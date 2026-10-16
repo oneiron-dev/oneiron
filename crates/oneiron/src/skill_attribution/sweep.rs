@@ -1,6 +1,6 @@
 //! TASK-lane receipt pump: capture once, route, then resume both idempotent projections.
 
-use super::codec::{evidence_after, validate_evidence};
+use super::codec::validate_evidence;
 use super::manifest_entry_names_skill;
 use super::projector::record_evidence_in_txn;
 use super::{
@@ -38,6 +38,13 @@ pub struct ReceiptAttributionFacts {
 pub trait ReceiptAttributionSource {
     /// `None` means facts are not yet available, not an abstention to spend forever.
     fn facts(&self, receipt: &ReceiptRecord) -> Result<Option<Vec<ReceiptAttributionFacts>>>;
+
+    /// A terminal self-report is not an anchor. Return a later held-out,
+    /// owner, world or audit receipt only when that observation has settled.
+    /// Receipts are revisited, so a late outcome need not arrive at capture.
+    fn anchored_outcome(&self, _receipt: &ReceiptRecord) -> Result<Option<super::AnchoredPackOutcome>> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -120,89 +127,34 @@ pub fn run_task_attribution_sweep_with_judge(
         .filter(|row| row.sequence > applied && row.sequence <= routed)
         .collect();
     report.judgments = judgments.len();
-    report.skills = crate::skill_reliability::project_skill_reliability(vault, &judgments)?;
-    // A callable's loss lands on the executors that invoked it; the shared
-    // projector above leaves callable subjects to this pass.
-    for judgment in &judgments {
-        if judgment.verdict == super::AttributionVerdict::SkillDefect
-            && !super::judgment_displaced(vault, judgment.sequence)?
-            && let Some(receipt) = judgment.evidence_receipts.first()
-        {
-            crate::skill_reliability::project_callable_receipt_outcome(
-                vault,
-                &judgment.subject,
-                receipt,
-                false,
-                judgment.at,
-            )?;
-        }
-    }
     report.actor_claims =
         crate::actor_claims::project_actor_claims_from_judgments(vault, &judgments)?;
-    for (sequence, evidence) in evidence_after(vault, applied)? {
-        if sequence <= routed
-            && evidence.outcome == AttemptOutcome::Succeeded
-            && (matches!(evidence.followed_state, Some(FollowedState::Followed))
-                || evidence.followed_state.is_none() && evidence.followed_skill == Some(true))
-            && let Some(skill) = evidence.skill
-        {
-            let record = vault
-                .get_skill_record(&skill)?
-                .ok_or(Error::EntityNotFound)?;
-            if record.role == crate::skill::SkillRole::Callable {
-                // The invocation witness names the executor that ran the
-                // callable; the attempt's own stamp may belong to another step.
-                crate::skill_reliability::project_callable_receipt_outcome(
-                    vault,
-                    &skill,
-                    &evidence.receipt_ref,
-                    true,
-                    evidence.at,
-                )?;
-            } else {
-                if crate::skill::resident_of(&record)?.is_some() {
-                    crate::skill_reliability::record_resident_skill_contributing_win(
-                        vault,
-                        &evidence.actor,
-                        &skill,
-                        &evidence.receipt_ref,
-                        evidence.at,
-                    )?;
-                } else {
-                    crate::skill_reliability::record_skill_contributing_win(
-                        vault,
-                        &skill,
-                        &evidence.receipt_ref,
-                        evidence.at,
-                    )?;
-                }
-                let receipt = crate::receipt::attempt_pack_receipt(vault, &evidence.receipt_ref)?
-                    .ok_or(Error::InvalidClaimBody("attribution receipt disappeared"))?;
-                match receipt
-                    .fields
-                    .get("model")
-                    .filter(|model| !model.is_empty())
+    for receipt in &receipts {
+        let outcome = match source.anchored_outcome(receipt) {
+            Ok(Some(outcome)) => outcome,
+            Ok(None) => continue,
+            Err(error) => {
+                report.failures.push((receipt.receipt_id.clone(), error));
+                continue;
+            }
+        };
+        match super::project_anchored_pack_outcome(
+            vault, &receipt.receipt_id, &outcome, crate::unix_seconds_now(),
+        ) {
+            Ok(credit) => {
+                for subject in credit.direct_subjects.iter()
+                    .chain(credit.shares.iter().map(|share| &share.subject))
                 {
-                    Some(model) => {
-                        crate::skill_reliability::project_skill_reliability_for_executor(
-                            vault,
-                            &skill,
-                            model,
-                            evidence.at,
-                        )?;
-                    }
-                    None => {
-                        crate::skill_reliability::project_skill_reliability_for(
-                            vault,
-                            &skill,
-                            evidence.at,
-                        )?;
+                    if vault.get_raw(subject)?.and_then(|raw| {
+                        crate::batch::EntityMetadataHeader::parse(&raw).map(|header| header.entity_type)
+                    }) == Some(crate::registry::ENTITY_TYPE_SKILL)
+                        && !report.skills.contains(subject)
+                    {
+                        report.skills.push(*subject);
                     }
                 }
             }
-            if !report.skills.contains(&skill) {
-                report.skills.push(skill);
-            }
+            Err(error) => report.failures.push((receipt.receipt_id.clone(), error)),
         }
     }
     // Separate from routing: an interrupted projector must be retried from durable

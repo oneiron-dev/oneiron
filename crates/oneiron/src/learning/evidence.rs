@@ -185,6 +185,9 @@ pub struct LearningEvidence {
     pub on_judge_model: bool,
     /// The outcome category a mean edit-cost observation also keeps.
     pub outcome_label: Option<String>,
+    /// Frozen pack execution/use context; judge and team metadata are evidence,
+    /// not reliability key qualifiers.
+    pub pack_attribution: Option<crate::receipt::PackLearningContext>,
 }
 
 impl LearningEvidence {
@@ -200,6 +203,7 @@ impl LearningEvidence {
             judge: None,
             on_judge_model: false,
             outcome_label: None,
+            pack_attribution: None,
         }
     }
 }
@@ -217,6 +221,8 @@ pub struct EvidenceRow {
     pub on_judge_model: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_attribution: Option<crate::receipt::PackLearningContext>,
 }
 
 fn bounded_ref(text: &str, what: &'static str) -> Result<()> {
@@ -287,6 +293,7 @@ pub(crate) fn record_evidence_in_txn(
         judge: evidence.judge.clone(),
         on_judge_model: evidence.on_judge_model,
         outcome_label: evidence.outcome_label.clone(),
+        pack_attribution: evidence.pack_attribution.clone(),
     };
     EVIDENCE.put(&vault.store, wtxn, &(digest, evidence.receipt.clone()), &row)?;
     project_cell_in_txn(vault, wtxn, &digest, now)

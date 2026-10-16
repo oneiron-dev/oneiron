@@ -181,6 +181,8 @@ side_tables! {
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw;
+    /// Frozen anchored pack outcome, eligible used lineage chains and shares. Key: credit receipt id.
+    SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;

@@ -57,6 +57,8 @@ side_tables! {
     /// Empty marker: this channel pointer changed and its publication has not reached the sync
     /// server yet. Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
+    /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
+    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;

@@ -18,13 +18,11 @@
 //! is one label at 100% — the same split path the amendment lane takes hunk by
 //! hunk.
 //!
-//! **Layer scope (SK stack 1737 → 1738 → 1739).** This module ROUTES and
-//! PERSISTS judgments; it writes no claims. `skill.reliability` materializes in
-//! ONE-1738 and the `actor.*` write doors open in ONE-1739 — both consume the
-//! judgment rows this projector persists. The absence of claim writes here is
-//! the stack's shape, not an omission: routing is the decision, claiming is the
-//! consequence, and they land in different tickets so the routing can be
-//! reviewed on its own.
+//! Routing persists judgments before any measured state is written. The
+//! anchored pack-outcome bridge feeds those judgments and actual-use witnesses
+//! to the shared `learning.*` projector; the actor-prose projector consumes
+//! the same judgment rows. Late-credit receipts retain the eligible lineage
+//! chains and their fractional shares.
 //!
 //! House shape is [`crate::comm::run_comm_projector`]: callers RECORD evidence
 //! through a door, the projector converts unprojected evidence into durable
@@ -42,6 +40,10 @@ mod judge_supersession;
 #[cfg(test)]
 pub(crate) use judge_supersession::set_pre_writer_hook;
 pub(crate) use judge_supersession::{judgment_displaced, judgment_displaced_in_txn};
+mod late_credit;
+mod pack_learning;
+pub use late_credit::{LateCreditReceipt, LateCreditShare, late_credit_receipt};
+pub use pack_learning::{AnchoredPackOutcome, project_anchored_pack_outcome};
 mod projector;
 pub(crate) use self::projector::{
     draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn, withdraw_edit_proposal_in_txn,
