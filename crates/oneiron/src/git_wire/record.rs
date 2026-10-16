@@ -189,6 +189,10 @@ pub enum GitWireRejection {
     /// The effect could not be confirmed to have happened, and the record is
     /// terminally void rather than silently claimed.
     EffectUnconfirmed,
+    /// The source the effect was decided for no longer holds the authority
+    /// to apply it. This judges that source, not the move: a later attempt at
+    /// the same move decides again.
+    Unauthorized,
 }
 
 impl GitWireRejection {
@@ -197,6 +201,7 @@ impl GitWireRejection {
             Self::RefMoved => GitWireFailureClass::RefMismatch,
             Self::ObjectsUnavailable => GitWireFailureClass::Missing,
             Self::EffectUnconfirmed => GitWireFailureClass::Unknown,
+            Self::Unauthorized => GitWireFailureClass::Unauthorized,
         }
     }
 }
@@ -407,6 +412,7 @@ pub(super) fn rejection_from_stored(stored: &StoredGitWireRecord) -> Result<GitW
     match class {
         Some(GitWireFailureClass::Missing) => Ok(GitWireRejection::ObjectsUnavailable),
         Some(GitWireFailureClass::RefMismatch) => Ok(GitWireRejection::RefMoved),
+        Some(GitWireFailureClass::Unauthorized) => Ok(GitWireRejection::Unauthorized),
         _ => Ok(GitWireRejection::EffectUnconfirmed),
     }
 }

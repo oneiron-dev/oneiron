@@ -87,6 +87,8 @@ mod publication_protocol;
 mod publication_tests_a;
 #[cfg(test)]
 mod publication_tests_b;
+#[cfg(test)]
+mod publication_tests_c;
 mod publication_types;
 
 pub use self::publication_codec::{
