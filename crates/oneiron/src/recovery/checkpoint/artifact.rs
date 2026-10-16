@@ -7,6 +7,8 @@
 //!   ‖ u32be n ‖ key header (n)    the vault key's commitment and sealed wraps
 //!   ‖ frame*                      the image's chunks, then each body's in order
 //!   ‖ frame                       the sealed manifest
+//!   ‖ u32be n ‖ commitment (n)    clear, signed (`commitment`)
+//!   ‖ u32be n ‖ signature (n)     E0 dual Ed25519 + SLH-DSA record
 //!   ‖ u64be offset of the manifest frame
 //! frame = u32be len ‖ E0 envelope
 //! ```
@@ -24,6 +26,10 @@
 //! The key header holds no key: it lets a host without the vault unlock the
 //! artifact's key from one wrap ([`CheckpointKey::unlock`]). Claim keys are
 //! never in an image either; exterior custody stays live (`checkpoint_custody`).
+//!
+//! The commitment names the sealed manifest by digest, and a reader verifies
+//! its signature against the signers its key trusts before the manifest opens
+//! (`commitment`).
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -35,6 +41,7 @@ use oneiron_crypto::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::commitment::{self, ChainHead, CheckpointSigner, Link, Trust};
 use crate::world_keys::{CarriedVaultKey, VaultKeyUnlock, refused};
 use crate::{Error, Result, Vault};
 
@@ -92,12 +99,14 @@ impl ArtifactKind {
 }
 
 /// The key one vault's sealed checkpoints and backups open with, derived from
-/// its data key and never stored. The open vault gives it
-/// ([`Vault::checkpoint_key`]); a host without the vault unlocks it from a wrap
-/// the artifact carries ([`CheckpointKey::unlock`]).
+/// its data key and never stored, and whose signatures it accepts. The open
+/// vault gives it, trusting this device's signer ([`Vault::checkpoint_key`]); a
+/// host without the vault unlocks it from a wrap the artifact carries
+/// ([`CheckpointKey::unlock`]) and says whom it trusts.
 pub struct CheckpointKey {
     vault_id: [u8; 32],
     kek: Kek,
+    trust: Trust,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -110,6 +119,7 @@ impl CheckpointKey {
     /// Unlocks the key of the artifact at `path` from one of the vault-key
     /// wraps it carries. The carried wraps are bound to the artifact once its
     /// manifest opens; a forged header unlocks a key that opens nothing.
+    /// It trusts no signer until told whom ([`CheckpointKey::trusting`]).
     pub fn unlock(path: &Path, unlock: &VaultKeyUnlock<'_>) -> Result<Self> {
         let prelude = Prelude::read(&mut File::open(path)?)?;
         let key = prelude
@@ -118,27 +128,50 @@ impl CheckpointKey {
         Ok(Self {
             vault_id: prelude.vault_id,
             kek: Kek::from_bytes(*key),
+            trust: Trust::Nobody,
         })
     }
 
     /// [`CheckpointKey::unlock`] with this install's keystore at the platform
-    /// defaults, from the device wrap it holds a slot for. `vault_dir` is the
-    /// vault's directory, which the keystore must lie outside.
+    /// defaults, from the device wrap it holds a slot for, trusting the
+    /// signers whose seeds that keystore holds. `vault_dir` is the vault's
+    /// directory, which the keystore must lie outside.
     pub fn unlock_on_this_device(path: &Path, vault_dir: &Path) -> Result<Self> {
         let keystore = oneiron_keystore::default_platform_keystore(&[vault_dir])
             .map_err(crate::world_keys::keystore_error)?;
-        Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))
+        Ok(
+            Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))?
+                .trusting_device(keystore),
+        )
+    }
+
+    /// Trusts exactly these signers, pinned through a channel of the
+    /// caller's ([`Vault::checkpoint_signer`]), in place of any trust before.
+    pub fn trusting(mut self, signers: Vec<CheckpointSigner>) -> Self {
+        self.trust = Trust::Pinned(signers);
+        self
+    }
+
+    /// Trusts the signers whose seeds `keystore` holds for the vault.
+    pub fn trusting_device(
+        mut self,
+        keystore: std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>,
+    ) -> Self {
+        self.trust = Trust::Device(keystore);
+        self
     }
 }
 
 impl Vault {
     /// The key this vault's checkpoints and backups seal under, unlocking the
     /// vault key with this device's wrap when this handle does not hold it.
+    /// It trusts the signers whose seeds this vault's keystore holds.
     pub fn checkpoint_key(&self) -> Result<CheckpointKey> {
         self.unlock_vault_key()?;
         Ok(CheckpointKey {
             vault_id: *self.vault_id().as_bytes(),
             kek: Kek::from_bytes(*self.vault_subkey(SEAL_CONTEXT)?),
+            trust: Trust::Device(self.device_keystore()?),
         })
     }
 
@@ -154,6 +187,7 @@ impl Vault {
             CheckpointKey {
                 vault_id: *self.vault_id().as_bytes(),
                 kek: Kek::from_bytes(*key),
+                trust: Trust::Nobody,
             },
         ))
     }
@@ -287,19 +321,22 @@ impl Sealer<'_> {
 }
 
 /// Writes the artifact at `path`, create-new and owner-only: the image, then
-/// each body `open_body` hands back, then the manifest. Returns the image's
-/// BLAKE3. A write that fails removes the file, so no part of one is left.
+/// each body `open_body` hands back, then the manifest, then the commitment
+/// `link` signs. Returns the image's BLAKE3 and the chain head the signed
+/// commitment makes. A write that fails removes the file, so no part of one is
+/// left.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_artifact(
     path: &Path,
     key: &CheckpointKey,
     kind: ArtifactKind,
     carried: &CarriedVaultKey,
+    link: &Link,
     created_at: u64,
     image: &[u8],
     bodies: &[([u8; 32], u64)],
     mut open_body: impl FnMut(&[u8; 32], u64) -> Result<File>,
-) -> Result<[u8; 32]> {
+) -> Result<([u8; 32], ChainHead)> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -363,11 +400,22 @@ pub(super) fn write_artifact(
     let bytes = rmp_serde::to_vec_named(&manifest).map_err(|_| codec())?;
     let envelope = sink.sealer.seal(MANIFEST_STREAM, 0, &bytes)?;
     sink.frame(&envelope)?;
+    let commitment = commitment::new_commitment(
+        link,
+        key.vault_id,
+        kind.code(),
+        snapshot,
+        *blake3::hash(&envelope).as_bytes(),
+        created_at,
+    )?;
+    let (commitment, signature, head) = link.sign(&commitment)?;
+    sink.frame(&commitment)?;
+    sink.frame(&signature)?;
     sink.put(&manifest_at.to_be_bytes())?;
     let file = sink.out.into_inner().map_err(|error| error.into_error())?;
     file.sync_all()?;
     partial.0 = None;
-    Ok(manifest.image.digest)
+    Ok((manifest.image.digest, head))
 }
 
 /// The file a write is making, removed unless the write finishes.
@@ -490,11 +538,28 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
     if manifest_at < prelude.end || manifest_at > footer_at {
         return Err(codec());
     }
-    let (manifest_len, _) = frame_at(&mut file, manifest_at)?;
-    if manifest_at + 4 + manifest_len != footer_at {
+    let (manifest_len, signed_at) = frame_at(&mut file, manifest_at)?;
+    let manifest_bytes = read_at(&mut file, manifest_at + 4, manifest_len)?;
+    // The signed commitment comes first: nothing opens for a signer the key
+    // does not trust, or a commitment that names another manifest.
+    let (commitment_len, record_at) = signed_frame_at(&mut file, signed_at)?;
+    let (record_len, end) = signed_frame_at(&mut file, record_at)?;
+    if end != footer_at {
         return Err(codec());
     }
-    let manifest_bytes = read_at(&mut file, manifest_at + 4, manifest_len)?;
+    let commitment = commitment::verify(
+        &key.trust,
+        &key.vault_id,
+        &read_at(&mut file, signed_at + 4, commitment_len)?,
+        &read_at(&mut file, record_at + 4, record_len)?,
+    )?;
+    if commitment.kind != prelude.kind.code()
+        || commitment.snapshot != prelude.snapshot
+        || commitment.manifest != *blake3::hash(&manifest_bytes).as_bytes()
+        || manifest_at + 4 + manifest_len != signed_at
+    {
+        return Err(codec());
+    }
     let manifest: Manifest =
         rmp_serde::from_slice(&sealer.open(MANIFEST_STREAM, 0, &manifest_bytes)?)
             .map_err(|_| codec())?;
@@ -503,6 +568,7 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
         || manifest.vault_id != prelude.vault_id
         || manifest.snapshot != prelude.snapshot
         || manifest.epoch != EPOCH
+        || manifest.created_at != commitment.created_at
         || manifest.key_header != *blake3::hash(&prelude.key_header).as_bytes()
     {
         return Err(codec());
@@ -559,6 +625,16 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
             streams,
         },
     })
+}
+
+/// The commitment or signature frame at `at`: its length, and where the next
+/// one starts.
+fn signed_frame_at(file: &mut File, at: u64) -> Result<(u64, u64)> {
+    let (len, next) = frame_at(file, at)?;
+    if len > commitment::MAX_SIGNED_FRAME {
+        return Err(codec());
+    }
+    Ok((len, next))
 }
 
 /// The frame at `at`: its envelope's length, and where the next one starts.

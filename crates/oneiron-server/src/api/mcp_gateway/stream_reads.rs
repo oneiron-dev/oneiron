@@ -50,13 +50,20 @@ pub(crate) fn mcp_stream_reads_task(
     actor: &McpResolvedActor,
     task: &oneiron::EntityId,
 ) -> bool {
-    if !matches!(
-        oneiron::context_board::CommittedTaskBoardState::read(vault, *task),
-        Ok(Some(_))
-    ) {
-        return false;
-    }
-    mcp_scoped_read(vault, actor)
-        .and_then(|scoped_read| mcp_scope_admits_row(vault, actor, &scoped_read, &task.to_hex()))
-        .unwrap_or(false)
+    mcp_stream_task_row(vault, actor, task).is_some()
+}
+
+/// A current TASK delta admitted by the same live read as tool-result riders.
+pub(crate) fn mcp_stream_task_row(
+    vault: &oneiron::Vault,
+    actor: &McpResolvedActor,
+    task: &oneiron::EntityId,
+) -> Option<oneiron::context_board::DeltaRow> {
+    let state = oneiron::context_board::CommittedTaskBoardState::read(vault, *task)
+        .ok()
+        .flatten()?;
+    let readable = mcp_scoped_read(vault, actor)
+        .and_then(|read| mcp_scope_admits_row(vault, actor, &read, &task.to_hex()))
+        .unwrap_or(false);
+    readable.then(|| state.delta_row())
 }

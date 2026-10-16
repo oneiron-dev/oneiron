@@ -1,17 +1,17 @@
 //! Held-out scoring releases a counted cohort. Binding is a separate owner act.
 use std::collections::BTreeSet;
 
+use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::manifest::{ModelRole, TeacherProbeApproval};
 use crate::skill_optimize::{EvalExposure, EvalExposureKind, EvalSeat};
-use crate::Vault;
 
 use super::custody::read_pin;
 use super::{
-    HeldOutResult, PinnedCheckpoint, ROLES, RUNS, RoleSwapReceipt, SWAPS, SourcePin,
-    SplitSide, SwapChoice, TrainingRun, TrainingState, invalid, run_in_txn,
+    HeldOutResult, PinnedCheckpoint, ROLES, RUNS, RoleSwapReceipt, SWAPS, SourcePin, SplitSide,
+    SwapChoice, TrainingRun, TrainingState, invalid, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -27,27 +27,48 @@ fn role_key(role: ModelRole) -> Result<String> {
 }
 
 fn validate_eval(run: &TrainingRun, eval: &HeldOutResult) -> Result<()> {
-    let result = run.result.as_ref().ok_or_else(|| invalid("training checkpoint has not returned"))?;
-    let cases = run.corpus.rows.iter().filter(|row| row.side == SplitSide::HeldOut).count() as u64;
+    let result = run
+        .result
+        .as_ref()
+        .ok_or_else(|| invalid("training checkpoint has not returned"))?;
+    let cases = run
+        .corpus
+        .rows
+        .iter()
+        .filter(|row| row.side == SplitSide::HeldOut)
+        .count() as u64;
     if eval.checkpoint_blake3 != result.exported_checkpoint.content_hash()?
         || eval.held_out_blake3 != run.corpus.held_out.blake3
-        || !run.eval_exposure.as_ref().is_some_and(|exposure| exposure.id == eval.exposure)
-        || eval.cases != cases || cases == 0
+        || !run
+            .eval_exposure
+            .as_ref()
+            .is_some_and(|exposure| exposure.id == eval.exposure)
+        || eval.cases != cases
+        || cases == 0
         || eval.metrics.is_empty()
-        || eval.metrics.iter().any(|(name, value)| name.trim().is_empty() || !value.is_finite())
+        || eval
+            .metrics
+            .iter()
+            .any(|(name, value)| name.trim().is_empty() || !value.is_finite())
         || eval.verifier_logs.is_empty()
     {
-        return Err(invalid("held-out result needs the exact checkpoint, split, exposure, metrics and verifier logs"));
+        return Err(invalid(
+            "held-out result needs the exact checkpoint, split, exposure, metrics and verifier logs",
+        ));
     }
     eval.harness.validate()?;
-    if matches!(run.plan.seat, EvalSeat::Decision | EvalSeat::ExtractionTagger | EvalSeat::Router)
-        && eval.calibration.is_none()
+    if matches!(
+        run.plan.seat,
+        EvalSeat::Decision | EvalSeat::ExtractionTagger | EvalSeat::Router
+    ) && eval.calibration.is_none()
     {
         return Err(invalid("a probability seat also reports calibration"));
     }
     if let Some(calibration) = &eval.calibration
-        && (!calibration.temperature.is_finite() || calibration.temperature <= 0.0
-            || !calibration.brier_score.is_finite() || calibration.brier_score < 0.0
+        && (!calibration.temperature.is_finite()
+            || calibration.temperature <= 0.0
+            || !calibration.brier_score.is_finite()
+            || calibration.brier_score < 0.0
             || !calibration.calibration_error.is_finite()
             || !(0.0..=1.0).contains(&calibration.calibration_error))
     {
@@ -60,20 +81,42 @@ impl Vault {
     /// The evaluator, not the trainer, gets these bytes after a counted OF-578
     /// serving. The run keeps the exposure so a result cannot name another one.
     pub fn open_training_held_out(&self, id: &EntityId) -> Result<TrainingEvalInput> {
-        let run = self.training_run(id)?.ok_or_else(|| invalid("training run not found"))?;
-        let result = run.result.as_ref().ok_or_else(|| invalid("training checkpoint has not returned"))?;
+        let run = self
+            .training_run(id)?
+            .ok_or_else(|| invalid("training run not found"))?;
+        let result = run
+            .result
+            .as_ref()
+            .ok_or_else(|| invalid("training checkpoint has not returned"))?;
         if run.evaluation.is_some() || run.state != TrainingState::Returned {
-            return Err(invalid("held-out scoring requires an unscored returned checkpoint"));
+            return Err(invalid(
+                "held-out scoring requires an unscored returned checkpoint",
+            ));
         }
-        let candidate = blake3::Hash::from(result.exported_checkpoint.content_hash()?).to_hex().to_string();
+        let candidate = blake3::Hash::from(result.exported_checkpoint.content_hash()?)
+            .to_hex()
+            .to_string();
         let release = self.open_eval_cohort(
-            &run.corpus.cohort.id, EvalExposureKind::Candidate, &run.admission_ref(),
-            Some(&candidate), self.store.clock.now_recorded_at(),
+            &run.corpus.cohort.id,
+            EvalExposureKind::Candidate,
+            &run.admission_ref(),
+            Some(&candidate),
+            self.store.clock.now_recorded_at(),
         )?;
-        let receipts: BTreeSet<_> = release.cases.iter()
-            .flat_map(|case| case.receipts.iter().map(String::as_str)).collect();
-        if run.corpus.rows.iter().any(|row| row.side == SplitSide::HeldOut && !receipts.contains(row.receipt.as_str())) {
-            return Err(invalid("training held-out rows must be cases in the sealed cohort"));
+        let receipts: BTreeSet<_> = release
+            .cases
+            .iter()
+            .flat_map(|case| case.receipts.iter().map(String::as_str))
+            .collect();
+        if run
+            .corpus
+            .rows
+            .iter()
+            .any(|row| row.side == SplitSide::HeldOut && !receipts.contains(row.receipt.as_str()))
+        {
+            return Err(invalid(
+                "training held-out rows must be cases in the sealed cohort",
+            ));
         }
         let held_out_jsonl = self.read_training_artifact(&run.corpus.held_out)?;
         self.with_write_txn_grouped(|txn| {
@@ -94,7 +137,11 @@ impl Vault {
 
     /// A trusted evaluator supplies measurements, not an instruction to deploy.
     /// A different harness is retained on the result and blocks a normal proposal.
-    pub fn record_training_evaluation(&self, id: &EntityId, evaluation: &HeldOutResult) -> Result<TrainingRun> {
+    pub fn record_training_evaluation(
+        &self,
+        id: &EntityId,
+        evaluation: &HeldOutResult,
+    ) -> Result<TrainingRun> {
         self.with_write_txn_grouped(|txn| {
             let mut run = run_in_txn(self, txn, id)?;
             if let Some(existing) = &run.evaluation {
@@ -104,7 +151,9 @@ impl Vault {
                 return Err(invalid("a training evaluation is immutable"));
             }
             if run.state != TrainingState::Returned {
-                return Err(invalid("training evaluation requires a returned checkpoint"));
+                return Err(invalid(
+                    "training evaluation requires a returned checkpoint",
+                ));
             }
             validate_eval(&run, evaluation)?;
             for log in &evaluation.verifier_logs {
@@ -128,17 +177,29 @@ impl Vault {
     ) -> Result<RoleSwapReceipt> {
         self.recheck_owner(owner)?;
         let promotion_exposure = if matches!(&choice, SwapChoice::Evaluated) {
-            let run = self.training_run(id)?.ok_or_else(|| invalid("training run not found"))?;
+            let run = self
+                .training_run(id)?
+                .ok_or_else(|| invalid("training run not found"))?;
             if !run.can_propose_swap() {
                 return Err(invalid("training checks block a swap proposal"));
             }
-            let result = run.result.as_ref().ok_or_else(|| invalid("training checkpoint has not returned"))?;
+            let result = run
+                .result
+                .as_ref()
+                .ok_or_else(|| invalid("training checkpoint has not returned"))?;
             let candidate = blake3::Hash::from(result.exported_checkpoint.content_hash()?)
-                .to_hex().to_string();
-            Some(self.open_eval_cohort(
-                &run.corpus.cohort.id, EvalExposureKind::Promotion, &run.admission_ref(),
-                Some(&candidate), self.store.clock.now_recorded_at(),
-            )?.exposure)
+                .to_hex()
+                .to_string();
+            Some(
+                self.open_eval_cohort(
+                    &run.corpus.cohort.id,
+                    EvalExposureKind::Promotion,
+                    &run.admission_ref(),
+                    Some(&candidate),
+                    self.store.clock.now_recorded_at(),
+                )?
+                .exposure,
+            )
         } else {
             None
         };
@@ -147,17 +208,26 @@ impl Vault {
             let mut run = run_in_txn(self, txn, id)?;
             match &choice {
                 SwapChoice::Evaluated if !run.can_propose_swap() => {
-                    return Err(invalid("training export, overlap or held-out checks block a swap proposal"));
+                    return Err(invalid(
+                        "training export, overlap or held-out checks block a swap proposal",
+                    ));
                 }
                 SwapChoice::ExplicitOverride { reason } if reason.trim().is_empty() => {
-                    return Err(invalid("an explicit checkpoint choice records the owner's reason"));
+                    return Err(invalid(
+                        "an explicit checkpoint choice records the owner's reason",
+                    ));
                 }
                 _ => {}
             }
-            let result = run.result.as_ref().ok_or_else(|| invalid("training checkpoint has not returned"))?;
+            let result = run
+                .result
+                .as_ref()
+                .ok_or_else(|| invalid("training checkpoint has not returned"))?;
             result.exported_checkpoint.verify(self, txn)?;
-            let mut manifest = crate::llm::manifest::read_manifest(&self.store, txn)?
-                .ok_or_else(|| invalid("configure the model manifest before binding a trained checkpoint"))?;
+            let mut manifest =
+                crate::llm::manifest::read_manifest(&self.store, txn)?.ok_or_else(|| {
+                    invalid("configure the model manifest before binding a trained checkpoint")
+                })?;
             let role = run.plan.role;
             let key = role_key(role)?;
             if let Some(current) = ROLES.get(&self.store, txn, &key)?
@@ -167,17 +237,27 @@ impl Vault {
                 return Ok(current);
             }
             let previous = manifest.roles.get(&role).cloned();
-            if previous.as_ref().is_some_and(|binding| binding.slot != run.plan.output_binding.slot) {
-                return Err(invalid("a trained checkpoint cannot move its role to another slot"));
+            if previous
+                .as_ref()
+                .is_some_and(|binding| binding.slot != run.plan.output_binding.slot)
+            {
+                return Err(invalid(
+                    "a trained checkpoint cannot move its role to another slot",
+                ));
             }
             manifest.roles.insert(role, run.plan.output_binding.clone());
-            self.write_model_manifest_in_txn(txn, &manifest, teacher_approval)?;
+            self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
             let receipt = RoleSwapReceipt {
-                id: self.store.clock.entity_id()?, run: *id, owner: actor,
-                at: self.store.clock.now_recorded_at(), role, previous,
+                id: self.store.clock.entity_id()?,
+                run: *id,
+                owner: actor,
+                at: self.store.clock.now_recorded_at(),
+                role,
+                previous,
                 binding: run.plan.output_binding.clone(),
                 checkpoint: result.exported_checkpoint.clone(),
-                evaluation: run.evaluation.clone(), checks: result.checks.clone(),
+                evaluation: run.evaluation.clone(),
+                checks: result.checks.clone(),
                 exact_hash_overlaps: run.corpus.exact_hash_overlaps,
                 promotion_exposure: promotion_exposure.clone(),
                 choice,
@@ -198,7 +278,11 @@ impl Vault {
             return Ok(None);
         };
         let manifest = crate::llm::manifest::read_manifest(&self.store, &txn)?;
-        if manifest.as_ref().and_then(|manifest| manifest.roles.get(&role)) != Some(&receipt.binding) {
+        if manifest
+            .as_ref()
+            .and_then(|manifest| manifest.roles.get(&role))
+            != Some(&receipt.binding)
+        {
             return Ok(None);
         }
         receipt.checkpoint.verify(self, &txn)?;

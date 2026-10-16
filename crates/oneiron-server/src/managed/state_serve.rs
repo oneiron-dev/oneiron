@@ -496,6 +496,7 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
 /// happened.
 pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Result<()> {
     let config = managed.serve_config(args);
+    let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     init_managed_tracing(&config.log_level);
     tracing::info!(
         vault = %managed.vault_name,
@@ -639,7 +640,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
-    let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state));
+    let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
     // Graceful shutdown couples "stop accepting" and "drain in-flight": the
     // listener closes the moment SIGTERM lands, and this resolves once the
     // requests already in the runtime have finished.

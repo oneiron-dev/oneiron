@@ -43,7 +43,7 @@ use crate::error::Result;
 use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
 use crate::store::RetrievalSignal;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy)]
 struct SnapshotInputs<'a> {
@@ -425,6 +425,7 @@ impl PipelineBuilder<'_> {
                     filter_config,
                     &mut metadata_cache,
                     &mut claim_gate,
+                    &mut acc.media_evidence,
                 )?;
                 diagnostics.succeeded.push(RetrievalSignal::MediaVector);
                 acc.admit_channel(
@@ -475,6 +476,7 @@ impl PipelineBuilder<'_> {
                     total_in_scope: 0,
                     empty_reason: None,
                     signal_components: HashMap::new(),
+                    media_evidence: HashSet::new(),
                     blend_components: HashMap::new(),
                     access_factors: HashMap::new(),
                     rerank_merged_components: None,
@@ -703,6 +705,7 @@ impl PipelineBuilder<'_> {
                 rtxn,
                 &mut scores,
                 &acc.signal_components,
+                &acc.media_evidence,
                 &mut empty_reason,
                 overrides.skip_ret01_abstain,
             )?;
@@ -864,6 +867,7 @@ impl PipelineBuilder<'_> {
                 total_in_scope,
                 empty_reason,
                 signal_components: acc.signal_components,
+                media_evidence: acc.media_evidence,
                 blend_components,
                 access_factors: blend_access_factors,
                 rerank_merged_components,
@@ -922,6 +926,7 @@ impl PipelineBuilder<'_> {
         rtxn: &heed::RoTxn<'_>,
         scores: &mut Vec<super::super::types::ScoredEntity>,
         signal_components: &HashMap<crate::EntityId, Vec<crate::store::RetrievalScoreComponent>>,
+        media_evidence: &HashSet<crate::EntityId>,
         empty_reason: &mut Option<EmptyReason>,
         skip_ret01_abstain: bool,
     ) -> Result<Vec<super::super::types::ScoredEntity>> {
@@ -951,6 +956,7 @@ impl PipelineBuilder<'_> {
         if context_pack_evidence_abstains(
             &capabilities,
             signal_components,
+            media_evidence,
             self.text_search.as_ref().map(|(query, _)| query.as_str()),
             self.vector_search.is_some(),
             self.vault.evidence_space(),
@@ -970,6 +976,7 @@ impl PipelineBuilder<'_> {
             && context_pack_evidence_abstains(
                 scores,
                 signal_components,
+                media_evidence,
                 self.text_search.as_ref().map(|(query, _)| query.as_str()),
                 self.vector_search.is_some(),
                 self.vault.evidence_space(),

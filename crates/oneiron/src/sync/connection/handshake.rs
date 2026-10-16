@@ -182,12 +182,7 @@ impl SyncConnection {
         &self,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
-    ) -> Result<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        String,
-    > {
+    ) -> Result<crate::sync::carrier::SyncSocket, String> {
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
         // Sync pulls the full root snapshot. The upgrade therefore proves an
@@ -214,9 +209,12 @@ impl SyncConnection {
                 .map_err(|_| "Auth token is not a valid header value".to_string())?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
         }
-        let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(|e| format!("WS connect failed: {e}"))?;
+        let ws_stream = crate::sync::carrier::connect_sync_socket(
+            request,
+            self.config.client_config.mesh_dialer.as_deref(),
+        )
+        .await
+        .map_err(|e| format!("WS connect failed: {e}"))?;
 
         let (mut write, mut read) = ws_stream.split();
 
@@ -489,6 +487,12 @@ impl SyncConnection {
         queued: Vec<QueuedUpdate>,
     ) -> Result<Vec<QueuedUpdate>, String> {
         let mut sent = Vec::with_capacity(queued.len());
+        let mut frames = Vec::new();
+        let mut size = 1;
+        let mut tick = tokio::time::interval(Duration::from_millis(
+            u64::from(client.config.sync_debounce_ms).max(1),
+        ));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         for update in queued {
             // Mirror the queued ops into the LOCAL window doc first:
             // convergence is confirmed by VV equality with the server,
@@ -524,11 +528,33 @@ impl SyncConnection {
                 .into_result()
             }
             .map_err(|e| format!("Queue replay encode failed: {e}"))?;
+            if !super::node_batch::fits(&frames, size, &msg).map_err(|e| e.to_string())? {
+                tick.tick().await;
+                let batch = transport::encode_node_batch(&frames)
+                    .into_result()
+                    .map_err(|e| e.to_string())?;
+                write
+                    .send(Message::Binary(batch.into()))
+                    .await
+                    .map_err(|e| format!("Queue replay failed: {e}"))?;
+                frames.clear();
+                size = 1;
+                // A single member still has to fit inside its BATCH envelope.
+                super::node_batch::fits(&frames, size, &msg).map_err(|e| e.to_string())?;
+            }
+            size += 4 + msg.len();
+            frames.push(msg);
+            sent.push(update);
+        }
+        if !frames.is_empty() {
+            tick.tick().await;
+            let batch = transport::encode_node_batch(&frames)
+                .into_result()
+                .map_err(|e| e.to_string())?;
             write
-                .send(Message::Binary(msg.into()))
+                .send(Message::Binary(batch.into()))
                 .await
                 .map_err(|e| format!("Queue replay failed: {e}"))?;
-            sent.push(update);
         }
         Ok(sent)
     }
