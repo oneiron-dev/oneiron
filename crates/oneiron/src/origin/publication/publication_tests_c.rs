@@ -5,7 +5,10 @@ mod tests {
     use super::super::publication_tests_a::tests::*;
     use super::super::*;
     use crate::entity_id::EntityId;
-    use crate::git_wire::{GitOid, GitWire, GitWireRecordState, GitWireRepo};
+    use crate::git_wire::{
+        GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire, GitWireRecordState,
+        GitWireRepo,
+    };
     use crate::origin::residence::OriginResidence;
     use crate::vault::Vault;
 
@@ -15,6 +18,7 @@ mod tests {
         vault: Vault,
         repo: GitWireRepo,
         base: GitOid,
+        next: GitOid,
         publication: OriginPublicationRecord,
         first_epoch: u64,
         host: EntityId,
@@ -67,6 +71,7 @@ mod tests {
             vault,
             repo,
             base,
+            next,
             publication,
             first_epoch: first.epoch,
             host,
@@ -117,6 +122,14 @@ mod tests {
         );
         assert_eq!(receipts.len(), 1);
         assert_eq!(receipts[0].state, GitWireRecordState::Failed);
+        // An unconditional write of the same target names no expected value,
+        // so no owner can be found for it: it is refused outright.
+        let unconditional =
+            GitRefPublication::update(main_ref(), GitRefExpectation::Any, state.next.clone());
+        assert!(
+            wire.publish_refs(&state.repo, vec![unconditional], LEARNED_AT + 2)
+                .is_err()
+        );
         drop(wire);
         assert_ref_and_publication_untouched(&state);
     }
@@ -156,11 +169,22 @@ mod tests {
         let wire = GitWire::new(&vault).expect("wire");
         let repo = open_repo(&wire, &root, &base);
         let repo_id = repo_id_of(&vault, &repo);
-        let ask = request(&vault, &repo, repo_id, Some(base.clone()), next);
+        let ask = request(&vault, &repo, repo_id, Some(base.clone()), next.clone());
         let id = origin_publication_id(&ask).expect("id");
         let blocked = root.join(".git/refs/heads/main.lock");
         std::fs::write(&blocked, b"another git ref transaction").expect("block CAS");
         assert!(vault.publish_origin_ref(&wire, ask).is_err());
+        // A second saved attempt at the same move, batched with another ref.
+        let side = GitRefName::parse_full("refs/heads/side").expect("side ref");
+        let batch = vec![
+            GitRefPublication::update(
+                main_ref(),
+                GitRefExpectation::Value(base.clone()),
+                next.clone(),
+            ),
+            GitRefPublication::update(side.clone(), GitRefExpectation::Absent, next.clone()),
+        ];
+        assert!(wire.publish_refs(&repo, batch, LEARNED_AT).is_err());
         std::fs::remove_file(blocked).expect("unblock CAS");
         force_ref(&root, &other);
         let report = vault
@@ -174,9 +198,10 @@ mod tests {
         wire.recover(&repo, LEARNED_AT + 2).expect("recover");
         assert_eq!(
             wire.read_ref(&repo, &main_ref()).expect("ref"),
-            Some(base),
+            Some(base.clone()),
             "a refused publication's move ran"
         );
+        assert_eq!(wire.read_ref(&repo, &side).expect("side"), None);
         assert_eq!(
             vault
                 .origin_publication(id)
@@ -185,5 +210,13 @@ mod tests {
             Some(OriginPublicationStatus::Conflicted)
         );
         assert_eq!(claim_count(&vault), 0);
+        // The refusal judged that publication, not the move: a later owner
+        // with its own source publishes the same move.
+        let later = request(&vault, &repo, repo_id, Some(base), next.clone());
+        let receipt = vault
+            .publish_origin_ref(&wire, later)
+            .expect("a later owner publishes the move");
+        assert_eq!(receipt.record.status, OriginPublicationStatus::Published);
+        assert_eq!(wire.read_ref(&repo, &main_ref()).expect("ref"), Some(next));
     }
 }
