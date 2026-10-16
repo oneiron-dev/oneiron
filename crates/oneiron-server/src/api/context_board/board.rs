@@ -154,6 +154,8 @@ pub(super) struct BoardParts {
     pub(super) authority: oneiron::pipeline::ResolvedWorldAuthority,
     pub(super) scope: String,
     pub(super) sections: Vec<BoardSection>,
+    /// The caller's `you:` forks line, rendered under the legend.
+    pub(super) you: Option<String>,
     pub(super) worlds: Vec<String>,
     pub(super) tasks: Vec<String>,
     pub(super) room: Option<Vec<String>>,
@@ -232,8 +234,8 @@ pub(super) fn board_parts(
     }
 
     // TASKS: each task's `who` and `fits:` by handle, the caller's live
-    // children on the task they realize, then the `you:` line and the
-    // project view as its first detail rows.
+    // children on the task they realize, and the project view as its first
+    // detail row. The `you:` line rides the frame, under the legend.
     let (mut tasks, you) = match &memory {
         Some(memory) => {
             let mut rows = readable_task_rows(auth, read, memory)?;
@@ -284,7 +286,7 @@ pub(super) fn board_parts(
             },
             (None, None) => None,
         };
-    let mut lead: Vec<String> = you.into_iter().collect();
+    let mut lead = Vec::new();
     if let Some((project, row)) = project {
         named.push(project);
         lead.push(row);
@@ -347,6 +349,7 @@ pub(super) fn board_parts(
         authority,
         scope,
         sections,
+        you,
         worlds: worlds.detail_rows().to_vec(),
         tasks: tasks_section.detail_rows().to_vec(),
         room: room_section.map(|room| room.pinned_rows().to_vec()),

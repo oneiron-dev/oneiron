@@ -129,6 +129,10 @@ pub(crate) struct ContextBoardResponse {
     /// WORLDS rows: the counts line, then each allowed world the caller's
     /// read reads, ACTIVE or AVAILABLE-OFF.
     worlds: Vec<String>,
+    /// The caller's `you:` line: its forks, where each runs and what it
+    /// does; absent when it has no fork.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    you: Option<String>,
     /// TASKS detail rows: the project view when one rides, the caller's
     /// readable task rows, and the overflow footer.
     tasks: Vec<String>,
@@ -450,6 +454,7 @@ pub(crate) async fn context_board_hydrate(
             },
             legend: &oneiron::context_board::BoardLegend::canonical(),
             sections: &parts.sections,
+            you: parts.you.as_deref(),
             changes: Some(&changed_line),
         },
         oneiron::context_board::BoardBudgetRequest {
@@ -523,6 +528,7 @@ pub(crate) async fn context_board_hydrate(
         board: board_render.text,
         board_budget,
         worlds: parts.worlds,
+        you: parts.you,
         tasks: parts.tasks,
         room: parts.room,
         pack,
