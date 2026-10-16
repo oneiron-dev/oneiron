@@ -50,6 +50,18 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     reverse_rematerialize_with(vault, doc, window_key, true)
 }
 
+/// [`reverse_rematerialize`] into a sealed window's own mirror document
+/// (OF-570): it packs the rows a device-only world keeps here too. Only the
+/// sealed-content door calls it, and what it packs leaves this machine only
+/// sealed under the world's key.
+pub(crate) fn reverse_rematerialize_for_sealing(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+) -> Result<u32> {
+    reverse_rematerialize_with(vault, doc, window_key, false)
+}
+
 /// [`reverse_rematerialize`], packing rows a device-only world keeps here
 /// unless `withhold_device_only`. Only promotion authority packs them: it
 /// asks what a grant covers and exports nothing.

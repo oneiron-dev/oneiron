@@ -73,6 +73,9 @@ pub enum Purpose {
     /// One world's data key, wrapped to a machine or to the recovery root. The owner
     /// binds the world and key generation in `key_id` and checks them on open.
     WorldDek = 11,
+    /// A slice of one private world's content, sealed under a key derived from the
+    /// world's key so a machine that may not read the world can still hold it.
+    SealedWorldContent = 12,
 }
 
 impl Purpose {
@@ -89,6 +92,7 @@ impl Purpose {
             9 => Self::GuestShare,
             10 => Self::EscrowRecipient,
             11 => Self::WorldDek,
+            12 => Self::SealedWorldContent,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

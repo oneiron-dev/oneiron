@@ -50,6 +50,9 @@ pub(crate) struct WorldKeySession {
     pub(crate) vault_key: Mutex<Option<Arc<super::vault_key::VaultDataKey>>>,
     /// Each world's question, at its latest crossing.
     frontier: Mutex<BTreeMap<EntityId, WorldKeyFrontierCheck>>,
+    /// Held while a sealed window's mirror is read, extended and written back.
+    #[cfg(feature = "sync")]
+    pub(crate) sealing: Mutex<()>,
 }
 
 impl WorldKeySession {
