@@ -42,6 +42,10 @@ pub struct PackManifest {
     /// Runtime structural shapes, by global name; handles are local, never in PACK.md.
     pub kinds: BTreeSet<String>,
     pub requested_grants: BTreeSet<String>,
+    /// Effect classes this pack's actions can fall in, by their engine
+    /// action-class names (`browser.send`, `browser.pay`, ...). The vault's
+    /// grant for a class sets its press; declaring a class grants nothing.
+    pub effects: BTreeSet<String>,
     pub wake_subscriptions: BTreeSet<String>,
     /// Hook folders under `hooks/`, by name (ARCH-0053 §7, PACK-HOOKS = A).
     /// Install binds each one; the runner is L11's.
@@ -179,6 +183,7 @@ impl PackManifest {
                     "predicates",
                     "kinds",
                     "grants",
+                    "effects",
                     "wakes",
                     "hooks",
                     "organs",
@@ -217,6 +222,10 @@ impl PackManifest {
         if predicates.iter().any(|name| kinds.contains(name)) {
             return Err(invalid("predicate and structural names must be disjoint"));
         }
+        let effects = list("effects")?;
+        for effect in &effects {
+            validate_name(effect)?;
+        }
         let hooks = list("hooks")?;
         for hook in &hooks {
             super::hooks::validate_hook_name(hook)?;
@@ -253,6 +262,7 @@ impl PackManifest {
             predicates,
             kinds,
             requested_grants,
+            effects,
             wake_subscriptions: list("wakes")?,
             hooks,
             organs,
@@ -288,6 +298,7 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
                 | "predicates"
                 | "kinds"
                 | "grants"
+                | "effects"
                 | "wakes"
                 | "hooks"
                 | "organs"

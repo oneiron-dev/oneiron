@@ -228,17 +228,46 @@ impl EngineNativeExecutor<'_> {
             super::compaction::result_reads(&message.content, &mut reads);
             window.push(message);
         }
+        // Docs Q22 (ARCH-0067 #fold-result-handles): a stub names every stored
+        // result, printed or not. The bounded window scan above finds only the
+        // ones the console showed; the run's stored manifests are the whole
+        // set, so a never-printed result stays reachable by its handle. It may
+        // name a same-run result from outside the span: a superset, never a
+        // loss.
+        for output in &record.outputs {
+            if super::store::is_result_output_path(&output.path) {
+                reads.insert(super::store::result_read_path(output.output_ref()));
+            }
+        }
         for read in reads {
             handles.push(serde_json::to_string(
                 &serde_json::json!({ "sandbox.fs.read_file": read }),
             )?);
         }
-        let pins = super::compaction::window_pins(&window);
+        let mut pins = super::compaction::window_pins(&window);
         if count_context_pack_tokens(&pins.join("\n")) as u64 > budget {
             return Ok(Err(
                 "its failure lines do not fit one summary; fold a shorter span".to_owned(),
             ));
         }
+        let room = driver.backend().input_token_limit(budget);
+        super::compaction::add_profile_pins(
+            &mut pins,
+            &window,
+            &driver.memory_profile().verbatim_pins,
+            |pins| {
+                count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
+                    && room.is_none_or(|room| {
+                        crate::compaction::compaction_input_tokens(
+                            mark.from,
+                            &window,
+                            pins,
+                            note.as_deref(),
+                            budget,
+                        ) <= room
+                    })
+            },
+        );
         if let Some(room) = driver.backend().input_token_limit(budget)
             && crate::compaction::compaction_input_tokens(
                 mark.from,
@@ -455,6 +484,23 @@ impl EngineNativeExecutor<'_> {
             }
             pins = super::compaction::window_pins(&window);
         }
+        super::compaction::add_profile_pins(
+            &mut pins,
+            &window,
+            &driver.memory_profile().verbatim_pins,
+            |pins| {
+                count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
+                    && room.is_none_or(|room| {
+                        crate::compaction::compaction_input_tokens(
+                            start,
+                            &window,
+                            pins,
+                            note.as_deref(),
+                            budget,
+                        ) <= room
+                    })
+            },
+        );
         // Nested provenance: the newest epoch stands for every id the calls
         // before its count served, and for the epochs before it, since those
         // are its own sources. Only the calls since then are read here, so a
