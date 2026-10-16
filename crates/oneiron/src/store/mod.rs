@@ -149,8 +149,8 @@ mod tests;
 
 #[cfg(unix)]
 pub(crate) use body_store::{
-    BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_SUFFIX, SunkBody, body_file_name,
-    read_body_range,
+    BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, SunkBody,
+    body_file_name, read_body_range,
 };
 pub use channel_identity_receipts::*;
 #[cfg(test)]
