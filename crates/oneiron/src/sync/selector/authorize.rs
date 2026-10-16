@@ -323,8 +323,16 @@ fn authorized_base_edge_endpoints(
                 Err(error) => return Err(error),
             };
             reverse_rematerialize_with(vault, &base, &base_key, withhold)?;
-            let selected =
-                filter_window_doc(vault, &base, &base_key, selector, position, withhold)?;
+            // Read only for what it selects: no birth is copied.
+            let selected = filter_window_doc(
+                vault,
+                &base,
+                &base_key,
+                selector,
+                position,
+                withhold,
+                BirthReach::OtherVault,
+            )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
