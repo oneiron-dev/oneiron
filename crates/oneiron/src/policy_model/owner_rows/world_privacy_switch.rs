@@ -71,10 +71,13 @@ impl Vault {
         world: EntityId,
         settings: WorldPrivacy,
     ) -> Result<WorldPrivacyReceipt> {
-        // The world's key follows its settings in the same commit, when this
-        // install has a keystore to hold its machine secret (world privacy
-        // P6b). Its secret is read before the writer.
-        let secret = self.machine_secret_outside_txn().ok();
+        // The world's key follows its settings in the same commit (world
+        // privacy P6b): a private world this machine may read never commits
+        // without one. Its secret is read before the writer.
+        let (secret, unavailable) = match self.machine_secret_outside_txn() {
+            Ok(secret) => (Some(secret), None),
+            Err(error) => (None, Some(error)),
+        };
         // The release lock is taken under the writer and released only after
         // the commit is durable: a release verdict reading the settings waits
         // for it, and never needs the writer while it holds the read side.
@@ -85,10 +88,11 @@ impl Vault {
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let receipt = self.set_world_privacy_in_txn(txn, owner, origin, world, settings)?;
-            if let Some(secret) = &secret {
-                let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-                self.ensure_world_key_after_edit_in_txn(txn, actor, world, secret)?;
-            }
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let secret = secret
+                .as_ref()
+                .ok_or_else(|| unavailable.expect("an absent secret has its error"));
+            self.world_key_for_edit_in_txn(txn, actor, world, secret)?;
             Ok((release, receipt))
         })?;
         Ok(receipt)
