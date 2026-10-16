@@ -20733,7 +20733,7 @@
      "purpose": "Human TASK follow-up shared types, stage machine and timing bounds",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 1,
       "struct": 5,
@@ -20755,7 +20755,7 @@
      "path": "src/human_task/storage.rs",
      "purpose": "vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -23982,6 +23982,7 @@
      "kind": "src",
      "notable": [
       "AssetConsumer",
+      "HydratedAsset",
       "LandedImage",
       "ResolvedAsset",
       "ServedAssetForm"
@@ -23990,8 +23991,8 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 4,
+      "enum": 2,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -31707,7 +31708,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -37558,7 +37559,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 28
      }
     },
     {
@@ -37964,7 +37965,7 @@
      "path": "src/task_verb/owner_index.rs",
      "purpose": "Shared derived tasks-by-owner index for inbox and saved plan queries",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -38005,7 +38006,7 @@
      "path": "src/task_verb/presence_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -38069,7 +38070,7 @@
      "path": "src/task_verb/room_thread.rs",
      "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -43857,7 +43858,7 @@
      "path": "src/beam/model_scaffold/paired.rs",
      "purpose": "Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -52296,7 +52297,7 @@
      "path": "src/api/booking.rs",
      "purpose": "ONE-1819 [BK-08] the agent-readable booking surface",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -52310,7 +52311,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/booking/client_address_tests.rs",
@@ -52384,7 +52385,7 @@
      "path": "src/api/booking/public.rs",
      "purpose": "Anonymous, published-capability-only booking transport",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -52447,6 +52448,26 @@
      "notable": [],
      "path": "src/api/booking/transport.rs",
      "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/booking/turn.rs",
+     "purpose": "Rule five at the owner's booking windows: authenticated work past one waits for it to open and is never…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/booking/turn_tests.rs",
+     "purpose": "Rule five at the owner's booking windows: an authenticated caller past one waits for it to open and is…",
      "surface": {
       "crate-vis": 1
      }
@@ -53561,6 +53582,14 @@
      "notable": [],
      "path": "src/api/tests/ai_chat.rs",
      "purpose": "`/v1/ai`: a chat turn streams through the bus and the socket fanout and saves its terminal once; status and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/asset_forms.rs",
+     "purpose": "OF-329's hydrate doors: a text-only agent that hydrates a generated image, on `/v1` core hydrate and on…",
      "surface": {}
     },
     {
@@ -57528,7 +57557,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 195,
+     "files": 198,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57768,8 +57797,8 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 354,
-   "test_files": 168
+   "source_files": 355,
+   "test_files": 170
   },
   "oneiron-spawn": {
    "files": [

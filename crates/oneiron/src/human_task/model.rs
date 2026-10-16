@@ -33,6 +33,11 @@ pub(super) const ESCALATION_AFTER_SECONDS: u64 = 7 * 24 * 60 * 60;
 /// Bound on one wake-pass follow-up drive.
 pub(super) const FOLLOWUP_WAKE_LIMIT: usize = 64;
 
+/// Follow-up cursors one drive reads at most, due or not: a pass's work is
+/// bounded by the cursors it reads, never by the ones it runs (F13). The
+/// next pass resumes after the last one read.
+pub(super) const FOLLOWUP_SWEEP_ROWS: usize = 4_096;
+
 /// Page size for the bounded TASK walk in [`HumanTaskFollowupDriver::rebuild_cursors`].
 pub(super) const REBUILD_PAGE: usize = 256;
 
