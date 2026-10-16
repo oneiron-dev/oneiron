@@ -9653,7 +9653,7 @@
      "path": "src/code_run/storage/compaction.rs",
      "purpose": "Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -11148,7 +11148,7 @@
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 23,
       "struct": 8,
@@ -11165,7 +11165,7 @@
      "purpose": "Epoch-summary codec and transactional lineage mint",
      "surface": {
       "const": 5,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 2,
       "struct": 1
      }

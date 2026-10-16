@@ -120,7 +120,7 @@ pub enum SkillEditDraft {
 ///
 /// The host implements this against the engine's existing LLM surface under
 /// [`skill_optimize_call_purpose`]; this module constructs no client (the
-/// `SkillRefiner` / `AttributionJudge` posture). What the author returns is a
+/// `SkillRefiner` / `AttributionDecisions` posture). What the author returns is a
 /// PROPOSAL either way — nothing it can say reaches canon without a human.
 pub trait SkillOptimizeAuthor {
     /// Drafts the edit `brief` supports.
