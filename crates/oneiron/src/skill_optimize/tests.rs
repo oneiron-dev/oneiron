@@ -5085,7 +5085,9 @@ fn jev_band_is_bound_and_only_outside_band_settles() -> Result<()> {
     let jev = decided.tradeoff_jev.as_ref().unwrap();
     assert_eq!(jev.pin.model, "jev");
     let resolution = decided.tradeoff_resolution.as_ref().unwrap();
-    assert_eq!(resolution.rung, TradeoffRung::Jev);
+    assert_eq!(resolution.rung, TradeoffRung::Judgment);
+    // Stored verdict rows carry the rung as JSON; the rename kept the v1 token.
+    assert_eq!(serde_json::to_string(&resolution.rung).unwrap(), "\"jev\"");
     assert_eq!(resolution.evidence, jev.question_digest);
     assert_eq!(resolution.authentication, "jev@pinned-1");
     assert_eq!(
