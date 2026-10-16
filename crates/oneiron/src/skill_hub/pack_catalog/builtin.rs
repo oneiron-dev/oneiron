@@ -8,7 +8,7 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 4] = [
+const PACKS: [(&str, &str); 5] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -24,6 +24,10 @@ const PACKS: [(&str, &str); 4] = [
     (
         "linkedin",
         include_str!("../../../../../packs/builtin/linkedin/PACK.md"),
+    ),
+    (
+        "native_mail",
+        include_str!("../../../../../packs/builtin/native_mail/PACK.md"),
     ),
 ];
 
