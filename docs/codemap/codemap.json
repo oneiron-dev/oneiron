@@ -17212,7 +17212,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -17990,9 +17990,9 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -18749,18 +18749,20 @@
       "FeedbackCategory",
       "FeedbackConfigSnapshot",
       "FeedbackDagHop",
+      "FeedbackEncoding",
       "FeedbackHealerDiagnosis",
       "FeedbackHnswSnapshot",
       "FeedbackPlatform",
+      "FeedbackProposal",
       "FeedbackVerb"
      ],
      "path": "src/feedback/bundle.rs",
      "purpose": "Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest",
      "surface": {
-      "const": 13,
-      "enum": 2,
-      "fn": 14,
-      "struct": 6
+      "const": 15,
+      "enum": 3,
+      "fn": 21,
+      "struct": 7
      }
     },
     {
@@ -18781,7 +18783,7 @@
       "const": 3,
       "crate-vis": 3,
       "enum": 2,
-      "fn": 19,
+      "fn": 20,
       "struct": 4,
       "trait": 1
      }
@@ -18829,7 +18831,7 @@
      "purpose": "The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -18843,7 +18845,7 @@
      "path": "src/feedback/intake.rs",
      "purpose": "Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -22817,7 +22819,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 179,
+      "mod": 180,
       "re-export": 72
      }
     },
@@ -23149,6 +23151,33 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LiveRow",
+      "LiveRows",
+      "LiveWaitedOut"
+     ],
+     "path": "src/live_rows.rs",
+     "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…",
+     "surface": {
+      "const": 4,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/live_rows/tests.rs",
+     "purpose": "Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "AutoCheckCandidate",
       "AutoCheckCandidateOwned",
       "AutoCheckOutcome",
@@ -23226,7 +23255,7 @@
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
       "crate-vis": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 6,
       "trait": 3
      }
@@ -23268,14 +23297,15 @@
       "BandMode",
       "DecisionBandPolicy",
       "LearnedBand",
+      "PersonThreshold",
       "Reversibility"
      ],
      "path": "src/llm/decision/policy.rs",
      "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
      "surface": {
       "enum": 2,
-      "fn": 3,
-      "struct": 2
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -23434,9 +23464,9 @@
       "DecisionReadProvider"
      ],
      "path": "src/llm/decision/read.rs",
-     "purpose": "The escalation rung's decision read: the house model scores the question's labels and the paired \"does this…",
+     "purpose": "The escalation rung's decision read: the house model scores the question's labels, the paired \"does this…",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -23493,7 +23523,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnswerContract",
@@ -23507,16 +23537,17 @@
       "EvidenceVersion",
       "HumanAskReason",
       "PairedReading",
+      "PersonChangedAnswer",
       "ProviderPin",
       "TypedDecision"
      ],
      "path": "src/llm/decision/types.rs",
      "purpose": "Closed answer contracts and engine-owned decision receipts",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 5,
       "fn": 6,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -25546,9 +25577,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/stream/mod.rs",
-     "purpose": "Ephemeral MESSAGE streams, bounded per vault, with transactional finality",
+     "purpose": "Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "re-export": 2
      }
@@ -25613,7 +25644,7 @@
      "path": "src/memory/witness/stream/types.rs",
      "purpose": "Public streaming vocabulary",
      "surface": {
-      "const": 3,
+      "const": 2,
       "enum": 7,
       "fn": 1,
       "struct": 4,
@@ -25913,7 +25944,7 @@
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
       "crate-vis": 7,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -36627,8 +36658,8 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 14,
-      "fn": 14,
+      "crate-vis": 15,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -42941,6 +42972,13 @@
      "layout": "file+dir",
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
+    "live_rows": {
+     "files": 2,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
+    },
     "llm": {
      "files": 75,
      "impl_vault": true,
@@ -43560,8 +43598,8 @@
    },
    "over_bar": 50,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2614,
-   "test_files": 900
+   "source_files": 2615,
+   "test_files": 901
   },
   "oneiron-android": {
    "files": [
@@ -50284,6 +50322,7 @@
      "notable": [
       "BudgetDenied",
       "FatalLlmError",
+      "LabelReadFailure",
       "LlmError",
       "RetryableLlmError",
       "UnsupportedCapability"
@@ -50291,7 +50330,7 @@
      "path": "src/llm/error.rs",
      "purpose": "Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "struct": 1
      }
     },
@@ -52789,7 +52828,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 19,
       "re-export": 1,
       "struct": 2
@@ -53660,7 +53699,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/feedback_inbox.rs",
@@ -53851,6 +53890,26 @@
      "notable": [],
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/llm/decision_read.rs",
+     "purpose": "`POST /v1/llm/decision_read`: the owner's probe of the house model's decision read",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/llm/decision_read/tests.rs",
+     "purpose": "The owner's decision-read probe: owner-only, one read admitted and settled once on its meter, a failed check…",
      "surface": {
       "crate-vis": 1
      }
@@ -54139,6 +54198,16 @@
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/history_routes.rs",
+     "purpose": "`/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -54906,13 +54975,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/byte_line.rs",
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -54951,8 +55020,28 @@
      "surface": {
       "enum": 8,
       "fn": 3,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookArgs",
+      "HookCommonArgs",
+      "HookEffort",
+      "HookEvent",
+      "HookHandOverArgs",
+      "HookHost",
+      "HookRecallArgs"
+     ],
+     "path": "src/cli/hook_args.rs",
+     "purpose": "`oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and…",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -55001,8 +55090,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 11,
-      "re-export": 10,
+      "fn": 12,
+      "re-export": 11,
       "struct": 1
      }
     },
@@ -55024,7 +55113,7 @@
      "path": "src/commands/credential_file.rs",
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -55117,6 +55206,36 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/hook.rs",
+     "purpose": "`oneiron hook --host <host> <event>`: an agent harness's hooks, run by the binary",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/hook/bind.rs",
+     "purpose": "Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/hook/recall.rs",
+     "purpose": "Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/host_init.rs",
      "purpose": "Reference deployment scaffolding and explicit encryption provisioning",
      "surface": {
@@ -55141,6 +55260,16 @@
      "purpose": "First-run embedder and tagger choices, using the same config and providers as serve",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/local_servers.rs",
+     "purpose": "The local servers running for this user, one runtime file each, so a client such as `oneiron hook` finds any…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -55438,6 +55567,25 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DecisionReadRecipe",
+      "DecisionReadSettings",
+      "ProbeQuestions",
+      "ReadPrompt",
+      "RenderRefusal"
+     ],
+     "path": "src/config/models/decision_read.rs",
+     "purpose": "`[models.decision_read]`: the house model's decision read on the `local_reasoner` rung, and the recipe it…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -55472,7 +55620,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 2,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 7
      }
     },
@@ -55961,7 +56109,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/handler/app_tier.rs",
@@ -56005,7 +56153,7 @@
      "path": "src/handler/documents.rs",
      "purpose": "Per-entity selector admission and scope-filtered document delivery on the sync socket",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -56037,6 +56185,24 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/lag_resync.rs",
+     "purpose": "A socket that fell behind the shared fan-out is told again what it may have missed; it is never closed for…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/handler/lag_resync_tests.rs",
+     "purpose": "Lag never closes a socket (rule 5): a socket that fell behind the shared fan-out is told again what it may…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -56101,7 +56267,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/handler/window_row_tests.rs",
@@ -56195,7 +56361,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -56203,9 +56369,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/budget.rs",
-     "purpose": "Retained app state has both a session ceiling and a shared hub ceiling",
+     "purpose": "Retained app state is charged to the server's retained-memory line (`limits.retained_memory_bytes`), never…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -56215,7 +56381,7 @@
      "path": "src/livequery/connection.rs",
      "purpose": "Socket attachment and bounded reconnect retention",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
@@ -56233,7 +56399,7 @@
      "path": "src/livequery/error.rs",
      "purpose": "The HTTP facade error body on app frames",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -56273,7 +56439,7 @@
      "path": "src/livequery/production_tests.rs",
      "purpose": "Real vault, verified slips and production facade/source; no injected read source",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -56311,16 +56477,18 @@
      "path": "src/livequery/residence.rs",
      "purpose": "Grant-scoped home-node reads for opened-item devices",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/livequery/residence/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -56330,6 +56498,16 @@
      "purpose": "Private routing header for the EXISTING server broadcast channel and a socket's own reply queue",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/livequery/rule5_tests.rs",
+     "purpose": "Rule five at the live-query rows (census rows 20 to 24): past a row the next session or subscription waits…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -56367,7 +56545,7 @@
      "path": "src/livequery/subscriptions/mod.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -56948,6 +57126,28 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DecisionReadDoor"
+     ],
+     "path": "src/models/decision_read.rs",
+     "purpose": "The house model's decision read over llama.cpp's native API: the `LabelReadModel` the escalation rung is…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/models/decision_read/tests.rs",
+     "purpose": "The decision read against an in-process llama.cpp: the joint marginals checked against idle-fold test 6's…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -56992,13 +57192,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -57034,8 +57234,8 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 3,
-      "fn": 11,
-      "re-export": 10,
+      "fn": 12,
+      "re-export": 11,
       "struct": 2
      }
     },
@@ -57079,7 +57279,7 @@
      "path": "src/models/raw.rs",
      "purpose": "The raw `/v1/llm` routes' models and their own meter",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -57353,6 +57553,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/owner/history.rs",
+     "purpose": "Erase history (ARCH-0038, ARCH-0032 #pins): the owner drops a text's edit history below its oldest pin, by…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/owner/imports.rs",
      "purpose": "Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202)",
      "surface": {
@@ -57376,7 +57586,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -57490,7 +57700,7 @@
      "path": "src/protocol.rs",
      "purpose": "Custom Oneiron sync protocol — server-side extensions",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -57611,7 +57821,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 14,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -57665,6 +57875,16 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/server/live_rows_tests.rs",
+     "purpose": "Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/server/message_stream.rs",
@@ -57680,7 +57900,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 3
      }
     },
@@ -57695,6 +57915,16 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/presence.rs",
+     "purpose": "The presence hub's charge on the server's retained-memory line (rule 5, census row 19)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -58145,6 +58375,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/it/hook.rs",
+     "purpose": "`oneiron hook --host claude-code`, through the shipped binary",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/host_re_root.rs",
      "purpose": "A self-host owner moves the vault's root off a leaked host secret (OF-455; ARCH-0028 #host-key-warning)",
      "surface": {}
@@ -58313,7 +58551,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 205,
+     "files": 208,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58336,26 +58574,26 @@
     "byte_line": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "cli": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
-     "files": 26,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58397,7 +58635,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 17,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58425,7 +58663,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -58460,7 +58698,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 26,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58481,7 +58719,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58509,7 +58747,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 18,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58553,8 +58791,8 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 361,
-   "test_files": 176
+   "source_files": 373,
+   "test_files": 182
   },
   "oneiron-spawn": {
    "files": [
@@ -58997,13 +59235,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context.rs",
      "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -59044,7 +59282,7 @@
      "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
      "surface": {
       "mod": 6,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -59055,6 +59293,19 @@
      "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocumentLocation"
+     ],
+     "path": "src/location.rs",
+     "purpose": "Where the workbook one recalculation reads was opened from: the folder and file name CELL(\"filename\")…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -59136,7 +59387,7 @@
     "context": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…"
     },
@@ -59160,6 +59411,13 @@
      "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…"
+    },
+    "location": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Where the workbook one recalculation reads was opened from: the folder and file name CELL(\"filename\")…"
     },
     "measure": {
      "files": 1,
@@ -59192,7 +59450,7 @@
    },
    "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 13,
+   "source_files": 14,
    "test_files": 1
   }
  }

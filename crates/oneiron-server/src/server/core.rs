@@ -86,6 +86,11 @@ pub struct SyncServer {
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// The line app-tier state kept between frames is charged to, sized by
+    /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
+    pub(crate) retained: Arc<crate::byte_line::ByteLine>,
+    /// The presence hub's charge on `retained`.
+    pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -116,6 +121,12 @@ pub struct SyncServer {
     pub(crate) tagger: Option<TaggerSlot>,
     /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
     pub(crate) llm: Option<crate::models::RawInference>,
+    /// The house model's decision read the owner probes at
+    /// `/v1/llm/decision_read`, and the meter its reads are admitted on;
+    /// `None` turns the route off.
+    pub(crate) decision_read: Option<(crate::models::DecisionReadDoor, oneiron::BudgetGuard)>,
+    /// Reads that route holds at once (`limits.decision_reads`).
+    pub(crate) decision_reads: crate::admission::Admission<()>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -143,6 +154,30 @@ pub struct SyncServer {
     /// clock then moves with the runtime's (paused) time.
     #[cfg(test)]
     pub(crate) booking_test_clock_from: Option<tokio::time::Instant>,
+}
+
+/// Sets the vault's live rows from `[limits]` and points their crossings at
+/// this server's questions.
+fn live_rows(
+    vault: &oneiron::Vault,
+    limits: &crate::config::LimitsConfig,
+    questions: &Arc<crate::wire_telemetry::LimitQuestions>,
+) {
+    use crate::wire_telemetry::LimitRow;
+    use oneiron::live_rows::{LiveRow, LiveRows};
+    vault.set_live_rows(LiveRows {
+        message_streams: limits.message_streams,
+        live_documents: limits.live_documents,
+        wait: limits.queue_wait(),
+    });
+    let questions = Arc::clone(questions);
+    vault.set_live_row_crossing(Some(Arc::new(move |row, bound, observed| {
+        let row = match row {
+            LiveRow::MessageStreams => LimitRow::MessageStreams,
+            LiveRow::LiveDocuments => LimitRow::LiveDocuments,
+        };
+        questions.ask(row, bound, observed);
+    })));
 }
 
 impl SyncServer {
@@ -244,24 +279,42 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
+        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
+        let retained = Arc::new(crate::byte_line::ByteLine::new(
+            crate::wire_telemetry::LimitRow::RetainedMemoryBytes,
+            usize::try_from(config.limits.retained_memory_bytes).unwrap_or(usize::MAX),
+        ));
+        let presence = Arc::new(super::presence::PresenceCharge::new(
+            Arc::clone(&retained),
+            Arc::clone(wire_telemetry.limit_questions()),
+        ));
         let ephemeral_store = Arc::new(EphemeralStore::new(config.ephemeral_timeout_ms));
         super::message_stream::spawn_message_stream_producer(
             &vault,
             &ephemeral_store,
+            &presence,
             &broadcast_tx,
             &config,
         );
-        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
         // The engine's `[limits]` rows on this vault ask where the server's do.
         let questions: Arc<crate::wire_telemetry::LimitQuestions> =
             Arc::clone(wire_telemetry.limit_questions());
         vault.set_limit_ask(questions);
+        let decision_reads = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::DecisionReads,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.decision_reads,
+            config.limits.queue_wait(),
+        );
         let feedback_flood = crate::api::FloodCap::new(
             config.feedback_inbox.notes_per_sender,
             config.feedback_inbox.notes_per_hour,
             std::time::Instant::now(),
         );
         Ok(Self {
+            retained,
+            presence,
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(
                 &config.limits,
@@ -295,6 +348,8 @@ impl SyncServer {
             embedder: None,
             tagger: None,
             llm: None,
+            decision_read: None,
+            decision_reads,
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
@@ -406,6 +461,18 @@ impl SyncServer {
         self
     }
 
+    /// Serves `door` at `/v1/llm/decision_read`, each read admitted as a run
+    /// on `meter`.
+    #[must_use]
+    pub fn with_decision_read(
+        mut self,
+        door: crate::models::DecisionReadDoor,
+        meter: oneiron::BudgetGuard,
+    ) -> Self {
+        self.decision_read = Some((door, meter));
+        self
+    }
+
     /// Writes every model call's run receipts to `receipts` instead of the
     /// log, including the calls of models and providers attached before.
     #[must_use]
@@ -428,6 +495,10 @@ impl SyncServer {
     pub fn with_ai(mut self, ai: crate::ai_host::AiHandle) -> Self {
         if let Some(raw) = ai.raw_inference() {
             self.llm = Some(raw);
+        }
+        // Its reads go on the raw routes' meter.
+        if let (Some(door), Some(raw)) = (ai.decision_read(), &self.llm) {
+            self.decision_read = Some((door, raw.meter().clone()));
         }
         self.ai = ai;
         self

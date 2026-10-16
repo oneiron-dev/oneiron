@@ -152,51 +152,68 @@ impl Vault {
     /// the quiet interval. No durable token heartbeat or text copy is invented.
     /// A policy refusal aborts open and retains the seed for explicit repair.
     pub(crate) fn recover_message_streams(&self) -> MessageStreamResult<()> {
-        let seeds = {
-            let txn = self.store.env.read_txn()?;
-            let mut seeds = Vec::new();
-            // Undecoded rows: the cap must stop the DECODE, not just collecting
-            // past MAX_MESSAGE_STREAMS rows.
-            for row in storage::ACTIVE.iter_raw_from(&self.store, &txn, &[])? {
-                if seeds.len() >= MAX_MESSAGE_STREAMS {
-                    return Err(MessageStreamError::TooManyStreams);
+        // However many seeds survived, each is retired: none is refused for
+        // the count. They are read a page at a time, so the decode holds one
+        // page in memory, never the whole table.
+        let mut after: Option<EntityId> = None;
+        loop {
+            let seeds = {
+                let txn = self.store.env.read_txn()?;
+                let start = after
+                    .as_ref()
+                    .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+                let mut seeds = Vec::new();
+                for row in storage::ACTIVE.iter_range(
+                    &self.store,
+                    &txn,
+                    start,
+                    std::ops::Bound::Unbounded,
+                )? {
+                    let (key, seed) = row?;
+                    if key != seed.message_id {
+                        return Err(Error::CorruptedIndex("stream seed key").into());
+                    }
+                    seed.mode.validate()?;
+                    if seed.idle_timeout_ms == 0 {
+                        return Err(Error::CorruptedIndex("stream idle threshold").into());
+                    }
+                    seeds.push(seed);
+                    if seeds.len() == RECOVERY_PAGE {
+                        break;
+                    }
                 }
-                let (key, bytes) = row?;
-                let seed: Seed = storage::ACTIVE.decode_value(&bytes)?;
-                if key.as_slice() != seed.message_id.as_bytes().as_slice() {
-                    return Err(Error::CorruptedIndex("stream seed key").into());
-                }
-                seed.mode.validate()?;
-                if seed.idle_timeout_ms == 0 {
-                    return Err(Error::CorruptedIndex("stream idle threshold").into());
-                }
-                seeds.push(seed);
-            }
-            seeds
-        };
-        for seed in seeds {
-            let state = State {
-                last_op_at_ms: seed.created_at_ms,
-                seed,
-                base: String::new(),
-                pending: String::new(),
-                sequence: 0,
-                emitted_chars: 0,
-                dirty: false,
-                terminal: false,
+                seeds
             };
-            commit_terminal(
-                self,
-                &state,
-                StreamFinality::Partial,
-                StreamFinalityReason::ProcessCrashRecovery,
-                true,
-                None,
-            )?;
+            let Some(last) = seeds.last().map(|seed| seed.message_id) else {
+                return Ok(());
+            };
+            for seed in seeds {
+                let state = State {
+                    last_op_at_ms: seed.created_at_ms,
+                    seed,
+                    base: String::new(),
+                    pending: String::new(),
+                    sequence: 0,
+                    emitted_chars: 0,
+                    dirty: false,
+                    terminal: false,
+                    _turn: None,
+                };
+                commit_terminal(
+                    self,
+                    &state,
+                    StreamFinality::Partial,
+                    StreamFinalityReason::ProcessCrashRecovery,
+                    true,
+                    None,
+                )?;
+            }
+            after = Some(last);
         }
-        Ok(())
     }
 }
+/// Seeds open-time recovery reads and retires at a time.
+const RECOVERY_PAGE: usize = 256;
 fn commit_terminal(
     vault: &Vault,
     state: &State,

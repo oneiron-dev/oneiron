@@ -1396,7 +1396,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/judgment.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | SheetAnswerBundle, SheetCellAnswer | Typed sheet answers: one ask over a bounded range becomes one retained edit |
 | `src/edit_roundtrip/judgment_cells.rs` | src | m | 1 crate-vis | — | Independent OOXML reads for typed sheet answers |
 | `src/edit_roundtrip/manifest.rs` | src | s | 2 struct · 2 enum · 5 fn · 1 const | EditManifest, EditWarning, MutationMode, WarningCode | Edit manifest and warnings |
-| `src/edit_roundtrip/mod.rs` | src | s | 2 mod · 9 re-export · 2 crate-vis | — | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
+| `src/edit_roundtrip/mod.rs` | src | s | 2 mod · 10 re-export · 2 crate-vis | — | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `src/edit_roundtrip/native_recalc.rs` | src | s | 2 crate-vis | — | Stage-3 default: in-process xlsx recalculation over the host session |
 | `src/edit_roundtrip/native_recalc_tests.rs` | test | L | — | — | The default stage-3 route ([`RecalcPolicy::NativeFirst`]) on real XLSX |
 | `src/edit_roundtrip/opc.rs` | src | m | 14 crate-vis | — | Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline |
@@ -1461,7 +1461,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/forks.rs` | src | m | 4 struct · 3 enum · 7 fn · 13 crate-vis | DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt | Durable divergences, entity-bound grant admission and atomic fork-set settlement |
 | `src/entity_doc/message_stream.rs` | src | s | 3 crate-vis | — | MESSAGE terminal commits join the common EntityDoc storage transaction |
 | `src/entity_doc/mod.rs` | src | s | 6 re-export · 7 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
-| `src/entity_doc/pins.rs` | src | m | 2 struct · 1 enum · 8 fn · 2 crate-vis | CitationPin, CursorResolution, PurgeReceipt | Causal citation floors, retained quotes and the owner's shallow-purge door |
+| `src/entity_doc/pins.rs` | src | m | 2 struct · 1 enum · 9 fn · 3 crate-vis | CitationPin, CursorResolution, PurgeReceipt | Causal citation floors, retained quotes and the owner's shallow-purge door |
 | `src/entity_doc/recovery.rs` | src | s | 2 crate-vis | — | Value-only canonical recovery for generic EntityDoc owners |
 | `src/entity_doc/registry.rs` | src | s | 1 struct · 5 fn · 5 crate-vis | RegistryStatus | Bounded per-vault insertion-ordered residency; durable bytes, not the cache, own truth |
 | `src/entity_doc/side_keys.rs` | src | s | 1 crate-vis | — | Colon-joined composite key shapes shared by several entity-document side-table rows |
@@ -1520,12 +1520,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/shared_creation_tests.rs` | test | m | — | — | — |
 | `src/federation/stale.rs` | src | m | 1 struct · 1 enum · 8 fn · 3 const · 7 crate-vis | FederationStaleReason, WorldStaleStamp | Terminal-pact per-world stale stamping (FED-04) |
 | `src/federation/tests.rs` | test | XL | — | — | — |
-| `src/feedback/bundle.rs` | src | m | 6 struct · 2 enum · 14 fn · 13 const | FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackHealerDiagnosis, FeedbackHnswSnapshot, FeedbackPlatform, FeedbackVerb | Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest |
-| `src/feedback/consent.rs` | src | m | 4 struct · 2 enum · 1 trait · 19 fn · 3 const · 3 crate-vis | FeedbackApproval, FeedbackApprovalScope, FeedbackPreview, FeedbackRedactionError, FeedbackRedactor, FeedbackSendRoute, UnredactedFeedback | Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval… |
+| `src/feedback/bundle.rs` | src | m | 7 struct · 3 enum · 21 fn · 15 const | FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis, FeedbackHnswSnapshot, FeedbackPlatform +2 | Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest |
+| `src/feedback/consent.rs` | src | m | 4 struct · 2 enum · 1 trait · 20 fn · 3 const · 3 crate-vis | FeedbackApproval, FeedbackApprovalScope, FeedbackPreview, FeedbackRedactionError, FeedbackRedactor, FeedbackSendRoute, UnredactedFeedback | Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval… |
 | `src/feedback/dispatch.rs` | src | m | 4 struct · 1 trait · 6 fn · 4 const | FeedbackExportOutcome, FeedbackSendContext, FeedbackSendOutcome, FeedbackTransport, FeedbackTransportRequest | Feedback dispatch and export: send context, transport adapter, dispatch request building, send, and… |
 | `src/feedback/error.rs` | src | s | 1 enum · 9 crate-vis | FeedbackError | Feedback error type plus shared validation and framing helpers |
-| `src/feedback/inbox.rs` | src | s | 1 struct · 1 enum · 3 fn | FeedbackInboxNote, FeedbackInboxVia | The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep |
-| `src/feedback/intake.rs` | src | s | 2 struct · 4 fn | FeedbackDedup, FeedbackReviewItem | Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input |
+| `src/feedback/inbox.rs` | src | s | 1 struct · 1 enum · 4 fn | FeedbackInboxNote, FeedbackInboxVia | The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep |
+| `src/feedback/intake.rs` | src | s | 2 struct · 5 fn | FeedbackDedup, FeedbackReviewItem | Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input |
 | `src/feedback/intake/refs.rs` | src | s | 6 crate-vis | — | Strict hexadecimal entity references for the intake row codec |
 | `src/feedback/intake/tests.rs` | test | s | — | — | — |
 | `src/feedback/mod.rs` | src | s | 1 mod · 5 re-export | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
@@ -1862,7 +1862,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 15 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | m | 179 mod · 72 re-export · 19 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 180 mod · 72 re-export · 19 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/limits.rs` | src | s | 1 crate-vis | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 2 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -1885,14 +1885,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linkedin_lead_preload/tests.rs` | test | m | — | — | — |
 | `src/linkedin_lead_preload/tests/employment.rs` | test | m | 2 crate-vis | — | — |
 | `src/linkedin_lead_preload/tests/source_binding.rs` | test | m | — | — | — |
+| `src/live_rows.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 type · 4 const · 7 crate-vis | LiveRow, LiveRows, LiveWaitedOut | Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044… |
+| `src/live_rows/tests.rs` | test | s | — | — | Rule 5 over the engine's live rows: past its row the next opener waits its turn and is served, or meets its… |
 | `src/llm/autocheck.rs` | src | m | 4 struct · 1 enum · 1 trait · 4 fn · 2 const · 5 crate-vis | AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckOutcome, AutoCheckSignals, AutoChecker, BoundedAutoChecker | Auto-check seam: candidate types, fail-closed verdicts, the bounded host wrapper, and the request contract |
 | `src/llm/budget/mod.rs` | src | s | 1 re-export | — | Vault-local durable RSI budget ledger |
 | `src/llm/budget/rsi.rs` | src | m | 5 struct · 3 enum · 12 fn | RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose | Vault-local durable reserve/settle/refund ledger for research-loop spend |
 | `src/llm/decision/codec.rs` | src | s | 6 crate-vis | — | Canonical entity references for typed-decision wire records |
-| `src/llm/decision/ladder.rs` | src | m | 6 struct · 3 trait · 4 fn · 3 crate-vis | DecisionLadder, DecisionModel, DecisionProvider, HumanDecisionQueue, HumanDecisionRequest, ModelDecisionProvider, PairedAnswer, ProviderDecision +1 | Host-injected, one-step decision ladder |
+| `src/llm/decision/ladder.rs` | src | m | 6 struct · 3 trait · 5 fn · 3 crate-vis | DecisionLadder, DecisionModel, DecisionProvider, HumanDecisionQueue, HumanDecisionRequest, ModelDecisionProvider, PairedAnswer, ProviderDecision +1 | Host-injected, one-step decision ladder |
 | `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |
 | `src/llm/decision/mod.rs` | src | s | 1 mod · 7 re-export | — | Typed question records and shared outcome projection |
-| `src/llm/decision/policy.rs` | src | s | 2 struct · 2 enum · 3 fn | BandMode, DecisionBandPolicy, LearnedBand, Reversibility | Question- and reversibility-scoped escalation bands; learning starts in shadow |
+| `src/llm/decision/policy.rs` | src | s | 3 struct · 2 enum · 5 fn | BandMode, DecisionBandPolicy, LearnedBand, PersonThreshold, Reversibility | Question- and reversibility-scoped escalation bands; learning starts in shadow |
 | `src/llm/decision/questions/arrival.rs` | src | m | 9 crate-vis | — | Outcome arrival projection in the materializing transaction |
 | `src/llm/decision/questions/graph_ask.rs` | src | m | 6 struct · 1 trait · 3 fn | GraphAnswerer, GraphAskFailure, GraphAskResult, GraphContextSource, GraphPrediction, GraphTypeSelection, GraphUnitContext | One-off graph judgment: scoped context, injected answerer, and proposed claims |
 | `src/llm/decision/questions/graph_ask_tests.rs` | test | L | — | — | — |
@@ -1905,12 +1907,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/standing_tests.rs` | test | L | — | — | — |
 | `src/llm/decision/questions/store.rs` | src | s | 4 fn · 13 crate-vis | — | Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one… |
 | `src/llm/decision/questions/task_ask.rs` | src | s | 3 crate-vis | — | Transactional tasks.ask adapter to the shared versioned question substrate |
-| `src/llm/decision/read.rs` | src | s | 2 struct · 1 fn | DecisionReadCall, DecisionReadProvider | The escalation rung's decision read: the house model scores the question's labels and the paired "does this… |
+| `src/llm/decision/read.rs` | src | s | 2 struct · 2 fn | DecisionReadCall, DecisionReadProvider | The escalation rung's decision read: the house model scores the question's labels, the paired "does this… |
 | `src/llm/decision/seat.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 fn · 1 type | DecisionSeat, SeatAnswer, SeatPhase, SeatRequest | Opt-in, non-light typed-decision seat and its receipt boundary |
 | `src/llm/decision/seat/tests.rs` | test | s | — | — | — |
 | `src/llm/decision/slides_policy.rs` | src | m | 3 struct · 1 enum · 8 fn | SlideReviewLimits, SlideReviewPolicy, SlideReviewPrecedence, SlideReviewRoute | Manifest-backed operating limits for the artifact judgment adapter |
 | `src/llm/decision/tests.rs` | test | m | — | — | — |
-| `src/llm/decision/types.rs` | src | s | 8 struct · 5 enum · 6 fn · 3 crate-vis | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung +5 | Closed answer contracts and engine-owned decision receipts |
+| `src/llm/decision/types.rs` | src | m | 9 struct · 5 enum · 6 fn · 4 crate-vis | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung +6 | Closed answer contracts and engine-owned decision receipts |
 | `src/llm/defaults.rs` | src | s | 4 fn · 3 crate-vis | — | Vault-local inference defaults: the stored, owner-editable purpose-default table and the vault doors that… |
 | `src/llm/defaults/tests.rs` | test | m | — | — | Purpose policy and binding regressions |
 | `src/llm/entity_refs.rs` | src | s | 5 crate-vis | — | Validated entity-reference wire encoding for model policy DTOs |
@@ -2080,12 +2082,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/session.rs` | src | m | 3 fn · 9 crate-vis | — | Session overlay landing: journal staging from the door's authorized values, room-shell claim |
 | `src/memory/witness/stream/admission.rs` | src | m | 4 fn · 4 crate-vis | — | Begin, append and flush |
 | `src/memory/witness/stream/lifecycle.rs` | src | m | 1 struct · 5 fn · 1 crate-vis | MessageStreamPump | Terminal transitions and the host-driven quiet-stream pump |
-| `src/memory/witness/stream/mod.rs` | src | s | 2 fn · 2 re-export · 2 crate-vis | — | Ephemeral MESSAGE streams, bounded per vault, with transactional finality |
+| `src/memory/witness/stream/mod.rs` | src | s | 2 fn · 2 re-export · 3 crate-vis | — | Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality |
 | `src/memory/witness/stream/policy.rs` | src | s | 2 fn · 3 crate-vis | — | Durable owner policy; no token or partial content is stored here |
 | `src/memory/witness/stream/presence.rs` | src | s | 1 fn · 4 crate-vis | — | Native EphemeralStore publication |
 | `src/memory/witness/stream/storage.rs` | src | s | 2 fn · 9 crate-vis | — | Fixed per-handle recovery metadata and terminal audit |
 | `src/memory/witness/stream/tests.rs` | test | m | — | — | Observable stream contracts: no partial persistence, cadence, finality and retry |
-| `src/memory/witness/stream/types.rs` | src | s | 4 struct · 7 enum · 1 fn · 1 type · 3 const | MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason +3 | Public streaming vocabulary |
+| `src/memory/witness/stream/types.rs` | src | s | 4 struct · 7 enum · 1 fn · 1 type · 2 const | MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason +3 | Public streaming vocabulary |
 | `src/memory/witness/types.rs` | src | s | 3 struct · 1 enum · 2 fn | WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn | Witness DTOs: author enum, message/turn inputs, turn receipt |
 | `src/memory/witness/validation.rs` | src | m | 9 crate-vis | — | Idempotency validators: turn/message existence, parent/actor binding, order collision axes |
 | `src/merge_queue/checks.rs` | src | s | 2 fn · 1 crate-vis | — | Out-of-order check completion, all-path agreement and red-batch diagnosis |
@@ -2109,7 +2111,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/coreference/pair.rs` | src | s | 7 crate-vis | — | Canonical pair identity and resident-owned submission witnesses |
 | `src/note/delete.rs` | src | s | 1 crate-vis | — | Transactional erasure of a NOTE's own carriers and outgoing pin indexes |
 | `src/note/document.rs` | src | m | 3 struct · 2 enum · 1 fn · 18 crate-vis | NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution | NOTE entity-document operations, stable cursors and citation provenance |
-| `src/note/document_store.rs` | src | m | 8 fn · 7 crate-vis | — | Actor-bound NOTE editor verbs and atomic entity-document persistence |
+| `src/note/document_store.rs` | src | m | 9 fn · 7 crate-vis | — | Actor-bound NOTE editor verbs and atomic entity-document persistence |
 | `src/note/document_tests.rs` | test | m | — | — | Concurrent editor operations, stable provenance and blessed brief acceptance |
 | `src/note/documents.rs` | src | m | 3 struct · 2 enum · 6 fn · 21 crate-vis | NoteAnchor, NoteDocument, NoteEdit, NoteEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |
 | `src/note/erase.rs` | src | s | 2 crate-vis | — | Active-store erasure of NOTE snapshots and workflow text, including headerless residue |
@@ -3024,7 +3026,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/connection/tests.rs` | test | L | — | — | — |
 | `src/sync/connection/topology.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | HomeNodeTopology | Host-authorized home-node candidate updates, independent of socket liveness |
 | `src/sync/convergence_props_internal.rs` | src | m | — | — | ONE-1136 (M4-14) — store-internal halves of the convergence property suite |
-| `src/sync/documents/mod.rs` | src | m | 2 struct · 14 fn · 14 crate-vis | DocumentRegistry, EntityDocument | Per-entity text documents |
+| `src/sync/documents/mod.rs` | src | m | 2 struct · 15 fn · 15 crate-vis | DocumentRegistry, EntityDocument | Per-entity text documents |
 | `src/sync/documents/note_requests.rs` | src | s | 2 fn · 2 crate-vis | — | Durable semantic NOTE requests for an authority-owned document subscription |
 | `src/sync/documents/storage.rs` | src | s | 4 crate-vis | — | Snapshot-then-update recovery and transactional text-plane persistence |
 | `src/sync/documents/tests.rs` | test | m | — | — | — |
