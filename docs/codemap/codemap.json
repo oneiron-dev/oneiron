@@ -10642,7 +10642,7 @@
      "path": "src/code_run/storage/folds.rs",
      "purpose": "One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -12217,7 +12217,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 10,
       "mod": 1,
@@ -12291,6 +12291,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/fold_words.rs",
+     "purpose": "Where a fold's words go when a record they came from is withdrawn (Docs Q23, Q24)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12308,8 +12318,9 @@
      "path": "src/compaction/folds.rs",
      "purpose": "Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 9
      }
     },
@@ -19868,7 +19879,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 29,
       "enum": 1,
       "fn": 4,
       "struct": 2,
@@ -33046,11 +33057,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ChangeLogStoreRead",
       "DeletionFamily",
       "DeletionState",
       "EdgeStoreRead",
       "EntityStoreRead",
       "EntityTime",
+      "JobQueueRead",
       "RetrievalIndexRead",
       "ShortIdStoreRead",
       "TimeAxis",
@@ -33062,7 +33075,7 @@
      "surface": {
       "enum": 2,
       "struct": 3,
-      "trait": 5,
+      "trait": 7,
       "type": 1
      }
     },
@@ -45789,7 +45802,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VoiceIdentity",
@@ -45797,6 +45810,9 @@
       "VoiceRefOrigin",
       "VoiceRefPack",
       "VoiceRegisterClip",
+      "VoiceRenderConsent",
+      "VoiceRenderDecision",
+      "VoiceRenderGrant",
       "VoiceTargetClone",
       "VoiceTargetRecord"
      ],
@@ -45805,8 +45821,8 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 8,
-      "struct": 6
+      "fn": 10,
+      "struct": 9
      }
     },
     {
@@ -48416,7 +48432,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -49531,7 +49547,7 @@
     "voice_identity": {
      "files": 11,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching"
     },
@@ -49578,9 +49594,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 110,
+   "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2993,
+   "source_files": 2994,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53449,6 +53465,74 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AssetMedia",
+      "AssetOrigin",
+      "Call",
+      "ContractError",
+      "CreatedSlide",
+      "DeckAsset",
+      "DeckCreateArgs",
+      "DeckCreated",
+      "DeckNames",
+      "DeckPlaceholder",
+      "DeckRead",
+      "DeckReadArgs",
+      "DeckShape",
+      "DeckSlide",
+      "DeckTransactionArgs",
+      "Description",
+      "DocumentLocationArgs",
+      "DocxLimits",
+      "DocxProjectArgs",
+      "DocxReadArgs",
+      "DocxReviseArgs",
+      "DocxValidateArgs",
+      "Done",
+      "Editability",
+      "ErrorCode",
+      "InputInfo",
+      "KeptBriefArgs",
+      "Op",
+      "OpInfo",
+      "Output",
+      "OutputInfo",
+      "OutputSpec",
+      "PackageLimits",
+      "Ports",
+      "RecalcClockArgs",
+      "RecalcPort",
+      "Recalculated",
+      "Reply",
+      "ShapeKind",
+      "UnverifiedUnit",
+      "XlsxProjectArgs",
+      "XlsxReadArgs",
+      "XlsxRecalcArgs"
+     ],
+     "path": "src/contract/mod.rs",
+     "purpose": "The document engine's contract (ARCH-0075 section 2, \"an organ crate with a hosted API\"): one versioned…",
+     "surface": {
+      "const": 6,
+      "enum": 7,
+      "fn": 11,
+      "struct": 35,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/contract/run.rs",
+     "purpose": "The handlers behind [`super::execute`]: each op maps its args onto one native door and the door's refusals…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -54111,7 +54195,7 @@
      "surface": {
       "enum": 1,
       "fn": 8,
-      "mod": 13,
+      "mod": 14,
       "re-export": 5
      }
     },
@@ -54442,6 +54526,13 @@
     }
    ],
    "modules": {
+    "contract": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "The document engine's contract (ARCH-0075 section 2, \"an organ crate with a hosted API\"): one versioned…"
+    },
     "deck": {
      "files": 10,
      "impl_vault": false,
@@ -54534,9 +54625,9 @@
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
     }
    },
-   "over_bar": 5,
+   "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 57,
+   "source_files": 59,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -67284,6 +67375,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/contract_port.rs",
+     "purpose": "The document contract's recalculation port (ARCH-0075 section 2): a host serving `oneiron_docedit::contract`…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -67430,6 +67529,13 @@
      "layout": "file",
      "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…"
     },
+    "contract_port": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The document contract's recalculation port (ARCH-0075 section 2): a host serving `oneiron_docedit::contract`…"
+    },
     "engine": {
      "files": 1,
      "impl_vault": false,
@@ -67489,7 +67595,7 @@
    },
    "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 14,
+   "source_files": 15,
    "test_files": 1
   }
  }

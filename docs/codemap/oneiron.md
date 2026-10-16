@@ -872,7 +872,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/run_verbs.rs` | src | s | 7 struct · 1 enum · 1 const | MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange, SkillCallInput, TaskRefuseDomain, TaskRefuseInput | The inputs of the verb-table rows a code run answers itself (`context: "run"` in… |
 | `src/code_run/storage/compaction.rs` | src | m | 17 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
-| `src/code_run/storage/folds.rs` | src | s | 2 crate-vis | — | One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's… |
+| `src/code_run/storage/folds.rs` | src | s | 3 crate-vis | — | One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's… |
 | `src/code_run/storage/mod.rs` | src | s | 1 re-export · 8 crate-vis | — | Canonical code-run persistence rows and the executor's storage routing |
 | `src/code_run/storage/records.rs` | src | L | 2 struct · 11 fn · 26 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/routing.rs` | src | m | 30 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
@@ -994,12 +994,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commitment_wake/wake_event.rs` | src | m | 2 struct · 1 enum · 11 fn · 7 const · 25 crate-vis | CommitmentWakeDue, CommitmentWakeEvent, CommitmentWakePhase | Commitment wake event vocabulary and tagged-payload codec |
 | `src/commitment_wake/wake_fire.rs` | src | s | 2 enum · 1 fn · 2 crate-vis | CommitmentWakeFireOutcome, CommitmentWakeSkip | Atomic fire-once door from the due index to the Dreamer queue |
 | `src/commitment_wake/wake_proposal.rs` | src | m | 2 struct · 1 enum · 1 trait · 2 fn · 2 crate-vis | CommitmentWakeExecutor, CommitmentWakeProposalDraft, CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip | Proposal planner, deterministic claim id, and the wrapper executor |
-| `src/compaction.rs` | src | m | 3 struct · 1 enum · 10 fn · 1 const · 1 mod · 4 re-export · 7 crate-vis | CompactionPacket, CompactionPayloadKind, CompactionSnapshotRef, ValidatedCompactionPacket | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
+| `src/compaction.rs` | src | m | 3 struct · 1 enum · 10 fn · 1 const · 1 mod · 4 re-export · 9 crate-vis | CompactionPacket, CompactionPayloadKind, CompactionSnapshotRef, ValidatedCompactionPacket | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
 | `src/compaction/driver/integration.rs` | src | s | 2 fn · 3 crate-vis | — | Transactional epoch integration, typed executor coverage, and swap plans |
 | `src/compaction/driver/log.rs` | src | s | 2 fn · 2 crate-vis | — | The driver's entries for a host that numbers its own log: an executor run, whose watermark is its own step… |
 | `src/compaction/driver/mod.rs` | src | L | 8 struct · 3 enum · 1 trait · 24 fn · 2 const · 5 crate-vis | CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver, CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass +4 | RT-05 in-engine compaction backend, margin law, and single-flight driver |
 | `src/compaction/epoch.rs` | src | L | 1 struct · 2 fn · 5 const · 20 crate-vis | EpochSummaryBody | Epoch-summary codec and transactional lineage mint |
-| `src/compaction/folds.rs` | src | m | 9 struct · 1 enum · 11 fn | FoldCompactAsk, FoldCompactInput, FoldLedger, FoldMark, FoldMarkInput, FoldRecord, FoldUnfold, FoldUnfoldInput +2 | Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every… |
+| `src/compaction/fold_words.rs` | src | s | 5 crate-vis | — | Where a fold's words go when a record they came from is withdrawn (Docs Q23, Q24) |
+| `src/compaction/folds.rs` | src | m | 9 struct · 1 enum · 12 fn · 1 crate-vis | FoldCompactAsk, FoldCompactInput, FoldLedger, FoldMark, FoldMarkInput, FoldRecord, FoldUnfold, FoldUnfoldInput +2 | Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every… |
 | `src/compaction/gate.rs` | src | m | 4 struct · 3 enum · 8 fn · 4 crate-vis | CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal, CompactionSuppression, GatedCompaction | The deterministic pre-swap gate (agent-runtime-v1 §d7) |
 | `src/compaction/output.rs` | src | m | 5 struct · 2 enum · 15 fn · 1 crate-vis | OutputAffordance, OutputContextEntry, OutputContextView, OutputDecayPolicy, OutputRef, OutputTier, OutputWorkingContext | Recoverable output references and local derived summaries (ARCH-0026) |
 | `src/compaction/output/tests.rs` | test | s | — | — | — |
@@ -1575,7 +1576,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embed/turn.rs` | src | s | 4 crate-vis | — | The turn doors' half of embedding: a TURN whose text moved owes a vector of its new text, marked with the… |
 | `src/embed/warn_capture.rs` | src | s | 3 crate-vis | — | Thread-scoped warning capture for embedding tests |
 | `src/engine_executor/code_check.rs` | src | s | 5 crate-vis | — | Shadow mode: before a generated program runs, it is type-checked against the declarations its prompt teaches |
-| `src/engine_executor/compaction.rs` | src | L | 2 struct · 1 enum · 1 trait · 4 fn · 31 crate-vis | CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason | The compaction host in the executor (agent-runtime-v1 §d7) |
+| `src/engine_executor/compaction.rs` | src | L | 2 struct · 1 enum · 1 trait · 4 fn · 29 crate-vis | CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason | The compaction host in the executor (agent-runtime-v1 §d7) |
 | `src/engine_executor/compaction_host.rs` | src | m | 6 crate-vis | — | The executor's side of the compaction host: landing a finished pass, the token feed, and sealing a window… |
 | `src/engine_executor/driver.rs` | src | m | 1 struct · 10 fn · 4 crate-vis | EngineNativeExecutor | Executor driver: struct, constructors, and the witness-turn doors |
 | `src/engine_executor/host.rs` | src | L | 10 crate-vis | — | JS host bridge: recording dispatcher, sandbox contract, and prompt sites |
@@ -2649,7 +2650,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/memory/query.rs` | src | m | — | — | Memory implementation of the same lazy read contracts as LMDB |
 | `src/ports/mod.rs` | src | s | 7 re-export · 16 crate-vis | — | Transaction-composable storage ports |
 | `src/ports/mutation.rs` | src | s | 5 crate-vis | — | Mutation audit composition |
-| `src/ports/query.rs` | src | s | 3 struct · 2 enum · 5 trait · 1 type | DeletionFamily, DeletionState, EdgeStoreRead, EntityStoreRead, EntityTime, RetrievalIndexRead, ShortIdStoreRead, TimeAxis +2 | Read halves of the storage ports |
+| `src/ports/query.rs` | src | s | 3 struct · 2 enum · 7 trait · 1 type | ChangeLogStoreRead, DeletionFamily, DeletionState, EdgeStoreRead, EntityStoreRead, EntityTime, JobQueueRead, RetrievalIndexRead +4 | Read halves of the storage ports |
 | `src/ports/records.rs` | src | s | 3 struct · 2 enum · 1 fn | ChangeLogRecord, ChangeOp, EdgeDirection, EntityRecord, SourceSpan | Backend-independent values carried across storage ports |
 | `src/ports/regeneration.rs` | src | s | 4 crate-vis | — | Generation-fenced completion of derived artifacts |
 | `src/ports/retrieval.rs` | src | s | 2 crate-vis | — | Query execution options for retrieval ports, independent of storage handles |
@@ -3693,7 +3694,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_identity/codec_records.rs` | src | m | 10 crate-vis | — | Print/evidence/segment/roster encode_/decode_ pairs; roster pair is the interlocutor-seam wire shape |
 | `src/voice_identity/math_keys.rs` | src | s | 9 crate-vis | — | Vector-math door (normalize/cosine/same-space check) and the digest helper the typed side tables' keys are… |
 | `src/voice_identity/mod.rs` | src | s | 1 mod · 1 re-export · 2 crate-vis | — | VOX-02 voice identity substrate: consent log, enrollment, local matching |
-| `src/voice_identity/ref_bank.rs` | src | m | 6 struct · 1 enum · 8 fn · 5 crate-vis | VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceTargetClone, VoiceTargetRecord | Private per-vault voice reference bank |
+| `src/voice_identity/ref_bank.rs` | src | L | 9 struct · 1 enum · 10 fn · 5 crate-vis | VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceRenderConsent, VoiceRenderDecision, VoiceRenderGrant +2 | Private per-vault voice reference bank |
 | `src/voice_identity/ref_bank/tests.rs` | test | s | — | — | — |
 | `src/voice_identity/ref_limits.rs` | src | s | 9 crate-vis | — | Resolved policy-manifest limits for the private render-reference bank |
 | `src/voice_identity/storage_admission.rs` | src | m | 28 crate-vis | — | Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination… |
