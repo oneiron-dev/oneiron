@@ -33,6 +33,7 @@ mod create_spec;
 mod create_validation;
 mod dormant_magistrate;
 mod entity_delta_facade;
+mod fanout_check;
 mod follow_up;
 mod lifecycle_facade;
 mod linear_store;
