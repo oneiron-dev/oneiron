@@ -2215,7 +2215,7 @@
      "purpose": "Local host-authorized mesh binding and grants, distinct from address hints",
      "surface": {
       "const": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -11953,14 +11953,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/companion/codec.rs",
-     "purpose": "Scope/subject task payload codecs and JSON value conversion for persona input",
+     "purpose": "Scope/subject task payload codecs",
      "surface": {
-      "crate-vis": 7,
-      "fn": 2
+      "crate-vis": 6
      }
     },
     {
@@ -11982,8 +11981,8 @@
      "path": "src/companion/mod.rs",
      "purpose": "Companion task queue and PERSON/FACET persona compilation",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 5
+      "crate-vis": 4,
+      "re-export": 4
      }
     },
     {
@@ -14153,7 +14152,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
       "crate-vis": 5,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -14224,6 +14223,26 @@
      "path": "src/conversation/tests/restore.rs",
      "purpose": "ASTRA-9A-2 F2: a restore over the live vault never brings back room authority narrowed since the checkpoint",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TurnAction",
+      "TurnActionAttempt",
+      "TurnActionContext",
+      "TurnActionLine",
+      "TurnActionReceipt",
+      "TurnActionRequest"
+     ],
+     "path": "src/conversation/turn_actions.rs",
+     "purpose": "Continue and Retry on an assistant turn (owner ruling 10-17): a reply interrupted by a crash or a dropped…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 5
+     }
     },
     {
      "bucket": "m",
@@ -24391,7 +24410,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 187,
-      "re-export": 73
+      "re-export": 74
      }
     },
     {
@@ -27306,7 +27325,21 @@
      "purpose": "Begin, append and flush",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MessageCompletion"
+     ],
+     "path": "src/memory/witness/stream/completion.rs",
+     "purpose": "Whether a MESSAGE's reply is complete, derived from its latest stream receipt",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -27319,7 +27352,7 @@
      "purpose": "Terminal transitions and the host-driven quiet-stream pump",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -27330,9 +27363,9 @@
      "path": "src/memory/witness/stream/mod.rs",
      "purpose": "Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -27353,7 +27386,7 @@
      "path": "src/memory/witness/stream/presence.rs",
      "purpose": "Native EphemeralStore publication",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -27362,9 +27395,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/stream/storage.rs",
-     "purpose": "Fixed per-handle recovery metadata and terminal audit",
+     "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 2
      }
     },
@@ -35071,8 +35104,8 @@
      "path": "src/serialize/mod.rs",
      "purpose": "Context-pack serialization",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 4
+      "crate-vis": 8,
+      "re-export": 5
      }
     },
     {
@@ -35169,6 +35202,17 @@
      "purpose": "Cross-cutting types shared by every `serialize` submodule",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/value_json.rs",
+     "purpose": "The opaque MessagePack value a record carries, to and from the JSON public APIs read and write",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -38800,6 +38844,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SyncDialer",
+      "SyncIo",
+      "SyncStream"
+     ],
+     "path": "src/sync/carrier.rs",
+     "purpose": "What a sync socket rides on (OF-535): TCP to the home's URL, or a stream a [`SyncDialer`] opens, such as a…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "trait": 2,
+      "type": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -38952,11 +39013,22 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 6,
       "re-export": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/authority.rs",
+     "purpose": "Authority history from the home for a machine that syncs what it opened (OF-469)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -39059,7 +39131,7 @@
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
-      "fn": 14,
+      "fn": 15,
       "re-export": 2,
       "struct": 3
      }
@@ -39389,8 +39461,8 @@
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 6,
-      "mod": 20,
-      "re-export": 15
+      "mod": 21,
+      "re-export": 16
      }
     },
     {
@@ -39665,7 +39737,7 @@
       "const": 2,
       "crate-vis": 5,
       "fn": 12,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 2
      }
     },
@@ -39680,6 +39752,17 @@
      "surface": {
       "fn": 7,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/authority_tail.rs",
+     "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
+     "surface": {
+      "const": 1,
+      "fn": 2
      }
     },
     {
@@ -41310,7 +41393,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 77
+      "fn": 79
      }
     },
     {
@@ -45765,7 +45848,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46192,7 +46275,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 121,
+     "files": 122,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46521,7 +46604,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46654,7 +46737,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 139,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46831,7 +46914,7 @@
    },
    "over_bar": 75,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2816,
+   "source_files": 2822,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53525,7 +53608,7 @@
      "path": "src/iroh_transport.rs",
      "purpose": "Private iroh data plane",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -53537,22 +53620,39 @@
       "MachineGrants",
       "MachineRoster",
       "MeshConnection",
+      "MeshDuplex",
       "MeshError",
+      "MeshService",
       "MeshStream",
       "MeshTransport",
+      "PairedMachineGrants",
       "VaultMachineGrants",
       "VaultMachineRoster"
      ],
      "path": "src/lib.rs",
      "purpose": "Vault-scoped mesh transport",
      "surface": {
+      "const": 1,
       "enum": 1,
       "fn": 2,
-      "mod": 2,
+      "mod": 3,
       "re-export": 1,
-      "struct": 3,
-      "trait": 5,
+      "struct": 4,
+      "trait": 7,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MeshSyncDialer"
+     ],
+     "path": "src/sync_dialer.rs",
+     "purpose": "The sync client's carrier to its home machine over the mesh (OF-535)",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -53565,7 +53665,7 @@
      "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded",
      "surface": {
       "crate-vis": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -53594,6 +53694,13 @@
      "layout": "file",
      "purpose": "Private iroh data plane"
     },
+    "sync_dialer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The sync client's carrier to its home machine over the mesh (OF-535)"
+    },
     "transport_key": {
      "files": 1,
      "impl_vault": false,
@@ -53604,7 +53711,7 @@
    },
    "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 3,
+   "source_files": 4,
    "test_files": 2
   },
   "oneiron-model": {
@@ -54316,7 +54423,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 59
+      "fn": 61
      }
     },
     {
@@ -55165,7 +55272,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 60
+      "fn": 62
      }
     },
     {
@@ -56643,10 +56750,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/turn_actions.rs",
+     "purpose": "The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/turns.rs",
      "purpose": "Chat turns in flight",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -56660,13 +56777,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat.rs",
-     "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat, streamed",
+     "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 14
      }
     },
     {
@@ -56686,7 +56803,7 @@
      "path": "src/api/ai/mod.rs",
      "purpose": "`/v1/ai`: the server's model-backed surfaces — status, chat turns, the session hints the Dreamer's triggers…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -57914,7 +58031,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -58033,6 +58150,16 @@
      "notable": [],
      "path": "src/api/owner_routes/cooperative_deletion_routes.rs",
      "purpose": "`/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/handoff_alarm_routes.rs",
+     "purpose": "`/v1/owner/authority/handoff-alarms`: the saved fork alarms a held root handoff left (OF-166 = A)",
      "surface": {
       "crate-vis": 1
      }
@@ -58929,6 +59056,8 @@
       "BackupArgs",
       "DoctorArgs",
       "ExportArgs",
+      "HandoffAlarmAckArgs",
+      "HandoffAlarmsCommand",
       "ImportBatchArgs",
       "ImportCommand",
       "ImportDecisionArgs",
@@ -58953,8 +59082,8 @@
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 5,
-      "struct": 18
+      "enum": 6,
+      "struct": 19
      }
     },
     {
@@ -59188,7 +59317,7 @@
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 4,
-      "fn": 11
+      "fn": 12
      }
     },
     {
@@ -60124,6 +60253,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/mesh.rs",
+     "purpose": "The paired-machine mesh listener (OF-535)",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/handler/message_stream_tests.rs",
@@ -60137,7 +60276,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -62652,14 +62791,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 222,
+     "files": 223,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62743,7 +62882,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62897,9 +63036,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 19,
+   "over_bar": 20,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 407,
+   "source_files": 410,
    "test_files": 182
   },
   "oneiron-spawn": {
