@@ -75,20 +75,21 @@ impl Memory<'_> {
         admit: impl Fn(&heed::RwTxn<'_>) -> bool,
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let entry = self.stream_entry(handle)?;
-        let (outcome, gate): (_, TerminalGate<'_>) = match finish_reason {
+        let gated: TerminalGate<'_> = Some(&admit);
+        let (outcome, gate) = match &finish_reason {
             FinishReason::Stop | FinishReason::ToolCalls => (
                 (
                     StreamFinality::Final,
                     StreamFinalityReason::ExplicitFinalize,
                 ),
-                Some(&admit),
+                gated,
             ),
             FinishReason::Length | FinishReason::ContentFiltered | FinishReason::Other { .. } => (
                 (
                     StreamFinality::Partial,
                     StreamFinalityReason::ExplicitFinalize,
                 ),
-                Some(&admit),
+                gated,
             ),
             FinishReason::Cancelled => (
                 (

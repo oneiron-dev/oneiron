@@ -15,7 +15,7 @@
 //! attempt claimed a second time was cut off when the process stopped under
 //! it: it is failed and never run again, so its reply stays as saved until
 //! someone asks again.
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::{
@@ -24,7 +24,7 @@ use oneiron::attempt_queue::{
 use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt};
 use oneiron::memory::{MessageWriteMode, WitnessAuthor};
 use oneiron::{LlmCapability, LlmMessage, LlmMessageRole, Vault, WriteActor};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
@@ -54,7 +54,7 @@ pub(super) fn spawn(vault: &Arc<Vault>, ai: &AiHandle) {
             return;
         };
         loop {
-            while !*stopped.borrow() {
+            while !stopping(&stopped) {
                 let Some(vault) = vault.upgrade() else {
                     return;
                 };
@@ -78,6 +78,11 @@ pub(super) fn spawn(vault: &Arc<Vault>, ai: &AiHandle) {
             }
         }
     });
+}
+
+/// Whether shutdown asked the worker to stop; the borrow ends here.
+fn stopping(stopped: &watch::Receiver<bool>) -> bool {
+    *stopped.borrow()
 }
 
 fn claim(vault: &Vault) -> Option<AttemptRecord> {
