@@ -22,6 +22,9 @@ pub enum LlmCapability {
     JsonResponse,
     Reasoning,
     Voice,
+    /// The model continues a trailing assistant message as its own answer
+    /// (native prefill), so an interrupted reply resumes from its saved text.
+    AssistantPrefill,
 }
 
 impl LlmCapability {
@@ -35,6 +38,7 @@ impl LlmCapability {
             Self::JsonResponse => "json_response",
             Self::Reasoning => "reasoning",
             Self::Voice => "voice",
+            Self::AssistantPrefill => "assistant_prefill",
         }
     }
 }

@@ -58,7 +58,7 @@ use crate::runtime::RuntimeRole;
 #[cfg(test)]
 use axum::http::HeaderMap;
 
-mod ai;
+pub(crate) mod ai;
 mod artifacts;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).

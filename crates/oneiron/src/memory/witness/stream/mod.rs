@@ -1,6 +1,7 @@
 //! Ephemeral MESSAGE streams, waiting their turn past the vault's row, with
 //! transactional finality.
 mod admission;
+mod completion;
 mod lifecycle;
 mod policy;
 #[cfg(feature = "sync")]
@@ -12,6 +13,8 @@ mod types;
 
 use crate::memory::Memory;
 use crate::{EntityId, Vault};
+pub use completion::MessageCompletion;
+pub(crate) use completion::message_completion_in_txn;
 pub use lifecycle::MessageStreamPump;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -54,6 +57,13 @@ struct State {
 impl State {
     fn text(&self) -> String {
         format!("{}{}", self.base, self.pending)
+    }
+    /// The ACTIVE row that checkpoints `saved` as this stream's accepted text.
+    fn checkpoint(&self, saved: String) -> Seed {
+        Seed {
+            saved,
+            ..self.seed.clone()
+        }
     }
     fn handle(&self) -> MessageStreamHandle {
         MessageStreamHandle {

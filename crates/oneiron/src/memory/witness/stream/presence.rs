@@ -5,6 +5,12 @@ use tokio::sync::broadcast;
 const FRAME_BUDGET: usize = 64 * 1024;
 /// Frames the lossy channel buffers for a socket that has not read them.
 const PRESENCE_FRAMES: usize = 256;
+/// One partial whose frame fits the budget, ready to publish.
+pub(super) struct PresencePartial {
+    key: String,
+    value: LoroValue,
+    visibility: StreamSyncVisibility,
+}
 /// The socket consumes this lossy bounded channel directly, never SyncQueue.
 pub(crate) struct StreamPresence {
     pub(crate) store: EphemeralStore,
@@ -25,11 +31,19 @@ impl StreamPresence {
     pub(crate) fn subscribe_frames(&self) -> broadcast::Receiver<Vec<u8>> {
         self.sender.subscribe()
     }
-    pub(super) fn publish(&self, seed: &Seed, text: &str, seq: u64) -> MessageStreamResult<()> {
+    /// Builds `text`'s partial and preflights it on a scratch native store,
+    /// so a refusal comes before the delta is checkpointed or accepted and
+    /// leaves no local presence mutation. `None` in atomic mode. Manual
+    /// buffering can exceed the cap; flush then refuses but finalize still
+    /// commits every buffered byte.
+    pub(super) fn prepare(
+        seed: &Seed,
+        text: &str,
+        seq: u64,
+    ) -> MessageStreamResult<Option<PresencePartial>> {
         let MessageWriteMode::Streamed { visibility, .. } = seed.mode else {
-            return Ok(());
+            return Ok(None);
         };
-        let _emission = lock(&self.emission)?;
         let key = format!("msg:{}", seed.message_id.to_hex());
         let seq = i64::try_from(seq)
             .map_err(|_| MessageStreamError::InvalidRequest("presence sequence overflow"))?;
@@ -49,14 +63,25 @@ impl StreamPresence {
             ]
             .into(),
         );
-        // Preflight a scratch native store, so refusal accepts neither the delta
-        // nor a local presence mutation. Manual buffering can exceed this cap;
-        // flush then refuses but finalize still commits every buffered byte.
         let scratch = EphemeralStore::new(DEFAULT_MESSAGE_STREAM_IDLE_MS as i64);
         scratch.set(&key, value.clone());
         if scratch.encode(&key).len().saturating_add(1) > FRAME_BUDGET {
             return Err(MessageStreamError::PresenceFrameTooLarge);
         }
+        Ok(Some(PresencePartial {
+            key,
+            value,
+            visibility,
+        }))
+    }
+    /// Publishes a prepared partial: text its stream has already saved.
+    pub(super) fn publish(&self, partial: PresencePartial) -> MessageStreamResult<()> {
+        let PresencePartial {
+            key,
+            value,
+            visibility,
+        } = partial;
+        let _emission = lock(&self.emission)?;
         self.store.remove_outdated();
         self.store.set(&key, value);
         if visibility == StreamSyncVisibility::AllDevices {

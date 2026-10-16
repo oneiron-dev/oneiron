@@ -15,7 +15,7 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::models::QuotaChoice;
 use crate::server::SyncServer;
 
-mod chat;
+pub(crate) mod chat;
 mod media;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {

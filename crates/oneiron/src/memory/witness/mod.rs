@@ -9,7 +9,9 @@ mod session;
 mod stream;
 mod types;
 pub use stream::*;
-pub(crate) use stream::{MessageStreamRuntime, message_stream_finality_in_txn};
+pub(crate) use stream::{
+    MessageStreamRuntime, message_completion_in_txn, message_stream_finality_in_txn,
+};
 mod validation;
 
 pub use self::types::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};

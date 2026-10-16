@@ -1,6 +1,6 @@
 //! Public streaming vocabulary. Stream handles carry no text or authority.
 use crate::memory::MemoryError;
-use crate::{EntityId, Error};
+use crate::{EntityId, Error, FinishReason};
 use serde::{Deserialize, Serialize};
 
 /// Maximum in-memory UTF-8 text per handle.
@@ -95,8 +95,9 @@ pub enum StreamCancelReason {
     ExternalSignal,
     Custom(String),
 }
-/// Durable audit. A crash can recover only previously committed text, never tokens
-/// held solely in process memory. The loss flag makes that distinction explicit.
+/// Durable audit. A crash recovers the stream's last checkpoint: every accepted
+/// delta is saved in its seed before it is published, so the loss flag is set
+/// only when accepted text was ahead of that checkpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageStreamReceipt {
     pub message_id: EntityId,
@@ -105,6 +106,9 @@ pub struct MessageStreamReceipt {
     pub generation: EntityId,
     pub finality: StreamFinality,
     pub finality_reason: StreamFinalityReason,
+    /// Why the model that wrote this generation stopped; `None` from a writer
+    /// that is no model, an idle expiry and a crash recovery.
+    pub finish_reason: Option<FinishReason>,
     pub bytes: u64,
     pub recovered: bool,
     pub ephemeral_text_lost: bool,

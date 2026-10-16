@@ -1,4 +1,5 @@
-//! Begin, append and flush. The only pre-final durable row is a content-free seed.
+//! Begin, append and flush. The only pre-final durable row is the seed, which
+//! checkpoints each accepted delta before that text is published.
 use super::super::witness_message_envelope;
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -81,6 +82,7 @@ impl Memory<'_> {
             mode,
             idle_timeout_ms: policy.idle_timeout_ms,
             continuation: false,
+            saved: String::new(),
         };
         let handle = MessageStreamHandle {
             message: id,
@@ -169,7 +171,13 @@ impl Memory<'_> {
                             "system stream requires an existing turn",
                         ));
                     }
-                    storage::ACTIVE.put(&self.vault.store, txn, &id, &state.seed)?;
+                    // Supplied initial content is the first checkpoint.
+                    storage::ACTIVE.put(
+                        &self.vault.store,
+                        txn,
+                        &id,
+                        &state.checkpoint(state.pending.clone()),
+                    )?;
                     Ok(())
                 });
         if let Err(error) = admitted {
@@ -180,7 +188,11 @@ impl Memory<'_> {
         Ok(handle)
     }
     /// Accepts a delta only if every bound and any scheduled publication pass.
-    /// No token, heartbeat, text-index update, CRDT op or offline queue row is written.
+    /// A delta that adds text is checkpointed into the stream's seed, in one
+    /// write transaction, before it is accepted or published: no partial is
+    /// ever seen that a crash would not recover. An empty keepalive writes
+    /// nothing. No token, heartbeat, text-index update, CRDT op or offline
+    /// queue row is written.
     pub fn append_to_stream(
         &self,
         handle: MessageStreamHandle,
@@ -208,31 +220,47 @@ impl Memory<'_> {
         }
         let text = format!("{}{}", state.text(), delta);
         let chars = text.chars().count();
-        let txn = self.vault.store.env.read_txn()?;
-        authorize(self.vault, &txn, &state.seed, &text)?;
-        drop(txn);
         let next = state
             .sequence
             .checked_add(1)
             .ok_or(MessageStreamError::InvalidRequest(
                 "stream sequence overflow",
             ))?;
-        if should_emit(
+        let emit = should_emit(
             state.seed.mode,
             &text,
             chars.saturating_sub(state.emitted_chars),
-        ) {
-            #[cfg(feature = "sync")]
-            self.vault
-                .publish_message_stream(&state.seed, &text, next)?;
-            state.emitted_chars = chars;
-            state.dirty = false;
+        );
+        #[cfg(feature = "sync")]
+        let partial = if emit {
+            super::presence::StreamPresence::prepare(&state.seed, &text, next)?
         } else {
-            state.dirty = true;
+            None
+        };
+        if delta.is_empty() {
+            let txn = self.vault.store.env.read_txn()?;
+            authorize(self.vault, &txn, &state.seed, &text)?;
+        } else {
+            let row = state.checkpoint(format!("{}{}", state.pending, delta));
+            self.vault
+                .try_with_write_txn_grouped(|txn| -> MessageStreamResult<()> {
+                    authorize(self.vault, txn, &row, &text)?;
+                    Ok(storage::checkpoint(self.vault, txn, &row)?)
+                })?;
         }
+        // Saved: the delta is accepted whatever its publication does.
         state.pending.push_str(delta);
         state.sequence = next;
         state.last_op_at_ms = at;
+        state.dirty = true;
+        if emit {
+            #[cfg(feature = "sync")]
+            if let Some(partial) = partial {
+                self.vault.message_streams.presence.publish(partial)?;
+            }
+            state.emitted_chars = chars;
+            state.dirty = false;
+        }
         Ok(())
     }
     /// Forces a dirty partial out immediately. Atomic mode deliberately stays private.
@@ -247,12 +275,67 @@ impl Memory<'_> {
         let txn = self.vault.store.env.read_txn()?;
         authorize(self.vault, &txn, &state.seed, &text)?;
         drop(txn);
+        // Every accepted delta is already checkpointed, so this text is saved.
         #[cfg(feature = "sync")]
-        self.vault
-            .publish_message_stream(&state.seed, &text, state.sequence)?;
+        if let Some(partial) =
+            super::presence::StreamPresence::prepare(&state.seed, &text, state.sequence)?
+        {
+            self.vault.message_streams.presence.publish(partial)?;
+        }
         state.emitted_chars = text.chars().count();
         state.dirty = false;
         Ok(())
+    }
+    /// Opens a continuation stream on an existing MESSAGE, reading its
+    /// immutable axes, TURN and conversation from the stored row: the caller
+    /// names only the MESSAGE. The stored text stays the base; the stream adds
+    /// only what is appended to it. The ordinary continuation checks apply.
+    pub fn begin_message_continuation(
+        &self,
+        message: &EntityId,
+        mode: Option<MessageWriteMode>,
+    ) -> MessageStreamResult<MessageStreamHandle> {
+        let turn = {
+            let txn = self.vault.store.env.read_txn()?;
+            let body = committed_body(self.vault, &txn, message)?
+                .ok_or(MessageStreamError::Engine(Error::EntityNotFound))?;
+            let edge = |kind| {
+                crate::memory::sole_edge_target(&self.vault.store, &txn, message, kind, "message")
+            };
+            let turn = edge(EdgeKind::PartOf)?
+                .ok_or(MessageStreamError::InvalidRequest("message has no turn"))?;
+            let conversation = edge(EdgeKind::BelongsTo)?.ok_or(
+                MessageStreamError::InvalidRequest("message has no conversation"),
+            )?;
+            let field = |name: &str| body.get(name);
+            let author = field("author")
+                .and_then(serde_json::Value::as_str)
+                .and_then(crate::memory::WitnessAuthor::parse)
+                .ok_or(Error::CorruptedIndex("message author"))?;
+            WitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                messages: vec![crate::memory::WitnessMessage {
+                    id: Some(message.to_hex()),
+                    author,
+                    message_type: field("type")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or(Error::CorruptedIndex("message type"))?
+                        .to_owned(),
+                    content: String::new(),
+                    metadata: field("metadata").filter(|value| !value.is_null()).cloned(),
+                    is_visible: field("is_visible")
+                        .and_then(serde_json::Value::as_bool)
+                        .ok_or(Error::CorruptedIndex("message visibility"))?,
+                    order: field("order")
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|order| u32::try_from(order).ok())
+                        .ok_or(Error::CorruptedIndex("message order"))?,
+                }],
+                occurred_at: self.vault.now_recorded_at(),
+            }
+        };
+        self.begin_message_stream(&turn, mode)
     }
 }
 fn should_emit(mode: MessageWriteMode, text: &str, new_chars: usize) -> bool {
@@ -329,14 +412,14 @@ pub(super) fn authorize(
     )?;
     Ok(())
 }
-/// Revalidate immutable axes/topology in the same snapshot used for a continuation.
-pub(super) fn committed_text(
+/// A MESSAGE's stored body as JSON, its text resolved from its document;
+/// `None` when no row exists.
+fn committed_body(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    seed: &Seed,
-) -> MessageStreamResult<Option<String>> {
-    let Some(raw) =
-        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &seed.message_id)?
+    message: &EntityId,
+) -> MessageStreamResult<Option<serde_json::Value>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, message)?
     else {
         return Ok(None);
     };
@@ -345,6 +428,24 @@ pub(super) fn committed_text(
     if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
         return Err(MessageStreamError::InvalidRequest("not a MESSAGE"));
     }
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    #[cfg(feature = "sync")]
+    let resolved = crate::entity_doc::resolve_record_body(&vault.store, txn, message, body)?;
+    #[cfg(feature = "sync")]
+    let body = resolved.as_slice();
+    Ok(Some(
+        rmp_serde::from_slice(body).map_err(|_| Error::CorruptedIndex("message body"))?,
+    ))
+}
+/// Revalidate immutable axes/topology in the same snapshot used for a continuation.
+pub(super) fn committed_text(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seed: &Seed,
+) -> MessageStreamResult<Option<String>> {
+    let Some(value) = committed_body(vault, txn, &seed.message_id)? else {
+        return Ok(None);
+    };
     if seed.author == crate::memory::WitnessAuthor::System {
         // System rows intentionally have no AuthoredBy edge. Only a stream's
         // durable actor-bound receipt proves which system writer may continue.
@@ -352,14 +453,6 @@ pub(super) fn committed_text(
             return Err(MessageStreamError::WrongActor);
         }
     }
-    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-    #[cfg(feature = "sync")]
-    let resolved =
-        crate::entity_doc::resolve_record_body(&vault.store, txn, &seed.message_id, body)?;
-    #[cfg(feature = "sync")]
-    let body = resolved.as_slice();
-    let value: serde_json::Value =
-        rmp_serde::from_slice(body).map_err(|_| Error::CorruptedIndex("message body"))?;
     let text = value
         .get("content")
         .and_then(|v| v.as_str())
@@ -389,10 +482,4 @@ pub(super) fn committed_text(
         }
     }
     Ok(Some(text))
-}
-#[cfg(feature = "sync")]
-impl Vault {
-    fn publish_message_stream(&self, seed: &Seed, text: &str, seq: u64) -> MessageStreamResult<()> {
-        self.message_streams.presence.publish(seed, text, seq)
-    }
 }
