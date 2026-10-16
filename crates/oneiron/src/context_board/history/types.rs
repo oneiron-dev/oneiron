@@ -12,6 +12,12 @@ pub struct BoardSelection {
     pub allowed: BTreeSet<EntityId>,
     pub default_on: BTreeSet<EntityId>,
     pub active: BTreeSet<EntityId>,
+    /// Base reality's place in each world tier. Base is no entity, so it
+    /// rides beside the tier's world ids, as the authority's own
+    /// `include_base` does.
+    pub allowed_base: bool,
+    pub default_on_base: bool,
+    pub active_base: bool,
     pub pinned: BTreeSet<EntityId>,
     pub top_snippet: BTreeSet<EntityId>,
     pub index_only: BTreeSet<EntityId>,
