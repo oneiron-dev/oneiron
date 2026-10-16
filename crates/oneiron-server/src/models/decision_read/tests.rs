@@ -1,6 +1,7 @@
 //! The decision read against an in-process llama.cpp: the joint marginals
 //! checked against idle-fold test 5's own `read_probs` (run5b.py) on a fixed
-//! answer, the measured request, and each per-call check refusing typed.
+//! answer, the measured request with test 6's exact retry, and each per-call
+//! check refusing typed.
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -112,7 +113,7 @@ fn package(dir: &std::path::Path, tokens: usize) {
     std::fs::write(
         package.join("recipe.toml"),
         format!(
-            "format = 1\ntemplate = \"read.txt\"\nrow = \"{{token}}: {{label}}; more thinking {{think}}\"\nrow_person = \"{{token}}: {{label}}; more thinking {{think}}; ask a person {{person}}\"\nyes = \"yes\"\nno = \"no\"\ntokens = [{}]\neos = \"<|im_end|>\"\nn_probs = 262144\n[probe]\npaired = \"Think?\"\nperson = \"Person?\"\n",
+            "format = 1\ntemplate = \"read.txt\"\nrow = \"{{token}}: {{label}}; more thinking {{think}}\"\nrow_person = \"{{token}}: {{label}}; more thinking {{think}}; ask a person {{person}}\"\nyes = \"yes\"\nno = \"no\"\ntokens = [{}]\neos = \"<|im_end|>\"\nn_probs = 16384\nn_probs_full = 262144\n[probe]\npaired = \"Think?\"\nperson = \"Person?\"\n",
             verbalizers.join(", ")
         ),
     )
@@ -217,39 +218,65 @@ fn oracle_answer() -> JsonValue {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
+    // The top 16,384 hold every label; then they miss the last one, and the
+    // one exact retry over the vocabulary reads the same numbers (test 6).
+    let mut cut = oracle_answer();
+    cut["completion_probabilities"][0]["top_logprobs"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|entry| entry["id"] != label_id(43));
     let fake = Arc::new(Fake::default());
-    fake.answers.lock().unwrap().push_back(oracle_answer());
+    fake.answers
+        .lock()
+        .unwrap()
+        .extend([oracle_answer(), cut, oracle_answer()]);
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path(), &serve(Arc::clone(&fake)).await, 44);
     let door = bind(&config, tokio::runtime::Handle::current())
         .unwrap()
         .unwrap();
     let options: Vec<String> = (0..11).map(|bin| format!("bin {bin}")).collect();
-    let read = read(&door, Some(options.clone()), true).await.unwrap();
+    let first = read(&door, Some(options.clone()), true).await.unwrap();
+    let retried = read(&door, Some(options.clone()), true).await.unwrap();
 
-    for (got, want) in read.primary.iter().zip(PRIMARY) {
-        assert!((got - want).abs() < 1e-12, "{got} vs {want}");
+    for read in [&first, &retried] {
+        for (got, want) in read.primary.iter().zip(PRIMARY) {
+            assert!((got - want).abs() < 1e-12, "{got} vs {want}");
+        }
+        assert!((read.paired_yes - THINK).abs() < 1e-12);
+        assert!((read.person_yes.unwrap() - PERSON).abs() < 1e-12);
     }
-    assert!((read.paired_yes - THINK).abs() < 1e-12);
-    assert!((read.person_yes.unwrap() - PERSON).abs() < 1e-12);
-    assert_eq!((read.usage.input.total, read.usage.output.total), (1234, 1));
+    assert_eq!(
+        (first.usage.input.total, first.usage.output.total),
+        (1234, 1)
+    );
+    // The retry costs the read its second call.
+    assert_eq!(
+        (retried.usage.input.total, retried.usage.output.total),
+        (2468, 2)
+    );
     let reader = door.reader();
     assert_eq!(reader.model(), "house/qwen3.8-27b@q4km");
     assert!(reader.revision().starts_with("q4km+recipe."));
     assert_eq!(door.person_threshold(), 0.9);
 
     // The measured request: one position, the end token forced, pre-sampler
-    // probabilities over the vocabulary, nothing sampled or stopped early.
+    // probabilities, nothing sampled or stopped early. The retry sends the
+    // same request over the whole vocabulary.
     let requests = fake.requests.lock().unwrap();
-    let [request] = requests.as_slice() else {
-        panic!("one completion per read");
+    let [request, top_k, full] = requests.as_slice() else {
+        panic!("one completion per read, and one retry");
     };
+    assert_eq!(top_k, request);
+    let mut widened = request.clone();
+    widened["n_probs"] = json!(262_144);
+    assert_eq!(full, &widened);
     assert_eq!(request["n_predict"], 1);
     assert_eq!(request["temperature"], 0.0);
     assert_eq!(request["cache_prompt"], true);
     assert_eq!(request["id_slot"], 0);
     assert_eq!(request["stop"], json!([]));
-    assert_eq!(request["n_probs"], 262_144);
+    assert_eq!(request["n_probs"], 16_384);
     assert_eq!(request["post_sampling_probs"], false);
     assert_eq!(request["logit_bias"], json!([[EOS, 1e9]]));
     assert_eq!(
@@ -265,7 +292,8 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
         ])
     );
     let prompt = request["prompt"].as_str().unwrap();
-    // The probe reserves the prompt it sends, byte for byte, and the position read.
+    // The probe reserves the prompt it sends, byte for byte, and the position
+    // read, for each call a read may make.
     let state = json!({"head": "HEAD", "dynamic": "DYNAMIC"});
     let reserve = door.reserve(&LabelReadRequest {
         state: &state,
@@ -276,7 +304,7 @@ async fn a_read_is_test_five_s_one_pass_read_through_the_configured_recipe() {
         paired: "Think?",
         person: Some("Person?"),
     });
-    assert_eq!(reserve, Ok(prompt.len() as u64 + 1));
+    assert_eq!(reserve, Ok(2 * (prompt.len() as u64 + 1)));
     assert!(prompt.starts_with("HEAD\n(1) When? (2) Think? (3) Person?\nA: bin 0; more thinking no; ask a person no\nB: bin 0; more thinking yes; ask a person no\nC: bin 0; more thinking no; ask a person yes\n"));
     assert!(prompt.contains(
         "\nr: bin 10; more thinking yes; ask a person yes\nDYNAMIC<|im_end|>\nJoint label:"
@@ -317,8 +345,21 @@ async fn each_read_check_refuses_typed_and_none_reads_as_zero() {
         ]}],
     });
     let fake = Arc::new(Fake::default());
+    // A read that misses a label retries once, and the retry is checked as
+    // the first call is.
     fake.answers.lock().unwrap().extend([
-        emitted, not_eos, missing, two_rows, no_content, no_usage, older,
+        emitted.clone(),
+        not_eos.clone(),
+        missing.clone(),
+        missing.clone(),
+        missing.clone(),
+        emitted,
+        missing,
+        not_eos,
+        two_rows,
+        no_content,
+        no_usage,
+        older,
     ]);
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path(), &serve(Arc::clone(&fake)).await, 44);
@@ -329,6 +370,8 @@ async fn each_read_check_refuses_typed_and_none_reads_as_zero() {
         LabelReadFailure::EmittedText,
         LabelReadFailure::NotEosStop,
         LabelReadFailure::MissingLabels,
+        LabelReadFailure::EmittedText,
+        LabelReadFailure::NotEosStop,
         LabelReadFailure::Malformed,
         LabelReadFailure::Malformed,
         LabelReadFailure::Malformed,
@@ -392,6 +435,17 @@ fn a_recipe_that_cannot_render_a_read_fails_the_config() {
     let error = models(dir.path(), base_url).unwrap_err();
     assert!(
         error.to_string().contains("unknown placeholder {thought}"),
+        "{error}"
+    );
+    // A retry no wider than the first read.
+    package(dir.path(), 44);
+    let text = std::fs::read_to_string(&recipe)
+        .unwrap()
+        .replace("n_probs_full = 262144", "n_probs_full = 16384");
+    std::fs::write(&recipe, text).unwrap();
+    let error = models(dir.path(), base_url).unwrap_err();
+    assert!(
+        error.to_string().contains("n_probs_full above n_probs"),
         "{error}"
     );
     // A probe that asks the person question reads at least eight labels.

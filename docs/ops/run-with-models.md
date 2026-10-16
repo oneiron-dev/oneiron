@@ -537,8 +537,9 @@ The recipe is yours, not the server's: it names the prompt template (with
 `{state.<key>}` slots), the joint label table's row wording (`row`, and
 `row_person` for the person question), the `yes` and `no` words, the
 single-token label verbalizers (`tokens`, at least four), the end token
-(`eos`), `n_probs` (the vocabulary, so every label's probability comes back)
-and, for the owner's probe, `[probe] paired` and `person`. Each label must be
+(`eos`), `n_probs` (how many of the top probabilities come back),
+`n_probs_full` (the whole vocabulary, for the one retry below) and, for the
+owner's probe, `[probe] paired` and `person`. Each label must be
 one distinct token on the served tokenizer, or every read is refused. Option
 `i`, more thinking `j` and ask a person `k` sit at row `4i + 2k + j`
 (`2i + j` without the person question), so a question of `n` options needs
@@ -555,10 +556,21 @@ the system and user turns, then
 newline), and the label cue as the template's last bytes. A template without
 that framing is not the calibrated read.
 
+llama.cpp normalizes over the whole vocabulary before it cuts the list, so a
+label among the top `n_probs` reads the same as over the whole vocabulary:
+idle-fold test 6 compared the house model's label numbers at 16,384 and at its
+full 262,144 bit for bit, 20 of 20 identical, and the shorter answer took
+about 1.5 s less to serialize per read. Some labels rank below the top
+16,384, so a read whose labels are not all listed is sent again, once, with
+`n_probs_full`; its time and tokens count in the read (17% of test 6's
+44-label reads needed it). Without `n_probs_full` there is no retry, so set
+`n_probs` to the whole vocabulary then.
+
 Every read checks that no text came back and that generation stopped at the
-forced end token; a read that fails a check, or misses a label, is refused
-typed (`LabelRead`: `EmittedText`, `NotEosStop`, `MissingLabels`,
-`Malformed`) and is never read as a probability of zero.
+forced end token, on the retry as on the first call; a read that fails a
+check, or still misses a label, is refused typed (`LabelRead`: `EmittedText`,
+`NotEosStop`, `MissingLabels`, `Malformed`) and is never read as a
+probability of zero.
 
 `person_threshold` starts the PersonThreshold row high, so "ask a person?"
 stays rare (0.9 asked nobody on test 5's held-out set) until the Coach tunes
