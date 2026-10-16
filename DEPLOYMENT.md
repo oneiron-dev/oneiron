@@ -176,7 +176,9 @@ its turn behind it. An LFS upload over `--max-lfs-object-bytes` (2 GiB unless
 set) lands and the row asks; an upload that would take the vault's disk below
 `disk_reserve_bytes` is refused with 507, by its declared size before any byte
 is read. A push holds its command section and status report on that disk past
-memory, and is answered 507 at the write that would take it below the reserve.
+memory, and is answered 507 when a write of them would take it below the
+reserve. Each such write asks first and claims nothing, so writes at the same
+moment can each pass the reserve by their own bytes.
 
 ## CJK Dictionaries
 

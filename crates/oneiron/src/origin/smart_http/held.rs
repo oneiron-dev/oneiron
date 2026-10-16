@@ -18,7 +18,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// The free disk a host keeps under what its exchanges hold past memory:
-/// asked before each write to a holder's file.
+/// asked before each write reaches a holder's file. The write claims nothing,
+/// so writes asking at the same moment can each pass it by their own bytes.
 pub trait SpillFloor: Send + Sync {
     /// Whether `bytes` more may be written and still leave the floor free.
     fn has_room_for(&self, bytes: u64) -> bool;
@@ -49,7 +50,7 @@ impl std::error::Error for AtDiskFloor {}
 /// Bytes held in memory up to a bound and in an unnamed file past it.
 pub struct HeldBytes {
     memory: Vec<u8>,
-    file: Option<BufWriter<File>>,
+    file: Option<BufWriter<FloorFile>>,
     /// Bytes held, wherever they are.
     len: u64,
     /// Bytes held in memory before the rest goes to disk.
@@ -110,7 +111,7 @@ impl HeldBytes {
         match &mut self.file {
             Some(file) => {
                 file.flush()?;
-                let file = file.get_mut();
+                let file = &mut file.get_mut().file;
                 file.seek(SeekFrom::Start(0))?;
                 Ok(Box::new(BufReader::new(file)))
             }
@@ -122,7 +123,6 @@ impl HeldBytes {
 impl Write for HeldBytes {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if let Some(file) = &mut self.file {
-            keep_floor(self.floor.as_deref(), bytes.len())?;
             let written = file.write(bytes)?;
             self.len += written as u64;
             return Ok(written);
@@ -136,8 +136,6 @@ impl Write for HeldBytes {
             .dir
             .as_ref()
             .ok_or_else(|| io::Error::other("no directory to hold bytes in"))?;
-        // What memory held goes to the file with these bytes.
-        keep_floor(self.floor.as_deref(), self.memory.len() + bytes.len())?;
         let file = tempfile::tempfile_in(dir)?;
         // Anonymity is checked on the open file, never assumed from a name's
         // removal: a file another name still links would keep the bytes
@@ -146,7 +144,10 @@ impl Write for HeldBytes {
         if std::os::unix::fs::MetadataExt::nlink(&file.metadata()?) != 0 {
             return Err(io::Error::other("the held bytes' file is still linked"));
         }
-        let mut file = BufWriter::new(file);
+        let mut file = BufWriter::new(FloorFile {
+            file,
+            floor: self.floor.clone(),
+        });
         file.write_all(&std::mem::take(&mut self.memory))?;
         file.write_all(bytes)?;
         self.file = Some(file);
@@ -159,11 +160,27 @@ impl Write for HeldBytes {
     }
 }
 
-/// Refuses a write of `bytes` to a holder's file that would take the disk
-/// below `floor`.
-fn keep_floor(floor: Option<&dyn SpillFloor>, bytes: usize) -> io::Result<()> {
-    if floor.is_some_and(|floor| !floor.has_room_for(bytes as u64)) {
-        return Err(io::Error::new(io::ErrorKind::StorageFull, AtDiskFloor));
+/// A holder's file, under its buffer: every write that reaches the file,
+/// a buffer's drain on flush, read-back or drop included, asks the floor for
+/// its bytes first.
+struct FloorFile {
+    file: File,
+    floor: Option<Arc<dyn SpillFloor>>,
+}
+
+impl Write for FloorFile {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self
+            .floor
+            .as_ref()
+            .is_some_and(|floor| !floor.has_room_for(bytes.len() as u64))
+        {
+            return Err(io::Error::new(io::ErrorKind::StorageFull, AtDiskFloor));
+        }
+        self.file.write(bytes)
     }
-    Ok(())
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
 }
