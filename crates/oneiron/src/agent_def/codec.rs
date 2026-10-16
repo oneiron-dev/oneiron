@@ -15,10 +15,11 @@ use super::types::{
     KEY_DESC, KEY_DISPLAY_NAME, KEY_DREAMING, KEY_DREAMING_MODEL, KEY_ENABLED, KEY_FORKED_FROM,
     KEY_GENERATED, KEY_HUMAN_AUTHORED, KEY_INSTRUCTIONS, KEY_LIFECYCLE_STATUS, KEY_LOGICAL_ID,
     KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION,
-    KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
+    KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_HOT_STEPS, KEY_PROFILE_OPTIONAL_MEMORY,
+    KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
     KEY_PROVENANCE, KEY_REFUSAL, KEY_SCOPE, KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS,
     KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS, KEY_VERSION, KEY_WAKE_CADENCE,
-    KEY_WORLD, MemoryProfile, SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
+    KEY_WORLD, MemoryProfile, OUTPUT_DECAY_KEYS, SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
@@ -567,7 +568,8 @@ fn encode_skill_dependency(dependency: &SkillDependency) -> Value {
 }
 
 /// Encodes a [`MemoryProfile`] sub-map: the [`MEMORY_PROFILE_KEYS`] in
-/// pinned order, with `budget_split` and `optional_memory` elided when absent.
+/// pinned order, with `budget_split`, `hot_steps`, `output_decay`, an empty
+/// `verbatim_pins` and `optional_memory` elided when absent.
 fn encode_memory_profile(profile: &MemoryProfile) -> Value {
     let mut entries = vec![(
         Value::from(KEY_PROFILE_WINDOW_TOKEN_BUDGET),
@@ -587,6 +589,36 @@ fn encode_memory_profile(profile: &MemoryProfile) -> Value {
         Value::from(KEY_PROFILE_COMPACTION),
         Value::from(profile.compaction.as_str()),
     ));
+    if let Some(hot_steps) = profile.hot_steps {
+        entries.push((Value::from(KEY_PROFILE_HOT_STEPS), Value::from(hot_steps)));
+    }
+    if let Some(decay) = profile.output_decay {
+        entries.push((
+            Value::from(KEY_PROFILE_OUTPUT_DECAY),
+            Value::Map(vec![
+                (
+                    Value::from(OUTPUT_DECAY_KEYS[0]),
+                    Value::from(decay.overview_after_turns),
+                ),
+                (
+                    Value::from(OUTPUT_DECAY_KEYS[1]),
+                    Value::from(decay.stub_after_turns),
+                ),
+            ]),
+        ));
+    }
+    if !profile.verbatim_pins.is_empty() {
+        entries.push((
+            Value::from(KEY_PROFILE_VERBATIM_PINS),
+            Value::Array(
+                profile
+                    .verbatim_pins
+                    .iter()
+                    .map(|pin| Value::from(pin.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
     if let Some(optional_memory) = &profile.optional_memory {
         entries.push((
             Value::from(KEY_PROFILE_OPTIONAL_MEMORY),

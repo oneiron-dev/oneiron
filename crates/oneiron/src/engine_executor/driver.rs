@@ -164,6 +164,10 @@ impl<'a> EngineNativeExecutor<'a> {
         if let ExecutorStorage::Session(binding) = &self.storage {
             seat.bind_room(binding.route.target());
         }
+        // Docs Q13: the agent's own decay thresholds, when its profile names them.
+        if let Some(decay) = seat.output_decay() {
+            self.output_decay = decay;
+        }
         self.compaction = Some(seat);
         self
     }
@@ -236,10 +240,13 @@ impl<'a> EngineNativeExecutor<'a> {
             // A room's run lands through its own handle, on the route it
             // captured at entry: the summary stays in the room's overlay and
             // drops with it at close, and a closed or flipped room refuses.
-            ExecutorStorage::Session(binding) => driver.integrate_in_overlay(
+            // Docs Q17: a room already on record at entry lands its summary in
+            // base under the room's saver instead.
+            ExecutorStorage::Session(binding) => driver.integrate_in_session(
                 &binding.session,
                 &binding.route,
                 byline,
+                placement,
                 gated,
                 accumulated,
                 &span,
