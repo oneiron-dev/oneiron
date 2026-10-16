@@ -320,15 +320,17 @@ rung and a prompt package for the executor is named:
 [models.code_mode]
 prompt_package = "prompts"   # holds blocks/engine-executor-wire.md; relative to this file
 budget_units = 10000000      # optional; process-lifetime meter for its model calls
-max_runs = 4                 # optional; runs at once, each its own thread
-max_runs_per_credential = 2  # optional; runs at once under one credential
+max_runs = 32                # optional; runs at once, each its own thread (default: from cores and memory)
 ```
 
 A run holds its place until its worker ends, whether or not its caller is
-still waiting, and past either bound a new run is refused with
-`code_run_saturated`. A compaction pass can outlive the call that started it,
-so passes have their own `max_runs` places; past them a pass is refused and
-the run keeps its raw window.
+still waiting. Past `max_runs` a new run waits its turn, round-robin across
+credentials, and the row asks whether everything is okay; a run that waits
+past `[limits] queue_wait_timeout_ms` ends with `code_run_waited_out` and no
+run started. The default is four runs a core, and no more than half a GiB of
+memory each. A compaction pass can outlive the call that started it, so
+passes have their own `max_runs` places; past them a pass waits its turn, and
+one that waits past the deadline leaves the run its raw window.
 
 Each step's call is admitted like a chat turn, against the vault's model
 manifest and route, and spends from `budget_units`: the tokens the reply

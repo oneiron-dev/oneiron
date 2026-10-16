@@ -1,13 +1,16 @@
 //! State machine: stage, advance, CAS, finish/refuse/finalize T2, availability gate, pin release and orphan sweep.
 
+use std::collections::BTreeSet;
+
 use crate::Vault;
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{
     GitOid, GitWire, GitWireCommitOutcome, GitWireRejection, GitWireRepo, lock_repository,
 };
-use crate::origin::scan_check::{OriginScan, ScanCount};
+use crate::origin::lfs::LfsOid;
+use crate::scan_check::{EngineScan, ScanCount};
 
 #[cfg(test)]
 use super::publication_codec::origin_publication_id;
@@ -28,6 +31,46 @@ use super::publication_types::{
 // The state machine
 // ---------------------------------------------------------------------------
 
+/// What admission made of one publication request.
+pub(super) enum OriginAdmission {
+    /// The request's own publication, durable and `Prepared`.
+    Staged(OriginPublicationRecord),
+    /// The `Published` publication that already made the request's move,
+    /// whose value the ref carries.
+    Resolved(OriginPublicationRecord),
+}
+
+/// The refusal naming what a request for `owner`'s move needs beyond what
+/// `owner` certified, or `None` when its proof covers the request. The
+/// owner's tip is always certified.
+pub(in crate::origin) fn obligations_beyond_owner<'a>(
+    owner: &OriginPublicationRecord,
+    objects: impl Iterator<Item = &'a GitOid>,
+    lfs_objects: impl Iterator<Item = &'a (LfsOid, u64)>,
+) -> Option<Error> {
+    let certified: BTreeSet<&GitOid> = owner
+        .required_objects
+        .iter()
+        .chain(std::iter::once(&owner.new_oid))
+        .collect();
+    let certified_lfs: BTreeSet<&(LfsOid, u64)> = owner.required_lfs_oids.iter().collect();
+    let objects: BTreeSet<String> = objects
+        .filter(|oid| !certified.contains(oid))
+        .map(|oid| oid.as_str().to_owned())
+        .collect();
+    let lfs_objects: BTreeSet<String> = lfs_objects
+        .filter(|pair| !certified_lfs.contains(pair))
+        .map(|(oid, size)| format!("{}:{size}", oid.to_hex()))
+        .collect();
+    if objects.is_empty() && lfs_objects.is_empty() {
+        return None;
+    }
+    Some(Error::Code(CodeError::OriginPublicationBeyondOwner {
+        objects: objects.into_iter().collect(),
+        lfs_objects: lfs_objects.into_iter().collect(),
+    }))
+}
+
 impl Vault {
     /// Exposes the real Prepared boundary to the sibling smart-HTTP crash test.
     #[cfg(test)]
@@ -43,13 +86,32 @@ impl Vault {
         self.stage_origin_publication(git, request, publication_id)
     }
 
-    /// Stages the objects and makes the intent durable. No public ref moves.
+    /// [`Vault::admit_origin_publication`] for a request whose move no
+    /// publication has made yet.
+    #[cfg(test)]
     pub(super) fn stage_origin_publication(
         &self,
         git: &GitWire<'_>,
         request: &OriginPublicationRequest,
         publication_id: EntityId,
     ) -> Result<OriginPublicationRecord> {
+        match self.admit_origin_publication(git, request, publication_id)? {
+            OriginAdmission::Staged(record) => Ok(record),
+            OriginAdmission::Resolved(_) => Err(Error::ConcurrentWrite(
+                "origin CAS intent already published",
+            )),
+        }
+    }
+
+    /// Admits one request: stages the objects and makes the intent durable,
+    /// or answers it with the publication that already made its move. No
+    /// public ref moves.
+    pub(super) fn admit_origin_publication(
+        &self,
+        git: &GitWire<'_>,
+        request: &OriginPublicationRequest,
+        publication_id: EntityId,
+    ) -> Result<OriginAdmission> {
         let _guard = lock_repository(request.repo.common_dir())?;
         let provenance =
             self.get_claim(&request.provenance_claim_id)?
@@ -99,7 +161,8 @@ impl Vault {
         };
         // Reconcile a colliding owner before creating anything for this caller.
         // A Published owner keeps the consumed triple's CAS row for good (T2):
-        // a different provenance is not a second effect.
+        // a different provenance is not a second effect, but the ref carrying
+        // the owner's value is the owner's answer to it.
         let intent_key = CasIntentKey::new(&record);
         let owner = {
             let rtxn = self.store.env.read_txn()?;
@@ -119,14 +182,14 @@ impl Vault {
                     request.learned_at,
                 )?;
             }
-            match self.origin_publication(owner)?.map(|row| row.status) {
-                Some(OriginPublicationStatus::Prepared) => {
+            match self.origin_publication(owner)? {
+                Some(row) if row.status == OriginPublicationStatus::Prepared => {
                     return Err(Error::ConcurrentWrite("origin CAS intent already owned"));
                 }
-                Some(OriginPublicationStatus::Published) => {
-                    return Err(Error::ConcurrentWrite(
-                        "origin CAS intent already published",
-                    ));
+                Some(row) if row.status == OriginPublicationStatus::Published => {
+                    return self
+                        .resolve_to_published_owner(git, request, row)
+                        .map(OriginAdmission::Resolved);
                 }
                 _ => {}
             }
@@ -169,7 +232,77 @@ impl Vault {
             PUBLICATIONS.put(&self.store, wtxn, &publication_id, &row)?;
             Ok(())
         })?;
-        Ok(record)
+        Ok(OriginAdmission::Staged(record))
+    }
+
+    /// Answers a request for a move a `Published` publication already made,
+    /// under another source (ARCH-0068 RA2). Only the ref already carrying
+    /// the owner's value resolves, and only when the owner's proof covers
+    /// everything the request needs and still holds: observed, never re-run.
+    /// No ref effect runs, no publication is minted, and the owner's record
+    /// and permit are unchanged. The name's visible slot names the owner
+    /// again, so the value the ref carries is the one it advertises.
+    fn resolve_to_published_owner(
+        &self,
+        git: &GitWire<'_>,
+        request: &OriginPublicationRequest,
+        owner: OriginPublicationRecord,
+    ) -> Result<OriginPublicationRecord> {
+        if owner.repo_id != request.repo_id
+            || owner.ref_name != request.ref_name
+            || owner.expected_old_oid != request.expected_old_oid
+            || owner.new_oid != request.new_oid
+        {
+            return Err(Error::CorruptedIndex(
+                "origin CAS intent names another move",
+            ));
+        }
+        if let Some(refusal) = obligations_beyond_owner(
+            &owner,
+            request.required_objects.iter(),
+            request.required_lfs_oids.iter(),
+        ) {
+            return Err(refusal);
+        }
+        if git.read_ref(&request.repo, &request.ref_name)?.as_ref() != Some(&owner.new_oid) {
+            return Err(Error::ConcurrentWrite(
+                "origin CAS intent already published",
+            ));
+        }
+        // A later publication of the ref may have released the owner's
+        // independent dependencies. Protect them again before the owner's
+        // proof is read and its slot restored.
+        self.repin_origin_dependencies(git, &request.repo, &owner, request.learned_at)?;
+        if self
+            .origin_availability_failure(git, &request.repo, &owner)?
+            .is_some()
+        {
+            return Err(Error::ConcurrentWrite(
+                "origin publication awaits readable objects",
+            ));
+        }
+        let intent_key = CasIntentKey::new(&owner);
+        self.with_write_txn_grouped(|wtxn| {
+            let current = PUBLICATIONS
+                .get(&self.store, wtxn, &owner.publication_id)?
+                .ok_or(Error::CorruptedIndex(
+                    "origin CAS intent has no publication",
+                ))?
+                .into_record()?;
+            if current.status != OriginPublicationStatus::Published
+                || CAS_INTENT.get(&self.store, wtxn, &intent_key)? != Some(owner.publication_id)
+            {
+                return Err(Error::ConcurrentWrite("origin CAS owner changed"));
+            }
+            VISIBLE_REF.put(
+                &self.store,
+                wtxn,
+                &visible_ref_key(&owner.repo_id, &owner.ref_name),
+                &owner.publication_id,
+            )?;
+            Ok(())
+        })?;
+        Ok(owner)
     }
 
     /// Drives one `Prepared` record to a terminal state.
@@ -208,7 +341,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Failed,
+                GitWireRejection::Unauthorized,
                 "origin authority epoch no longer permits this publication",
                 learned_at,
             );
@@ -218,7 +351,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Conflicted,
+                GitWireRejection::RefMoved,
                 "live ref no longer equals the expected value",
                 learned_at,
             );
@@ -238,7 +371,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Failed,
+                GitWireRejection::ObjectsUnavailable,
                 &failure,
                 learned_at,
             );
@@ -281,22 +414,22 @@ impl Vault {
         // Retrying it is exactly how the second writer would clobber the first,
         // so neither arm below ever loops.
         if let GitWireCommitOutcome::Rejected { reason, .. } = outcome {
-            let (status, failure) = match reason {
-                GitWireRejection::RefMoved => (
-                    OriginPublicationStatus::Conflicted,
+            let failure = match reason {
+                GitWireRejection::RefMoved => {
                     "compare-and-swap found a value on the ref that nobody decided against"
-                        .to_owned(),
-                ),
-                GitWireRejection::ObjectsUnavailable => (
-                    OriginPublicationStatus::Failed,
-                    "the git wire found required objects unavailable".to_owned(),
-                ),
+                }
+                GitWireRejection::ObjectsUnavailable => {
+                    "the git wire found required objects unavailable"
+                }
+                GitWireRejection::Unauthorized => {
+                    "origin authority epoch no longer permits this publication"
+                }
                 GitWireRejection::EffectUnconfirmed => {
                     return Err(Error::ConcurrentWrite("origin CAS effect is uncertain"));
                 }
             };
             let mut refused =
-                self.refuse_origin_publication(git, repo, record, status, &failure, learned_at)?;
+                self.refuse_origin_publication(git, repo, record, reason, failure, learned_at)?;
             refused.wire = Some(outcome);
             return Ok(refused);
         }
@@ -320,6 +453,32 @@ impl Vault {
                 OriginCensusDisposition::RetriedAndPublished
             },
         })
+    }
+
+    /// Pins again each independent dependency of a `Published` record that
+    /// is still readable: a later publication of its ref may have released
+    /// them, and resolution is about to make the record certify its ref's
+    /// value again.
+    pub(in crate::origin) fn repin_origin_dependencies(
+        &self,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        record: &OriginPublicationRecord,
+        learned_at: u64,
+    ) -> Result<()> {
+        for oid in &record.required_objects {
+            if oid != &record.new_oid && git.object_exists(repo, oid)? {
+                self.pin_origin_object(
+                    git,
+                    repo,
+                    OriginKeepRefKind::Publication,
+                    &record.publication_id.to_hex(),
+                    oid,
+                    learned_at,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Re-drives the ref effect of an already-`Published` publication.
@@ -493,10 +652,24 @@ impl Vault {
         git: &GitWire<'_>,
         repo: &GitWireRepo,
         record: OriginPublicationRecord,
-        status: OriginPublicationStatus,
+        reason: GitWireRejection,
         failure: &str,
         learned_at: u64,
     ) -> Result<OriginAdvance> {
+        // A refusal decided before the wire ran must not leave an earlier
+        // uncertain attempt at this move runnable by generic recovery. Voided
+        // first: a crash before the refusal re-decides on the same evidence.
+        git.void_prepared_ref_move(
+            repo,
+            &record.ref_name,
+            record.expected_old_oid.as_ref(),
+            &record.new_oid,
+        )?;
+        let status = if reason == GitWireRejection::RefMoved {
+            OriginPublicationStatus::Conflicted
+        } else {
+            OriginPublicationStatus::Failed
+        };
         let mut refused = record;
         refused.status = status;
         refused.failure = Some(bounded_failure(failure));
@@ -551,15 +724,24 @@ impl Vault {
                     oid.to_hex()
                 )));
             }
-            match self.verify_lfs_object(*oid, *size) {
-                Ok(true) => {}
-                Ok(false) | Err(Error::CorruptedIndex(_)) => {
-                    return Ok(Some(format!(
-                        "required lfs object {} is not locally readable at {size} bytes",
-                        oid.to_hex()
-                    )));
-                }
-                Err(error) => return Err(error),
+            // The check reads the object's whole manifest, so it first takes
+            // room for it from the host, by the row it found stored, and
+            // holds it through the check. A wait that runs out is an error
+            // and decides nothing. An object whose manifest row is gone has
+            // nothing to read, so it is not readable, as the check would find.
+            let readable = match self.lfs_manifest_read_room(*oid)? {
+                Some(_room) => match self.verify_lfs_object(*oid, *size) {
+                    Ok(readable) => readable,
+                    Err(Error::CorruptedIndex(_)) => false,
+                    Err(error) => return Err(error),
+                },
+                None => false,
+            };
+            if !readable {
+                return Ok(Some(format!(
+                    "required lfs object {} is not locally readable at {size} bytes",
+                    oid.to_hex()
+                )));
             }
         }
         Ok(None)
@@ -578,6 +760,9 @@ impl Vault {
         if record.status == OriginPublicationStatus::Prepared {
             return Ok(());
         }
+        // Held throughout, so no push is accepted between what is read below
+        // and the release it decides.
+        let _coordinator = lock_repository(repo.common_dir())?;
         self.unpin_origin_object(
             git,
             repo,
@@ -596,9 +781,19 @@ impl Vault {
                 )?
                 .is_some_and(|id| id == record.publication_id)
         };
-        if record.status != OriginPublicationStatus::Published
+        let released = record.status != OriginPublicationStatus::Published
             || !owns_visible_slot
-            || git.read_ref(repo, &record.ref_name)?.as_ref() != Some(&record.new_oid)
+            || git.read_ref(repo, &record.ref_name)?.as_ref() != Some(&record.new_oid);
+        // A push of this record's own move that is still pending lands on this
+        // record, and its proof needs every dependency: they stay rooted until
+        // that push settles.
+        if released
+            && !(record.status == OriginPublicationStatus::Published
+                && record
+                    .required_objects
+                    .iter()
+                    .any(|oid| oid != &record.new_oid)
+                && self.receive_pack_move_pending(repo.repo_root(), record)?)
         {
             for oid in &record.required_objects {
                 if oid != &record.new_oid {
@@ -634,8 +829,12 @@ impl Vault {
         // its length (rule 5).
         let (owners, count) = {
             let rtxn = self.store.env.read_txn()?;
-            let mut count =
-                ScanCount::start(&self.store, &rtxn, OriginScan::KeepOwnerRows, Some(repo_id))?;
+            let mut count = ScanCount::start(
+                &self.store,
+                &rtxn,
+                EngineScan::KeepOwnerRows,
+                repo_id.as_bytes(),
+            )?;
             let mut owners = Vec::new();
             for row in KEEP_OWNER.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
                 count.row();

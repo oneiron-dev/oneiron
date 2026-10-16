@@ -153,7 +153,7 @@ fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGat
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
         | crate::mcp::McpCodeExecutionError::RunBusy
-        | crate::mcp::McpCodeExecutionError::RunSaturated => -32020,
+        | crate::mcp::McpCodeExecutionError::RunWaitedOut => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_) => -32603,
     };
@@ -519,7 +519,7 @@ pub(crate) fn mcp_board_verb_page_source(
     match output {
         oneiron::board_verb::BoardVerbOutput::Expanded { key, lines } => {
             let produced = lines.len();
-            if key == MCP_BOARD_TASKS_SECTION {
+            let source = if key == MCP_BOARD_TASKS_SECTION {
                 crate::mcp::McpPageSource::scoped_window(
                     produced,
                     omissions.scope_omitted,
@@ -528,7 +528,8 @@ pub(crate) fn mcp_board_verb_page_source(
                 )
             } else {
                 crate::mcp::McpPageSource::complete(produced)
-            }
+            };
+            source.rows_at("lines")
         }
         // A refresh renders the WHOLE board, so both axes apply to it.
         oneiron::board_verb::BoardVerbOutput::Frame(_) => crate::mcp::McpPageSource::scoped_window(

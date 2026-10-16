@@ -376,7 +376,7 @@ pub fn register_peer_actor(vault: &Vault, peer_id: u64, actor: &WriteActor) -> R
 pub fn peer_actor_at(vault: &Vault, peer_id: u64, at: u64) -> Result<Option<WriteActor>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut resolved: Option<WriteActor> = None;
-    for binding in peer_bindings_in_txn(vault, &rtxn, peer_id)? {
+    for binding in eligible_peer_bindings_in_txn(vault, &rtxn, peer_id)? {
         if !binding.claims_second(at) {
             continue;
         }
@@ -395,7 +395,7 @@ pub fn peer_actor_at(vault: &Vault, peer_id: u64, at: u64) -> Result<Option<Writ
 /// is corruption, not ambiguity — so this reports it instead of choosing.
 pub fn active_peer_actor(vault: &Vault, peer_id: u64) -> Result<Option<WriteActor>> {
     let rtxn = vault.store.env.read_txn()?;
-    let active = peer_bindings_in_txn(vault, &rtxn, peer_id)?
+    let active = eligible_peer_bindings_in_txn(vault, &rtxn, peer_id)?
         .into_iter()
         .filter(|binding| binding.lifecycle == ClaimLifecycleStatus::Active)
         .map(|binding| binding.actor)
@@ -438,9 +438,30 @@ pub fn peer_actor_stamp_is_honored(
     actor: &WriteActor,
 ) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(peer_bindings_in_txn(vault, &rtxn, peer_id)?
+    Ok(eligible_peer_bindings_in_txn(vault, &rtxn, peer_id)?
         .into_iter()
         .any(|binding| binding.claims_second(at) && binding.actor == *actor))
+}
+
+/// The peer's bindings an attribution may rest on: one awaiting its owner's
+/// answer vouches for no actor yet. Registration's closure scan reads them all.
+fn eligible_peer_bindings_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    peer_id: u64,
+) -> Result<Vec<PeerBinding>> {
+    let mut eligible = Vec::new();
+    for binding in peer_bindings_in_txn(vault, rtxn, peer_id)? {
+        if crate::gate::claim_consolidation_eligible_in_txn(
+            &vault.store,
+            rtxn,
+            &binding.claim_id,
+            crate::gate::ConsolidationReader::PeerBinding,
+        )? {
+            eligible.push(binding);
+        }
+    }
+    Ok(eligible)
 }
 
 fn peer_binding_value(peer_id: u64, class: EdgeActorClass) -> Value {

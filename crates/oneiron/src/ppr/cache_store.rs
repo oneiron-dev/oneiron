@@ -8,6 +8,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Rows, Store};
 
 use super::query::DeferredPprCacheWrite;
@@ -444,18 +445,23 @@ pub(super) fn store_cache_entry(
 
     Ok(true)
 }
+/// Every dependency row is read: past the table's threshold row the scan
+/// raises one check and deletes on.
 fn delete_dep_rows_for_seed_hash(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     seed_hash: &[u8; SEED_HASH_LEN],
 ) -> Result<()> {
+    let mut rows = ScanCount::start(store, wtxn, EngineScan::PprCacheDepRows, &[])?;
     let mut dep_keys = Vec::new();
     for entry in store.ppr_cache_deps.iter(&*wtxn)? {
         let (key, _) = entry?;
+        rows.row();
         if key.len() == CACHE_DEP_KEY_LEN && &key[ENTITY_ID_LEN..] == seed_hash {
             dep_keys.push(key.to_vec());
         }
     }
+    rows.defer(store);
 
     for key in dep_keys {
         store.ppr_cache_deps.delete(wtxn, &key)?;

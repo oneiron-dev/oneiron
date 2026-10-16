@@ -1,4 +1,30 @@
 mod authority;
+#[cfg(feature = "sync")]
+mod cycle_model;
+#[cfg(feature = "sync")]
+mod history;
+#[cfg(feature = "sync")]
+mod history_bounds_fall;
+#[cfg(feature = "sync")]
+mod history_budget;
+#[cfg(feature = "sync")]
+mod history_cycles;
+#[cfg(feature = "sync")]
+mod history_cycles_closure;
+#[cfg(feature = "sync")]
+mod history_cycles_guards;
+#[cfg(feature = "sync")]
+mod history_cycles_kept;
+#[cfg(feature = "sync")]
+mod history_cycles_named;
+#[cfg(feature = "sync")]
+mod history_doors;
+#[cfg(feature = "sync")]
+mod history_refresh_order;
+#[cfg(feature = "sync")]
+mod history_resolution;
+#[cfg(feature = "sync")]
+mod history_transport;
 mod room_facet;
 mod support;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -6,7 +32,6 @@ use crate::edge::EdgeKind;
 use rmpv::Value;
 
 use super::*;
-pub(crate) use authority::spawn_signed as spawn_signed_project_for_test;
 #[cfg(feature = "sync")]
 pub(crate) use support::signed_birth as create_project_signed_for_test;
 pub(crate) use support::signed_depth as set_project_depth_signed_for_test;
@@ -143,14 +168,9 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let root = vault.root_project()?;
-        let owner = EntityId::now();
-        vault.put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"member",
-        )?;
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
         let id = EntityId::now();
         let project = ProjectRecord::new(id, Some(root), root, owner)?;
         vault.put_project(id, &project, 2)?;
@@ -292,17 +312,12 @@ fn mint_fixture(
         ConsentActionKind, ConsentActorIdentity, ConsentSurface, PROJECT_PROPOSAL_MINT_ACTION_ID,
         ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
     };
-    let person = crate::test_util::entity(0x78);
+    let person = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let message = crate::test_util::entity(0x79);
     let skill = crate::test_util::entity(0x7A);
     let at = TimeRange { start: 20, end: 20 };
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        20,
-        b"owner",
-    )?;
     // A source message must go through the witness door, never a raw MESSAGE put.
     let staging = EntityId::now();
     let staging_project = ProjectRecord::new(

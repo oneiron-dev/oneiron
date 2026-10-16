@@ -6,9 +6,13 @@ use super::*;
 use crate::credential_door::PushedBlob;
 use crate::error::CodeError;
 
-/// The tip stream alone, under the full line budget.
-fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
-    parse_door_streams(framed, b"", DOOR_MAX_SCAN_LINES).map(|(blobs, _)| blobs)
+/// The tip stream alone, read a record at a time under the default bounds.
+fn parse_pushed_blobs(mut framed: &[u8]) -> std::result::Result<Vec<PushedBlob>, InputRefused> {
+    let mut blobs = Vec::new();
+    for_each_framed_blob(&mut framed, false, ScanBounds::default(), &mut |blob| {
+        blobs.push(blob);
+    })?;
+    Ok(blobs)
 }
 
 #[cfg(unix)]
@@ -148,7 +152,7 @@ fn smart_http_framed_blobs_reach_the_door_whatever_their_bytes_look_like() {
         "the post-image oid is what the push would make durable"
     );
     assert_eq!(
-        blobs[0].added_lines,
+        blobs[0].lines().collect::<Vec<_>>(),
         vec![
             b"++ let token = \"value\";".to_vec(),
             b"+++ b/decoy".to_vec()
@@ -160,7 +164,7 @@ fn smart_http_framed_blobs_reach_the_door_whatever_their_bytes_look_like() {
         "the path field runs to the end of the header, spaces and all"
     );
     assert!(
-        blobs[1].added_lines.iter().any(|line| line.contains(&0)),
+        blobs[1].lines().any(|line| line.contains(&0)),
         "binary bytes reach the door, which is what refuses them"
     );
 }
@@ -269,6 +273,7 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
         verdict: DoorWindowVerdict::Clean,
         ref_updates: outcome.ref_updates.clone(),
         lfs_pointers: Vec::new(),
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     let attribution = vault

@@ -13,6 +13,7 @@ use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::import::ImportConfigOverride;
+use super::keystore::{KeystoreConfigOverride, lookup_keystore_override};
 use super::limits::LimitsConfigOverride;
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
@@ -76,6 +77,7 @@ impl EnvConfig {
         values.vault_path = lookup_path(&mut lookup, "ONEIRON_VAULT_PATH");
         values.host = lookup("ONEIRON_HOST");
         values.port = lookup_parse(&mut lookup, "ONEIRON_PORT")?;
+        values.artifact_port = lookup_parse(&mut lookup, "ONEIRON_ARTIFACT_PORT")?;
         values.auth_secret = lookup("ONEIRON_AUTH_SECRET");
         values.oauth_issuer = lookup("ONEIRON_OAUTH_ISSUER");
         values.oauth_jwks_uri = lookup("ONEIRON_OAUTH_JWKS_URI");
@@ -116,6 +118,7 @@ impl EnvConfig {
         values.backup = lookup_backup_override(&mut lookup)?;
         values.feedback = lookup_feedback_override(&mut lookup)?;
         values.recall = lookup_recall_override(&mut lookup)?;
+        values.keystore = lookup_keystore_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
         values.failure_signal_training =
@@ -280,6 +283,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.backup.validate()?;
     config.feedback.validate()?;
     config.recall.validate()?;
+    config.keystore.validate()?;
     config.limits.validate()?;
     config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
@@ -448,6 +452,7 @@ struct FileServeConfig {
     vault_path: Option<PathBuf>,
     host: Option<String>,
     port: Option<u16>,
+    artifact_port: Option<u16>,
     auth_secret: Option<String>,
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
@@ -481,6 +486,7 @@ struct FileServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
@@ -496,6 +502,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             vault_path: value.vault_path,
             host: value.host,
             port: value.port,
+            artifact_port: value.artifact_port,
             auth_secret: value.auth_secret,
             oauth_issuer: value.oauth_issuer,
             oauth_jwks_uri: value.oauth_jwks_uri,
@@ -529,6 +536,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             backup: value.backup,
             feedback: value.feedback,
             recall: value.recall,
+            keystore: value.keystore,
             limits: value.limits,
             import: value.import,
             models: None,
@@ -545,6 +553,7 @@ struct PartialServeConfig {
     vault_path: Option<PathBuf>,
     host: Option<String>,
     port: Option<u16>,
+    artifact_port: Option<u16>,
     auth_secret: Option<String>,
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
@@ -578,6 +587,7 @@ struct PartialServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
@@ -594,6 +604,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("vault_path", &self.vault_path)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("artifact_port", &self.artifact_port)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("oauth_issuer", &self.oauth_issuer)
             .field("oauth_jwks_uri", &self.oauth_jwks_uri)
@@ -639,6 +650,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("keystore", &self.keystore)
             .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
@@ -661,6 +673,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.port {
             resolved.port = value;
+        }
+        if let Some(value) = self.artifact_port {
+            resolved.artifact_port = value;
         }
         if let Some(value) = self.auth_secret {
             resolved.auth_secret = Some(value);
@@ -767,6 +782,9 @@ impl PartialServeConfig {
         if let Some(value) = self.feedback {
             resolved.feedback.apply_override(value);
         }
+        if let Some(value) = self.keystore {
+            resolved.keystore.apply_override(value);
+        }
         if let Some(value) = self.recall {
             resolved.recall.apply_override(value);
         }
@@ -806,6 +824,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             vault_path: value.vault_path.clone().or_else(|| value.data_dir.clone()),
             host: value.host.clone(),
             port: value.port,
+            artifact_port: value.artifact_port,
             auth_secret: value.auth_secret.clone(),
             oauth_issuer: value.oauth_issuer.clone(),
             oauth_jwks_uri: value.oauth_jwks_uri.clone(),
@@ -840,6 +859,13 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             recall: None,
+            keystore: value
+                .keystore_dir
+                .clone()
+                .map(|dir| KeystoreConfigOverride {
+                    dir: Some(dir),
+                    ..KeystoreConfigOverride::default()
+                }),
             limits: None,
             import: None,
             models: None,

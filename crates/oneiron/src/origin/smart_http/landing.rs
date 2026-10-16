@@ -10,7 +10,7 @@ use super::evidence::{
 use super::landing_lfs::{
     admit_landing_lfs_pointers, attach_landing_lfs_pointers, ref_required_lfs_oids,
 };
-use super::paths::{now_secs, serve_failed};
+use super::paths::{ORIGIN_REF_UPDATE_BATCH, now_secs, serve_failed};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
@@ -20,7 +20,8 @@ use crate::git_wire::{
 };
 use crate::origin::lfs::{LfsPointerIntent, lfs_repo_id};
 use crate::origin::publication::{
-    OriginPublicationReceipt, OriginPublicationRequest, OriginPublicationStatus,
+    OriginPublicationAnswer, OriginPublicationReceipt, OriginPublicationRequest,
+    OriginPublicationStatus,
 };
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::temporal::TimeRange;
@@ -39,11 +40,25 @@ pub struct ReceivePackAttribution {
 /// The durable record of one landing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceivePackLanding {
-    /// The first certified ref's receipt. A multi-ref landing is not atomic;
+    /// What certified the first ref. A multi-ref landing is not atomic;
     /// success means every ref certified, but failure never rolls earlier refs back.
-    pub receipt: GitWireReceipt,
+    pub receipt: ReceivePackCertificate,
     /// Whether a durable terminal record answered without re-running git.
     pub replayed: bool,
+}
+
+/// What certified one landed ref.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReceivePackCertificate {
+    /// The journaled ref effect the landing drove or replayed.
+    Wire(GitWireReceipt),
+    /// The `Published` publication that had already made this ref's move.
+    /// The backend left the ref at its value, its proof covers the push, and
+    /// no ref effect ran for it: the push's own outcome stays its record.
+    ResolvedToOwner {
+        /// The owner's publication id.
+        publication_id: EntityId,
+    },
 }
 
 /// Whether the repository already carries every observed value.
@@ -65,7 +80,10 @@ pub fn refs_already_applied(
         .iter()
         .map(|entry| GitRefName::parse_full(entry.name.clone()))
         .collect::<Result<Vec<_>>>()?;
-    let observed = wire.read_refs(&handle, &names)?;
+    let mut observed = Vec::with_capacity(names.len());
+    for batch in names.chunks(ORIGIN_REF_UPDATE_BATCH) {
+        observed.extend(wire.read_refs(&handle, batch)?);
+    }
     Ok(refs
         .iter()
         .zip(observed)
@@ -227,7 +245,7 @@ impl Vault {
         authority: Option<&OriginAuthorityStamp>,
         learned_at: u64,
     ) -> Result<ReceivePackLanding> {
-        let mut certified: Option<GitWireReceipt> = None;
+        let mut certified: Option<ReceivePackCertificate> = None;
         let mut replayed = true;
         for update in &outcome.ref_updates {
             if let Some(attribution) = attribution {
@@ -252,11 +270,19 @@ impl Vault {
                     authority,
                     learned_at,
                 )?,
-                None => landed_wire_outcome(wire.publish_refs(
-                    handle,
-                    vec![update.publication()?],
-                    learned_at,
-                )?)?,
+                None => {
+                    let deletion = update.publication()?;
+                    let name = deletion.name().clone();
+                    let landed = landed_wire_outcome(wire.publish_refs(
+                        handle,
+                        vec![deletion],
+                        learned_at,
+                    )?)?;
+                    // A deleted name keeps no visible slot. Whatever recreates
+                    // it at a published tip reinstalls that owner's slot first.
+                    self.retire_origin_visible_ref(wire, handle, repo_id, &name)?;
+                    landed
+                }
             };
             // One publication per ref, not an atomic multi-ref push. Preserve
             // each successful ref's attachment even if a later ref is refused.
@@ -300,7 +326,7 @@ impl Vault {
         attribution: Option<&ReceivePackAttribution>,
         authority: Option<&OriginAuthorityStamp>,
         learned_at: u64,
-    ) -> Result<(GitWireReceipt, bool)> {
+    ) -> Result<(ReceivePackCertificate, bool)> {
         let ref_name = GitRefName::parse_full(update.name.clone())?;
         let attribution = match attribution {
             Some(attribution) => *attribution,
@@ -375,7 +401,17 @@ fn certified_refs(outcome: &ReceivePackOutcome) -> Vec<ObservedRef> {
 fn landing_from_publication(
     name: &str,
     receipt: &OriginPublicationReceipt,
-) -> Result<(GitWireReceipt, bool)> {
+) -> Result<(ReceivePackCertificate, bool)> {
+    if receipt.answer == OriginPublicationAnswer::ResolvedToOwner
+        && receipt.record.status == OriginPublicationStatus::Published
+    {
+        return Ok((
+            ReceivePackCertificate::ResolvedToOwner {
+                publication_id: receipt.record.publication_id,
+            },
+            true,
+        ));
+    }
     if let Some(reason) = receipt.wire_rejection() {
         return Err(Error::Code(CodeError::ReceivePackLandingRefused {
             reason: format!("{reason:?}"),
@@ -399,10 +435,14 @@ fn landing_from_publication(
 }
 
 /// The receipt and replay flag of one journaled ref effect, or a refusal.
-fn landed_wire_outcome(outcome: GitWireCommitOutcome) -> Result<(GitWireReceipt, bool)> {
+fn landed_wire_outcome(outcome: GitWireCommitOutcome) -> Result<(ReceivePackCertificate, bool)> {
     match outcome {
-        GitWireCommitOutcome::Applied(receipt) => Ok((receipt, false)),
-        GitWireCommitOutcome::Replayed(receipt) => Ok((receipt, true)),
+        GitWireCommitOutcome::Applied(receipt) => {
+            Ok((ReceivePackCertificate::Wire(receipt), false))
+        }
+        GitWireCommitOutcome::Replayed(receipt) => {
+            Ok((ReceivePackCertificate::Wire(receipt), true))
+        }
         GitWireCommitOutcome::Rejected { reason, .. } => {
             Err(Error::Code(CodeError::ReceivePackLandingRefused {
                 reason: format!("{reason:?}"),

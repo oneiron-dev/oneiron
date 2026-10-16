@@ -930,6 +930,41 @@ fn counterparty_projection_preserves_latest_contact_flags() {
 }
 
 #[test]
+fn counterparty_projection_lists_its_newest_receipts_and_totals_them_all() {
+    // F13 H104: the projection lists each counterparty's newest `limit`
+    // receipts, and its totals still count every one.
+    let receipts = (1..=3_u64)
+        .map(|n| {
+            let id = format!("outbound:send-{n}");
+            let debit = n.to_string();
+            projected_receipt(
+                &id,
+                ReceiptKind::Outbound,
+                10 * n,
+                "delivered_to_channel",
+                Some("brief:party"),
+                Some(&format!("intent:send-{n}")),
+                &[
+                    ("counterparty_ref", "kenji@example.com"),
+                    ("budget_debit", &debit),
+                ],
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let projections = project_receipts_by_counterparty_with_contacts(receipts, &BTreeMap::new(), 1);
+
+    assert_eq!(projections.len(), 1);
+    let listed = projections[0]
+        .receipts
+        .iter()
+        .map(|receipt| receipt.receipt_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(listed, ["outbound:send-3"]);
+    assert_eq!(projections[0].budget_debit_total, 6);
+}
+
+#[test]
 fn counterparty_projection_joins_contact_records() -> Result<()> {
     let (_tmp, vault) = temp_vault()?;
     let identity_ref = entity(0x91);
@@ -954,7 +989,8 @@ fn counterparty_projection_joins_contact_records() -> Result<()> {
     )];
 
     let contacts = counterparty_contact_records_for_receipts(&vault, &receipts)?;
-    let projections = project_receipts_by_counterparty_with_contacts(receipts, &contacts);
+    let projections =
+        project_receipts_by_counterparty_with_contacts(receipts, &contacts, usize::MAX);
 
     assert_eq!(projections.len(), 1);
     assert_eq!(
@@ -1009,7 +1045,8 @@ fn counterparty_projection_combines_multi_identity_contacts_conservatively() -> 
     ];
 
     let contacts = counterparty_contact_records_for_receipts(&vault, &receipts)?;
-    let projections = project_receipts_by_counterparty_with_contacts(receipts, &contacts);
+    let projections =
+        project_receipts_by_counterparty_with_contacts(receipts, &contacts, usize::MAX);
 
     assert_eq!(projections.len(), 1);
     assert_eq!(projections[0].first_touch.as_deref(), Some("inbound_first"));
@@ -1104,6 +1141,91 @@ fn brief_projection_chain_walks_nested_runs() {
     assert_eq!(child.intents[0].intent_ref, "intent:child");
     assert_eq!(child.intents[0].receipts.len(), 1);
     assert_eq!(projection.budget_debit_total, 5);
+}
+
+/// H107: a shared suffix never joins two namespaces. A run, a grant and an
+/// access grant that happen to share the brief's id stay out of the brief's
+/// audit view and budget, and an access grant stays out of an outbound grant's.
+#[test]
+fn receipt_projections_never_join_refs_across_namespaces() {
+    let receipts = vec![
+        projected_receipt(
+            "outbound:intent:own",
+            ReceiptKind::Outbound,
+            10,
+            "delivered_to_channel",
+            Some("brief:party"),
+            Some("intent:own"),
+            &[("grant_ref", "grant:party"), ("budget_debit", "2")],
+        ),
+        projected_receipt(
+            "outbound:intent:run-named-party",
+            ReceiptKind::Outbound,
+            11,
+            "delivered_to_channel",
+            Some("run:party"),
+            Some("intent:run-named-party"),
+            &[("budget_debit", "7")],
+        ),
+        projected_receipt(
+            "outbound:intent:grant-named-party",
+            ReceiptKind::Outbound,
+            12,
+            "delivered_to_channel",
+            None,
+            Some("intent:grant-named-party"),
+            &[("brief_ref", "grant:party"), ("budget_debit", "11")],
+        ),
+        projected_receipt(
+            "scoped_read:party:minted",
+            ReceiptKind::ScopedRead,
+            13,
+            "minted",
+            None,
+            Some("access_grant:party"),
+            &[],
+        ),
+    ];
+
+    let brief = project_receipts_by_brief("brief:party", receipts.clone());
+    let brief_ids: Vec<&str> = brief
+        .runs
+        .iter()
+        .flat_map(|run| {
+            run.intents
+                .iter()
+                .flat_map(|intent| intent.receipts.iter())
+                .chain(run.direct_receipts.iter())
+        })
+        .chain(brief.direct_receipts.iter())
+        .chain(brief.consent_grants.iter())
+        .chain(brief.bundles.iter())
+        .map(|receipt| receipt.receipt_id.as_str())
+        .collect();
+    assert!(brief_ids.contains(&"outbound:intent:own"));
+    assert!(!brief_ids.contains(&"outbound:intent:run-named-party"));
+    assert!(!brief_ids.contains(&"outbound:intent:grant-named-party"));
+    assert_eq!(brief.budget_debit_total, 2);
+
+    let grant = project_receipts_by_grant("grant:party", receipts.clone());
+    let grant_ids: Vec<&str> = grant
+        .receipts
+        .iter()
+        .map(|receipt| receipt.receipt_id.as_str())
+        .collect();
+    assert_eq!(grant_ids, vec!["outbound:intent:own"]);
+
+    // The legacy bare spellings still read their own namespace.
+    let filtered = finalize_receipt_query_records(
+        receipts,
+        &ReceiptQuery::new(10).with_job_ref("party"),
+        None,
+    );
+    let filtered_ids: Vec<&str> = filtered
+        .iter()
+        .map(|receipt| receipt.receipt_id.as_str())
+        .collect();
+    assert_eq!(filtered_ids, vec!["outbound:intent:own"]);
 }
 
 fn test_prompt_stamp() -> PromptRecompileStamp {

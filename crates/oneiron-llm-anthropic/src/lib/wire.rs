@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort};
+use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, limit};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
@@ -367,6 +367,13 @@ pub fn classify_anthropic_status(
     if is_content_filter_error(body) || status == 451 {
         return FatalLlmError::ContentFiltered.into();
     }
+    if limit::is_limit_status(status, body) {
+        return limit::limit_refusal(headers, body).into();
+    }
+    // A request error's status is the answer, whatever type its body names.
+    if matches!(status, 400 | 404 | 413 | 422) {
+        return FatalLlmError::InvalidRequest.into();
+    }
 
     if let Some(error_type) = body
         .get("error")
@@ -374,12 +381,7 @@ pub fn classify_anthropic_status(
         .and_then(JsonValue::as_str)
     {
         match error_type {
-            "rate_limit_error" => {
-                return RetryableLlmError::RateLimited {
-                    retry_after: retry_after_seconds(headers, body),
-                }
-                .into();
-            }
+            "rate_limit_error" => return limit::limit_refusal(headers, body).into(),
             "overloaded_error" | "api_error" => return RetryableLlmError::ServerError.into(),
             "authentication_error" | "permission_error" => return FatalLlmError::Auth.into(),
             "invalid_request_error" | "not_found_error" => {
@@ -391,28 +393,12 @@ pub fn classify_anthropic_status(
 
     match status {
         408 | 504 => RetryableLlmError::Timeout.into(),
-        429 => RetryableLlmError::RateLimited {
-            retry_after: retry_after_seconds(headers, body),
-        }
-        .into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         401 | 403 => FatalLlmError::Auth.into(),
         400 | 404 | 413 | 422 => FatalLlmError::InvalidRequest.into(),
         _ if status >= 500 => RetryableLlmError::ServerError.into(),
         _ => FatalLlmError::InvalidRequest.into(),
     }
-}
-
-fn retry_after_seconds(headers: &BTreeMap<String, String>, body: &JsonValue) -> Option<u64> {
-    headers
-        .iter()
-        .find(|(key, _)| key.eq_ignore_ascii_case("retry-after"))
-        .and_then(|(_, value)| value.parse::<u64>().ok())
-        .or_else(|| {
-            body.get("error")
-                .and_then(|error| error.get("retry_after"))
-                .and_then(JsonValue::as_u64)
-        })
 }
 
 fn is_content_filter_error(body: &JsonValue) -> bool {

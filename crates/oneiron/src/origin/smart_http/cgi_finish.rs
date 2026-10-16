@@ -9,11 +9,13 @@ use std::sync::Arc;
 use super::door::DoorAdmissionStamp;
 use super::evidence::{RefUpdate, landing_pin, local_repo_ref, receive_pack_provenance_refused};
 use super::intent::{ReceivePackRefResult, ReceivePackRefStatus};
-use super::paths::{SERVE_MAX_CGI_HEADER_BYTES, SERVE_STREAM_CHUNK_BYTES, serve_failed};
+use super::paths::{
+    ORIGIN_REF_UPDATE_BATCH, SERVE_MAX_CGI_HEADER_BYTES, SERVE_STREAM_CHUNK_BYTES, serve_failed,
+};
 use super::serve::{ServeExchange, ServeReport, ServeSink};
 use super::serve_cmd::ServeRequest;
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitRefName, GitWire};
 
 /// Parses the CGI header block, then streams the body through untouched.
@@ -158,7 +160,10 @@ pub(super) fn realized_updates(
         .iter()
         .map(|update| GitRefName::parse_full(update.name.clone()))
         .collect::<Result<Vec<_>>>()?;
-    let observed = wire.read_refs(&handle, &names)?;
+    let mut observed = Vec::with_capacity(names.len());
+    for batch in names.chunks(ORIGIN_REF_UPDATE_BATCH) {
+        observed.extend(wire.read_refs(&handle, batch)?);
+    }
     Ok(proposed
         .iter()
         .zip(observed)
@@ -200,9 +205,15 @@ pub(super) fn finish_serve(
     }
     intent.transport_bytes = Some((exchange.request_bytes, exchange.response_bytes));
     vault.save_receive_pack_intent(&key, &intent)?;
-    (report.outcome, report.landing) = vault
-        .resume_receive_pack_intent(&key, &mut intent)
-        .unwrap_or_default();
+    (report.outcome, report.landing) = match vault.resume_receive_pack_intent(&key, &mut intent) {
+        Ok(resumed) => resumed,
+        // Nothing was decided: the push is told to retry, and its refs
+        // stay Pending for whoever next finds the repository free.
+        Err(Error::Code(CodeError::LfsReadRoomWaitedOut)) => {
+            return Err(Error::Code(CodeError::LfsReadRoomWaitedOut));
+        }
+        Err(_) => Default::default(),
+    };
     report.ref_results = intent
         .refs
         .iter()

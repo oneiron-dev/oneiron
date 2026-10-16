@@ -1018,7 +1018,8 @@ mod foreign_owner_proof {
         let (_dir_a, server_a) = auth_test_server();
         let (_dir_b, server_b) = auth_test_server();
         let (a, b): (&oneiron::Vault, &oneiron::Vault) = (server_a.vault(), server_b.vault());
-        let actor = oneiron::EntityId::now();
+        // Each vault's embedded owner: one id, the same in both.
+        let actor = a.ensure_embedded_owner_actor().unwrap();
         for vault in [a, b] {
             vault
                 .put_entity(

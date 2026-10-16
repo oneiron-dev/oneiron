@@ -186,6 +186,7 @@ fn confirm_with_real_solver_in_zone(
 }
 
 fn request_as(vault: &Vault, owner: u8) -> EmergencyRescheduleRequest {
+    crate::test_util::bind_test_owner(vault, id(owner));
     let mut req = request();
     req.owner_ref = id(owner);
     req.authority = append_owner_instruction(
@@ -516,7 +517,9 @@ fn both_secondary_owner_and_rotated_sender_keep_the_actual_initial_organizer() {
     let plan = &batch.plans[0];
     let ics = crate::calendar::read_calendar_invite_ics(&vault, plan.payload().unwrap()).unwrap();
     assert_eq!(
-        crate::calendar::ics::invite_organizer(&ics).unwrap(),
+        crate::calendar::ics::invite_identity(&ics)
+            .unwrap()
+            .organizer,
         "host@example.test"
     );
     assert_eq!(plan.organizer, "host@example.test");

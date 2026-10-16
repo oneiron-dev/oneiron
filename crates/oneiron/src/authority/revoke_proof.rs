@@ -14,6 +14,8 @@ struct VerifiedRestriction {
     vault_id: AuthorityVaultId,
     entry_hash: AuthorityEntryHash,
     kind: Restriction,
+    /// The rows its proven branch folded through an owner anchor's branch.
+    routed: BTreeSet<AuthorityEntryHash>,
 }
 
 #[derive(Clone, Debug)]
@@ -21,17 +23,22 @@ enum Restriction {
     Actor {
         authority_key: AuthorityKey,
         epoch: u64,
+        /// The revoke's own folded state, kept to judge its signer against the
+        /// floors that survive the fold.
+        proof: Box<FoldState>,
     },
     /// A verified `SlipRevoke`: the withdrawn id.
     SlipRevoke([u8; 32]),
     /// A verified `SlipConsume`: every id its proven branch had burnt, the
     /// single-use ancestors it spent among them.
     SlipBurn(BTreeSet<[u8; 32]>),
-    /// A verified machine removal: the machine's chains on the removal's own
-    /// branch, whose head is the terminal revision.
+    /// A verified machine removal: the removing admitter's chain on the
+    /// removal's own branch, whose head is the terminal revision. Only the
+    /// removal itself travels: nothing else that branch held.
     MachineRemoval {
         machine: EntityId,
-        chains: BTreeMap<MachineAdmitter, MachineChain>,
+        admitter: MachineAdmitter,
+        chain: Box<MachineChain>,
     },
 }
 
@@ -56,6 +63,7 @@ impl RevokeFacts {
                 Restriction::Actor {
                     authority_key,
                     epoch,
+                    ..
                 } => record_actor_revoke(state, authority_key, *epoch, fact.entry_hash),
                 Restriction::SlipRevoke(slip_id) => {
                     state.slips.revoked.insert(*slip_id);
@@ -64,8 +72,12 @@ impl RevokeFacts {
                 Restriction::SlipBurn(burnt) => {
                     state.slips.consumed.extend(burnt.iter().copied());
                 }
-                Restriction::MachineRemoval { machine, chains } => {
-                    super::machine_profile::merge_machine_chains(state, *machine, chains);
+                Restriction::MachineRemoval {
+                    machine,
+                    admitter,
+                    chain,
+                } => {
+                    super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
             }
         }
@@ -135,6 +147,7 @@ pub(super) fn derive_revoke_facts(
         let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, !removal) else {
             continue;
         };
+        let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
         let kind = match &entry.op {
             AuthorityOp::RevokeActor {
                 authority_key,
@@ -142,14 +155,40 @@ pub(super) fn derive_revoke_facts(
             } => Restriction::Actor {
                 authority_key: authority_key.clone(),
                 epoch: *epoch,
+                proof: Box::new(state),
             },
             AuthorityOp::MachineProfile(profile) => {
-                let Some(chains) = state.machines.get(&profile.machine) else {
+                let Some((admitter, chain)) = state
+                    .machines
+                    .get(&profile.machine)
+                    .into_iter()
+                    .flatten()
+                    .find(|(_, chain)| chain.head.entry == *hash)
+                else {
                     continue;
                 };
                 Restriction::MachineRemoval {
                     machine: profile.machine,
-                    chains: chains.clone(),
+                    admitter: *admitter,
+                    chain: Box::new(MachineChain {
+                        head: chain.head.clone(),
+                        owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
+                        owner_held_removals: chain
+                            .owner_held_removals
+                            .iter()
+                            .filter(|(_, removal)| removal.entry == *hash)
+                            .map(|(signer, removal)| (signer.clone(), removal.clone()))
+                            .collect(),
+                        // The removal's own revision, past its floor here
+                        // still: the proof never erases that mark (Astra
+                        // #1430b).
+                        revisions: chain
+                            .revisions
+                            .iter()
+                            .filter(|(revision, _)| *revision == hash)
+                            .map(|(revision, held)| (*revision, std::sync::Arc::clone(held)))
+                            .collect(),
+                    }),
                 }
             }
             _ => continue,
@@ -157,9 +196,10 @@ pub(super) fn derive_revoke_facts(
         facts.by_hash.insert(
             *hash,
             VerifiedRestriction {
-                vault_id: state.vault_id,
+                vault_id,
                 entry_hash: *hash,
                 kind,
+                routed,
             },
         );
     }
@@ -203,6 +243,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind,
+                    routed: state.anchor_entries,
                 },
             );
         }
@@ -212,7 +253,8 @@ impl RevokeFacts {
 impl RevokeFacts {
     /// Forgets every restriction that stands on a key a handoff retired: the
     /// old root revokes no actor and withdraws no slip the new root bound or
-    /// minted, whatever its own old branch says.
+    /// minted, whatever its own old branch says. A row the proof took through
+    /// an owner anchor's branch rests on that anchor (Wonder W3-F1).
     pub(super) fn forget_retired(
         &mut self,
         retirements: &super::retired_signers::Retirements,
@@ -220,7 +262,48 @@ impl RevokeFacts {
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) {
         self.by_hash
-            .retain(|hash, _| !retirements.excludes(hash, entries, ancestors));
+            .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
+    }
+
+    /// Forgets every actor revocation that falls under a floor that survived
+    /// the fold and that the revoke did not precede (H411): its signer is
+    /// below it, or its consent or quorum rested on a cosigner below it. The
+    /// fold refuses such a row; its proof re-folds only the revoke's own
+    /// branch, where that floor does not exist, so an outranked key's old
+    /// signature would otherwise still revoke, at any epoch it chose.
+    pub(super) fn forget_below_concurrent_floors(
+        &mut self,
+        survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
+        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        context: FoldContext<'_>,
+    ) {
+        let floors = super::tier_floor::concurrent_tier_floors(survivors, entries, &|_| true);
+        self.by_hash.retain(|hash, fact| match &fact.kind {
+            Restriction::Actor { proof, .. } => {
+                survivors.contains_key(hash)
+                    || super::tier_floor::below_a_concurrent_floor(
+                        hash,
+                        proof,
+                        entries,
+                        ancestors,
+                        &floors,
+                        // A revoke changes no roster, floor or consent input,
+                        // so its own state judges its participants as its
+                        // parents' merged state would.
+                        &|floor| {
+                            super::tier_floor::participants_with_floor(
+                                (**proof).clone(),
+                                &entries[hash],
+                                floor,
+                                context,
+                            )
+                        },
+                    )
+                    .is_none()
+            }
+            _ => true,
+        });
     }
 
     /// Forgets every restriction proved through a handoff that did not take

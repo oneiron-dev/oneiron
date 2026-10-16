@@ -18,8 +18,8 @@ use oneiron_driver::{HintPusher, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig};
 use crate::models::{
-    KeyDoor, LoggedReceipts, ModelRuntime, ModelsStatus, RawInference, RoleCall, RoleRefusal, Seat,
-    VaultKeyDoor,
+    KeyDoor, LoggedReceipts, ModelRuntime, ModelsStatus, OfferCooldowns, RawInference, RoleCall,
+    RoleRefusal, Seat, VaultKeyDoor,
 };
 use crate::server::SyncServer;
 
@@ -27,6 +27,8 @@ use crate::server::SyncServer;
 mod code_mode;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod compaction;
+#[cfg(all(test, feature = "code-sandbox-wasmtime"))]
+pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
 mod policy;
 mod status;
@@ -358,8 +360,9 @@ impl AiHost {
     ) -> Self {
         recover_dead_leases(&vault);
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
+        let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
         let runtime =
-            Arc::new(ModelRuntime::build_with_keys(models, Some(keys)).with_receipts(receipts));
+            Arc::new(ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts));
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
             handle: handle.clone(),

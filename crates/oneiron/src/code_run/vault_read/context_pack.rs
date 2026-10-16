@@ -189,6 +189,8 @@ pub enum CoreContextPackEmptyReason {
     AllActivated,
     /// Every candidate scored below threshold.
     BelowThreshold,
+    /// The reader's profile takes no optional memory, so no retrieval ran.
+    SkippedByProfile,
 }
 
 /// Structured empty-context record.
@@ -222,6 +224,9 @@ pub struct CoreContextPackProjection {
     /// Empty-context record when the pack surfaced nothing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub empty: Option<CoreContextPackEmpty>,
+    /// The request's `limit` was past 1,000 and was served at 1,000.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub limit_clamped: bool,
 }
 
 /// Context-pack response.

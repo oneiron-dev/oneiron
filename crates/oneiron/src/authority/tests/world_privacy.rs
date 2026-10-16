@@ -3,7 +3,8 @@
 //! Concurrent edits fold stricter in every order, and no forged entry, generic
 //! write, replayed edit, restore or machine that lost "yours" widens a world.
 use super::super::slip_vault::next_entry;
-use super::machine_identity::{Host, encryption_key, host, request_for};
+use super::machine_identity::{Host, host, own_encryption_key, request_for};
+use super::support::RosterHead;
 use super::support::{
     authority_key_from_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
 };
@@ -29,7 +30,10 @@ pub(super) fn world_row(host: &Host) -> EntityId {
 pub(super) fn enrol_here(host: &Host) -> EntityId {
     let request = host
         .vault
-        .machine_enrolment_request(host.vault_id, encryption_key())
+        .machine_enrolment_request(
+            host.vault_id,
+            own_encryption_key(&host.vault, host.vault_id),
+        )
         .unwrap();
     host.vault
         .enroll_machine(
@@ -338,7 +342,10 @@ fn a_world_orphaned_by_a_shared_key_is_re_picked() {
     .unwrap();
     land(&host, &[twin_mark]);
     let fold = host.vault.authority_fold().unwrap();
-    assert!(fold.machine(laptop).is_some_and(|folded| folded.conflicted));
+    assert!(
+        fold.machine(laptop)
+            .is_some_and(|folded| folded.head().conflicted)
+    );
     assert!(!fold.world_readable_on(world, Destination::Machine(here)));
 
     set(
@@ -438,7 +445,10 @@ fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
     // machine of the owner's included; only this machine speaks for itself.
     for origin in [
         EditOrigin::Peer(PeerMachine::Unknown),
-        EditOrigin::Peer(PeerMachine::Proven(other)),
+        EditOrigin::Peer(PeerMachine::Proven {
+            machine: other,
+            key: other_key.verifying_key().to_bytes(),
+        }),
     ] {
         assert!(set(&host, origin, world, ReadLocation::Everywhere).is_err());
     }
@@ -468,7 +478,15 @@ fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
         .vault
         .set_world_privacy_as(
             &host.owner,
-            EditOrigin::Peer(PeerMachine::Proven(here)),
+            EditOrigin::Peer(PeerMachine::Proven {
+                machine: here,
+                key: host
+                    .vault
+                    .authority_fold()
+                    .unwrap()
+                    .machine_proof_key(here)
+                    .unwrap(),
+            }),
             world,
             settings(ReadLocation::OneMachine(here)),
         )
@@ -661,8 +679,8 @@ fn a_hold_resting_on_a_later_mark_still_edits() {
     let fold = host.vault.authority_fold().unwrap();
     let mut seq = fold.append_sequences[&host.issuer.public_key()];
     let mut parents: Vec<_> = fold.append_heads.iter().copied().collect();
-    let laptop_profile = fold.machine(laptop).unwrap().profile.clone();
-    let here_profile = fold.machine(here).unwrap().profile.clone();
+    let laptop_profile = fold.machine(laptop).unwrap().head().profile.clone();
+    let here_profile = fold.machine(here).unwrap().head().profile.clone();
     let demotion = MachineProfile {
         role: MachineRole::Owned(MachineOwnership::WorkSchool),
         revision: laptop_profile.revision + 1,
@@ -702,7 +720,7 @@ fn a_hold_resting_on_a_later_mark_still_edits() {
         .unwrap();
     assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
     let fold = host.vault.authority_fold().unwrap();
-    assert_eq!(fold.machine(here).unwrap().entry, parents[0]);
+    assert_eq!(fold.machine(here).unwrap().head().entry, parents[0]);
     set(
         &host,
         EditOrigin::ThisMachine,
@@ -826,11 +844,21 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     let (later, later_key) = other_machine(&host, 71, MachineRole::Owned(MachineOwnership::Yours));
 
     let entries = stored_entries(&host.vault);
-    let (edits, main): (Vec<_>, Vec<_>) = entries
-        .iter()
-        .cloned()
-        .partition(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)));
-    assert_eq!(edits.len(), 2);
+    // The world's side entries: its settings edits, and the key records the
+    // settings door's ensure step signs once this install has a keystore.
+    let (edits, main): (Vec<_>, Vec<_>) = entries.iter().cloned().partition(|entry| {
+        matches!(
+            entry.op,
+            AuthorityOp::WorldPrivacy(_) | AuthorityOp::WorldKeyWraps(_)
+        )
+    });
+    assert_eq!(
+        edits
+            .iter()
+            .filter(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
+            .count(),
+        2
+    );
     let edit_hashes: BTreeSet<_> = edits
         .iter()
         .map(|entry| authority_entry_hash(entry).unwrap())
@@ -850,7 +878,7 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
             .collect::<BTreeSet<_>>(),
         without.valid_entries
     );
-    assert!(without.machine(later).is_some_and(FoldedMachine::is_mine));
+    assert!(without.machine(later).is_some_and(RosterHead::mine));
     assert!(without.worlds.is_empty());
     // The second edit took the first as its parent: one live edit, never a
     // main-log head.

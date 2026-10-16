@@ -57,9 +57,7 @@ impl Memory<'_> {
         stopped: &mut bool,
     ) -> MemoryResult<Vec<EntityId>> {
         // Bounded page primitive, not `entities_by_type().take(cap)`: the
-        // latter materializes the whole CLAIM index and errors with
-        // IndexOverflow past MAX_TYPE_QUERY_RESULTS before `take` can run, so
-        // a large vault would hard-fail world-scoped recall.
+        // latter materializes the whole CLAIM index before `take` can run.
         let page = |after: Option<&EntityId>| {
             self.vault
                 .entities_by_type_page(ENTITY_TYPE_CLAIM, after, SCOPE_HONESTY_SCAN_CAP)

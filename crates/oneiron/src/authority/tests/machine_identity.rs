@@ -2,7 +2,7 @@
 //! own answer at enrolment ("yours, work/school, or rented"; only yours counts),
 //! signed into the authority log. No MACHINE body, actor class, host-root
 //! derivation or forged entry sets it, and a mesh address bind keeps it.
-use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
+use super::support::{RosterChain, authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_MACHINE;
@@ -44,13 +44,29 @@ pub(super) fn encryption_key() -> MachineEncryptionKey {
     }
 }
 
+thread_local! {
+    /// This test's host keystore: every vault one test opens runs on one machine.
+    static HOST_KEYS: std::sync::Arc<oneiron_keystore::MemoryKeystore> = std::sync::Arc::default();
+}
+
+/// `vault`'s own encryption key for `vault_id`, from this test's host keystore.
+pub(super) fn own_encryption_key(vault: &Vault, vault_id: [u8; 32]) -> MachineEncryptionKey {
+    vault.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
+    vault.machine_encryption_key(vault_id).unwrap()
+}
+
 /// The machine that joins: its own install, asking to join `vault_id`.
 fn joining(vault_id: [u8; 32]) -> (tempfile::TempDir, Vault, MachineEnrolmentRequest) {
     let dir = tempfile::tempdir().unwrap();
     let install = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-    let request = install
-        .machine_enrolment_request(vault_id, encryption_key())
-        .unwrap();
+    let own = own_encryption_key(&install, vault_id);
+    // A key from no slot of this install's is never signed into a request.
+    assert!(
+        install
+            .machine_enrolment_request(vault_id, encryption_key())
+            .is_err()
+    );
+    let request = install.machine_enrolment_request(vault_id, own).unwrap();
     (dir, install, request)
 }
 
@@ -82,7 +98,7 @@ fn is_mine(vault: &Vault, machine: EntityId) -> bool {
         .authority_fold()
         .unwrap()
         .machine(machine)
-        .is_some_and(FoldedMachine::is_mine)
+        .is_some_and(|folded| folded.is_mine(None))
 }
 
 #[test]
@@ -100,7 +116,7 @@ fn only_the_owners_yours_makes_a_machine_mine() {
             .vault
             .enroll_machine(&host.issuer, &host.owner, &request, role)
             .unwrap();
-        assert_eq!(folded.is_mine(), mine, "{role:?}");
+        assert_eq!(folded.is_mine(None), mine, "{role:?}");
         assert_eq!(is_mine(&host.vault, request.machine), mine, "{role:?}");
         // The joining install keeps its own machine id beside its key; it is
         // not the CRDT client id.
@@ -177,6 +193,7 @@ fn only_the_owners_yours_makes_a_machine_mine() {
             .unwrap()
             .machine(request.machine)
             .unwrap()
+            .roster_chain()
             .profile
             .machine_key,
         request.machine_key
@@ -200,7 +217,7 @@ fn a_removed_machine_never_comes_back() {
             MachineRole::Removed,
         )
         .unwrap();
-    assert!(removed.removed && !removed.is_live());
+    assert!(removed.roster_chain().removed && !removed.roster_chain().is_live());
     assert!(!is_mine(&host.vault, request.machine));
     for retry in [
         host.vault
@@ -243,7 +260,13 @@ fn a_machine_never_changes_its_key() {
             )
             .unwrap()
     };
-    assert_eq!(proved(&first), PeerMachine::Proven(machine));
+    assert_eq!(
+        proved(&first),
+        PeerMachine::Proven {
+            machine,
+            key: first.verifying_key().to_bytes()
+        }
+    );
 
     let fold = host.vault.authority_fold().unwrap();
     let request = request_for(host.vault_id, machine, &second);
@@ -257,7 +280,12 @@ fn a_machine_never_changes_its_key() {
                 machine_key: request.machine_key,
                 machine_proof: request.machine_proof,
                 revision: 2,
-                ..fold.machine(machine).unwrap().profile.clone()
+                ..fold
+                    .machine(machine)
+                    .unwrap()
+                    .roster_chain()
+                    .profile
+                    .clone()
             }),
             2,
         )
@@ -400,7 +428,7 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
         vault_id,
     } = host;
     let request = vault
-        .machine_enrolment_request(vault_id, encryption_key())
+        .machine_enrolment_request(vault_id, own_encryption_key(&vault, vault_id))
         .unwrap();
     vault
         .enroll_machine(
@@ -410,9 +438,12 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
             MachineRole::Owned(MachineOwnership::Yours),
         )
         .unwrap();
-    assert!(vault.local_machine().unwrap().is_some_and(|machine| {
-        machine.id == request.machine && machine.profile.is_some_and(|profile| profile.is_mine())
-    }));
+    assert!(
+        vault
+            .local_machine()
+            .unwrap()
+            .is_some_and(|machine| { machine.id == request.machine && machine.mine })
+    );
     (_dir, vault, request)
 }
 
@@ -424,10 +455,13 @@ fn joins_as_a_new_machine(copy: &Vault, vault: &Vault, request: &MachineEnrolmen
     assert_eq!(copy.local_machine().unwrap(), None);
     assert_eq!(proof(copy), None);
     let joined = copy
-        .machine_enrolment_request(request.vault_id, encryption_key())
+        .machine_enrolment_request(request.vault_id, own_encryption_key(copy, request.vault_id))
         .unwrap();
     assert_ne!(joined.machine, request.machine);
     assert_ne!(joined.machine_key, request.machine_key);
+    // Engine ruling on slot names (R2): the copy is a new machine on the same host,
+    // with the same keystore, and still gets a key of its own.
+    assert_ne!(joined.encryption_key, request.encryption_key);
     let (machine, signature) = proof(copy).unwrap();
     assert_eq!(machine, joined.machine);
     assert_eq!(
@@ -577,7 +611,7 @@ fn pair_and_bind(
             request,
         )
         .unwrap();
-    assert!(folded.is_mine());
+    assert!(folded.is_mine(None));
     let address = MeshMachineAddress {
         endpoint_key: transport.verifying_key().to_bytes(),
         direct_addrs: vec![],
@@ -624,7 +658,10 @@ fn a_mesh_address_bind_keeps_the_mark() {
         host.vault
             .mesh_peer_machine(address.endpoint_key, b"mesh/sync")
             .unwrap(),
-        PeerMachine::Proven(machine)
+        PeerMachine::Proven {
+            machine,
+            key: request.machine_key
+        }
     );
     // Only through a live grant.
     assert_eq!(
@@ -650,7 +687,10 @@ fn a_mesh_address_bind_keeps_the_mark() {
         host.vault
             .mesh_peer_machine(address.endpoint_key, b"mesh/sync")
             .unwrap(),
-        PeerMachine::Proven(machine)
+        PeerMachine::Proven {
+            machine,
+            key: request.machine_key
+        }
     );
 
     // A mesh pairing by any key other than the profile's install key never
@@ -665,4 +705,34 @@ fn a_mesh_address_bind_keeps_the_mark() {
             .unwrap(),
         PeerMachine::Unknown
     );
+}
+
+/// H336: an owner keeps binding mesh addresses past the 1,024 MACHINE rows
+/// the endpoint read once refused at (rule 5). Past the scan's threshold row
+/// the bind raises the owner's check. A lookup any endpoint key may make is
+/// a stranger's work: it stays bounded and raises none.
+#[test]
+fn a_mesh_bind_reads_past_the_old_machine_cap() {
+    const PAST_THE_OLD_CAP: usize = 1_025;
+    let host = host();
+    let at = TimeRange { start: 1, end: 1 };
+    for _ in 0..PAST_THE_OLD_CAP {
+        host.vault
+            .put_entity(&EntityId::now(), ENTITY_TYPE_MACHINE, at, 1, b"machine")
+            .unwrap();
+    }
+    let scan = crate::scan_check::EngineScan::MachineRows;
+    host.vault.set_scan_threshold(scan, 2).unwrap();
+    assert!(host.vault.mesh_machine_by_endpoint([0x5c; 32]).is_err());
+    assert!(host.vault.scan_checks().unwrap().is_empty());
+
+    let install_key = ed_key(66);
+    let machine = EntityId::now();
+    let request = request_for(host.vault_id, machine, &install_key);
+    let address = pair_and_bind(&host, machine, &request, &install_key, &ed_key(67));
+    let bound = host.vault.mesh_machine(machine).unwrap().expect("bound");
+    assert_eq!(bound.endpoint_key, address.endpoint_key);
+    let checks = host.vault.scan_checks().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].scan, scan.code());
 }

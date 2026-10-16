@@ -31,7 +31,7 @@ fn actor_key_grammar_parses_and_fails_closed() {
 #[test]
 fn witness_writes_turn_messages_edges_and_text() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x21);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     let conversation_hex = EntityId::from_bytes([0x22; 16]).expect("conv id").to_hex();
@@ -139,7 +139,7 @@ fn witness_writes_turn_messages_edges_and_text() {
 #[test]
 fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x31);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     let conversation_hex = EntityId::from_bytes([0x32; 16]).expect("conv").to_hex();
@@ -252,7 +252,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
 #[test]
 fn witness_facade_turn_enqueues_meso_on_session_close() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x61);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let session = mint_open_session(&vault, 400);
 
@@ -329,7 +329,7 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
 #[test]
 fn witness_rejects_mixed_non_system_speakers_atomically() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x63);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     mint_open_session(&vault, 400);
 
@@ -474,7 +474,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
 #[test]
 fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x65);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     // Arm one: the raced TURN belongs to the speaker the call carries. The
@@ -853,7 +853,7 @@ fn witness_append_redirties_the_same_turn() {
 #[test]
 fn witness_system_interleave_appends_but_never_mints_a_turn() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x6D);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
     let conversation_hex = EntityId::from_bytes([0x6E; 16]).expect("conv id").to_hex();
     let turn_id = EntityId::from_bytes([0x6F; 16]).expect("turn id");
@@ -1008,7 +1008,7 @@ fn witness_without_an_open_session_stays_valid() {
 #[test]
 fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_others() {
     let (_dir, vault) = open_vault();
-    let alice = put_person(&vault, 0x52);
+    let alice = put_owner(&vault);
     let bob = put_person(&vault, 0x53);
     let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
     crate::conversation_dag::fixtures::grant(&vault, owner, true);
@@ -1185,7 +1185,7 @@ fn mixed_room_messages() -> (
     EntityId,
 ) {
     let (dir, vault) = open_vault();
-    let alice = put_person(&vault, 0x52);
+    let alice = put_owner(&vault);
     let bob = put_person(&vault, 0x53);
     let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
     crate::conversation_dag::fixtures::grant(&vault, owner, true);
@@ -1236,9 +1236,11 @@ fn mixed_room_messages() -> (
             occurred_at: 11,
         })
         .expect("second actor appends to the first TURN");
+    // Bob is not the vault's owner (H149), and the room's rows carry no
+    // record scope a read grant could name, so the owner resolves his message.
     let b_message = EntityId::from_hex(
         &vault
-            .memory(bob, EdgeActorClass::Human)
+            .memory(alice, EdgeActorClass::Human)
             .get_entity(&second.message_short_ids[0])
             .unwrap()
             .value
@@ -1286,9 +1288,10 @@ fn per_person_room_erasure_sweeps_messages_inside_another_persons_turn() {
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].receipt_id.is_some());
     assert!(vault.get(&b_message).unwrap().is_none());
+    // Read as the owner, who read it before (Bob is not the vault's owner).
     assert!(
         vault
-            .memory(bob, EdgeActorClass::Human)
+            .memory(alice, EdgeActorClass::Human)
             .get_entity(&b_message.to_hex())
             .unwrap()
             .is_none()
@@ -1394,7 +1397,7 @@ fn persist_received_turn_tombstone(vault: &crate::Vault, turn: EntityId, raw_val
 #[test]
 fn persisted_personal_turn_tombstone_erases_only_its_authored_messages_on_receiver() {
     for soft_first in [false, true] {
-        let (_dir, vault, alice, bob, _room, turn, a_message, b_message) = mixed_room_messages();
+        let (_dir, vault, alice, _bob, _room, turn, a_message, b_message) = mixed_room_messages();
         let request_id = *uuid::Uuid::now_v7().as_bytes();
         if soft_first {
             let soft = crate::deletion::TombstoneValueV2 {
@@ -1442,9 +1445,10 @@ fn persisted_personal_turn_tombstone_erases_only_its_authored_messages_on_receiv
                 .unwrap()
         );
         assert!(vault.get(&b_message).unwrap().is_some());
+        // Bob's message still reads through the facade, as the owner reads it.
         assert!(
             vault
-                .memory(bob, EdgeActorClass::Human)
+                .memory(alice, EdgeActorClass::Human)
                 .get_entity(&b_message.to_hex())
                 .unwrap()
                 .is_some()
@@ -1659,5 +1663,59 @@ fn a_turn_fill_leased_before_the_owner_binding_does_not_land() {
     assert!(
         vault.get_vector(&turn).expect("read vector").is_some(),
         "work leased under the owner lands"
+    );
+}
+
+/// F30 (H227): a witnessed turn is learned at its occurrence time, so the door
+/// refuses one past the store clock's skew with a typed bad request: a
+/// far-future row can no longer carry the consolidation watermark past every
+/// later turn. A turn at the clock's edge still lands, and the close plans the
+/// current turn with the watermark inside the skew.
+#[test]
+fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x61);
+    let facade = facade_for(&vault, actor);
+    let now = vault.store.clock.now_recorded_at();
+    let turn = |seed: u8, occurred_at: u64| WitnessTurn {
+        conversation_ref: EntityId::from_bytes([seed; 16])
+            .expect("conversation id")
+            .to_hex(),
+        turn_ref: None,
+        messages: vec![witness_message(0, WitnessAuthor::User, "a plain turn")],
+        occurred_at,
+    };
+
+    let refused = facade
+        .witness(&turn(0x62, now + 10 * 365 * 86_400))
+        .expect_err("a far-future witness is refused");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    facade
+        .witness(&turn(0x63, now))
+        .expect("a current turn lands");
+    facade
+        .witness(&turn(0x64, now + 60))
+        .expect("a turn inside the clock skew lands");
+    // The structural door takes a caller learned time, so it holds a TURN to
+    // the same ceiling.
+    let structural = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "TURN".to_owned(),
+            body: serde_json::json!({"speaker": "user"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: now,
+            learned_at: Some(now + 10 * 365 * 86_400),
+        })
+        .expect_err("a far-future structural turn is refused");
+    assert_eq!(structural.code, MEMORY_CODE_BAD_REQUEST);
+
+    let advance = production_close_wake(&vault)
+        .advance_watermark_to
+        .expect("the current turns are dirty");
+    assert!(
+        advance <= vault.store.clock.now_recorded_at() + 300,
+        "the watermark would advance to {advance}"
     );
 }

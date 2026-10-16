@@ -564,7 +564,8 @@ fn a_losing_skill_drafts_one_gated_proposal_citing_its_defect_evidence() -> Resu
     let Value::Map(ref provenance) = proposal.provenance else {
         panic!("proposal provenance is a map");
     };
-    let authority = vault.dreamer_authority()?;
+    // SKILL-OPT is the Coach's job (owner ruling 2026-10-16).
+    let authority = vault.coach_authority()?;
     assert!(provenance.iter().any(|(key, value)| {
         key.as_str() == Some("actor_entity_ref")
             && value.as_slice() == Some(authority.entity_ref().as_bytes().as_slice())
@@ -680,9 +681,11 @@ fn rejected_edit_buffer_keeps_preference_principals_separate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, _) = put_standard_active(&vault, "oneiron.skill.private-buffer");
     attribute_defects_across_split(&vault, &skill, "oneiron.skill.private-buffer");
-    let owner_id = EntityId::now();
+    // The vault's own owner; a principal is the owner (H149).
+    let owner_id = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let other_id = EntityId::now();
-    put_actor(&vault, &owner_id);
     put_actor(&vault, &other_id);
     let owner = crate::write_envelope::WriteActor::new(owner_id, crate::EdgeActorClass::Human);
     let other = crate::write_envelope::WriteActor::new(other_id, crate::EdgeActorClass::Human);
@@ -754,7 +757,13 @@ fn rejected_edit_buffer_keeps_preference_principals_separate() -> Result<()> {
             .is_empty()
     );
     assert!(
-        optimize_brief_for_principal_at(&vault, &candidate, other, 301)?
+        optimize_brief_for_principal_at(&vault, &candidate, other, 301).is_err(),
+        "a person who is not the vault's owner read the owner's brief"
+    );
+    // Past that check, another principal's brief (an earlier owner's) still
+    // carries none of this owner's rejected drafts.
+    assert!(
+        super::brief::optimize_brief_bound_at(&vault, &candidate, Some(other.entity_ref()), 301)?
             .rejected_edits
             .is_empty()
     );
@@ -3523,10 +3532,7 @@ fn judged_verdict_rejects_unsupported_world_axes_and_unbound_counts() -> Result<
 }
 
 fn vector_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    let id = EntityId::now();
-    vault
-        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"goal owner")
-        .expect("person");
+    let id = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(
             id,
@@ -4905,10 +4911,7 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
 
 // ONE-2115: a pending tradeoff climbs rule → Jev band → responsible A/B.
 fn tradeoff_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    let person = EntityId::now();
-    vault
-        .put_entity(&person, ENTITY_TYPE_PERSON, t(1), 1, b"responsible")
-        .unwrap();
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(
             person,
@@ -4957,6 +4960,7 @@ fn axes_with_minutes_floor() -> Vec<GoalAxisSpec> {
 /// gain and the cost axis loses; `inverted` swaps them.
 struct LadderScorer {
     jev: Option<(f64, bool)>, // confidence, corrupt question binding
+    jev_rung: crate::llm::decision::DecisionRung,
     choice: TradeoffChoice,
     baseline: &'static str,
     inverted: bool,
@@ -4970,6 +4974,7 @@ impl LadderScorer {
     fn new(jev: Option<(f64, bool)>) -> Self {
         Self {
             jev,
+            jev_rung: crate::llm::decision::DecisionRung::SystemOne,
             choice: TradeoffChoice::Approve,
             baseline: TARGET_DESC,
             inverted: false,
@@ -5051,7 +5056,7 @@ impl HeldOutReplayScorer for LadderScorer {
                     choice: self.choice,
                     probability,
                     pin: crate::llm::decision::ProviderPin {
-                        rung: crate::llm::decision::DecisionRung::SystemOne,
+                        rung: self.jev_rung,
                         model: "jev".into(),
                         version: "pinned-1".into(),
                     },
@@ -5091,7 +5096,9 @@ fn jev_band_is_bound_and_only_outside_band_settles() -> Result<()> {
     let jev = decided.tradeoff_jev.as_ref().unwrap();
     assert_eq!(jev.pin.model, "jev");
     let resolution = decided.tradeoff_resolution.as_ref().unwrap();
-    assert_eq!(resolution.rung, TradeoffRung::Jev);
+    assert_eq!(resolution.rung, TradeoffRung::Judgment);
+    // Stored verdict rows carry the rung as JSON; the rename kept the v1 token.
+    assert_eq!(serde_json::to_string(&resolution.rung).unwrap(), "\"jev\"");
     assert_eq!(resolution.evidence, jev.question_digest);
     assert_eq!(resolution.authentication, "jev@pinned-1");
     assert_eq!(
@@ -5105,6 +5112,36 @@ fn jev_band_is_bound_and_only_outside_band_settles() -> Result<()> {
             .contains_key("skill_edit_tradeoff_jev")
     );
     assert!(skill_tradeoff_ask(&vault, &proposal)?.is_none());
+    Ok(())
+}
+
+/// PR B2 acceptance: the house model's decision read settles a tradeoff above the
+/// band like System One.
+#[test]
+fn house_read_verdict_above_the_band_settles_the_tradeoff() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.read");
+    let owner = tradeoff_owner(&vault);
+    ladder_goal(&vault, &owner, &skill, Vec::new())?;
+    let mut house = LadderScorer::new(Some((0.95, false)));
+    house.jev_rung = crate::llm::decision::DecisionRung::Escalation;
+    let decided = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &house,
+        wake(&vault, "tradeoff-read", 20),
+        901,
+    )?;
+    assert_eq!(decided.disposition, SkillEditDisposition::AcceptedTradeoff);
+    assert_eq!(
+        decided.tradeoff_jev.as_ref().unwrap().pin.rung,
+        crate::llm::decision::DecisionRung::Escalation
+    );
+    assert_eq!(
+        skill_edit_verdict(&vault, &proposal)?.unwrap(),
+        decided,
+        "the house read round-trips through the ledger"
+    );
     Ok(())
 }
 
@@ -5133,7 +5170,9 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
     assert_eq!(ask.question.proposal, proposal);
     assert_eq!(ask.jev, first.tradeoff_jev);
     let ask_digest = ask.question.digest()?;
-    let stranger = tradeoff_owner(&vault);
+    // Someone other than the responsible person settles nothing.
+    let stranger = crate::test_util::non_owner_proof(&vault);
+    assert_ne!(stranger.actor(), owner.actor());
     assert!(
         settle_skill_tradeoff_ask(
             &vault,

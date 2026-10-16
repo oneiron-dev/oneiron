@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use heed::RoTxn;
 
@@ -12,8 +12,9 @@ use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 
 use super::types::{
     CONTEXT_PACK_ANOMALOUS_REPEAT_RUN, CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO,
-    CONTEXT_PACK_SCORE_GAP_EPSILON, EntityMetadataCache, ScoredEntity,
+    CONTEXT_PACK_SCORE_GAP_EPSILON, ClaimStatusGateCache, EntityMetadataCache, ScoredEntity,
 };
+use crate::disclosure::DisclosureContext;
 use crate::vault::NoMatchFloors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,42 +84,216 @@ impl ContextPackBudgetCounts {
     }
 }
 
+/// Whether `non_base` non-base CLAIMs may stand beside `base` base CLAIMs in
+/// an `All`-world pack: non-base worlds take at most
+/// `floor(fraction × emitted claims)` (ARCH-0004). None always may.
+fn non_base_claims_fit(base: usize, non_base: usize, fraction: f32) -> bool {
+    non_base == 0 || non_base as f32 <= (base.saturating_add(non_base) as f32 * fraction).floor()
+}
+
+/// The most of `non_base` non-base CLAIMs that may stand beside `base` base
+/// CLAIMs ([`non_base_claims_fit`]).
+pub(crate) fn non_base_claim_cap(base: usize, non_base: usize, fraction: f32) -> usize {
+    (0..=non_base)
+        .rev()
+        .find(|&count| non_base_claims_fit(base, count, fraction))
+        .unwrap_or(0)
+}
+
+/// An `All`-world pack's world share while its rows are selected: the
+/// non-base claim fraction, and the run's claim decisions, which name each
+/// claim's world.
+#[derive(Clone, Copy)]
+pub(super) struct WorldShare<'g> {
+    pub(super) fraction: f32,
+    pub(super) claim_gate: &'g ClaimStatusGateCache,
+}
+
+/// A scored row's part in a pack's world share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShareRole {
+    /// Not a claim; it takes no share.
+    Free,
+    BaseClaim,
+    NonBaseClaim,
+}
+
+impl WorldShare<'_> {
+    /// A claim's world is the one its gate-decoded body names. A claim with
+    /// no decoded body counts as non-base, so it never takes a base claim's
+    /// room.
+    fn role(self, kind: ContextPackBudgetKind, id: &EntityId) -> ShareRole {
+        if kind != ContextPackBudgetKind::Claim {
+            return ShareRole::Free;
+        }
+        match self.claim_gate.decisions.get(id) {
+            Some(Some(body)) if body.world.is_none() => ShareRole::BaseClaim,
+            _ => ShareRole::NonBaseClaim,
+        }
+    }
+}
+
+/// Picks `rows` in score order under per-kind `caps` and a `limit`. A
+/// non-base claim enters only while the world share holds; one held back
+/// enters as soon as later base claims make room, so the page goes short,
+/// never over the share, when base claims are scarce. Picked rows keep
+/// their score order. Also returns whether the share kept a claim out.
+fn select_rows(
+    rows: &[(ScoredEntity, ContextPackBudgetKind, ShareRole)],
+    caps: Option<ContextPackBudgetCounts>,
+    limit: usize,
+    fraction: f32,
+) -> (Vec<ScoredEntity>, bool) {
+    let fits = |used: &ContextPackBudgetCounts, kind: ContextPackBudgetKind| {
+        caps.is_none_or(|caps| used.get(kind) < caps.get(kind))
+    };
+    let mut picked = vec![false; rows.len()];
+    let mut used = ContextPackBudgetCounts::default();
+    let (mut total, mut base, mut non_base) = (0_usize, 0_usize, 0_usize);
+    let mut held = VecDeque::new();
+    for (index, &(_, kind, role)) in rows.iter().enumerate() {
+        if total >= limit {
+            break;
+        }
+        if !fits(&used, kind) {
+            continue;
+        }
+        if role == ShareRole::NonBaseClaim && !non_base_claims_fit(base, non_base + 1, fraction) {
+            held.push_back(index);
+            continue;
+        }
+        picked[index] = true;
+        used.increment(kind);
+        total += 1;
+        match role {
+            ShareRole::Free => {}
+            ShareRole::NonBaseClaim => non_base += 1,
+            ShareRole::BaseClaim => {
+                base += 1;
+                while total < limit
+                    && fits(&used, kind)
+                    && non_base_claims_fit(base, non_base + 1, fraction)
+                {
+                    let Some(next) = held.pop_front() else {
+                        break;
+                    };
+                    picked[next] = true;
+                    used.increment(kind);
+                    total += 1;
+                    non_base += 1;
+                }
+            }
+        }
+    }
+    let rows = rows
+        .iter()
+        .zip(picked)
+        .filter_map(|(&(scored, ..), picked)| picked.then_some(scored))
+        .collect();
+    (rows, !held.is_empty())
+}
+
+/// Returns whether the world share kept a claim out; a kind's zero cap
+/// is not the share's.
 pub(super) fn apply_context_pack_retrieval_budget(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     budget: ContextPackRetrievalBudget,
-) -> Result<()> {
+    world_share: Option<WorldShare<'_>>,
+) -> Result<bool> {
     if scores.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut candidates = Vec::with_capacity(scores.len());
     let mut available = ContextPackBudgetCounts::default();
+    let (mut base_claims, mut non_base_claims) = (0_usize, 0_usize);
     for scored in scores.iter().copied() {
         let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
             continue;
         };
         let kind = ContextPackBudgetKind::from_entity_type(meta.entity_type);
-        available.increment(kind);
-        candidates.push((scored, kind));
+        let role = world_share.map_or(ShareRole::Free, |share| share.role(kind, &scored.id));
+        match role {
+            ShareRole::Free => available.increment(kind),
+            ShareRole::BaseClaim => base_claims += 1,
+            ShareRole::NonBaseClaim => non_base_claims += 1,
+        }
+        candidates.push((scored, kind, role));
     }
+    // Claims the world share can never emit leave their room to other kinds.
+    let fraction = world_share.map_or(1.0, |share| share.fraction);
+    available.add(
+        ContextPackBudgetKind::Claim,
+        base_claims + non_base_claim_cap(base_claims, non_base_claims, fraction),
+    );
 
     let caps =
         redistribute_context_pack_budget(ContextPackBudgetCounts::from_budget(budget), available);
-    let mut used = ContextPackBudgetCounts::default();
-    let mut kept = Vec::with_capacity(candidates.len().min(scores.len()));
-    for (scored, kind) in candidates {
-        if used.get(kind) >= caps.get(kind) {
-            continue;
-        }
-        used.increment(kind);
-        kept.push(scored);
-    }
+    let (rows, share_held_back) = select_rows(&candidates, Some(caps), usize::MAX, fraction);
+    *scores = rows;
+    Ok(share_held_back)
+}
 
-    *scores = kept;
+/// Cuts an `All`-world pack's scored rows to `limit` under its world share
+/// ([`select_rows`]), after any reorder that followed the budget.
+pub(super) fn truncate_under_world_share(
+    scores: &mut Vec<ScoredEntity>,
+    limit: usize,
+    share: WorldShare<'_>,
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<()> {
+    let mut rows = Vec::with_capacity(scores.len());
+    for scored in scores.iter().copied() {
+        let kind = match metadata_cache.get(store, rtxn, &scored.id)? {
+            Some(meta) => ContextPackBudgetKind::from_entity_type(meta.entity_type),
+            None => ContextPackBudgetKind::Other,
+        };
+        rows.push((scored, kind, share.role(kind, &scored.id)));
+    }
+    *scores = select_rows(&rows, None, limit, share.fraction).0;
     Ok(())
+}
+
+/// Drops the scored rows a pack's disclosure clamp withholds before any
+/// selection, so a withheld row takes no slot (OF-365); the assembly's own
+/// sweep still checks every survivor. Returns the ids it dropped.
+pub(super) fn withhold_undisclosed(
+    scores: &mut Vec<ScoredEntity>,
+    clamp: &DisclosureContext,
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &ClaimStatusGateCache,
+) -> Result<Vec<EntityId>> {
+    let mut withheld = Vec::new();
+    let mut kept = Vec::with_capacity(scores.len());
+    for scored in scores.drain(..) {
+        let admitted = match metadata_cache.get(store, rtxn, &scored.id)? {
+            Some(meta) => clamp.admits(
+                store.base(),
+                rtxn,
+                &scored.id,
+                meta.entity_type,
+                claim_gate
+                    .decisions
+                    .get(&scored.id)
+                    .and_then(Option::as_ref),
+            )?,
+            None => false,
+        };
+        if admitted {
+            kept.push(scored);
+        } else {
+            withheld.push(scored.id);
+        }
+    }
+    *scores = kept;
+    Ok(withheld)
 }
 
 fn redistribute_context_pack_budget(

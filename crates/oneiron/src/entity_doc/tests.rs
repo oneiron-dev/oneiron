@@ -4,21 +4,15 @@ use super::*;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::edge::EdgeActorClass;
 use crate::error::{ArtifactError, Error, Result};
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
+/// The vault's owner as a writer, with the owner's proof (H149).
 fn actor(vault: &Vault) -> Result<(WriteActor, AuthenticatedOwner)> {
-    let id = EntityId::now();
-    vault.put_entity(
-        &id,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let id = vault.ensure_embedded_owner_actor().unwrap();
     let actor = WriteActor::new(id, EdgeActorClass::Human);
     let owner =
         vault.authenticate_owner(id, "principal:document-test", true, GateDecisionId::now())?;

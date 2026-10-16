@@ -35,14 +35,7 @@ fn on_record_diagnostic(vault: &crate::Vault, _time: u64) -> Result<EntityId> {
     use crate::consent::{ComposedEffect, EffectFacts};
     use crate::receipt::{ReceiptKind, ReceiptQuery};
     use crate::store::GateDecisionId;
-    let owner_id = EntityId::now();
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::temporal::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
     let effect =
@@ -451,6 +444,84 @@ fn retrieval_miss_uses_published_base_run_not_entity_impersonation() -> Result<(
             )
             .is_err()
     );
+    assert_eq!(vault.export_tier1_failure_counts()?[0].count(), 1);
+    Ok(())
+}
+
+/// ONE-2689#6: an open vault's witnesses whose base runs are gone are
+/// collected, a live witness keeps verifying, and a handle taken before its
+/// witness was collected still refuses by the evidence it lost.
+#[test]
+fn a_long_running_vault_collects_dead_witnesses_and_keeps_live_ones() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut config = crate::test_util::embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    config.failure_signals.export_opt_in = true;
+    let vault = crate::Vault::open(dir.path(), config)?;
+    let miss = |started_at| {
+        crate::store::RetrievalRunRecord::new(
+            crate::store::RetrievalRunId::now(),
+            crate::store::RetrievalAction::Pipeline,
+            started_at,
+            1,
+            vec![crate::store::RetrievalSignal::Text],
+            vec![],
+            3,
+            0,
+            Some("no_results".into()),
+        )
+    };
+    let mut started_at = 3_601;
+    vault.store.record_retrieval_run(&miss(started_at))?;
+    let live = vault.run_retrieval_miss_detector("retrieval", 1)?[0];
+    let mut dead = Vec::new();
+    let mut lost = None;
+    for _ in 0..WITNESS_COLLECTION_FLOOR * 2 / 16 + 1 {
+        let runs: Vec<_> = (0..16)
+            .map(|_| {
+                started_at += 1;
+                miss(started_at)
+            })
+            .collect();
+        for run in &runs {
+            vault.store.record_retrieval_run(run)?;
+        }
+        let ids = vault.run_retrieval_miss_detector("retrieval", runs.len())?;
+        assert_eq!(ids.len(), runs.len());
+        if lost.is_none() {
+            lost = vault.tier1_observation(ids[0])?;
+        }
+        dead.extend(ids);
+        for run in &runs {
+            vault.store.delete_retrieval_run(run.run_id)?;
+        }
+    }
+    let mut retained = 0;
+    for id in &dead {
+        retained += usize::from(vault.tier1_observation(*id)?.is_some());
+    }
+    assert!(vault.tier1_observation(dead[0])?.is_none());
+    assert!(
+        retained < WITNESS_COLLECTION_FLOOR,
+        "{retained} of {} dead witnesses still held",
+        dead.len()
+    );
+    let refused = vault
+        .record_failure_signal(
+            &lost.expect("captured before its run was deleted"),
+            input(FailureClassV1::MemoryMiss),
+        )
+        .unwrap_err();
+    let Error::InvalidConfig(reason) = &refused else {
+        panic!("{refused}");
+    };
+    assert_eq!(reason, "failure observation source changed");
+    vault.record_failure_signal(
+        &vault
+            .tier1_observation(live)?
+            .expect("a live witness is never collected"),
+        input(FailureClassV1::MemoryMiss),
+    )?;
     assert_eq!(vault.export_tier1_failure_counts()?[0].count(), 1);
     Ok(())
 }

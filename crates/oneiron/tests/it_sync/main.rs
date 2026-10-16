@@ -12,6 +12,7 @@
 mod common;
 mod sync_harness;
 
+mod agent_definition_peer_reenable;
 mod ask_option_link_replication;
 mod rung0_cold_start_conformance;
 mod sync_blob_artifact_delete;
@@ -23,6 +24,7 @@ mod sync_delete_propagation;
 mod sync_edge_kind_gating;
 mod sync_facet_of_admission_boundary;
 mod sync_maintenance_quota;
+mod sync_pinned_window_catchup;
 mod sync_quarantine;
 mod sync_receipt_replay;
 mod sync_remat_correctness;

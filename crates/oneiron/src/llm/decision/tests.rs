@@ -1,4 +1,8 @@
 use super::*;
+use crate::llm::{
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest,
+    LabelReadResponse, LabelSet, LlmResult, LlmUsage,
+};
 use crate::{EntityId, Result};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17,6 +21,7 @@ fn yes(p: f64) -> ProviderDecision {
     ProviderDecision {
         answer: DecisionAnswer::Noul(true),
         probability: Some(p),
+        paired: None,
     }
 }
 fn pin(rung: DecisionRung, version: &str) -> ProviderPin {
@@ -68,7 +73,8 @@ fn provenance_and_invalid_provider_output_fail_before_queue_or_receipt() {
     let ladder = DecisionLadder {
         rule: Some(&rule),
         local: None,
-        jev: None,
+        system_one: None,
+        escalation: None,
         big: None,
         human: &queue,
         human_pin: pin(DecisionRung::Human, "q1"),
@@ -111,4 +117,273 @@ fn provenance_and_invalid_provider_output_fail_before_queue_or_receipt() {
             .is_err()
     );
     assert!(queue.0.lock().unwrap().is_empty());
+}
+
+struct Reader {
+    revision: String,
+    primary: Vec<f64>,
+    paired_yes: f64,
+    /// Primary text, primary labels and paired text of each read.
+    seen: Mutex<Vec<(String, Vec<String>, String)>>,
+}
+impl Reader {
+    fn new(primary: Vec<f64>, paired_yes: f64) -> Self {
+        Self {
+            revision: "r1".into(),
+            primary,
+            paired_yes,
+            seen: Mutex::default(),
+        }
+    }
+}
+impl LabelReadModel for Reader {
+    fn model(&self) -> &str {
+        "test-Escalation"
+    }
+    fn revision(&self) -> &str {
+        &self.revision
+    }
+    fn read(
+        &self,
+        request: &LabelReadRequest<'_>,
+        _: &BudgetLease,
+    ) -> LlmResult<LabelReadResponse> {
+        let labels = match request.primary.labels {
+            LabelSet::Noul => vec!["yes".into(), "no".into()],
+            LabelSet::Choice(options) => options.to_vec(),
+        };
+        self.seen.lock().unwrap().push((
+            request.primary.text.to_owned(),
+            labels,
+            request.paired.to_owned(),
+        ));
+        let mut usage = LlmUsage::zero();
+        usage.input.total = 3;
+        Ok(LabelReadResponse {
+            primary: self.primary.clone(),
+            paired_yes: self.paired_yes,
+            usage,
+        })
+    }
+}
+fn choice_question() -> DecisionQuestion {
+    DecisionQuestion {
+        contract: AnswerContract::Choice {
+            options: vec!["keep".into(), "merge".into(), "split".into()],
+        },
+        ..question(DecisionClass::Judgment)
+    }
+}
+fn paired_question() -> DecisionQuestion {
+    DecisionQuestion {
+        version: 3,
+        text: "Does this need more thinking?".into(),
+        ..question(DecisionClass::Judgment)
+    }
+}
+fn read_guard(limit: u64) -> BudgetGuard {
+    BudgetGuard::with_reserve_units("read-test", limit, 4, BudgetExhaustionPolicy::Suspend)
+}
+
+/// PR B1 acceptance: an in-band System One answer under an enforced band steps to the
+/// escalation rung, whose house-model read answers from the question's own labels and
+/// records the paired reading on the receipt, bound to the escalation pin.
+#[test]
+fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
+    let q = choice_question();
+    let paired = paired_question();
+    let mut policy = DecisionBandPolicy::default();
+    policy
+        .learn_shadow(
+            &q,
+            Reversibility::ReversibleRead,
+            DecisionBand::default(),
+            1,
+        )
+        .unwrap();
+    policy.enforce(&q, Reversibility::ReversibleRead).unwrap();
+    let system_one = Scripted {
+        pin: pin(DecisionRung::SystemOne, "s1"),
+        result: ProviderDecision {
+            answer: DecisionAnswer::Choice("merge".into()),
+            probability: Some(0.5),
+            paired: None,
+        },
+        calls: AtomicUsize::new(0),
+    };
+    let big = Scripted {
+        pin: pin(DecisionRung::Big, "b1"),
+        result: ProviderDecision {
+            answer: DecisionAnswer::Choice("keep".into()),
+            probability: Some(0.95),
+            paired: None,
+        },
+        calls: AtomicUsize::new(0),
+    };
+    let reader = Reader::new(vec![0.1, 0.2, 0.7], 0.8);
+    let guard = read_guard(100);
+    let evidence = vec![EntityId::now()];
+    let state = serde_json::json!({"unit": "bounded"});
+    let call = DecisionReadCall {
+        question: &q,
+        evidence: &evidence,
+        state: &state,
+    };
+    let escalation = DecisionReadProvider::new(
+        pin(DecisionRung::Escalation, "r1"),
+        &reader,
+        &guard,
+        &paired,
+        call,
+    )
+    .unwrap();
+    let queue = Queue::default();
+    let ladder = DecisionLadder {
+        rule: None,
+        local: None,
+        system_one: Some(&system_one),
+        escalation: Some(&escalation),
+        big: Some(&big),
+        human: &queue,
+        human_pin: pin(DecisionRung::Human, "q1"),
+    };
+    let run = |ladder: &DecisionLadder<'_>| {
+        ladder.run(
+            &q,
+            EntityId::now(),
+            &evidence,
+            dial(DecisionRung::SystemOne, DecisionRung::Big),
+            &policy,
+            Reversibility::ReversibleRead,
+        )
+    };
+    let decision = run(&ladder).unwrap();
+
+    assert_eq!(decision.answer, DecisionAnswer::Choice("split".into()));
+    assert_eq!(decision.probability, Some(0.7));
+    assert!(decision.in_band);
+    assert_eq!(
+        decision.receipt.providers,
+        vec![
+            pin(DecisionRung::SystemOne, "s1"),
+            pin(DecisionRung::Escalation, "r1")
+        ]
+    );
+    assert_eq!(
+        decision.receipt.paired,
+        vec![PairedReading {
+            provider: pin(DecisionRung::Escalation, "r1"),
+            question: paired.id,
+            question_version: 3,
+            probability: 0.8,
+        }]
+    );
+    assert_eq!(big.calls.load(Ordering::SeqCst), 0);
+    // One read over the question's own three labels; the paired question is no option.
+    let labels: Vec<String> = vec!["keep".into(), "merge".into(), "split".into()];
+    assert_eq!(
+        *reader.seen.lock().unwrap(),
+        vec![(q.text.clone(), labels, paired.text.clone())]
+    );
+    let budget = guard.read();
+    assert!(budget.used_units > 0);
+    assert_eq!(budget.reserved_units, 0);
+
+    // A ladder without the escalation slot skips it, up to the dial's ceiling
+    // (ARCH-0076 #posture): the big model answers.
+    let without = DecisionLadder {
+        escalation: None,
+        ..ladder
+    };
+    let decision = run(&without).unwrap();
+    assert_eq!(decision.answer, DecisionAnswer::Choice("keep".into()));
+    assert_eq!(
+        decision.receipt.providers,
+        vec![
+            pin(DecisionRung::SystemOne, "s1"),
+            pin(DecisionRung::Big, "b1")
+        ]
+    );
+    assert_eq!(big.calls.load(Ordering::SeqCst), 1);
+    assert!(queue.0.lock().unwrap().is_empty());
+    // With no big model either, a Big ceiling leaves no rung: a typed abstention.
+    let neither = DecisionLadder {
+        big: None,
+        ..without
+    };
+    let decision = run(&neither).unwrap();
+    assert_eq!(decision.answer, DecisionAnswer::Abstain);
+    assert_eq!(
+        decision.human_ask,
+        Some(HumanAskReason::ProviderUnavailable)
+    );
+    assert!(queue.0.lock().unwrap().is_empty());
+    // A dial that reaches the person queues the step there, with the in-band prior.
+    let decision = neither
+        .run(
+            &q,
+            EntityId::now(),
+            &evidence,
+            dial(DecisionRung::SystemOne, DecisionRung::Human),
+            &policy,
+            Reversibility::ReversibleRead,
+        )
+        .unwrap();
+    assert_eq!(decision.answer, DecisionAnswer::Abstain);
+    assert_eq!(decision.human_ask, Some(HumanAskReason::Uncertain));
+    let queued = queue.0.lock().unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(
+        queued[0].prior.as_ref().map(|prior| prior.answer.clone()),
+        Some(DecisionAnswer::Choice("merge".into()))
+    );
+}
+
+#[test]
+fn decision_read_refuses_another_model_a_malformed_read_and_a_refused_budget() {
+    let q = choice_question();
+    let paired = paired_question();
+    let evidence = vec![EntityId::now()];
+    let state = serde_json::json!({"unit": "bounded"});
+    let call = DecisionReadCall {
+        question: &q,
+        evidence: &evidence,
+        state: &state,
+    };
+    let guard = read_guard(100);
+    let reader = Reader::new(vec![0.1, 0.2, 0.7], 0.8);
+
+    // The route bound another revision, or another rung.
+    for bound in [
+        pin(DecisionRung::Escalation, "r2"),
+        pin(DecisionRung::SystemOne, "r1"),
+    ] {
+        assert!(DecisionReadProvider::new(bound, &reader, &guard, &paired, call).is_err());
+    }
+
+    let decide = |reader: &Reader, guard: &BudgetGuard| {
+        DecisionReadProvider::new(
+            pin(DecisionRung::Escalation, "r1"),
+            reader,
+            guard,
+            &paired,
+            call,
+        )
+        .unwrap()
+        .decide(&q, &evidence)
+    };
+    // A paired reading outside [0, 1], a missing label, or labels that are no distribution.
+    for (primary, paired_yes) in [
+        (vec![0.1, 0.2, 0.7], f64::NAN),
+        (vec![0.1, 0.2, 0.7], 1.5),
+        (vec![0.3, 0.7], 0.8),
+        (vec![0.3, 0.3, 0.3], 0.8),
+    ] {
+        assert!(decide(&Reader::new(primary, paired_yes), &guard).is_err());
+    }
+
+    // A refused admission never reaches the reader.
+    let empty = read_guard(0);
+    assert!(decide(&reader, &empty).is_err());
+    assert!(reader.seen.lock().unwrap().is_empty());
 }

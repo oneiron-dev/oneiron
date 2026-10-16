@@ -43,14 +43,7 @@ impl Fixture {
     fn new() -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), VaultConfig::default())?;
-        let subject = EntityId::now();
-        vault.put_entity(
-            &subject,
-            crate::registry::ENTITY_TYPE_PERSON,
-            at(1),
-            1,
-            b"owner",
-        )?;
+        let subject = vault.ensure_embedded_owner_actor().unwrap();
         let owner = vault.authenticate_owner(
             subject,
             "principal:claim-refinement",
@@ -147,6 +140,7 @@ impl UsefulUpstreamClaimJudge for Useful {
                 band_version: 0,
                 evidence_versions: Vec::new(),
                 cost_per_thousand: None,
+                paired: Vec::new(),
             },
             human_ask: None,
         })

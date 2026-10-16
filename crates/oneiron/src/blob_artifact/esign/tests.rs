@@ -112,14 +112,7 @@ fn capability_preview_and_signature_share_injected_time_and_ids() -> Result<()> 
         ..VaultConfig::default()
     };
     let (_dir, vault, document, doc) = setup_with(config, 200)?;
-    let owner = EntityId::from_bytes([0x42; 16])?;
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
@@ -346,17 +339,7 @@ fn ceremony_setup() -> Result<(
     }
     doc.fields[0].meta = FieldMeta::Date;
     doc.recipients[0].automated = true;
-    let owner = EntityId::now();
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_util::bind_test_owner(&vault, owner);
     doc.recipients[0].principal_ref = Some(owner.to_hex());
     event(
@@ -2252,6 +2235,97 @@ fn a_restore_never_reopens_a_ceremony_rejected_since() -> Result<()> {
         vault.execute_signing_action(first, &SigningAction::Load, None, None)?,
         SigningOutcome::AwaitingSeal
     );
+    Ok(())
+}
+
+/// A held event keeps every positive read of its document back, yet a
+/// recipient's decline and the owner's void still land on the whole chain;
+/// the seal waits for the owner's answer.
+#[test]
+fn a_held_event_never_blocks_a_decline_or_a_void() -> Result<()> {
+    for void in [false, true] {
+        let (_dir, vault, id, _doc, owner) = ceremony_setup()?;
+        let tokens = vault.issue_esign_capabilities(&owner, id)?;
+        let mut command = EsignOutboundCommand {
+            document: id.to_hex(),
+            recipient_count: 2,
+            verb: EsignOutboundVerb::SendForSignature,
+            reason: None,
+        };
+        vault
+            .dispatch_esign(
+                send_request(id, owner.actor(), command.verb, "held-send"),
+                &command,
+                None,
+                None,
+            )
+            .expect("sent");
+        if !void {
+            // The recipient opens the page, so a decline is theirs to make.
+            assert!(matches!(
+                vault.execute_signing_action(&tokens[0].1, &SigningAction::Load, None, None)?,
+                SigningOutcome::Page(_)
+            ));
+        }
+        let event = |predicate: &str| -> Result<Option<EntityId>> {
+            Ok(vault.claims_for_subject(&id)?.into_iter().find(|claim| {
+                vault
+                    .get_claim(claim)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|body| body.predicate == predicate)
+            }))
+        };
+        // The sent event's owner-answer obligation opens.
+        let sent = event("esign.sent")?.expect("sent event");
+        let pending = crate::store::PendingGateConsentRecord {
+            version: 0,
+            claim_id: *sent.as_bytes(),
+            decision_id: crate::store::GateDecisionId::from_bytes([0x70; 16]),
+            created_at: crate::unix_seconds_now(),
+            diff_handle: vec![0x70, 0x71],
+            read_frontier_hash: [0x72; 32],
+            reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()],
+            dreamer_run_id: None,
+        };
+        vault.with_write_txn(|txn| vault.store.put_pending_gate_consent_in_txn(txn, &pending))?;
+        assert!(vault.esign_document(id).is_err(), "a held chain read back");
+        if void {
+            command.verb = EsignOutboundVerb::Void;
+            command.reason = Some("withdrawn".into());
+            vault
+                .dispatch_esign(
+                    send_request(id, owner.actor(), command.verb, "held-void"),
+                    &command,
+                    None,
+                    None,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("FAILBEFORE H244 narrowed: the void did not land: {error:?}")
+                });
+        } else {
+            let outcome = vault
+                .execute_signing_action(
+                    &tokens[0].1,
+                    &SigningAction::Reject {
+                        reason: "declined".into(),
+                    },
+                    None,
+                    None,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("FAILBEFORE H244 narrowed: the decline did not land: {error:?}")
+                });
+            assert_eq!(outcome, SigningOutcome::AwaitingSeal);
+        }
+        let landed = if void {
+            "esign.voided"
+        } else {
+            "esign.declined"
+        };
+        assert!(event(landed)?.is_some(), "{landed} did not land");
+        assert!(vault.esign_document(id).is_err(), "a held chain read back");
+    }
     Ok(())
 }
 

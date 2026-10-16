@@ -1,8 +1,8 @@
 //! Top-level fold orchestration.
 //!
-//! `FoldContext` plus the topological entry-by-entry driver and its local,
-//! peer, and seen-time variants. Per-entry state transitions are delegated
-//! to [`super::entry_transition`].
+//! `FoldContext` plus the topological entry-by-entry driver; its local,
+//! peer, and seen-time entry points live in `entry_points`. Per-entry state
+//! transitions are delegated to [`super::entry_transition`].
 //!
 //! Seen-times feed only the post-fold stale-roster window; no entry waits on
 //! them (the delayed-widen ceremony died 2026-08-05, identity canon "Device-key
@@ -11,6 +11,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
+
+mod entry_points;
+
+pub use entry_points::*;
 
 #[derive(Clone, Copy)]
 pub(super) struct FoldContext<'a> {
@@ -42,10 +46,15 @@ pub(super) struct FoldContext<'a> {
     pub(super) hosted: bool,
     /// Which machines the roster rule admits as the owner's this install
     /// counts: a world edit from one it does not count only narrows.
-    pub(super) machine_standing: super::world_privacy::MachineStanding<'a>,
+    pub(super) machine_standing: super::machine_standing::InstallCounted<'a>,
     /// Only verified pre-handoff ancestry can use retired device-key ops.
     /// None is the legacy-only reference fold, never the posture-aware vault door.
     pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    /// The bytes this fold may project to hold at its peak.
+    pub(super) memory_floor_bytes: u64,
+    /// This install's pin on a fold of its own vault's log: which world-key
+    /// records count here. It decides no entry's validity.
+    pub(super) pin: Option<&'a PinnedRoot>,
 }
 
 impl FoldContext<'_> {
@@ -60,10 +69,16 @@ pub(super) struct FoldLocalInputs<'a> {
     pub(super) retire_device_ops: bool,
     pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
     pub(super) hosted: bool,
-    pub(super) machine_standing: Option<super::world_privacy::MachineStanding<'a>>,
+    pub(super) machine_standing: Option<super::machine_standing::InstallCounted<'a>>,
     /// The handoffs valid on their own rows; only these settle. None settles
     /// every handoff the fold holds.
     pub(super) handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    /// This install's pin, on a fold of its own vault's log. It moves trust
+    /// only, never which entries are valid; a peer's log folds with none.
+    pub(super) pin: Option<&'a PinnedRoot>,
+    /// Where the strict fold leaves what a resumed fold starts from; never
+    /// handed to a probe.
+    pub(super) capture: Option<&'a super::fold_resume::FoldCapture>,
 }
 
 impl FoldLocalInputs<'_> {
@@ -74,189 +89,9 @@ impl FoldLocalInputs<'_> {
         hosted: false,
         machine_standing: None,
         handoff_candidates: None,
+        pin: None,
+        capture: None,
     };
-}
-
-/// Folds a set of authority entries into a deterministic roster.
-///
-/// No local seen-times, so the stale-roster window never expires an approval;
-/// callers with local seen-time data should use
-/// [`fold_authority_log_with_seen_times`].
-pub fn fold_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
-    let first_seen_at_secs = BTreeMap::new();
-    let peer_consent_roots = BTreeMap::new();
-    fold_authority_log_inner(
-        entries,
-        &first_seen_at_secs,
-        None,
-        &peer_consent_roots,
-        folded_device_can_authority_consent,
-        FoldLocalInputs::VAULT_DOOR,
-    )
-}
-
-// Historical signed-history reference for unit tests of pre-handoff ancestry.
-// Never used by Vault, peers, cache, replay admission, or public authorization.
-#[cfg(test)]
-pub(super) fn fold_legacy_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
-    fold_authority_log_inner(
-        entries,
-        &BTreeMap::new(),
-        None,
-        &BTreeMap::new(),
-        folded_device_can_authority_consent,
-        FoldLocalInputs::default(),
-    )
-}
-
-#[cfg(test)]
-pub(super) fn fold_legacy_authority_log_with_seen_times(
-    entries: &[AuthorityLogEntry],
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
-    now_secs: u64,
-) -> AuthorityFold {
-    fold_authority_log_inner(
-        entries,
-        first_seen_at_secs,
-        Some(now_secs),
-        &BTreeMap::new(),
-        folded_device_can_authority_consent,
-        FoldLocalInputs::default(),
-    )
-}
-
-#[cfg(test)]
-pub(super) fn fold_legacy_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
-    fold_authority_log_inner(
-        entries,
-        &BTreeMap::new(),
-        None,
-        &BTreeMap::new(),
-        folded_peer_device_is_consent_root,
-        FoldLocalInputs::default(),
-    )
-}
-
-/// Folds authority entries using local first-seen timestamps for the
-/// stale-roster approval window.
-///
-/// `first_seen_at_secs` is keyed by authority entry hash and must be sourced
-/// from the local device's monotonic first-observation time. An entry missing a
-/// timestamp never starts a stale-roster window. No entry waits on its
-/// timestamp: every op lands the moment its ancestry folds.
-pub fn fold_authority_log_with_seen_times(
-    entries: &[AuthorityLogEntry],
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
-    now_secs: u64,
-) -> AuthorityFold {
-    let peer_consent_roots = BTreeMap::new();
-    fold_authority_log_with_peer_consent_roots(
-        entries,
-        first_seen_at_secs,
-        now_secs,
-        &peer_consent_roots,
-    )
-}
-
-/// [`fold_authority_log_with_seen_times`] with the consent roots of every
-/// admitted peer roster in scope for FED-01 gesture acceptance.
-///
-/// The local fold is otherwise IDENTICAL — same consent arm, same roster, same
-/// vault id. `peer_consent_roots` only widens which peer signature a lifecycle
-/// gesture may carry, and only for the peer vault the gesture already names.
-pub(crate) fn fold_authority_log_with_peer_consent_roots(
-    entries: &[AuthorityLogEntry],
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
-    now_secs: u64,
-    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
-) -> AuthorityFold {
-    fold_authority_log_inner(
-        entries,
-        first_seen_at_secs,
-        Some(now_secs),
-        peer_consent_roots,
-        folded_device_can_authority_consent,
-        FoldLocalInputs::VAULT_DOOR,
-    )
-}
-
-/// Folds under the vault's explicit hosting posture. Relay and self-host retain
-/// owner-device consent; only managed hosts may treat a cloud key as root.
-pub fn fold_authority_log_for_posture(
-    entries: &[AuthorityLogEntry],
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
-    now_secs: u64,
-    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
-    posture: crate::HostingPrivacyPosture,
-) -> AuthorityFold {
-    let consent = if posture == crate::HostingPrivacyPosture::Hosted {
-        folded_host_device_can_consent
-    } else {
-        folded_device_can_authority_consent
-    };
-    fold_authority_log_inner(
-        entries,
-        first_seen_at_secs,
-        Some(now_secs),
-        peer_consent_roots,
-        consent,
-        FoldLocalInputs {
-            hosted: posture == crate::HostingPrivacyPosture::Hosted,
-            ..FoldLocalInputs::VAULT_DOOR
-        },
-    )
-}
-
-/// Peer-side roster fold: same fold machinery, same transcript domain, two
-/// swaps.
-///
-/// The consent arm becomes the unfiltered host-root predicate
-/// (`folded_peer_device_is_consent_root`), and there are no seen-times: peer
-/// entries carry no local first-observation time, so no local stale-roster
-/// window applies, and they stay inside the peer fold's own epoch semantics.
-///
-/// The output is evidence, not authority: it never enters the local roster.
-#[must_use]
-pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
-    let first_seen_at_secs = BTreeMap::new();
-    let peer_consent_roots = BTreeMap::new();
-    fold_authority_log_inner(
-        entries,
-        &first_seen_at_secs,
-        None,
-        &peer_consent_roots,
-        folded_peer_device_is_consent_root,
-        FoldLocalInputs::VAULT_DOOR,
-    )
-}
-
-/// The reference fold under the vault's local observations (sequence floors
-/// and observation policy) and hosting posture.
-pub(super) fn fold_authority_log_with_local_observations_and_posture(
-    entries: &[AuthorityLogEntry],
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
-    now_secs: u64,
-    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
-    observations: &AuthorityLocalObservations,
-    posture: crate::HostingPrivacyPosture,
-) -> AuthorityFold {
-    let consent = if posture == crate::HostingPrivacyPosture::Hosted {
-        folded_host_device_can_consent
-    } else {
-        folded_device_can_authority_consent
-    };
-    fold_authority_log_inner(
-        entries,
-        first_seen_at_secs,
-        Some(now_secs),
-        peer_consent_roots,
-        consent,
-        FoldLocalInputs {
-            observations: Some(observations),
-            hosted: posture == crate::HostingPrivacyPosture::Hosted,
-            ..FoldLocalInputs::VAULT_DOOR
-        },
-    )
 }
 
 pub(super) fn fold_authority_log_inner(
@@ -267,9 +102,6 @@ pub(super) fn fold_authority_log_inner(
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
-    if let Some(refused) = super::log_budget::refuse_over_budget(entries) {
-        return refused;
-    }
     if local.retire_device_ops {
         // An unrelated retired sibling must not vote in a handoff probe:
         // its tier floor could otherwise disqualify a valid rotation before
@@ -283,7 +115,9 @@ pub(super) fn fold_authority_log_inner(
             consent_arm,
             local,
         );
+        let mut rounds = 0_usize;
         loop {
+            rounds += 1;
             let handoffs: BTreeSet<_> = candidates.keys().copied().collect();
             let allowed = verified_handoff_ancestors(entries, &handoffs);
             // Each candidate's line settles as it probed, under no local
@@ -305,6 +139,8 @@ pub(super) fn fold_authority_log_inner(
                     hosted: local.hosted,
                     machine_standing: local.machine_standing,
                     handoff_candidates: Some(&handoffs),
+                    pin: local.pin,
+                    capture: local.capture,
                 },
             );
             // A handoff in conflict keeps its standing here: its fence stays
@@ -314,6 +150,11 @@ pub(super) fn fold_authority_log_inner(
                     || result.closed_handoffs.contains(candidate)
             });
             if candidates.len() == handoffs.len() {
+                if let Some(capture) = local.capture
+                    && rounds > 1
+                {
+                    capture.spoil();
+                }
                 return result;
             }
         }
@@ -390,6 +231,7 @@ fn verified_handoff_candidates(
                 observations: observations.as_ref(),
                 retire_device_ops: false,
                 pre_handoff_entries: None,
+                capture: None,
                 ..local
             },
         );
@@ -457,11 +299,14 @@ fn has_re_root_ancestor(
     false
 }
 
-pub(super) fn fold_authority_log_once(
+/// The entries a fold of `entries` judges, by hash: each well signed, none
+/// hanging off another branch's side entry. With the issues found.
+fn judged_entries(
     entries: &[AuthorityLogEntry],
-    context: FoldContext<'_>,
-    handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
-) -> AuthorityFold {
+) -> (
+    BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    Vec<AuthorityFoldIssue>,
+) {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
     for entry in entries {
@@ -479,9 +324,32 @@ pub(super) fn fold_authority_log_once(
         by_hash.remove(&hash);
         issues.push(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    let entry_ancestors = match entry_ancestor_index(&by_hash) {
-        Ok(index) => index,
-        Err(signer) => return super::log_budget::over_budget_fold(signer),
+    (by_hash, issues)
+}
+
+/// The floors a fold of `entries` under `context` applies, once causal
+/// ancestry has vouched for every row it can (`sequence_ancestry`).
+pub(super) fn causal_floors_of(
+    entries: &[AuthorityLogEntry],
+    context: FoldContext<'_>,
+) -> Option<BTreeMap<AuthorityEntryHash, u64>> {
+    let (by_hash, _) = judged_entries(entries);
+    let (ancestors, _) = entry_ancestor_index(&by_hash, context.memory_floor_bytes)?;
+    super::sequence_ancestry::causal_sequence_floors(&by_hash, &ancestors, context)
+}
+
+pub(super) fn fold_authority_log_once(
+    entries: &[AuthorityLogEntry],
+    context: FoldContext<'_>,
+    handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
+    capture: Option<&super::fold_resume::FoldCapture>,
+) -> AuthorityFold {
+    let original_floors = context.sequence_floors;
+    let (by_hash, mut issues) = judged_entries(entries);
+    let Some((entry_ancestors, counted_ancestor_pairs)) =
+        entry_ancestor_index(&by_hash, context.memory_floor_bytes)
+    else {
+        return super::log_budget::memory_floor_fold(context.memory_floor_bytes);
     };
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
@@ -541,6 +409,8 @@ pub(super) fn fold_authority_log_once(
         }
         return AuthorityFold {
             append_heads: BTreeSet::new(),
+            anchor_heads: BTreeMap::new(),
+            scope_heads: BTreeMap::new(),
             append_sequences: BTreeMap::new(),
             actor_revocation_affected_writers: BTreeSet::new(),
             actor_write_frontiers: BTreeMap::new(),
@@ -561,9 +431,16 @@ pub(super) fn fold_authority_log_once(
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
             machines: BTreeMap::new(),
+            pinned_root: None,
+            root_anchors: BTreeMap::new(),
+            anchor_entries: BTreeSet::new(),
+            accepted_roster_marks: BTreeSet::new(),
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
             install: InstallBound::default(),
+            counted_ancestor_pairs,
+            world_keys: BTreeMap::new(),
+            refused_world_keys: BTreeSet::new(),
             issues,
         };
     }
@@ -571,6 +448,7 @@ pub(super) fn fold_authority_log_once(
     revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
     revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
     revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
+    revoke_facts.forget_below_concurrent_floors(&states, &by_hash, &entry_ancestors, context);
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = BTreeSet::new();
     for (hash, state) in &states {
@@ -581,101 +459,53 @@ pub(super) fn fold_authority_log_once(
         });
     }
 
-    // Collision poison is part of the externally auditable fold result, not
-    // merely a settlement-time guard. Emit one deterministic issue per id.
-    if let Some(state) = &merged {
-        issues.extend(
-            state
-                .conflicted_critical_write_confirms
-                .iter()
-                .map(
-                    |confirm_id| AuthorityFoldIssue::CriticalWriteConfirmConflict {
-                        confirm_id: *confirm_id,
-                    },
-                ),
-        );
-    }
-    if let Some(state) = &mut merged {
-        revoke_facts.apply_to(state);
-        for key in &retired_keys {
-            if let Some(device) = state.roster.get_mut(key) {
-                device.revoked = true;
-            }
-        }
-    }
-    let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
-        folded_actor_bindings(state, context.consent_arm)
+    let kept = capture.map(|_| {
+        (
+            merged.clone(),
+            valid_entries.clone(),
+            retired_keys.clone(),
+            issues.clone(),
+        )
     });
-
-    AuthorityFold {
-        append_heads: BTreeSet::new(),
-        append_sequences: BTreeMap::new(),
-        actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
-            &states,
-            merged.as_ref(),
-        ),
-        actor_write_frontiers: super::causal_write::causal_actor_frontiers(
-            &states,
-            merged.as_ref(),
-            &actor_bindings,
-            |hash| {
-                by_hash
-                    .get(hash)
-                    .is_some_and(|entry| super::world_privacy::side_world(&entry.op).is_none())
-            },
-        ),
-        revoked_actor_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
-            state.actor_revocation_hashes.keys().cloned().collect()
-        }),
-        slips: merged
-            .as_ref()
-            .map_or_else(SlipAuthorityState::default, |state| state.slips.clone()),
-        vault_id: merged.as_ref().map(|state| state.vault_id),
-        valid_entries,
-        roster: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.roster.clone()),
-        retired_keys,
-        closed_handoffs: retirements.handoffs(),
-        tier_floor: merged.as_ref().map(|state| state.tier_floor),
-        genesis_fragile: merged.as_ref().is_some_and(|state| {
-            state.genesis_recovery_dismissed && !state.recovery_redundancy_established
-        }),
-        federation_pacts: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
-        federation_confirms: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.federation_confirms.clone()),
-        critical_write_confirms: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.critical_write_confirms.clone()),
-        consumed_critical_write_confirm_nonces: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| {
-                state.consumed_critical_write_confirm_nonces.clone()
-            }),
-        conflicted_critical_write_confirms: merged.as_ref().map_or_else(BTreeSet::new, |state| {
-            state.conflicted_critical_write_confirms.clone()
-        }),
-        federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            state.federation_grant_bindings.clone()
-        }),
-        actor_bindings,
-        machines: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            super::machine_profile::folded_machines(state, retirements.unsettled())
-        }),
-        worlds: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, super::world_privacy::folded_worlds),
-        refused_world_edits: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.refused_world_edits.clone()),
-        install: merged
-            .as_ref()
-            .map_or_else(InstallBound::default, super::install_fold::held_back),
-        issues,
+    let (fold, final_merged) = super::fold_project::project_once(
+        super::fold_project::Settled {
+            merged,
+            valid_entries,
+            by_hash: &by_hash,
+            revoke_facts: &revoke_facts,
+            retired_keys,
+            closed_handoffs: retirements.handoffs(),
+            unsettled: retirements.unsettled(),
+            counted_ancestor_pairs,
+            issues,
+        },
+        &super::fold_project::AllStates {
+            by_hash: &by_hash,
+            states: &states,
+        },
+        context,
+    );
+    if let (Some(capture), Some((Some(merged), valid_entries, retired_keys, issues))) =
+        (capture, kept)
+    {
+        capture.record(super::fold_resume::OnceParts {
+            by_hash: &by_hash,
+            states: &states,
+            entry_ancestors: &entry_ancestors,
+            original_floors,
+            merged,
+            valid_entries,
+            revoke_facts,
+            retired_keys,
+            closed_handoffs: retirements.handoffs(),
+            unsettled: retirements.unsettled(),
+            counted_ancestor_pairs,
+            issues,
+            final_merged: final_merged.as_ref(),
+            fold: &fold,
+        });
     }
+    fold
 }
 
 /// The confirmations that lose a collision among the rows `present` keeps,

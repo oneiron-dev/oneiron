@@ -246,6 +246,9 @@ pub(crate) struct ExternalEffectGateContext {
     /// the sole hydrating caller fills it after `gate_input()` (the
     /// `scoped_mcp_grant_authorized` precedent below).
     pub(crate) counterparty_send_override: Option<SendOverrideMatch>,
+    /// A matching contact is owner-revoked. GATE-INTERNAL like the override:
+    /// hydration fills it at the same seam.
+    pub(crate) counterparty_contact_revoked: bool,
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
@@ -307,6 +310,7 @@ impl ExternalEffectGateInput {
                 counterparty_opted_out: self.counterparty_opted_out,
                 counterparty_opt_out_receipt_reason: self.counterparty_opt_out_receipt_reason,
                 counterparty_send_override: None,
+                counterparty_contact_revoked: false,
                 has_opted_in: self.has_opted_in,
                 has_permission: self.has_permission,
                 policy_risk: self.policy_risk,

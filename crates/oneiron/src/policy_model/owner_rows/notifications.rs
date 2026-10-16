@@ -314,7 +314,7 @@ impl Vault {
         mode: PolicyNotificationMode,
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        let actor_id = actor.revalidate_in_txn(self, &txn)?;
+        let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
         let mut preference = preference_in(self, &txn, actor_id)?;
         preference.mode = mode;
         self.store.vault_meta.put(
@@ -337,7 +337,7 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        let actor_actor = actor.revalidate_in_txn(self, &txn)?;
+        let actor_actor = actor.revalidate_person_in_txn(self, &txn)?;
         let mut preference = preference_in(self, &txn, actor_actor)?;
         preference.digest_interval_seconds = interval_seconds;
         self.store.vault_meta.put(
@@ -649,7 +649,8 @@ impl Vault {
         now: u64,
     ) -> Result<String> {
         let mut txn = self.store.env.write_txn()?;
-        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
         if !authority::holders_for_in_txn(
             self,
             &txn,
@@ -693,7 +694,7 @@ impl Vault {
         }
         let mut encoded = Vec::new();
         rmpv::encode::write_value(&mut encoded, &value).map_err(|_| invalid())?;
-        self.write_owner_policy_manifest_in_txn(holder, &mut txn, id, encoded, now)?;
+        self.write_holder_policy_manifest_in_txn(holder, &mut txn, id, encoded, now)?;
         let receipt_id = self.store.clock.entity_id()?.to_hex();
         let event = PolicyChangedEvent {
             kind: "policy.changed".to_owned(),

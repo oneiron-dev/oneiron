@@ -548,12 +548,47 @@ fn delete_purges_orphan_protected_one_way_backlink() -> Result<()> {
         &[1.0, 0.0, 0.0, 0.0],
         5,
         false,
+        None,
     )?;
     assert!(
         hits.iter().all(|hit| hit.id != from),
         "search must not return the deleted node"
     );
     assert!(!hits.is_empty(), "search must still reach a live node");
+    Ok(())
+}
+
+/// H14: the same one-way link, but the HOLDER is deleted. The target's
+/// exception record must forget it rather than list a dead holder forever.
+#[test]
+fn deleting_a_one_way_holder_drops_it_from_the_exception_record() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), small_graph_config(4, 1, 8))?;
+    let target = id_from_u64(1);
+    let holder = id_from_u64(2); // keeps a one-way link `holder -> target`
+    let near = id_from_u64(3);
+    for id in [target, holder, near] {
+        vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    vault.put_vector(&target, &[1.0, 0.0, 0.0, 0.0])?;
+    vault.put_vector(&holder, &[0.8, 0.6, 0.0, 0.0])?;
+    vault.put_vector(&near, &[0.99, 0.14, 0.0, 0.0])?;
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            read_one_way_exception_holders(&vault.store, &rtxn, &target)?,
+            vec![holder],
+        );
+    }
+
+    vault.delete_entity_with_reason(&holder, crate::deletion::DeleteReason::UserHardDelete)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        read_one_way_exception_holders(&vault.store, &rtxn, &target)?.is_empty(),
+        "a deleted holder stays listed on its target"
+    );
+    assert_symmetric_links(&vault.store, &rtxn)?;
     Ok(())
 }
 
@@ -699,3 +734,64 @@ fn vector_row_unknown_version_truncated_and_wrong_length_fail_closed() -> Result
 }
 
 // ===== ONE-1137: prepared-cosine scoring on the insert/search paths =====
+
+/// H74/H296: a narrowed walk admits its scope inside the beam. A full beam of
+/// out-of-scope rows nearer the query than the one in-scope row kept that
+/// row out of the matches on main, and the type filter after the cut then
+/// left a one-row search empty.
+#[test]
+fn a_type_scoped_vector_search_finds_its_row_past_a_full_beam_of_others() -> Result<()> {
+    let window = crate::memory::caps::MAX_SEARCH_LIMIT;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(small_graph_config(4, 2, window));
+    // A chain from the first other row through every other row to `wanted`:
+    // the walk reaches and scores `wanted` only after `window` others.
+    let chain: Vec<EntityId> = (1..=window as u64 + 1).map(id_from_u64).collect();
+    let wanted = chain[window];
+    let mut batch = vault.batch();
+    for id in &chain {
+        let kind = if *id == wanted {
+            crate::registry::ENTITY_TYPE_ASSET_TEXT
+        } else {
+            crate::registry::ENTITY_TYPE_PERSON
+        };
+        batch = batch.put(id, kind, point(1, 1), 1, b"node");
+    }
+    batch.commit().expect("seed the rows");
+    let mut wtxn = vault.store.env.write_txn()?;
+    for (at, id) in chain.iter().enumerate() {
+        let vector = if *id == wanted {
+            [0.8, 0.6, 0.0, 0.0]
+        } else {
+            [1.0, 0.0, 0.0, 0.0]
+        };
+        put_vector_raw(&vault.store, &mut wtxn, id, &vector)?;
+        let neighbors: Vec<EntityId> = [at.checked_sub(1), Some(at + 1)]
+            .into_iter()
+            .flatten()
+            .filter_map(|next| chain.get(next).copied())
+            .collect();
+        write_neighbors(&vault.store, &mut wtxn, id, &neighbors)?;
+    }
+    vault
+        .store
+        .hnsw_meta
+        .put(&mut wtxn, ENTRY_POINT_KEY, chain[0].as_bytes())?;
+    vault
+        .store
+        .hnsw_meta
+        .put(&mut wtxn, COUNT_KEY, &(chain.len() as u64).to_le_bytes())?;
+    wtxn.commit()?;
+
+    let hits = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .filter_types(&[crate::registry::ENTITY_TYPE_ASSET_TEXT])
+        .limit(1)
+        .run()?;
+
+    assert_eq!(
+        hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![wanted]
+    );
+    Ok(())
+}

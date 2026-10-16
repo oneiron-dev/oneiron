@@ -163,7 +163,7 @@ fn put_calendar_claim(
 #[test]
 fn outbound_calendar_read_returns_its_receipt() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x71);
+    let owner = put_owner(&vault);
     let agent = put_person(&vault, 0x72);
     let world = EntityId::from_bytes([0x73; 16]).expect("world id");
     let event = EntityId::from_bytes([0x74; 16]).expect("event id");
