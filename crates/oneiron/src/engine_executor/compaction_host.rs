@@ -5,8 +5,8 @@ use super::compaction::{FoldJob, RunFrames};
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
 use super::store::{
-    COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_observation_window,
-    load_utf8_output, observation_output_path, recoverable_chunk_path, script_output_path,
+    COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_context_output,
+    load_observation_window, observation_output_path, recoverable_chunk_path, script_output_path,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
@@ -111,11 +111,9 @@ impl EngineNativeExecutor<'_> {
         // which `self.folds()` shows.
         if !seat.is_live()
             && (asked.is_some() || !marks.is_empty())
-            && let Err(error) = self
-                .storage
-                .update_code_run_folds(run_id, |ledger| {
-                    ledger.refuse_pending("compaction is off for this run")
-                })
+            && let Err(error) = self.storage.update_code_run_folds(run_id, |ledger| {
+                ledger.refuse_pending("compaction is off for this run")
+            })
         {
             self.compaction = Some(seat);
             return Err(error.into());
@@ -210,7 +208,7 @@ impl EngineNativeExecutor<'_> {
                 super::compaction::step_message_id(run_id, seq),
                 turn_id,
                 seq,
-                load_utf8_output(&self.storage, record, &script_output_path(seq))?,
+                load_context_output(&self.storage, record, &script_output_path(seq))?,
                 load_observation_window(
                     &self.storage,
                     record,
@@ -379,7 +377,7 @@ impl EngineNativeExecutor<'_> {
                 super::compaction::step_message_id(run_id, seq),
                 turn_id,
                 seq,
-                load_utf8_output(&self.storage, record, &script_output_path(seq))?,
+                load_context_output(&self.storage, record, &script_output_path(seq))?,
                 load_observation_window(
                     &self.storage,
                     record,
@@ -506,7 +504,10 @@ impl EngineNativeExecutor<'_> {
     /// This run's swapped epochs with their summaries' prose, and its fold
     /// ledger, where the run's rows are: base, or its room's overlay over
     /// base.
-    pub(super) fn compaction_epochs(&self, run_id: crate::EntityId) -> EngineExecutorResult<RunFrames> {
+    pub(super) fn compaction_epochs(
+        &self,
+        run_id: crate::EntityId,
+    ) -> EngineExecutorResult<RunFrames> {
         Ok(RunFrames {
             epochs: self.storage.code_run_compaction_epochs(run_id)?,
             folds: self.storage.code_run_folds(run_id)?,
@@ -534,7 +535,12 @@ impl EngineNativeExecutor<'_> {
         };
         let mut messages = Vec::new();
         if !frames.hides(record.run_id, seq) {
-            for append in frames.folds.unfolds.iter().filter(|append| append.at == seq) {
+            for append in frames
+                .folds
+                .unfolds
+                .iter()
+                .filter(|append| append.at == seq)
+            {
                 let Some(fold) = frames.folds.fold(append.fold) else {
                     continue;
                 };
@@ -546,8 +552,12 @@ impl EngineNativeExecutor<'_> {
                 );
                 for step in fold.from..=fold.through.min(completed.saturating_sub(1)) {
                     let turn = CodeRunHistoryTurn {
-                        code: load_utf8_output(&self.storage, record, &script_output_path(step))?,
-                        console: load_utf8_output(
+                        code: load_context_output(
+                            &self.storage,
+                            record,
+                            &script_output_path(step),
+                        )?,
+                        console: load_context_output(
                             &self.storage,
                             record,
                             &observation_output_path(step),

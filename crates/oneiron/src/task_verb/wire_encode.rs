@@ -273,6 +273,14 @@ fn task_execution_state_value(state: &TaskExecutionState) -> Value {
                 Value::from(*consent_required),
             ),
         ]),
+        TaskExecutionState::Blocked { since, on } => Value::Map(vec![
+            (Value::from("state"), Value::from("blocked")),
+            (Value::from("since"), Value::from(*since)),
+            (
+                Value::from("on"),
+                Value::Array(on.iter().copied().map(entity_ref_value).collect()),
+            ),
+        ]),
         TaskExecutionState::Terminal(record) => Value::Map(vec![
             (Value::from("state"), Value::from("terminal")),
             (Value::from("terminal"), task_terminal_record_value(record)),
@@ -345,12 +353,27 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
         ),
         (Value::from("provenance"), body.provenance),
         (Value::from("created_at"), Value::from(body.created_at)),
+        (
+            Value::from("type_ref"),
+            body.type_ref
+                .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
+        ),
     ];
     // Elided when absent, so a task nobody refused keeps its bytes.
     if let Some(refusal) = &body.refusal {
         entries.push((Value::from("refusal"), task_refusal_record_value(refusal)));
     }
+    // OF-220: elided the same way, so a TASK without a brief keeps its bytes.
+    if let Some(brief) = &body.brief {
+        entries.push((Value::from("brief"), stored_brief_value(brief)));
+    }
     canonical_bytes(&Value::Map(entries))
+}
+
+/// The stored brief as named MessagePack, the shape `mirror_fields` uses.
+pub(super) fn stored_brief_value(brief: &super::brief::StoredBrief) -> Value {
+    let encoded = rmp_serde::to_vec_named(brief).expect("a typed brief always encodes");
+    rmpv::decode::read_value(&mut encoded.as_slice()).expect("typed brief MessagePack")
 }
 
 pub(super) fn encode_task_realization_input(spec: &Value) -> Result<Vec<u8>> {

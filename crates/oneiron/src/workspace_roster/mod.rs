@@ -89,11 +89,14 @@ mod codec;
 mod intent;
 mod records;
 mod runner;
+mod sharing;
 mod steps;
+mod work_companion;
 
 use codec::*;
 use steps::*;
 
+pub use self::intent::CompanionChoice;
 pub use self::intent::{
     CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
     WorkspaceRosterPreset,
@@ -106,6 +109,11 @@ pub use self::records::{
     MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
     WorkspaceRosterEntry, WorkspaceRosterRole,
 };
+pub use self::sharing::{
+    CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp,
+    RoomSharingView,
+};
+pub use self::work_companion::{WORK_COMPANION_REQUIRED, WorkCompanionPolicy};
 
 #[cfg(test)]
 mod tests;
@@ -171,6 +179,7 @@ pub use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
 pub(crate) use rooms::project_room_audience_in;
 

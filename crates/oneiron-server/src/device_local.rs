@@ -53,7 +53,9 @@ pub(crate) fn withholds_retained_for(
     named.extend_from_slice(rows);
     named.sort_unstable_by_key(|id| *id.as_bytes());
     named.dedup();
-    Ok(!oneiron::sync::residence::rows_may_reach(vault, peer, &named)?)
+    Ok(!oneiron::sync::residence::rows_may_reach(
+        vault, peer, &named,
+    )?)
 }
 
 /// Whether a cached response replayed to a caller at `locality` stays on

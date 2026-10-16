@@ -4,7 +4,7 @@
 use super::admission::{PACK_INSTALL, PackCommit, pack_permissions, refuse_engine_namespace};
 use super::{
     PackAdapter, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackInstallStatus,
-    PackKind, PackSource,
+    PackKind, PackQualification, PackQualifier, PackSource,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::skill_hub::{HubFile, HubPin, HubRef};
@@ -38,14 +38,42 @@ impl Vault {
         files: Vec<HubFile>,
     ) -> Result<PackInstallDisposition> {
         let source = PackSource::from_files(files)?;
+        self.put_pack_source(owner, source, None)
+    }
+
+    /// Owner-authored connectors use the same source-bound qualification as
+    /// hub installs. The owner put supplies consent, not a wire-probe bypass.
+    pub fn put_qualified_pack(
+        &self,
+        owner: &AuthenticatedOwner,
+        files: Vec<HubFile>,
+        qualifier: &dyn PackQualifier,
+    ) -> Result<PackInstallDisposition> {
+        let source = PackSource::from_files(files)?;
+        refuse_engine_namespace(&source)?;
+        let qualification = qualifier.qualify(&source)?;
+        super::qualify::validate_qualification(&source, &qualification)?;
+        self.put_pack_source(owner, source, Some(qualification))
+    }
+
+    fn put_pack_source(
+        &self,
+        owner: &AuthenticatedOwner,
+        source: PackSource,
+        qualification: Option<PackQualification>,
+    ) -> Result<PackInstallDisposition> {
         refuse_engine_namespace(&source)?;
         let hub = put_ref(&source)?;
+        // The put is the owner's consent, advisories included: the tree's OSV
+        // row is evidence on its hash, and holds nothing here.
+        let advisories = self.pack_advisories(&source, false, crate::unix_seconds_now())?;
         self.with_write_txn_grouped(|txn| {
             let holder = owner.revalidate_in_txn(self, txn)?.to_hex();
             let at = crate::unix_seconds_now();
             let occurred = TimeRange { start: at, end: at };
             let source_id = self.stage_pack_source_in_txn(txn, &source, occurred, at)?;
             self.scan_and_ingest_pack_source_in_txn(txn, &source, occurred, at)?;
+            self.ingest_pack_advisories_in_txn(txn, &advisories, occurred, at)?;
             if let Some(reason) = self.screen_pack_in_txn(txn, &source, &[], &holder)? {
                 return Ok(PackInstallDisposition::Blocked { reason });
             }
@@ -54,7 +82,8 @@ impl Vault {
             let verdict = PackFitVerdict {
                 fits: true,
                 rules_hit: false,
-                code_auto_install: !matches!(source.manifest.adapter, Some(PackAdapter::Script(_))),
+                code_auto_install: qualification.is_some()
+                    || !matches!(source.manifest.adapter, Some(PackAdapter::Script(_))),
             };
             let disposition = self.commit_pack_install_in_txn(
                 txn,
@@ -66,7 +95,7 @@ impl Vault {
                     foreign: None,
                     verdict,
                     permissions: &permissions,
-                    qualification: None,
+                    qualification: qualification.as_ref(),
                 },
             )?;
             if matches!(disposition, PackInstallDisposition::Installed(_)) {
@@ -109,6 +138,7 @@ pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
             publisher: "vault".to_owned(),
             permissions: pack_permissions(&source, None)?,
             qualification_report_hash: None,
+            connector_qualification: None,
             runtime: None,
             sections: Vec::new(),
             predicates: Vec::new(),

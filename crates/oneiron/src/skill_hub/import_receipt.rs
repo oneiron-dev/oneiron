@@ -214,6 +214,28 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        self.import_marketplace_skill_with_query(
+            adapter, source, publisher, fit, None, occurred, learned_at,
+        )
+    }
+
+    /// The same import; with `advisories`, the bytes' OSV receipts are queried
+    /// before the writer and co-commit with the import, so the activation
+    /// consult reads them.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the marketplace import plus an optional dependency advisory transport"
+    )]
+    pub(super) fn import_marketplace_skill_with_query<A: SkillHubAdapter>(
+        &self,
+        adapter: &A,
+        source: &HubRef,
+        publisher: &ForeignSkillPublisher,
+        fit: &dyn MarketplaceFitEvaluator,
+        advisories: Option<&dyn super::osv::OsvQuery>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
         let configured = {
             let txn = self.store.env.read_txn()?;
             self.check_publisher_in_txn(&txn, publisher)?;
@@ -233,6 +255,14 @@ impl Vault {
         let parsed = super::folder::package_from_files(package.files)?;
         let static_scan = crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?;
         let fit = fit.evaluate(source, &parsed, &static_scan)?;
+        let advisory_scans = match advisories {
+            Some(query) => {
+                let inventory = super::osv::dependency_inventory(&parsed)?;
+                self.dependency_advisories(parsed.content_hash()?, &inventory, query, learned_at)?
+                    .2
+            }
+            None => Vec::new(),
+        };
         self.with_write_txn_grouped(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
             if self.hub_record_in_txn(txn, &source.hub_id)? != configured {
@@ -256,6 +286,11 @@ impl Vault {
                 occurred,
                 learned_at,
             )?;
+            for scan in &advisory_scans {
+                self.ingest_skill_scan_verdict_in_txn(
+                    txn, &entity, hash, scan, occurred, learned_at,
+                )?;
+            }
             let rule_blocked = marketplace_hash_blocked_in_txn(&self.store, txn, hash)?;
             let code_bearing = parsed
                 .files
@@ -461,10 +496,7 @@ impl Vault {
     /// disposition in the same read snapshot. The source identity and hash stay
     /// those of the import; a later activation or retirement is not a new import.
     /// Like `hub_import_receipt`, this door grants no read authority.
-    pub fn current_hub_import_receipts(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Vec<HubImportReceipt>> {
+    pub fn current_hub_import_receipts(&self, entity: &EntityId) -> Result<Vec<HubImportReceipt>> {
         let txn = self.store.env.read_txn()?;
         let Some(record) = self.get_skill_record_in_txn(&txn, entity)? else {
             return Ok(Vec::new());
@@ -496,9 +528,7 @@ impl Vault {
                     }
                     disposition => disposition,
                 },
-                SkillLifecycle::Stale => {
-                    InstallDisposition::NotInstalled(InstallHoldReason::Stale)
-                }
+                SkillLifecycle::Stale => InstallDisposition::NotInstalled(InstallHoldReason::Stale),
                 SkillLifecycle::Quarantined => {
                     InstallDisposition::NotInstalled(InstallHoldReason::Quarantined)
                 }

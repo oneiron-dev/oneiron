@@ -1,5 +1,8 @@
 //! Post-fit installation of pinned pack source; requested powers stay inert.
-use super::super::install_transition::{InstallBinding, InstallDisposition, InstallPlan};
+use super::super::install_transition::{
+    InstallBinding, InstallDisposition, InstallHoldReason, InstallPlan,
+};
+use super::qualify::{validate_installed_qualification, validate_qualification};
 use super::{
     BundledSkillPermissions, PackAdapter, PackCandidateReason, PackFitPolicy, PackFitVerdict,
     PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackKind,
@@ -22,7 +25,7 @@ pub(super) const PACK_INSTALL: SideTable<String, PackInstallReceipt, LegacyJson>
 const PACK_PREDICATE: SideTable<String, String, Raw> =
     SideTable::new(&side_table::SKILL_HUB_PACK_PREDICATE);
 /// Candidate receipt keyed by the source content hash in lowercase hex.
-const PACK_CANDIDATE: SideTable<String, PackInstallReceipt, LegacyJson> =
+pub(super) const PACK_CANDIDATE: SideTable<String, PackInstallReceipt, LegacyJson> =
     SideTable::new(&side_table::SKILL_HUB_PACK_CANDIDATE);
 
 /// What one install commits, from a hub ask or the owner's own put.
@@ -75,10 +78,8 @@ impl Vault {
         {
             return Err(invalid("observed tool manifest exceeds bounds"));
         }
-        // Even a flag-off Candidate has a qualified *shape*. Running code
-        // also needs the host's source-bound sandbox suite and runtime pin.
-        let qualification = if let Some(adapter @ PackAdapter::Script(_)) = &source.manifest.adapter
-        {
+        // A flag-off Candidate still needs a valid script shape, but no wire run yet.
+        if let Some(adapter @ PackAdapter::Script(_)) = &source.manifest.adapter {
             let shape_recipe = PackRuntimeRecipe {
                 adapter: adapter.clone(),
                 runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.to_owned(),
@@ -86,15 +87,23 @@ impl Vault {
             };
             super::script_plan::ScriptExecutionPlan::from_source(&source, &shape_recipe)?
                 .qualified_shape()?;
-            if verdict.code_auto_install && !verdict.rules_hit {
-                let qualified = policy
-                    .qualify_script(&source)?
-                    .ok_or_else(|| invalid("script pack requires a qualified runtime"))?;
-                validate_qualification(&source, &qualified)?;
-                Some(qualified)
+        }
+        let qualification = if verdict.code_auto_install && !verdict.rules_hit {
+            let qualified = if source.manifest.kind == PackKind::Connector {
+                policy.qualify_connector(&source)?
+            } else if matches!(source.manifest.adapter, Some(PackAdapter::Script(_))) {
+                Some(
+                    policy
+                        .qualify_script(&source)?
+                        .ok_or_else(|| invalid("script pack requires a qualified runtime"))?,
+                )
             } else {
                 None
+            };
+            if let Some(qualified) = qualified.as_ref() {
+                validate_qualification(&source, qualified)?;
             }
+            qualified
         } else {
             None
         };
@@ -169,13 +178,22 @@ impl Vault {
         source: &PackSource,
         commit: &PackCommit<'_>,
     ) -> Result<PackInstallDisposition> {
+        if let Some(qualification) = commit.qualification {
+            validate_qualification(source, qualification)?;
+        }
         let at = crate::unix_seconds_now();
         let (skills, skill_sources) =
             self.import_pack_skills_in_txn(txn, &source, &commit.hub, at)?;
         let candidate_reason = if commit.verdict.rules_hit {
             Some(PackCandidateReason::RulesHit)
+        } else if commit.foreign.is_some()
+            && self.pack_advisory_hold_in_txn(txn, source.content_hash())?
+        {
+            Some(PackCandidateReason::Advisories)
         } else if source.has_code() && !commit.verdict.code_auto_install {
             Some(PackCandidateReason::CodeAutoInstallOff)
+        } else if source.manifest.kind == PackKind::Connector && commit.qualification.is_none() {
+            Some(PackCandidateReason::QualificationRequired)
         } else {
             None
         };
@@ -194,9 +212,16 @@ impl Vault {
             let plan = InstallPlan::pack(
                 &record,
                 InstallBinding::new(&source.reference, source.hash, &capabilities),
-                status == PackInstallStatus::Active,
-                candidate_reason == Some(PackCandidateReason::RulesHit),
-                candidate_reason != Some(PackCandidateReason::CodeAutoInstallOff),
+                candidate_reason.map(|reason| match reason {
+                    PackCandidateReason::RulesHit => InstallHoldReason::RulesHit,
+                    PackCandidateReason::CodeAutoInstallOff => {
+                        InstallHoldReason::CodeAutoInstallOff
+                    }
+                    PackCandidateReason::QualificationRequired => {
+                        InstallHoldReason::QualificationRequired
+                    }
+                    PackCandidateReason::Advisories => InstallHoldReason::Advisories,
+                }),
             );
             let result = self.execute_hub_install_plan_in_txn(
                 txn,
@@ -252,6 +277,11 @@ impl Vault {
             publisher: commit.publisher.to_owned(),
             permissions: commit.permissions.clone(),
             qualification_report_hash: commit.qualification.map(|q| q.report_hash.clone()),
+            connector_qualification: commit.qualification.and_then(|q| {
+                q.connector
+                    .as_ref()
+                    .map(|connector| connector.receipt().clone())
+            }),
             runtime: if status == PackInstallStatus::Active {
                 commit.qualification.and_then(|q| q.runtime.clone())
             } else {
@@ -518,6 +548,7 @@ impl Vault {
                 {
                     return Err(invalid("installed source identity drift"));
                 }
+                validate_installed_qualification(&source, &receipt)?;
                 Ok(receipt)
             })
             .transpose()
@@ -727,36 +758,6 @@ pub(super) fn pack_permissions(
         section_verbs,
         section_authorities,
     })
-}
-
-fn validate_qualification(source: &PackSource, result: &PackQualification) -> Result<()> {
-    if !result.passed
-        || !result.advisory_accepted
-        || result.suite.is_empty()
-        || result.suite.len() > 256
-        || result.advisory.is_empty()
-        || result.advisory.len() > 16384
-    {
-        return Err(invalid("pack qualification or advisory refused"));
-    }
-    crate::skill::SkillContentHash::parse_hex(&result.report_hash)?;
-    for text in [&result.suite, &result.advisory] {
-        crate::batch::secret_scan::scan_metadata_field(text)?;
-    }
-    let runtime = result
-        .runtime
-        .as_ref()
-        .ok_or_else(|| invalid("script pack requires qualified runtime recipe"))?;
-    if Some(&runtime.adapter) != source.manifest.adapter.as_ref()
-        || runtime.runtime_id.is_empty()
-        || runtime.runtime_id.len() > 1024
-    {
-        return Err(invalid("runtime recipe does not bind declared adapter"));
-    }
-    crate::skill::SkillContentHash::parse_hex(&runtime.runtime_hash)?;
-    super::script_plan::ScriptExecutionPlan::from_source(source, runtime)?.qualified_shape()?;
-    crate::batch::secret_scan::scan_metadata_field(&runtime.runtime_id)?;
-    Ok(())
 }
 
 /// A pack never takes a namespace the engine owns, not as its name and not in

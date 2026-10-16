@@ -15,8 +15,19 @@ doctest = false
 blake3 = { workspace = true }
 oneiron-spawn = { path = "../oneiron-spawn" }
 serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"
 thiserror = { workspace = true }
 uuid = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "oneiron-fence"
+path = "src/bin/oneiron-fence.rs"
+test = false
+bench = false
 
 [lints]
 workspace = true

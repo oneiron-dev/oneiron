@@ -146,6 +146,9 @@ fn pump_once(
     status: &StatusCell,
     stopped: &watch::Receiver<bool>,
 ) -> oneiron::Result<bool> {
+    if !*stopped.borrow() {
+        super::waves::run_once(runtime, vault, runner, status)?;
+    }
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
@@ -238,7 +241,16 @@ fn pump_once(
             }
         }
     }
-    Ok(!dispatcher.open_workflow_roots()?.is_empty())
+    let wave_pending = AttemptQueue::new(vault).list()?.iter().any(|attempt| {
+        attempt.kind == oneiron::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND
+            && matches!(
+                attempt.state,
+                oneiron::attempt_queue::AttemptState::Queued
+                    | oneiron::attempt_queue::AttemptState::Scheduled
+                    | oneiron::attempt_queue::AttemptState::Leased
+            )
+    });
+    Ok(wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
 }
 
 /// Asks every queued project question on the host's ladder; with none

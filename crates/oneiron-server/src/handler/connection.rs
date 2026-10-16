@@ -8,6 +8,7 @@ use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes, WebSocket, 
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
+use oneiron::sync::documents::document_frame_withheld_for;
 use tokio::time::Duration;
 
 use super::app_tier::{
@@ -272,8 +273,7 @@ async fn handle_connection(
                                 conn_state.locality,
                                 conn_state.peer_machine(server.vault()),
                                 &data,
-                            )
-                            else {
+                            ) else {
                                 continue;
                             };
                             let Ok(auth) = require_bound_app_auth(&server, &conn_state) else {
@@ -470,12 +470,15 @@ async fn handle_connection(
                         _ => break,
                     }
                 }
-                if window_update_withheld(&server, conn_state.peer_machine(server.vault()), &data)
-                    || oneiron::sync::documents::document_frame_withheld_for(
-                        server.vault(),
-                        conn_state.peer_machine(server.vault()),
-                        &data,
-                    )
+                let peer = conn_state.peer_machine(server.vault());
+                let ledger_withheld =
+                    if conn_state.window_sync_mode == super::conn_state::WindowSyncMode::Selector {
+                        super::federation::selector_update_withheld(&server, &data, peer)
+                    } else {
+                        window_update_withheld(&server, peer, &data)
+                    };
+                if ledger_withheld
+                    || document_frame_withheld_for(server.vault(), peer, &data)
                     || (data.first() == Some(&oneiron::sync::transport::TAG_LFS_CHUNK_SYNC)
                         && super::lfs_chunks::chunk_reply_withheld(&server, &mut conn_state))
                 {

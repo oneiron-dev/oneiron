@@ -10,7 +10,9 @@ use crate::code_run::{
 use crate::code_sandbox::{
     SandboxCredentialCall, SandboxCredentialHandle, SandboxReadFile, SandboxVirtualPath,
 };
-use crate::engine_executor::{JsCodeModeOutput, JsCodeModeStepOutcome, SelfDispatchResponse};
+use crate::engine_executor::{
+    JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef, SelfDispatchResponse,
+};
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Result, TimeRange};
 use serde::Deserialize;
@@ -27,6 +29,12 @@ struct JsonValidation {
 struct VerbCall {
     verb: String,
     input: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Store {
+    #[serde(default)]
+    name: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -235,12 +243,63 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             Ok(json!({"bytes":bytes}).to_string())
         }
         _ => {
+            if name == "self.verbs.call"
+                && let Some(call) = result_call(input)?
+            {
+                return Ok(state.host.result_call(call)?.to_string());
+            }
             if let Some(refusal) = wrong_root_call(name, input) {
                 return Ok(json!({ "error": refusal }).to_string());
             }
             let call = self_call(name, input, state.determinism.frozen_unix_ms / 1000)?;
             response(state.host.dispatch_self(call)?)
         }
+    }
+}
+
+/// A verb-table call the run answers from its own results: `store`, and a
+/// `describe` of a result rather than of a task. `None` for any other call.
+fn result_call(input: &str) -> Result<Option<JsResultCall>> {
+    let Ok(args) = serde_json::from_str::<VerbCall>(input) else {
+        return Ok(None);
+    };
+    Ok(match args.verb.as_str() {
+        "store" => Some(JsResultCall::Store {
+            name: decode::<Store>(args.input)?.name,
+        }),
+        "describe" => result_ref(args.input).map(JsResultCall::Describe),
+        _ => None,
+    })
+}
+
+/// The result a `describe` input names, when it names one: a string (a bound
+/// name, or a handle, whose colon no name has), a result's card by its
+/// `handle`, or `{name}` with none of a task describe's fields.
+fn result_ref(input: Value) -> Option<JsResultRef> {
+    const TASK_FIELDS: [&str; 6] = [
+        "task_ref",
+        "self",
+        "session_id",
+        "key",
+        "frame_epoch",
+        "fold",
+    ];
+    match input {
+        Value::String(text) if text.contains(':') => Some(JsResultRef::Handle(text)),
+        Value::String(text) => Some(JsResultRef::Name(text)),
+        Value::Object(mut fields) => {
+            if let Some(Value::String(handle)) = fields.remove("handle") {
+                return Some(JsResultRef::Handle(handle));
+            }
+            if TASK_FIELDS.iter().any(|field| fields.contains_key(*field)) {
+                return None;
+            }
+            match fields.remove("name") {
+                Some(Value::String(name)) => Some(JsResultRef::Name(name)),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -274,7 +333,9 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             if verb == AgentVerb::Describe
                 && let Some(fold) = args.input.get("fold").filter(|fold| !fold.is_null())
             {
-                let fold = fold.as_str().ok_or_else(|| failure("invalid fold handle"))?;
+                let fold = fold
+                    .as_str()
+                    .ok_or_else(|| failure("invalid fold handle"))?;
                 return Ok(SelfCall::Fold(crate::compaction::SelfFoldCall::Describe {
                     fold: crate::compaction::parse_fold_handle(fold)?,
                 }));
@@ -400,6 +461,26 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
             let _: crate::compaction::FoldsInput = decode(input)?;
             SelfCall::Fold(crate::compaction::SelfFoldCall::List)
         }
+        RunVerb::TasksRefuse => {
+            let args: crate::code_run::TaskRefuseInput = decode(input)?;
+            SelfCall::TasksRefuse(crate::code_run::SelfTaskRefuseCall {
+                task_ref: args
+                    .task_ref
+                    .as_deref()
+                    .map(EntityId::from_hex)
+                    .transpose()?,
+                domain: match args.domain {
+                    crate::code_run::TaskRefuseDomain::Bond => {
+                        crate::agent_def::RefusalDomain::Bond
+                    }
+                    crate::code_run::TaskRefuseDomain::Logistics => {
+                        crate::agent_def::RefusalDomain::Logistics
+                    }
+                },
+                reason_ref: args.reason_ref,
+                at: args.at.map_or(Ok(now), js_time)?,
+            })
+        }
     })
 }
 
@@ -415,6 +496,9 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             json!({"id":hit.id.to_hex(),"score":hit.score})).collect::<Vec<_>>()}})
         }
         SelfDispatchOutcome::DurableWait(value) => json!({"waitId":value.wait_id.to_hex()}),
+        SelfDispatchOutcome::TaskRefusal(value) => {
+            json!({"output":{"task":value.task_ref.to_hex(),"level":value.level.as_str(),"outcome":value.outcome_word(),"replay":value.replay}})
+        }
         SelfDispatchOutcome::AgentVerb(answer) => json!({"output":answer.output}),
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})

@@ -1,6 +1,6 @@
 //! The restore class of every canonical `vault_meta`, `m` to `r` family, in declaration order.
 
-use super::{CONTENT, Class, LIVE, ORG_ADMIN_GRANTS, ORIGIN_AUTHORITY};
+use super::{CONTENT, Class, LIVE, ORG_ADMIN_GRANTS, ORIGIN_AUTHORITY, ORIGIN_MIRRORS};
 use crate::side_table::{self as t, SideTableDecl};
 
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
@@ -57,6 +57,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ORIGIN_LFS_OWNER_REF, CONTENT),
     (&t::ORIGIN_LFS_REF, CONTENT),
     (&t::ORIGIN_LFS_UPLOAD_JOURNAL, CONTENT),
+    (&t::ORIGIN_MIRROR_TARGET, ORIGIN_MIRRORS),
     (&t::ORIGIN_PUBLICATION_RECORD, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_EVIDENCE, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_INTENT, CONTENT),
