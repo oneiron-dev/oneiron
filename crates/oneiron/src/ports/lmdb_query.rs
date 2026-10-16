@@ -523,7 +523,8 @@ impl super::EdgeStoreRead for Vault {
         kind: crate::EdgeKind,
         peer: &EntityId,
     ) -> Result<bool> {
-        self.store.port_edge_present(txn, center, direction, kind, peer)
+        self.store
+            .port_edge_present(txn, center, direction, kind, peer)
     }
     fn port_edge_get_incoming(
         &self,

@@ -275,8 +275,8 @@ impl EdgeStoreRead for Memory {
         kind: EdgeKind,
         peer: &EntityId,
     ) -> Result<bool> {
-        let out = direction != EdgeDirection::In
-            && txn.edges.contains_key(&(*center, kind as u8, *peer));
+        let out =
+            direction != EdgeDirection::In && txn.edges.contains_key(&(*center, kind as u8, *peer));
         let incoming = direction != EdgeDirection::Out
             && txn.edges.contains_key(&(*peer, kind as u8, *center));
         Ok(out || incoming)
