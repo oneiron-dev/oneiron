@@ -6,8 +6,10 @@
 //! anything. Every fan-out door computes it once its work is resolved and
 //! before any TASK exists, freezes it with the run, and returns the frozen
 //! copy on every later read, so what the caller saw is what ran. Width is a
-//! check, never a limit: a count above the exceptional-width threshold
-//! carries an [`ExceptionalWidthCheck`] and every TASK still lands. The budget
+//! check, never a limit: under AUTO a count above the exceptional-width
+//! threshold carries an [`ExceptionalWidthCheck`] and every TASK still lands;
+//! full access just goes, and Manual mode pauses because the owner chose it.
+//! The budget
 //! is an input, never a refusal: an expected spend above what is available is
 //! stated (`over_available`, `more_would_buy`), not refused.
 
@@ -59,17 +61,16 @@ pub struct PeerCount {
 }
 
 /// How the approval ladder classified an exceptional-width check. No arm
-/// holds, refuses or narrows the work.
+/// holds, refuses or narrows the work. Full access raises no check at all.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WidthCheckClass {
-    /// Full access: recorded, nobody asked.
-    Recorded,
     /// AUTO cleared it; `policy_ref` names the standing policy row that
     /// covered it, when one did.
     AutoClear { policy_ref: Option<String> },
-    /// The next authorised role is asked on a question row. A run held for
-    /// another reason (pathology, Manual mode) is asked on its pause row.
+    /// AUTO was uncertain, so the next authorised role is asked on a question
+    /// row. A run held for another reason (pathology, Manual mode) is asked
+    /// on its pause row.
     Asked { row_ref: String },
 }
 

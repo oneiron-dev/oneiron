@@ -215,15 +215,15 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                 }
                 // Stated before any TASK row; a re-apply of the same cut keeps
                 // the statement its first apply froze.
-                let statement_key = statement_key(plan.plan_ref());
+                let frozen_key = statement_key(plan.plan_ref());
                 if WAVE_PLAN_INDEX
-                    .get(&self.vault.store, txn, &statement_key)?
+                    .get(&self.vault.store, txn, &frozen_key)?
                     .is_none()
                 {
                     let statement = wave_statement_in(self.vault, txn, self.actor, plan, now)?;
                     let encoded = serde_json::to_vec(&statement)
                         .map_err(|_| Error::InvariantViolation("wave statement encoding"))?;
-                    WAVE_PLAN_INDEX.put(&self.vault.store, txn, &statement_key, &encoded)?;
+                    WAVE_PLAN_INDEX.put(&self.vault.store, txn, &frozen_key, &encoded)?;
                 }
                 let mut ids = BTreeMap::new();
                 for local in plan.topological_order() {

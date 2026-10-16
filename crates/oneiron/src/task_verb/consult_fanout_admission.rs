@@ -1,8 +1,9 @@
 //! Meter, state and admit consult fan-outs before any TASK exists.
 //!
 //! Every fan-out states its counts, expected spend and cap before minting
-//! (OF-393). Width is a check, never a hold: a fan-out above the threshold
-//! still mints in the same transaction and carries its classified check.
+//! (OF-393). Width is a check, never a hold: an `auto` fan-out above the
+//! threshold still mints in the same transaction and carries its classified
+//! check, a `full-access` one just mints, and `manual` keeps its pause.
 
 use super::consult_fanout_store::{
     FrozenInput, StoredFanout, TxnSurface, policy_in, runs_in, save_run,
@@ -327,9 +328,12 @@ impl Memory<'_> {
                     }
                     run.estimate = estimate;
                     // A run held for pathology or by Manual mode asks its
-                    // width check on the same pause row.
+                    // width check on the same pause row; full access raises
+                    // none.
                     let threshold = u64::from(policy.approval_threshold);
-                    if run.statement.crosses(threshold) {
+                    if run.plan.mode != super::ConsultFanOutMode::FullAccess
+                        && run.statement.crosses(threshold)
+                    {
                         run.statement.raise_width_check(
                             threshold,
                             WidthCheckClass::Asked {

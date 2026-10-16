@@ -236,7 +236,6 @@ impl FanoutSurfaceSink for TxnSurface<'_, '_> {
 
     fn persist_width_check(&mut self, check: &FanoutWidthCheck) -> Result<Option<String>> {
         let (classification, row) = match &check.class {
-            FanoutWidthClass::Recorded => (WidthCheckClass::Recorded, None),
             FanoutWidthClass::AutoClear => (
                 WidthCheckClass::AutoClear {
                     policy_ref: self.clearance.clone(),

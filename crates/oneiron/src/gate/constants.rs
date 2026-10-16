@@ -22,10 +22,10 @@ pub(super) const POLICY_SIGNATURE_KEY: &str = "signature";
 pub(super) const POLICY_SIGNATURES_KEY: &str = "signatures";
 pub(super) const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
 pub(super) const POLICY_PROJECT_COLLABORATION_KEY: &str = "project_collaboration";
-/// Vault-wide exceptional-width check threshold: a consult fan-out wider than
+/// Vault-wide exceptional-width check threshold. A consult fan-out wider than
 /// this raises the typed "is everything okay" check on its ordinary approval
-/// ladder and still lands; only Manual mode pauses on it. A check, never a
-/// limit. The default is stored in the default manifest, not applied by the
+/// ladder in auto mode and still lands; full access just goes, and Manual mode
+/// pauses on it. A check, never a limit. The default is stored in the default manifest, not applied by the
 /// fan-out runtime when policy data is absent.
 pub(crate) const POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY: &str =
     "consult_fanout_approval_threshold";
