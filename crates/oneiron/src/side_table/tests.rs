@@ -620,6 +620,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "TEST_API_SLIP_CACHE",
         "TEST_MCP_PAIRED_CACHE",
         "TRUSTED_CONTACT_ASK",
+        "TRUSTED_CONTACT_FIRE",
         "TRUSTED_CONTACT_RELATION",
         "TRUSTED_CONTACT_TIER",
         "TYPED_QUESTION_PENDING",

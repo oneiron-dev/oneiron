@@ -25,9 +25,6 @@ use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::temporal::TimeRange;
 use crate::{Vault, VaultConfig};
 
-/// What the person writes when they name the contact, and all the contact
-/// ever receives.
-const NOTICE: &str = "Having a hard night, please check in.";
 /// The turn the gate routes to help. Every word of it is private.
 const PRIVATE_TURN: &str =
     "crisis-marker the bridge on fifth street, my sister's pills, please do not tell anyone";
@@ -136,14 +133,8 @@ impl Fixture {
     }
 
     fn name(&self, dial: TrustedContactDial) -> Result<TrustedContact> {
-        self.vault.name_trusted_contact(
-            &self.person,
-            self.contact_id,
-            self.reach(),
-            NOTICE,
-            dial,
-            now(),
-        )
+        self.vault
+            .name_trusted_contact(&self.person, self.contact_id, self.reach(), dial, now())
     }
 
     /// Named by the person and accepted by the contact as an adult.
@@ -298,7 +289,6 @@ fn a_named_contact_hears_nothing_until_they_accept_as_an_adult() -> Result<()> {
                     &fx.person,
                     contact,
                     fx.reach(),
-                    NOTICE,
                     TrustedContactDial::JustCall,
                     now()
                 )
@@ -392,8 +382,33 @@ fn only_the_gates_route_to_help_fires_the_notify() -> Result<()> {
     assert_eq!(unbound.action, PolicyEnforcementAction::RouteToHelp);
     assert_eq!(fx.staged()?, 0);
 
+    // A notice queued by hand, for a live relation, with no fire behind it,
+    // is never handed to the host.
+    let forged = super::TrustedContactNotice {
+        fire: EntityId::now().to_hex(),
+        person: fx.person_id.to_hex(),
+        contact: fx.contact_id.to_hex(),
+        version: 1,
+        sender: fx.sender.to_hex(),
+        channel: "email".to_owned(),
+        verb: "send".to_owned(),
+        target: CONTACT_ADDRESS.to_owned(),
+    };
+    AttemptQueue::new(&fx.vault).enqueue(crate::attempt_queue::EnqueueAttempt {
+        kind: TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND.to_owned(),
+        payload: serde_json::to_vec(&forged).expect("notice encode"),
+        dedupe_key: None,
+        run_id: None,
+        now: now(),
+    })?;
+    assert!(
+        fx.vault
+            .claim_trusted_contact_notice("notice-worker", now())?
+            .is_none()
+    );
+
     let fired = fx.crisis()?;
-    assert_eq!(fx.staged()?, 1);
+    assert_eq!(fx.staged()?, 2);
     let (attempt, notice) = fx.claim()?;
     let sent = fx
         .vault
@@ -414,11 +429,11 @@ fn only_the_gates_route_to_help_fires_the_notify() -> Result<()> {
         false,
     )?;
     assert_eq!(replayed.action, PolicyEnforcementAction::RouteToHelp);
-    assert_eq!(fx.staged()?, 1);
+    assert_eq!(fx.staged()?, 2);
 
     // The gate's own next RouteToHelp does.
     fx.crisis()?;
-    assert_eq!(fx.staged()?, 2);
+    assert_eq!(fx.staged()?, 3);
     Ok(())
 }
 
@@ -440,8 +455,9 @@ fn the_tier_and_dial_decide_whether_she_asks_first() -> Result<()> {
             .is_err()
     );
     assert!(
-        !fx.vault
+        fx.vault
             .answer_trusted_contact_ask(&fx.person, asks[0].ask, false, now())?
+            .is_empty()
     );
     assert!(
         fx.vault
@@ -453,10 +469,13 @@ fn the_tier_and_dial_decide_whether_she_asks_first() -> Result<()> {
 
     fx.crisis()?;
     let ask = fx.vault.trusted_contact_asks(&fx.person)?[0].ask;
-    assert!(
-        fx.vault
-            .answer_trusted_contact_ask(&fx.person, ask, true, now())?
-    );
+    // A yes is told, like the gate's own fire.
+    let yes = fx
+        .vault
+        .answer_trusted_contact_ask(&fx.person, ask, true, now())?;
+    assert!(yes.iter().any(|notice| {
+        notice.notice_type == "trusted_contact_notified" && notice.audience == "user_and_model"
+    }));
     assert_eq!(fx.staged()?, 1);
 
     // Only the owner names a policy row's tier.
@@ -531,7 +550,6 @@ fn the_notice_carries_the_fact_of_concern_and_nothing_from_the_turn() -> Result<
         .expect("off-record witness");
     fx.crisis()?;
     let (attempt, notice) = fx.claim()?;
-    assert_eq!(notice.text, NOTICE);
     assert_eq!(notice.target, CONTACT_ADDRESS);
 
     // The send rides the notice's own binding: no other target, no other sender.
@@ -545,9 +563,12 @@ fn the_notice_carries_the_fact_of_concern_and_nothing_from_the_turn() -> Result<
     );
     assert!(sink.calls.is_empty());
 
+    // Whatever else the host's request carries stays behind.
+    let mut carrying = fx.outgoing(&notice, "fact");
+    carrying.intent.job_ref = Some(PRIVATE_TURN.to_owned());
     let sent = fx
         .vault
-        .dispatch_trusted_contact_notice(&attempt, fx.outgoing(&notice, "fact"), &mut sink)
+        .dispatch_trusted_contact_notice(&attempt, carrying, &mut sink)
         .expect("dispatch");
     assert_eq!(sent.outcome, OutboundDispatchOutcome::DeliveredToChannel);
     assert_eq!(sink.calls.len(), 1);

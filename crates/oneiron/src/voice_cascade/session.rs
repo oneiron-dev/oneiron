@@ -9,6 +9,7 @@ use crate::error::Result;
 use crate::interlocutor::InterlocutorResolutionInput;
 use crate::policy_model::PolicyClassifyRequest;
 use crate::speculative::SpeculativeSessionConfig;
+use crate::store::GateSystemNoticeRecord;
 
 use super::retrieval::invalid;
 use super::{
@@ -77,6 +78,10 @@ pub enum AsrUpdate {
 pub struct SafeguardUpdate {
     pub control: ControlEvent,
     pub stop: Option<OutputStop>,
+    /// The gate's notices to the person and the model, among them what a
+    /// `RouteToHelp` did for the person's trusted contacts. The host says
+    /// each one to both; none is silent.
+    pub notices: Vec<GateSystemNoticeRecord>,
 }
 
 struct Generation {
@@ -422,6 +427,9 @@ impl VoiceCascadeSession {
     /// audio flags cannot weaken that invariant. The engine kill's `cancel_llm`
     /// is respected; without a kill record, a halt conservatively cancels it too.
     /// No warning/persona content is substituted for the original sentence.
+    /// A stale result returns `None`; its notices are still on
+    /// [`SentenceEnforcement::enforcement`], for the host to say before it
+    /// drops it.
     pub fn apply_safeguard(&mut self, outcome: SentenceEnforcement) -> Option<SafeguardUpdate> {
         let active = self.generation.as_mut()?;
         if self.ended
@@ -444,8 +452,17 @@ impl VoiceCascadeSession {
             receipt_ref: enforcement.receipt_ref,
             custom_tier_skipped: enforcement.custom_tier_skipped,
         };
+        let notices = enforcement
+            .system_notices
+            .into_iter()
+            .filter(|notice| notice.audience == "user_and_model")
+            .collect();
         let stop = halts.then(|| self.stop_generation(StopReason::Safeguard, cancel_llm));
-        Some(SafeguardUpdate { control, stop })
+        Some(SafeguardUpdate {
+            control,
+            stop,
+            notices,
+        })
     }
 
     /// Feed monotonic host VAD observations. `speaking=true` asserts continuous

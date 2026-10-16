@@ -141,7 +141,7 @@ fn owner_notice(
 /// What a `RouteToHelp` did for the person's trusted contacts, told to the
 /// person and the model alike: every fire is said, none is silent. Neither
 /// body names the contact, the row or anything the turn said.
-pub(super) fn trusted_contact_notices(
+pub(crate) fn trusted_contact_notices(
     fire: crate::counterparty_contact::TrustedContactFire,
 ) -> Vec<GateSystemNoticeRecord> {
     [

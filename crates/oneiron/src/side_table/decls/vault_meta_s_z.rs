@@ -385,6 +385,9 @@ side_tables! {
     /// One pending or answered "may I reach your trusted contact?" ask, raised by a
     /// `RouteToHelp` the person's dial or the row's tier says to ask about first. Key: id16(ask).
     TRUSTED_CONTACT_ASK: VaultMeta b"trusted_contact.ask.v1:" Named;
+    /// One trusted-contact notice the engine staged, by its fire ref: the witness that claim and
+    /// dispatch require, so a notice queued any other way is never sent. Key: id16(fire).
+    TRUSTED_CONTACT_FIRE: VaultMeta b"trusted_contact.fire.v1:" Named;
     /// A person's trusted contact: the PERSON named, how to reach them, the fixed notice, the
     /// dial, and both sides' consent or revocation. Key: id16(person) + id16(contact).
     TRUSTED_CONTACT_RELATION: VaultMeta b"trusted_contact.relation.v1:" Named;

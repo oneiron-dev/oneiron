@@ -1,8 +1,8 @@
 //! Trusted contact (OF-527): a person names another PERSON to hear a crisis
 //! notice. Both sides consent, the contact attests they are an adult, and
 //! either side revokes. Only a `RouteToHelp` the OF-333 gate settles for that
-//! person fires it; the contact then hears the notice both of them saw when it
-//! was named, and nothing else.
+//! person fires it; the contact then hears the fact of concern, which the
+//! host renders as its fixed check-in line, and nothing else.
 //!
 //! The rows live in engine-private side tables, so no claim writer, agent tool
 //! or sync peer can stamp a consent: each one is written here, behind the proof
@@ -10,12 +10,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::trusted_contact_notice::stage_notice_in_txn;
+use super::trusted_contact_notice::{consent_change_guard, stage_notice_in_txn};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::GateSystemNoticeRecord;
 
 /// Key: (person, contact).
 pub(super) const RELATIONS: SideTable<(EntityId, EntityId), TrustedContact, Named> =
@@ -27,10 +28,6 @@ const ASKS: SideTable<EntityId, TrustedContactAsk, Named> =
 /// Key: the `RouteToHelp` owner row's ref.
 const TIERS: SideTable<String, TrustedContactTier, Named> =
     SideTable::new(&side_table::TRUSTED_CONTACT_TIER);
-
-/// About two text messages: room for "having a hard night, please check in"
-/// and a name, not for an account of the night.
-const MAX_NOTICE_BYTES: usize = 280;
 
 const MAX_TARGET_BYTES: usize = 512;
 
@@ -94,9 +91,6 @@ pub struct TrustedContact {
     pub person: EntityId,
     pub contact: EntityId,
     pub reach: TrustedContactReach,
-    /// The whole of what the contact receives, fixed when the person names
-    /// them and shown to the contact before they accept.
-    pub notice: String,
     pub dial: TrustedContactDial,
     /// Counts the times the person named this contact. Naming again changes
     /// what the contact agreed to, so it needs their consent again.
@@ -132,6 +126,8 @@ pub struct TrustedContactAsk {
 pub struct TrustedContactAnswer {
     pub yes: bool,
     pub at: u64,
+    /// The yes staged a notice: the relation was still live as asked about.
+    pub notified: bool,
 }
 
 /// What one settled `RouteToHelp` did for its person: how many contacts were
@@ -151,7 +147,7 @@ fn not_a_party(reason: &'static str) -> Error {
     Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
 }
 
-fn validate_naming(reach: &TrustedContactReach, notice: &str) -> Result<()> {
+fn validate_reach(reach: &TrustedContactReach) -> Result<()> {
     if !crate::outbound::is_canonical_outbound_verb(&reach.channel, &reach.verb) {
         return Err(invalid("the reach names no outbound channel verb"));
     }
@@ -161,30 +157,25 @@ fn validate_naming(reach: &TrustedContactReach, notice: &str) -> Result<()> {
     {
         return Err(invalid("the reach target is not an address"));
     }
-    if notice.trim().is_empty()
-        || notice.len() > MAX_NOTICE_BYTES
-        || notice.chars().any(char::is_control)
-    {
-        return Err(invalid("the notice is one short line"));
-    }
     Ok(())
 }
 
 impl Vault {
     /// The person names `contact`, another live PERSON, as their trusted
-    /// contact, reached on `reach` with `notice`. The relation is not live
-    /// until the contact accepts it. Naming the same contact again replaces
-    /// it, and the contact's consent with it.
+    /// contact, reached on `reach`. The relation is not live until the
+    /// contact accepts it. Naming the same contact again replaces it, and the
+    /// contact's consent with it; a notice staged for the old naming is not
+    /// sent.
     pub fn name_trusted_contact(
         &self,
         person: &AuthenticatedOwner,
         contact: EntityId,
         reach: TrustedContactReach,
-        notice: &str,
         dial: TrustedContactDial,
         now: u64,
     ) -> Result<TrustedContact> {
-        validate_naming(&reach, notice)?;
+        validate_reach(&reach)?;
+        let _order = consent_change_guard();
         self.with_write_txn(|wtxn| {
             let person = person.revalidate_person_in_txn(self, wtxn)?;
             if contact == person || !crate::consent::person_is_live_in_txn(self, wtxn, &contact)? {
@@ -197,7 +188,6 @@ impl Vault {
                 person,
                 contact,
                 reach,
-                notice: notice.to_owned(),
                 dial,
                 version,
                 named_at: now,
@@ -237,7 +227,8 @@ impl Vault {
     }
 
     /// Either side ends the relation. A revoked relation never fires, and a
-    /// notice already staged from it is not sent.
+    /// notice already staged from it is not sent: this waits for a send
+    /// already under way, and none starts once it returns.
     pub fn revoke_trusted_contact(
         &self,
         party: &AuthenticatedOwner,
@@ -245,6 +236,7 @@ impl Vault {
         contact: EntityId,
         now: u64,
     ) -> Result<TrustedContact> {
+        let _order = consent_change_guard();
         self.with_write_txn(|wtxn| {
             let actor = party.revalidate_person_in_txn(self, wtxn)?;
             let by = if actor == person {
@@ -330,15 +322,16 @@ impl Vault {
     }
 
     /// The person answers one ask, once. A yes stages the notice when the
-    /// relation is still live at the version asked about; the return says
-    /// whether a notice is on its way.
+    /// relation is still live at the version asked about, and returns the
+    /// notice that tells the person and the model it was sent, as the gate's
+    /// own fire does; nothing else returns one.
     pub fn answer_trusted_contact_ask(
         &self,
         person: &AuthenticatedOwner,
         ask: EntityId,
         yes: bool,
         now: u64,
-    ) -> Result<bool> {
+    ) -> Result<Vec<GateSystemNoticeRecord>> {
         self.with_write_txn(|wtxn| {
             let person = person.revalidate_person_in_txn(self, wtxn)?;
             let mut pending = ASKS
@@ -348,19 +341,27 @@ impl Vault {
             if pending.answer.is_some() {
                 return Err(invalid("this ask is already answered"));
             }
-            pending.answer = Some(TrustedContactAnswer { yes, at: now });
-            ASKS.put(&self.store, wtxn, &ask, &pending)?;
-            if !yes {
-                return Ok(false);
-            }
-            let Some(relation) = RELATIONS
+            let relation = RELATIONS
                 .get(&self.store, wtxn, &(pending.person, pending.contact))?
-                .filter(|relation| relation.is_live() && relation.version == pending.version)
-            else {
-                return Ok(false);
+                .filter(|relation| {
+                    yes && relation.is_live() && relation.version == pending.version
+                });
+            pending.answer = Some(TrustedContactAnswer {
+                yes,
+                at: now,
+                notified: relation.is_some(),
+            });
+            ASKS.put(&self.store, wtxn, &ask, &pending)?;
+            let Some(relation) = relation else {
+                return Ok(Vec::new());
             };
             stage_notice_in_txn(self, wtxn, &relation, ask, now)?;
-            Ok(true)
+            Ok(crate::policy_model::trusted_contact_notices(
+                TrustedContactFire {
+                    notified: 1,
+                    asked: 0,
+                },
+            ))
         })
     }
 

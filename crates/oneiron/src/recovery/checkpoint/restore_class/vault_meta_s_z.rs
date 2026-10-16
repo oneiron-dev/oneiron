@@ -155,6 +155,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // Consent and the owner's tiers stand on their own: a restore never brings
     // back a relation either side has since revoked, or an ask already answered.
     (&t::TRUSTED_CONTACT_ASK, LIVE),
+    (&t::TRUSTED_CONTACT_FIRE, LIVE),
     (&t::TRUSTED_CONTACT_RELATION, LIVE),
     (&t::TRUSTED_CONTACT_TIER, LIVE),
     (&t::TYPED_QUESTION_PENDING, CONTENT),
