@@ -33,8 +33,7 @@ fn posterior<'a>(
     critique: &CritiqueArtifact,
     rows: &'a [CriticReliability],
 ) -> Option<&'a CriticReliability> {
-    rows.iter()
-        .find(|row| row.lens_id == critique.lens_id && row.domain == critique.domain)
+    rows.iter().find(|row| row.cell == critique.calibration)
 }
 pub(super) fn merge_findings(
     critiques: &[CritiqueArtifact],
@@ -57,14 +56,14 @@ pub(super) fn merge_findings(
         for critique in &group {
             if !seen.insert((
                 &critique.provenance.critic_ref,
-                &critique.lens_id,
-                &critique.domain,
+                critique.calibration.digest(),
             )) {
                 continue;
             }
             let row = posterior(critique, rows);
-            alpha += row.map_or(1.0, |row| row.alpha);
-            beta += row.map_or(1.0, |row| row.beta);
+            let (a, b) = row.map_or((1.0, 1.0), CriticReliability::beta_parameters);
+            alpha += a;
+            beta += b;
         }
         let confidence = alpha / (alpha + beta);
         findings.push(MergedFinding {
@@ -110,8 +109,7 @@ pub(super) fn verdict_confidence(
     for row in critiques.iter().filter(|row| !row.out_of_scope) {
         if !seen.insert((
             &row.provenance.critic_ref,
-            &row.lens_id,
-            &row.domain,
+            row.calibration.digest(),
             finding_key(row),
         )) {
             continue;

@@ -2,13 +2,15 @@
 //!
 //! OF-352 models critics as run-tree-scoped artifacts, not vault claims. This
 //! module keeps that split explicit: critiques persist in private `vault_meta`
-//! rows keyed by the Dreamer branch attempt, while learned reliability can be
-//! surfaced separately as `critic_reliability.*` claims by callers that choose
-//! to write the public calibration state.
+//! rows keyed by the Dreamer branch attempt. Anchored outcomes feed the shared
+//! `learning.reliability` projector, keyed by lens, executor, task type and axis.
 
 mod findings;
 pub mod review;
 pub use findings::MergedFinding;
+mod reliability;
+pub use reliability::{CriticReliability, ReliabilityOutcomeSource};
+pub use review::CriticPrediction;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,18 +19,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
-};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::posterior::{Posterior, beta_mean};
+use crate::learning::{LearningCell, LearningPredicate};
 use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::write_envelope::WriteActor;
 
 pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
-pub const CRITIC_RELIABILITY_CLAIM_SCHEMA_VERSION: u64 = 1;
-pub const CRITIC_RELIABILITY_PREDICATE_PREFIX: &str = "critic_reliability";
 
 /// Private run-tree-scoped critique artifact for one branch attempt, written independently by
 /// both the generic critic reviewer and the Dreamer tournament with the identical prefix and key
@@ -205,6 +204,7 @@ impl CritiqueSeverity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CritiqueProvenance {
     pub critic_ref: String,
+    pub critic_class: u8,
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_revision: Option<String>,
@@ -212,21 +212,43 @@ pub struct CritiqueProvenance {
 
 impl CritiqueProvenance {
     pub fn new(
-        critic_ref: impl Into<String>,
+        critic: WriteActor,
         model_id: impl Into<String>,
         model_revision: Option<String>,
     ) -> Result<Self> {
         let provenance = Self {
-            critic_ref: critic_ref.into(),
+            critic_ref: critic.entity_ref().to_hex(),
+            critic_class: critic.actor_class() as u8,
             model_id: model_id.into(),
             model_revision,
         };
         validate_provenance(&provenance)?;
         Ok(provenance)
     }
+
+    pub fn actor(&self) -> Result<WriteActor> {
+        let class = crate::EdgeActorClass::try_from_u8(self.critic_class)
+            .ok_or_else(|| invalid_critic_config("invalid critic actor class"))?;
+        Ok(WriteActor::new(
+            EntityId::from_hex(&self.critic_ref)?,
+            class,
+        ))
+    }
+
+    pub fn executor(&self) -> Result<String> {
+        if self.critic_class == crate::EdgeActorClass::Human as u8 {
+            return Ok(self.critic_ref.clone());
+        }
+        let revision = self
+            .model_revision
+            .as_deref()
+            .filter(|revision| !revision.is_empty())
+            .ok_or_else(|| invalid_critic_config("critic executor requires a model revision"))?;
+        Ok(format!("{}@{revision}", self.model_id))
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CritiqueArtifact {
     pub schema_version: u64,
     pub artifact_id: String,
@@ -237,6 +259,10 @@ pub struct CritiqueArtifact {
     pub lens_id: String,
     pub domain: String,
     pub provenance: CritiqueProvenance,
+    /// Lens subject, executor at revision, the task's existing typeRef and scored axis.
+    pub calibration: LearningCell,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prediction: Option<CriticPrediction>,
     pub verdict: CritiqueVerdict,
     pub severity: CritiqueSeverity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -258,6 +284,7 @@ impl CritiqueArtifact {
         candidate_ref: impl Into<String>,
         lens: &CriticLens,
         provenance: CritiqueProvenance,
+        calibration: LearningCell,
         verdict: CritiqueVerdict,
         severity: CritiqueSeverity,
         hard_check_passed: Option<bool>,
@@ -274,6 +301,8 @@ impl CritiqueArtifact {
             lens_id: lens.id.clone(),
             domain: lens.domain.clone(),
             provenance,
+            calibration,
+            prediction: None,
             verdict,
             severity,
             hard_check_passed,
@@ -284,142 +313,6 @@ impl CritiqueArtifact {
         };
         validate_critique_artifact(&artifact)?;
         Ok(artifact)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CriticReliability {
-    pub lens_id: String,
-    pub domain: String,
-    pub alpha: f64,
-    pub beta: f64,
-    pub observations: u64,
-}
-
-impl CriticReliability {
-    pub fn prior(lens_id: impl Into<String>, domain: impl Into<String>) -> Result<Self> {
-        Self::new(lens_id, domain, 1.0, 1.0, 0)
-    }
-
-    pub fn new(
-        lens_id: impl Into<String>,
-        domain: impl Into<String>,
-        alpha: f64,
-        beta: f64,
-        observations: u64,
-    ) -> Result<Self> {
-        let reliability = Self {
-            lens_id: lens_id.into(),
-            domain: domain.into(),
-            alpha,
-            beta,
-            observations,
-        };
-        validate_reliability(&reliability)?;
-        Ok(reliability)
-    }
-
-    #[must_use]
-    pub fn posterior_mean(&self) -> f64 {
-        beta_mean(self.alpha, self.beta)
-    }
-
-    #[must_use]
-    pub fn ucb_bonus(&self, total_observations: u64, exploration: f64) -> f64 {
-        Posterior::ucb_bonus(self, total_observations, exploration)
-    }
-
-    #[must_use]
-    pub fn triage_weight(&self, total_observations: u64, exploration: f64) -> f64 {
-        self.posterior_mean() + self.ucb_bonus(total_observations, exploration)
-    }
-
-    pub fn apply_outcome(&mut self, event: ReliabilityOutcomeEvent) -> Result<()> {
-        self.update(event)
-    }
-}
-
-impl Posterior for CriticReliability {
-    type Outcome = ReliabilityOutcomeEvent;
-
-    fn update(&mut self, event: Self::Outcome) -> Result<()> {
-        if self.lens_id != event.lens_id || self.domain != event.domain {
-            return Err(invalid_critic_config(
-                "reliability outcome does not match posterior lens/domain",
-            ));
-        }
-        if !event.source.is_anchored() {
-            return Err(invalid_critic_config(
-                "critic reliability updates require anchored outcomes",
-            ));
-        }
-        if event.correct {
-            self.alpha += 1.0;
-        } else {
-            self.beta += 1.0;
-        }
-        self.observations = self
-            .observations
-            .checked_add(1)
-            .ok_or(Error::IndexOverflow("critic reliability observations"))?;
-        Ok(())
-    }
-
-    fn beta_parameters(&self) -> (f64, f64) {
-        (self.alpha, self.beta)
-    }
-
-    fn ucb_bonus(&self, total_observations: u64, exploration: f64) -> f64 {
-        let denominator = self.observations.max(1) as f64;
-        let numerator = (total_observations.max(1).saturating_add(1) as f64).ln();
-        exploration * (2.0 * numerator / denominator).sqrt()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum ReliabilityOutcomeSource {
-    HeldOutEval,
-    OwnerVerdict,
-    Beam,
-    CriticAgreement,
-}
-
-impl ReliabilityOutcomeSource {
-    #[must_use]
-    pub const fn is_anchored(self) -> bool {
-        matches!(self, Self::HeldOutEval | Self::OwnerVerdict | Self::Beam)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReliabilityOutcomeEvent {
-    pub lens_id: String,
-    pub domain: String,
-    pub source: ReliabilityOutcomeSource,
-    pub correct: bool,
-    pub observed_at: u64,
-}
-
-impl ReliabilityOutcomeEvent {
-    pub fn new(
-        lens_id: impl Into<String>,
-        domain: impl Into<String>,
-        source: ReliabilityOutcomeSource,
-        correct: bool,
-        observed_at: u64,
-    ) -> Result<Self> {
-        let event = Self {
-            lens_id: lens_id.into(),
-            domain: domain.into(),
-            source,
-            correct,
-            observed_at,
-        };
-        validate_identifier(&event.lens_id, MAX_ID_BYTES, "lens id")?;
-        validate_identifier(&event.domain, MAX_DOMAIN_BYTES, "domain")?;
-        Ok(event)
     }
 }
 
@@ -464,17 +357,12 @@ pub fn triage_critiques_with_exploration(
     }
 
     let total_observations = reliabilities.iter().try_fold(0_u64, |sum, reliability| {
-        sum.checked_add(reliability.observations)
+        sum.checked_add(reliability.estimate.runs.ceil() as u64)
             .ok_or(Error::IndexOverflow("critic reliability observations"))
     })?;
     let reliability_by_lens = reliabilities
         .iter()
-        .map(|reliability| {
-            (
-                (reliability.lens_id.as_str(), reliability.domain.as_str()),
-                reliability,
-            )
-        })
+        .map(|reliability| (reliability.cell.digest(), reliability))
         .collect::<BTreeMap<_, _>>();
 
     let mut scores = CritiqueTriageScores::default();
@@ -500,23 +388,18 @@ pub fn triage_critiques_with_exploration(
 
         if !votes.insert((
             critique.provenance.critic_ref.clone(),
-            critique.lens_id.clone(),
-            critique.domain.clone(),
+            critique.calibration.digest(),
             findings::finding_key(critique),
         )) {
             continue;
         }
         let reliability = reliability_by_lens
-            .get(&(critique.lens_id.as_str(), critique.domain.as_str()))
+            .get(&critique.calibration.digest())
             .copied();
-        let owned_prior;
-        let reliability = if let Some(reliability) = reliability {
-            reliability
-        } else {
-            owned_prior = CriticReliability::prior(&critique.lens_id, &critique.domain)?;
-            &owned_prior
-        };
-        let weight = reliability.triage_weight(total_observations, exploration);
+        let weight = reliability.map_or_else(
+            || 0.5 + exploration * (2.0 * (total_observations as f64 + 1.0).ln()).sqrt(),
+            |row| row.triage_weight(total_observations, exploration),
+        );
         match critique.verdict {
             CritiqueVerdict::Accept => scores.accept += weight,
             CritiqueVerdict::Revise => {
@@ -608,47 +491,6 @@ impl<'a> CritiqueArtifactStore<'a> {
         artifacts.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
         Ok(artifacts)
     }
-}
-
-pub fn critic_reliability_predicate(domain: &str, lens_id: &str) -> Result<String> {
-    validate_identifier(domain, MAX_DOMAIN_BYTES, "domain")?;
-    validate_identifier(lens_id, MAX_ID_BYTES, "lens id")?;
-    let predicate = format!("{CRITIC_RELIABILITY_PREDICATE_PREFIX}.{domain}.{lens_id}");
-    if predicate.len() > MAX_PREDICATE_BYTES {
-        return Err(invalid_critic_config(
-            "critic reliability predicate exceeds claim predicate limit",
-        ));
-    }
-    Ok(predicate)
-}
-
-pub fn critic_reliability_claim_body(
-    subject: EntityId,
-    reliability: &CriticReliability,
-    confidence: f32,
-) -> Result<ClaimBody> {
-    validate_reliability(reliability)?;
-    let predicate = critic_reliability_predicate(&reliability.domain, &reliability.lens_id)?;
-    let value = Value::Map(vec![
-        (
-            Value::from("schema_version"),
-            Value::from(CRITIC_RELIABILITY_CLAIM_SCHEMA_VERSION),
-        ),
-        (Value::from("alpha"), Value::F64(reliability.alpha)),
-        (Value::from("beta"), Value::F64(reliability.beta)),
-        (
-            Value::from("observations"),
-            Value::from(reliability.observations),
-        ),
-    ]);
-    ClaimBody::new(
-        predicate,
-        ClaimSubject::Entity(subject),
-        value,
-        confidence,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )
 }
 
 fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {

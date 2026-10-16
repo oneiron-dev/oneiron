@@ -56,6 +56,18 @@ pub(super) fn validate_critique_artifact(artifact: &CritiqueArtifact) -> Result<
     validate_identifier(&artifact.lens_id, MAX_ID_BYTES, "lens id")?;
     validate_identifier(&artifact.domain, MAX_DOMAIN_BYTES, "domain")?;
     validate_provenance(&artifact.provenance)?;
+    artifact.calibration.validate()?;
+    if artifact.calibration.predicate != LearningPredicate::Reliability
+        || artifact.calibration.executor.as_deref()
+            != Some(artifact.provenance.executor()?.as_str())
+    {
+        return Err(invalid_critic_config(
+            "critique calibration must name its executor",
+        ));
+    }
+    if let Some(prediction) = &artifact.prediction {
+        prediction.validate(artifact.created_at)?;
+    }
     if artifact.evidence_refs.len() > MAX_EVIDENCE_REFS {
         return Err(invalid_critic_config(
             "critique evidence_refs exceeds 64 entries",
@@ -76,6 +88,8 @@ pub(super) fn validate_provenance(provenance: &CritiqueProvenance) -> Result<()>
         MAX_PROVENANCE_REF_BYTES,
         "critic_ref",
     )?;
+    provenance.actor()?;
+    provenance.executor()?;
     validate_text(&provenance.model_id, MAX_PROVENANCE_REF_BYTES, "model_id")?;
     if let Some(model_revision) = &provenance.model_revision {
         validate_text(model_revision, MAX_PROVENANCE_REF_BYTES, "model_revision")?;
@@ -87,9 +101,9 @@ pub(super) fn validate_reliability_table(reliabilities: &[CriticReliability]) ->
     let mut seen = BTreeSet::new();
     for reliability in reliabilities {
         validate_reliability(reliability)?;
-        if !seen.insert((reliability.domain.as_str(), reliability.lens_id.as_str())) {
+        if !seen.insert(reliability.cell.digest()) {
             return Err(invalid_critic_config(
-                "critic reliability table contains duplicate domain/id",
+                "critic reliability table contains duplicate cells",
             ));
         }
     }
@@ -97,15 +111,13 @@ pub(super) fn validate_reliability_table(reliabilities: &[CriticReliability]) ->
 }
 
 pub(super) fn validate_reliability(reliability: &CriticReliability) -> Result<()> {
-    validate_identifier(&reliability.lens_id, MAX_ID_BYTES, "lens id")?;
-    validate_identifier(&reliability.domain, MAX_DOMAIN_BYTES, "domain")?;
-    if !reliability.alpha.is_finite()
-        || !reliability.beta.is_finite()
-        || reliability.alpha <= 0.0
-        || reliability.beta <= 0.0
+    reliability.cell.validate()?;
+    reliability.estimate.validate()?;
+    if reliability.cell.predicate != LearningPredicate::Reliability
+        || reliability.estimate.form() != crate::learning::EstimateForm::Beta
     {
         return Err(invalid_critic_config(
-            "critic reliability alpha/beta must be finite and positive",
+            "critic weight requires learning.reliability in Beta form",
         ));
     }
     Ok(())

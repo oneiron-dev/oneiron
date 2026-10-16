@@ -76,6 +76,7 @@ pub struct ReviewFinding {
 pub struct ReviewNote {
     pub evidence_refs: Vec<String>,
     pub suggested_edit: Option<String>,
+    pub prediction: Option<CriticPrediction>,
 }
 
 /// Generation beside a typed review: evidence refs and a suggested edit per finding, from the
@@ -162,8 +163,18 @@ impl ReviewDecisions<'_> {
             // One answer per question, in order.
             let decisions = self.ask(&questions, &[input.target])?;
             let verdict = label(&decisions[0], &VERDICTS)?;
-            let id = format!("review_{}", questions[0].id.to_hex());
-            meta.push((id, provenance_of(&input.lens, &decisions[0])?));
+            let identity = rmp_serde::to_vec_named(&(
+                questions[0].id,
+                input.target,
+                &input.run_id,
+                input.branch_attempt,
+                input.lens_ref,
+                &input.type_ref,
+                &input.axis,
+            ))
+            .map_err(|_| invalid_critic_config("review artifact identity"))?;
+            let id = format!("review_{}", blake3::hash(&identity).to_hex());
+            meta.push((id, provenance_of(input.critic, &decisions[0])?));
             let severity = label(&decisions[1], &SEVERITIES)?;
             let hard_check_passed = if input.lens.hard_check {
                 Some(noul(&decisions[2])?)
@@ -198,7 +209,11 @@ impl ReviewDecisions<'_> {
                 input.branch_attempt,
                 input.target.to_hex(),
                 &input.lens,
-                provenance,
+                provenance.clone(),
+                LearningCell::new(LearningPredicate::Reliability, input.lens_ref)
+                    .executor(provenance.executor()?)
+                    .type_ref(input.type_ref)
+                    .axis(input.axis),
                 finding.verdict,
                 finding.severity,
                 finding.hard_check_passed,
@@ -207,6 +222,8 @@ impl ReviewDecisions<'_> {
                 at,
             )?;
             artifact.out_of_scope = finding.out_of_scope;
+            artifact.prediction = note.prediction;
+            validate_critique_artifact(&artifact)?;
             artifacts.push(artifact);
         }
         Ok((artifacts, receipts))
@@ -287,14 +304,14 @@ fn noul(decision: &TypedDecision) -> Result<bool> {
 }
 
 /// The verdict's answering rung names the critic's model.
-fn provenance_of(lens: &CriticLens, decision: &TypedDecision) -> Result<CritiqueProvenance> {
+fn provenance_of(critic: WriteActor, decision: &TypedDecision) -> Result<CritiqueProvenance> {
     let pin = decision
         .receipt
         .providers
         .last()
         .ok_or_else(|| invalid_critic_config("review answer has no provider"))?;
     CritiqueProvenance::new(
-        format!("{}/{}", lens.domain, lens.id),
+        critic,
         pin.model.clone(),
         (!pin.version.is_empty()).then(|| pin.version.clone()),
     )

@@ -1,8 +1,9 @@
-//! Anchored outcomes, Beta updates and repeat-finding reads.
+//! Anchored review outcomes feed the shared measured-state projector.
 use super::*;
+use crate::learning::{LearningEvidence, Observation};
+use crate::ports::EntityStore;
 
-/// Accept/dismiss a finding with an anchored outcome. Automatic critic agreement is deliberately
-/// not calibration evidence; only an owner verdict, held-out evaluation or BEAM outcome updates Beta.
+/// Accept/dismiss a finding with an anchored outcome. Critic agreement never trains a cell.
 pub fn record_review_outcome(
     vault: &Vault,
     result: &ReviewResult,
@@ -12,22 +13,12 @@ pub fn record_review_outcome(
     accepted: bool,
     at: u64,
 ) -> Result<EntityId> {
-    if !source.is_anchored() {
-        return Err(invalid_critic_config("review outcome is not anchored"));
-    }
+    let anchor = source.anchor()?;
     let verdict = vault
         .get_claim(&result.verdict_claim)?
         .ok_or(Error::EntityNotFound)?;
     if verdict.predicate != "review.verdict" {
         return Err(invalid_critic_config("outcome requires review verdict"));
-    }
-    {
-        let txn = vault.store.env.read_txn()?;
-        if !trusted_claim(vault, &txn, &result.verdict_claim, &verdict)? {
-            return Err(invalid_critic_config(
-                "outcome requires a producer-bound review verdict",
-            ));
-        }
     }
     let session = EntityId::from_hex(
         verdict
@@ -35,18 +26,20 @@ pub fn record_review_outcome(
             .as_deref()
             .ok_or_else(|| invalid_critic_config("review has no session bundle"))?,
     )?;
-    let artifact = &persisted_artifact(vault, &result.verdict_claim, artifact_id)?;
+    let artifact = persisted_artifact(vault, &result.verdict_claim, artifact_id)?;
     let stored = CritiqueArtifactStore::new(vault)
         .get(artifact.branch_attempt, artifact_id)?
         .ok_or(Error::EntityNotFound)?;
-    if stored != *artifact || candidate_evidence(&verdict) != Some(&Value::from(stored.run_id)) {
+    if stored != artifact
+        || candidate_evidence(&verdict) != Some(&Value::from(artifact.run_id.clone()))
+    {
         return Err(invalid_critic_config(
             "outcome does not cite this persisted review",
         ));
     }
     let outcome_value = value_of(&(source, accepted))?;
     let outcome_key = format!("{}:{artifact_id}", result.verdict_claim.to_hex());
-    vault.with_write_txn_grouped(|txn| {
+    let outcome = vault.with_write_txn_grouped(|txn| {
         let current = vault
             .get_claim_in_txn(txn, &result.verdict_claim)?
             .ok_or(Error::EntityNotFound)?;
@@ -55,80 +48,85 @@ pub fn record_review_outcome(
                 "review changed during outcome admission",
             ));
         }
-        // The owner check every owner verb takes, rooted or not (H149).
         if actor.actor_class() != crate::EdgeActorClass::Human
             || crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
                 .is_err()
         {
             return Err(invalid_critic_config(
-                "owner verdict requires an active human owner",
+                "review outcome requires an active human owner",
             ));
         }
-        let predicate = critic_reliability_predicate(&artifact.domain, &artifact.lens_id)?;
-        let mut reliability = CriticReliability::prior(&artifact.lens_id, &artifact.domain)?;
-        let mut old = Vec::new();
+        let mut existing = None;
         for id in vault.claims_for_subject_in_txn(txn, &session)? {
             let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
                 continue;
             };
-            if !crate::claim::claim_surfaceable(&body) || !trusted_claim(vault, txn, &id, &body)? {
-                continue;
-            }
-            if body.predicate == "review.outcome"
+            if crate::claim::claim_surfaceable(&body)
+                && trusted_claim(vault, txn, &id, &body)?
+                && body.predicate == "review.outcome"
                 && candidate_evidence(&body) == Some(&Value::from(outcome_key.clone()))
             {
-                return if body.value == outcome_value {
-                    Ok(id)
-                } else {
-                    Err(invalid_critic_config("outcome already recorded"))
-                };
-            }
-            // A calibration still awaiting its owner's answer trains nothing
-            // and is left as it is.
-            if body.predicate == predicate
-                && body.lifecycle == ClaimLifecycleStatus::Active
-                && crate::gate::claim_consolidation_eligible_in_txn(
-                    &vault.store,
-                    txn,
-                    &id,
-                    crate::gate::ConsolidationReader::CriticOutcome,
-                )?
-            {
-                reliability = reliability_from_body(&body, &artifact.lens_id, &artifact.domain)?;
-                old.push(id);
+                if body.value != outcome_value {
+                    return Err(invalid_critic_config("outcome already recorded"));
+                }
+                existing = Some(id);
+                break;
             }
         }
-        reliability.apply_outcome(ReliabilityOutcomeEvent::new(
-            &artifact.lens_id,
-            &artifact.domain,
-            source,
-            accepted,
-            at,
-        )?)?;
-        let mut calibration = critic_reliability_claim_body(session, &reliability, 1.0)?;
-        calibration.source = Some(ClaimSource::Observed);
-        calibration.evidence = Some(Value::from(outcome_key.clone()));
-        let calibration_id = EntityId::now();
-        write_claim(vault, txn, &calibration_id, &calibration, actor, at)?;
-        for id in old {
-            vault.supersede_claim_in_txn(txn, &calibration_id, &id, at)?;
+        let id = if let Some(id) = existing {
+            id
+        } else {
+            let id = EntityId::now();
+            let mut body = ClaimBody::new(
+                "review.outcome",
+                ClaimSubject::Entity(session),
+                outcome_value.clone(),
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )?;
+            body.source = Some(ClaimSource::Observed);
+            body.evidence = Some(Value::from(outcome_key.clone()));
+            body.scope = Some(Value::from(super::findings::finding_key(&artifact)));
+            body.session_tag = Some(session.to_hex());
+            write_claim(vault, txn, &id, &body, actor, at)?;
+            id
+        };
+        // A verdict still waiting for its owner's answer is not evidence.
+        if crate::gate::claim_consolidation_eligible_in_txn(
+            &vault.store,
+            txn,
+            &id,
+            crate::gate::ConsolidationReader::CriticOutcome,
+        )? {
+            let evidence_at = vault
+                .port_entity_get(txn, &id)?
+                .ok_or(Error::EntityNotFound)?
+                .occurred
+                .start;
+            crate::learning::record_evidence_in_txn(
+                vault,
+                txn,
+                &artifact.calibration,
+                &LearningEvidence::anchored(
+                    calibration_receipt(&result.verdict_claim, artifact_id),
+                    evidence_at,
+                    anchor,
+                    Observation::Success(accepted),
+                ),
+                at,
+            )?;
         }
-        let id = EntityId::now();
-        let mut body = ClaimBody::new(
-            "review.outcome",
-            ClaimSubject::Entity(session),
-            outcome_value.clone(),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.source = Some(ClaimSource::Observed);
-        body.evidence = Some(Value::from(outcome_key));
-        body.scope = Some(Value::from(super::findings::finding_key(artifact)));
-        body.session_tag = Some(session.to_hex());
-        write_claim(vault, txn, &id, &body, actor, at)?;
         Ok(id)
-    })
+    })?;
+    if !accepted {
+        preserve_review_dissent(vault, result, artifact_id, at)?;
+    }
+    Ok(outcome)
+}
+
+pub(super) fn calibration_receipt(verdict: &EntityId, artifact: &str) -> String {
+    format!("critic.review:{}:{artifact}", verdict.to_hex())
 }
 
 /// Repeated finding keys, with their anchored outcome count, for a session bundle.
