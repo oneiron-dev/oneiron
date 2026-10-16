@@ -965,7 +965,7 @@
      "path": "src/anchored_annotation/mod.rs",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 3
      }
     },
@@ -1057,7 +1057,7 @@
      "path": "src/anchored_annotation/threads.rs",
      "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 8
      }
     },
@@ -17152,6 +17152,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeckEditContext",
+      "DeckRender",
+      "DeckRenderSide",
+      "DeckSettleEvidence"
+     ],
+     "path": "src/edit_roundtrip/deck.rs",
+     "purpose": "Native deck edits (ARCH-0077, \"Edit in place with passthrough\"): one docedit deck transaction over the exact…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -17245,9 +17263,9 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 2,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -17533,7 +17551,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 38
+      "crate-vis": 44
      }
     },
     {
@@ -42916,7 +42934,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43800,7 +43818,7 @@
    },
    "over_bar": 54,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2626,
+   "source_files": 2627,
    "test_files": 903
   },
   "oneiron-android": {
@@ -47784,7 +47802,8 @@
       "crate-vis": 1,
       "enum": 3,
       "fn": 1,
-      "re-export": 1,
+      "mod": 1,
+      "re-export": 2,
       "struct": 5
      }
     },
@@ -47882,6 +47901,40 @@
      "purpose": "`set_text` and `replace_run_text`",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AssetRef",
+      "Assets",
+      "DeckStep",
+      "DeckTransaction",
+      "DeckTransactionReport",
+      "Digest",
+      "IdMarks",
+      "NoAssets",
+      "PartChange",
+      "PartChangeKind",
+      "StepAssetKind",
+      "StepCell",
+      "StepPreset",
+      "StepRefusal",
+      "StepReport",
+      "StepSequence",
+      "StepTarget",
+      "StepXfrm",
+      "TransactionError"
+     ],
+     "path": "src/edit/transaction.rs",
+     "purpose": "Deck transactions (ARCH-0077, \"Transactions and allowed part changes\"): the unit the engine proposes and…",
+     "surface": {
+      "const": 2,
+      "enum": 8,
+      "fn": 15,
+      "struct": 10,
+      "trait": 1
      }
     },
     {
@@ -48322,9 +48375,9 @@
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")"
     },
     "edit": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…"
     },
@@ -48371,9 +48424,9 @@
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 50,
+   "source_files": 51,
    "test_files": 14
   },
   "oneiron-driver": {
