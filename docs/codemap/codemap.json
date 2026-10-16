@@ -44644,7 +44644,7 @@
      "path": "src/voice_cascade.rs",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
-      "mod": 5,
+      "mod": 6,
       "re-export": 6
      }
     },
@@ -44702,6 +44702,31 @@
      "path": "src/voice_cascade/hosted_tts/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BankVoiceBinding",
+      "MediaAsrAdapter",
+      "MediaTtsAdapter",
+      "MediaVoiceRoute",
+      "VoiceMediaOutput",
+      "VoiceMediaQueue",
+      "VoiceMediaSender",
+      "VoiceMediaWork",
+      "VoiceMediaWorker",
+      "VoiceRender"
+     ],
+     "path": "src/voice_cascade/media.rs",
+     "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 10,
+      "struct": 6,
+      "trait": 1
+     }
     },
     {
      "bucket": "s",
@@ -48693,7 +48718,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -48751,7 +48776,7 @@
    },
    "over_bar": 98,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2939,
+   "source_files": 2940,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56077,6 +56102,7 @@
       "MediaRequest",
       "MediaResponse",
       "MediaUsage",
+      "MediaVoice",
       "Modality",
       "NativeRate",
       "NativeUnit"
@@ -56085,11 +56111,25 @@
      "purpose": "The `ai.*` call family past text (runtime \"The ai.* call family\"): image, video, speech, transcription and…",
      "surface": {
       "const": 1,
-      "enum": 5,
-      "fn": 24,
+      "enum": 6,
+      "fn": 25,
+      "mod": 1,
       "struct": 6,
       "trait": 2,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WavClip"
+     ],
+     "path": "src/llm/media/wav.rs",
+     "purpose": "RIFF/WAVE clips: the container a voice call's PCM rides in both ways",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -56224,7 +56264,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -56233,7 +56273,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 34,
+   "source_files": 35,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -58859,7 +58899,7 @@
      "path": "src/api/ai/media.rs",
      "purpose": "The `ai.*` verbs past text: `GET /v1/ai/options`, `POST /v1/ai/image`, `/video`, `/speech`, `/transcribe`…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -63758,7 +63798,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 7,
-      "fn": 9,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -63944,6 +63984,16 @@
      "purpose": "Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/voice.rs",
+     "purpose": "The voice cascade's routes on the media seats (OF-410)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -65515,7 +65565,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65636,7 +65686,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 452,
+   "source_files": 453,
    "test_files": 182
   },
   "oneiron-spawn": {
