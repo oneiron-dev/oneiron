@@ -7,10 +7,10 @@ mod tests;
 
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ClaimSource;
-use crate::code_run::CodeRunDeterminism;
+use crate::code_run::{CodeRunDeterminism, SelfCall};
 use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, SelfDispatchResponse,
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::skill::SkillRole;
@@ -18,6 +18,21 @@ use crate::{EntityId, Vault};
 
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
+}
+
+/// The caller's host, lent to a callable skill, with the skill's streamed
+/// result kept in its outcome: its answer is JSON the call checks against
+/// its contract, never a body for the caller's store.
+struct SkillHost<'h>(&'h mut dyn JsCodeModeHost);
+
+impl JsCodeModeHost for SkillHost<'_> {
+    fn read_recoverable_output(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.0.read_recoverable_output(path)
+    }
+
+    fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
+        self.0.dispatch_self(call)
+    }
 }
 
 /// Imported source and local revisions descended from it stay on the foreign
@@ -161,7 +176,7 @@ pub fn execute_callable_skill(
             boundary: SandboxBoundaryContract::for_tier(tier),
             determinism,
         },
-        host,
+        &mut SkillHost(host),
     )?;
     if !outcome.done {
         return Err(invalid("callable skill did not finish"));

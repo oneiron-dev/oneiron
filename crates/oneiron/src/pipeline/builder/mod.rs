@@ -105,6 +105,12 @@ pub struct PipelineBuilder<'a> {
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
+    /// The run's affect retrieval policy (OF-423): the vault's by default,
+    /// replaced per run with [`Self::affect_policy`].
+    pub(super) affect_policy: super::AffectRetrievalPolicy,
+    /// The query side of emotion congruence. When unset, a run bound to a
+    /// retrieval turn reads that turn's VAD annotation.
+    pub(super) query_affect: Option<crate::affect::Vad>,
     pub(super) skip_vector_rescore: bool,
     /// The no-match floors the run judges, hashes and records by, read once
     /// when it starts ([`Self::no_match_floors`]).
@@ -175,6 +181,8 @@ impl<'a> PipelineBuilder<'a> {
             rerank: None,
             hyde: None,
             access_factor_overrides: None,
+            affect_policy: vault.config.affect_retrieval,
+            query_affect: None,
             skip_vector_rescore: false,
             no_match_floors: None,
             session: None,
@@ -622,6 +630,20 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn boost_contiguity(mut self) -> Self {
         self.apply_contiguity = true;
+        self
+    }
+
+    /// Replaces the vault's affect retrieval policy for this run. Validated
+    /// when the run starts.
+    pub fn affect_policy(mut self, policy: super::AffectRetrievalPolicy) -> Self {
+        self.affect_policy = policy;
+        self
+    }
+
+    /// The current turn's VAD, the query side of emotion congruence.
+    /// Validated when the run starts.
+    pub fn query_affect(mut self, vad: crate::affect::Vad) -> Self {
+        self.query_affect = Some(vad);
         self
     }
 

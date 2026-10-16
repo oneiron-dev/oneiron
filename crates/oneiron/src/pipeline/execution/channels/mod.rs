@@ -509,6 +509,7 @@ impl PipelineBuilder<'_> {
                 gravity: self.apply_gravity,
                 access_factor_overrides: self.access_factor_overrides,
                 access_factor_application: AccessFactorApplication::Apply,
+                affect: self.affect_policy,
             };
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(

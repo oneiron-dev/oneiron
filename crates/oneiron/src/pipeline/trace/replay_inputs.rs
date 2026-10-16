@@ -64,6 +64,16 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "query_occurred_range": t.query_occurred_range, "effort_anchor": t.effort_anchor,
         })
     });
+    let affect_retrieval = json!({
+        "arousal_stretch": builder.affect_policy.arousal_stretch,
+        "availability_floor": builder.affect_policy.availability_floor,
+        "floor_arousal": builder.affect_policy.floor_arousal,
+        "emotion_weight": builder.affect_policy.emotion_weight,
+        "query_affect": builder
+            .affect_policy
+            .congruence_query(builder.query_affect)
+            .map(|vad| [vad.valence, vad.arousal, vad.dominance]),
+    });
     let mut inputs = RetrievalReplayInputs {
         query_ref: builder.replay_query_ref.clone(),
         config: json!({
@@ -160,6 +170,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     };
     // `json!` above is at its recursion limit, so these join after it.
     inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
+    inputs.config["affect_retrieval"] = affect_retrieval;
     inputs.config["media_search"] = json!(builder
         .media_search
         .iter()
