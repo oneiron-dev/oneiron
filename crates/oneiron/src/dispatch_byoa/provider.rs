@@ -63,13 +63,22 @@ fn cli(program: &str, args: &[&str], input: DreamerProviderInput) -> ByoaResult<
     super::validate::validate_connector(&connector)?;
     Ok(connector)
 }
+/// The official Claude Code binary. Under the person's own sign-in it may run
+/// on any runtime, their hosted vault VM included ([`super::login_placement`]).
+pub const CLAUDE_CODE_PROGRAM: &str = "claude";
+/// The official Codex CLI. A ChatGPT plan login runs only on the person's own
+/// runtime.
+pub const CODEX_PROGRAM: &str = "codex";
+/// The OpenCode CLI.
+pub const OPENCODE_PROGRAM: &str = "opencode";
+
 pub struct ClaudeCodeRunner;
 impl DreamerProviderAdapter for ClaudeCodeRunner {
     fn name(&self) -> &'static str {
         "claude-code"
     }
     fn connector(&self, input: DreamerProviderInput) -> ByoaResult<ByoaConnectorSpec> {
-        cli("claude", &["--print", "--output-format", "json"], input)
+        cli(CLAUDE_CODE_PROGRAM, &["--print", "--output-format", "json"], input)
     }
 }
 pub struct CodexRunner;
@@ -78,7 +87,7 @@ impl DreamerProviderAdapter for CodexRunner {
         "codex"
     }
     fn connector(&self, input: DreamerProviderInput) -> ByoaResult<ByoaConnectorSpec> {
-        cli("codex", &["exec", "--json"], input)
+        cli(CODEX_PROGRAM, &["exec", "--json"], input)
     }
 }
 pub struct OpenCodeRunner;
@@ -87,6 +96,6 @@ impl DreamerProviderAdapter for OpenCodeRunner {
         "opencode"
     }
     fn connector(&self, input: DreamerProviderInput) -> ByoaResult<ByoaConnectorSpec> {
-        cli("opencode", &["run", "--format", "json"], input)
+        cli(OPENCODE_PROGRAM, &["run", "--format", "json"], input)
     }
 }

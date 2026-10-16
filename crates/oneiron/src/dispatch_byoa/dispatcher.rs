@@ -19,7 +19,7 @@ use crate::code_sandbox::SandboxBoundaryContract;
 use crate::code_sandbox::microvm::ExecutionBudget;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
-use crate::llm::{BudgetLease, LlmBackend, LlmRequest};
+use crate::llm::{BudgetLease, LlmBackend, LlmError, LlmRequest};
 use crate::temporal::TimeRange;
 
 use super::connector::{
@@ -40,6 +40,12 @@ use super::exhaust::{
     byoa_result_ref, decode_byoa_record, disposition_matches_state, encode_exhaust_envelope,
     ensure_byoa_runtime_actor, normalize_capture_reason, union_taint_refs,
     validate_canonical_capture,
+};
+use super::error::ERR_SEAT_TASK;
+use super::provider::ProviderAdapterRegistry;
+use super::seat::{
+    LoginPlacement, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeatPolicy, RunnerWork,
+    SeatRoute, SeatSpent, login_placement, runner_task, spent_seat_in,
 };
 use super::validate::{
     encode_execution_transcript, validate_cli_sandbox, validate_connector, validate_endpoint,
@@ -106,6 +112,18 @@ pub trait ByoaCliExecutor {
     ) -> ByoaResult<ByoaExhaust>;
 }
 
+/// One attempt row a dispatch door lands, with its task scope already a
+/// queue-shaped reference.
+struct ByoaEnqueue {
+    user_login: bool,
+    connector: ByoaConnectorSpec,
+    task_ref: Option<String>,
+    parent_attempt: Option<[u8; 16]>,
+    run_id: Option<String>,
+    dedupe_key: Option<String>,
+    now: u64,
+}
+
 /// The foreign-agent dispatch organ.
 ///
 /// It owns no transport of its own. The endpoint factory and the egress port
@@ -145,32 +163,47 @@ where
     /// Returns [`ByoaError::Store`] when the connector fails the door or the
     /// queue refuses the row.
     pub fn dispatch(&mut self, request: DispatchByoa) -> ByoaResult<ByoaDispatchOutcome> {
-        self.check_login_placement(request.user_login)?;
+        let enqueue = ByoaEnqueue {
+            user_login: request.user_login,
+            connector: request.connector,
+            task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
+            parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
+            run_id: request.run_id,
+            dedupe_key: request.dedupe_key,
+            now: request.now,
+        };
+        self.vault
+            .try_with_write_txn_grouped(|txn| self.enqueue_in_txn(txn, enqueue))
+    }
+
+    fn enqueue_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        request: ByoaEnqueue,
+    ) -> ByoaResult<ByoaDispatchOutcome> {
+        self.check_login_placement(request.user_login, &request.connector)?;
         validate_connector(&request.connector)?;
         let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
             user_login: request.user_login,
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             connector: request.connector,
-            parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
+            parent_attempt: request.parent_attempt,
         })?;
-
-        let outcome = self.vault.with_write_txn_grouped(|txn| {
-            crate::ports::JobQueue::port_job_enqueue_scoped(
-                self.vault,
-                txn,
-                EnqueueAttempt {
-                    kind: BYOA_ATTEMPT_KIND.to_owned(),
-                    payload,
-                    dedupe_key: request.dedupe_key,
-                    run_id: request.run_id,
-                    now: request.now,
-                },
-                crate::ports::JobScope {
-                    task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
-                    dedupe_actor_ref: None,
-                },
-            )
-        })?;
+        let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
+            self.vault,
+            txn,
+            EnqueueAttempt {
+                kind: BYOA_ATTEMPT_KIND.to_owned(),
+                payload,
+                dedupe_key: request.dedupe_key,
+                run_id: request.run_id,
+                now: request.now,
+            },
+            crate::ports::JobScope {
+                task_ref: request.task_ref,
+                dedupe_actor_ref: None,
+            },
+        )?;
 
         let status = |attempt: AttemptRecord| -> ByoaResult<ByoaDispatchStatus> {
             let connector_kind = decode_byoa_record(&attempt)?.connector.kind();
@@ -185,6 +218,123 @@ where
         })
     }
 
+    /// Dispatches `work` to the policy's `seat` through the runner adapter
+    /// the registry names for it (OF-137). The seat's login rides the attempt
+    /// as `user_login`, so the placement door holds again before execution.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an invalid policy or seat index, an unknown runner, a login
+    /// this runtime may not run, and every refusal [`Self::dispatch`] has.
+    pub fn dispatch_runner(
+        &mut self,
+        registry: &ProviderAdapterRegistry,
+        policy: &RunnerSeatPolicy,
+        seat: usize,
+        work: RunnerWork,
+    ) -> ByoaResult<ByoaDispatchOutcome> {
+        policy.validate(registry)?;
+        let chosen = policy.seat(seat)?;
+        let connector = chosen.connector(registry, work.task, work.checkout_id)?;
+        self.dispatch(DispatchByoa {
+            user_login: chosen.logs_in(),
+            connector,
+            task_ref: work.task_ref,
+            parent_attempt_id: work.parent_attempt_id,
+            run_id: work.run_id,
+            dedupe_key: work.dedupe_key,
+            now: work.now,
+        })
+    }
+
+    /// Captures a runner attempt's terminal exhaust and, when the seat it
+    /// ran on is spent, routes its work under the owner's policy, all in one
+    /// write transaction (OF-137). A failed capture is read for a spent seat
+    /// unless the host already knows one (`spent`, from
+    /// [`ByoaError::SeatSpent`]). Stop parks the work until the seat is back;
+    /// NextSeat dispatches the next seat this runtime may run, as a child of
+    /// the spent attempt, and parks when none is left; InternalModels hands
+    /// the work back to the Dreamer's own model roles. A replay finds the
+    /// same capture and the same child.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an invalid policy or seat index, a NextSeat route from an
+    /// attempt that carries no registered runner's task, and every refusal
+    /// capture and dispatch have, without durable writes.
+    pub fn route_runner_terminal(
+        &mut self,
+        registry: &ProviderAdapterRegistry,
+        policy: &RunnerSeatPolicy,
+        seat: usize,
+        mut capture: CaptureByoaExhaust,
+        spent: Option<SeatSpent>,
+    ) -> ByoaResult<SeatRoute> {
+        policy.validate(registry)?;
+        policy.seat(seat)?;
+        let spent = spent.or_else(|| {
+            (capture.disposition == ByoaTerminalDisposition::Failed)
+                .then(|| spent_seat_in(&capture.exhaust))
+                .flatten()
+        });
+        if let Some(spent) = &spent {
+            capture.reason.get_or_insert_with(|| spent.reason().to_owned());
+        }
+        let now = capture.now;
+        self.vault.try_with_write_txn_grouped(|wtxn| {
+            let receipt = self.capture_terminal_exhaust_in_txn(wtxn, capture)?;
+            let Some(spent) = spent else {
+                return Ok(SeatRoute::Settled(receipt));
+            };
+            let park = |receipt, spent: SeatSpent| SeatRoute::Park {
+                until: spent.back_at(now),
+                receipt,
+                spent,
+            };
+            match policy.on_spent {
+                OnSeatSpent::Stop => Ok(park(receipt, spent)),
+                OnSeatSpent::InternalModels => Ok(SeatRoute::InternalModels { receipt, spent }),
+                OnSeatSpent::NextSeat => {
+                    let ByoaConnectorSpec::CliSandbox(ran) =
+                        decode_byoa_record(&receipt.attempt)?.connector
+                    else {
+                        return Err(invalid(ERR_SEAT_TASK));
+                    };
+                    let task = runner_task(&ran).ok_or_else(|| invalid(ERR_SEAT_TASK))?;
+                    let parent = *receipt.attempt.id.as_bytes();
+                    for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
+                        let connector = next.connector(registry, task.to_owned(), ran.checkout_id)?;
+                        if !self.login_admitted(next.logs_in(), &connector) {
+                            continue;
+                        }
+                        let outcome = self.enqueue_in_txn(
+                            wtxn,
+                            ByoaEnqueue {
+                                user_login: next.logs_in(),
+                                connector,
+                                task_ref: receipt.attempt.task_ref.clone(),
+                                parent_attempt: Some(parent),
+                                run_id: receipt.attempt.run_id.clone(),
+                                dedupe_key: Some(format!(
+                                    "{RUNNER_SEAT_DEDUPE_PREFIX}{}:{index}",
+                                    bytes_to_hex_lower(&parent)
+                                )),
+                                now,
+                            },
+                        )?;
+                        return Ok(SeatRoute::NextSeat {
+                            receipt,
+                            spent,
+                            seat: index,
+                            outcome,
+                        });
+                    }
+                    Ok(park(receipt, spent))
+                }
+            }
+        })
+    }
+
     /// Resolves an endpoint connector into the host backend that serves it.
     ///
     /// # Errors
@@ -196,10 +346,21 @@ where
         self.endpoint_factory.resolve_backend(spec)
     }
 
-    fn check_login_placement(&self, user_login: bool) -> ByoaResult<()> {
-        if user_login
-            && self.vault.config.privacy.posture == crate::config::HostingPrivacyPosture::Hosted
-        {
+    /// Whether this runtime may run a login behind `connector`: anywhere for
+    /// a login its vendor lets run on a hosted node, else only off one. A
+    /// connector without a login runs anywhere.
+    fn login_admitted(&self, user_login: bool, connector: &ByoaConnectorSpec) -> bool {
+        !user_login
+            || self.vault.config.privacy.posture != crate::config::HostingPrivacyPosture::Hosted
+            || login_placement(connector) == LoginPlacement::AnyRuntime
+    }
+
+    fn check_login_placement(
+        &self,
+        user_login: bool,
+        connector: &ByoaConnectorSpec,
+    ) -> ByoaResult<()> {
+        if !self.login_admitted(user_login, connector) {
             return Err(ByoaError::CloudLoginRefused);
         }
         Ok(())
@@ -210,7 +371,7 @@ where
             .get(fence.attempt_id)?
             .ok_or_else(|| invalid(ERR_ATTEMPT_MISSING))?;
         let payload = decode_byoa_record(&record)?;
-        self.check_login_placement(payload.user_login)?;
+        self.check_login_placement(payload.user_login, &payload.connector)?;
         AttemptQueue::check_result_lease(
             &record,
             &fence.lease_owner,
@@ -246,10 +407,18 @@ where
         }
         encode_execution_transcript(&request)?;
         let backend = self.endpoint_backend(&spec)?;
-        let response = backend
-            .generate(request, lease)
-            .await
-            .map_err(|_| ByoaError::Backend("endpoint execution failed".to_owned()))?;
+        let response = backend.generate(request, lease).await.map_err(|error| {
+            // A spent seat keeps its type so the caller can route it; every
+            // other provider error stays out of custody.
+            let spent = match &error {
+                LlmError::Retryable(retryable) => SeatSpent::from_retryable(retryable),
+                _ => None,
+            };
+            spent.map_or_else(
+                || ByoaError::Backend("endpoint execution failed".to_owned()),
+                ByoaError::SeatSpent,
+            )
+        })?;
         Ok(ByoaExhaust {
             transcript: Some(encode_execution_transcript(&response)?),
             ..ByoaExhaust::default()

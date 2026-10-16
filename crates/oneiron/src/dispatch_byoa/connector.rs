@@ -483,11 +483,11 @@ mod optional_credential_handle_wire {
     }
 }
 
-mod credential_handle_vec_wire {
+pub(super) mod credential_handle_vec_wire {
     use super::SandboxCredentialHandle;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub(super) fn serialize<S: Serializer>(
+    pub(in crate::dispatch_byoa) fn serialize<S: Serializer>(
         handles: &[SandboxCredentialHandle],
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
@@ -498,7 +498,7 @@ mod credential_handle_vec_wire {
             .serialize(serializer)
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    pub(in crate::dispatch_byoa) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Vec<SandboxCredentialHandle>, D::Error> {
         Vec::<String>::deserialize(deserializer)?
