@@ -182,13 +182,6 @@ pub(crate) fn conflict_close_candidate(
             }
         }
     }
-    let value = Value::Map(vec![
-        (
-            Value::from("open_marker"),
-            Value::Binary(open.as_bytes().to_vec()),
-        ),
-        (Value::from("resolution"), resolution),
-    ]);
     let claim_id = deterministic_claim_id(
         run.attempt_id,
         subject,
@@ -206,29 +199,7 @@ pub(crate) fn conflict_close_candidate(
             .or(body.source)
             .unwrap_or(ClaimSource::Generated),
     );
-    let mut candidate = ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, body.subject, value, 1.0);
-    // The marker's own stamp is its project; a scope-map entry can never move
-    // it. Promotion keeps only a map scope, so a non-map one adds nothing.
-    let mut fields = match body.scope {
-        Some(Value::Map(fields)) => fields,
-        _ => Vec::new(),
-    };
-    fields.retain(|(key, _)| key.as_str() != Some(SCOPE_PROJECT_KEY));
-    if project != crate::claim::default_project_id() {
-        fields.push((
-            Value::from(SCOPE_PROJECT_KEY),
-            Value::Binary(project.as_bytes().to_vec()),
-        ));
-    }
-    if !fields.is_empty() {
-        candidate = candidate.with_scope(Value::Map(fields));
-    }
-    if let Some(rel) = body.rel {
-        candidate = candidate.with_relationship(rel);
-    }
-    if let Some(world) = body.world {
-        candidate = candidate.with_world(world);
-    }
+    let candidate = resolved_candidate(&body, open, resolution);
     Ok(PromotionCandidate {
         claim_id,
         candidate,
@@ -242,4 +213,47 @@ pub(crate) fn conflict_close_candidate(
         },
         learned_at: run.now_ms,
     })
+}
+
+/// The `conflict.resolved` answering the open marker `open` (whose body is
+/// `marker`) with `resolution`, on the marker's own subject, world,
+/// relationship, scope and project.
+pub(crate) fn resolved_candidate(
+    marker: &crate::ClaimBody,
+    open: EntityId,
+    resolution: Value,
+) -> ClaimCandidate {
+    let value = Value::Map(vec![
+        (
+            Value::from("open_marker"),
+            Value::Binary(open.as_bytes().to_vec()),
+        ),
+        (Value::from("resolution"), resolution),
+    ]);
+    let project = marker.scope_project;
+    let mut candidate =
+        ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, marker.subject, value, 1.0);
+    // The marker's own stamp is its project; a scope-map entry can never move
+    // it. Promotion keeps only a map scope, so a non-map one adds nothing.
+    let mut fields = match &marker.scope {
+        Some(Value::Map(fields)) => fields.clone(),
+        _ => Vec::new(),
+    };
+    fields.retain(|(key, _)| key.as_str() != Some(SCOPE_PROJECT_KEY));
+    if project != crate::claim::default_project_id() {
+        fields.push((
+            Value::from(SCOPE_PROJECT_KEY),
+            Value::Binary(project.as_bytes().to_vec()),
+        ));
+    }
+    if !fields.is_empty() {
+        candidate = candidate.with_scope(Value::Map(fields));
+    }
+    if let Some(rel) = marker.rel {
+        candidate = candidate.with_relationship(rel);
+    }
+    if let Some(world) = marker.world {
+        candidate = candidate.with_world(world);
+    }
+    candidate
 }
