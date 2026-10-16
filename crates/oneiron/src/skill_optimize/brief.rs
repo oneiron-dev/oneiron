@@ -363,6 +363,12 @@ fn reliability_citations(vault: &Vault, skill: &EntityId) -> Result<Vec<String>>
             || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
             || body.source != Some(crate::claim::ClaimSource::Observed)
             || body.approval != crate::claim::ClaimApprovalStatus::Auto
+            || !crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                &rtxn,
+                &id,
+                crate::gate::ConsolidationReader::SkillOptimizeCitations,
+            )?
         {
             continue;
         }
@@ -381,4 +387,14 @@ fn reliability_citations(vault: &Vault, skill: &EntityId) -> Result<Vec<String>>
         }
     }
     Ok(best.map(|(_, receipts)| receipts).unwrap_or_default())
+}
+
+#[cfg(test)]
+impl Vault {
+    pub(crate) fn skill_optimize_reliability_citations_for_test(
+        &self,
+        skill: &EntityId,
+    ) -> Result<Vec<String>> {
+        reliability_citations(self, skill)
+    }
 }

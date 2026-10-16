@@ -37,6 +37,7 @@ use crate::owner::{
     pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod history_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -68,7 +69,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/graph-fs", get(read_graph_fs))
         .route("/feedback/preview", post(preview_feedback))
         .route("/feedback/send", post(send_feedback))
+        .route("/feedback/inbox", get(feedback_inbox))
         .route("/pack-drift", get(pack_drift_repairs))
+        .merge(history_routes::routes())
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the
@@ -205,13 +208,14 @@ async fn blocking<T: Send + 'static>(
         .map_err(owner_error)
 }
 
-/// `GET /v1/owner/status`: where the data lives, and the embedder as this
-/// server serves it.
+/// `GET /v1/owner/status`: where the data lives, the embedder as this
+/// server serves it, and where feedback goes.
 #[derive(serde::Serialize)]
 struct OwnerStatus {
     #[serde(flatten)]
     location: location::Location,
     embedder: crate::owner::embedder::EmbedderReport,
+    feedback: feedback::FeedbackStatus,
 }
 
 async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<OwnerStatus> {
@@ -226,6 +230,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
                 host.every.map(|every| every.as_secs() / 3_600),
             )?,
             embedder: server.embedder_report()?,
+            feedback: feedback::status(server.feedback.as_deref(), &server.config.feedback_inbox),
         })
     })
     .await?;
@@ -769,6 +774,18 @@ async fn send_feedback(
     let request = json_payload(payload)?;
     let sent = blocking(move || feedback::send(server.vault(), &host, &owner, &request)).await?;
     Ok(Json(sent))
+}
+
+async fn feedback_inbox(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<feedback::InboxPage>, QueryRejection>,
+) -> OwnerReply<Vec<oneiron::feedback::FeedbackInboxNote>> {
+    owner(&auth, &server)?;
+    let page = query_params(query)?;
+    Ok(Json(
+        blocking(move || feedback::inbox(server.vault(), &page)).await?,
+    ))
 }
 
 async fn pack_drift_repairs(

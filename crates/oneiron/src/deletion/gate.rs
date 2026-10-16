@@ -47,11 +47,19 @@ pub(crate) struct DeletionGateContext {
 /// [`reverify_deletion_authority_when_unpublished`].
 type DeletionCheck<'a> = &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>;
 
+/// A write a `user_hard_delete` makes in its own linearizing transaction (its
+/// tombstone publication, or with nothing published its purge), given its
+/// request id: the claim on what authorized it, refused when that is already
+/// spent. The purge transaction calls it again with the delete's receipt.
+pub(crate) type DeletionClaim<'a> =
+    &'a dyn Fn(&mut heed::RwTxn<'_>, &[u8; 16], Option<&EntityId>) -> Result<()>;
+
 pub(crate) struct GatedDeletion<'a> {
     pub(super) context: DeletionGateContext,
     reverify: DeletionCheck<'a>,
     pre_scrub_check: Option<DeletionCheck<'a>>,
     soft_scrub_committed: Cell<bool>,
+    claim: Option<DeletionClaim<'a>>,
 }
 
 impl<'a> GatedDeletion<'a> {
@@ -69,6 +77,7 @@ impl<'a> GatedDeletion<'a> {
             reverify,
             pre_scrub_check: None,
             soft_scrub_committed: Cell::new(false),
+            claim: None,
         }
     }
 
@@ -84,12 +93,42 @@ impl<'a> GatedDeletion<'a> {
             reverify,
             pre_scrub_check: Some(check),
             soft_scrub_committed: Cell::new(false),
+            claim: None,
         }
+    }
+
+    /// See [`DeletionClaim`] for the one reason that carries a claim.
+    pub(crate) fn with_claim(mut self, claim: Option<DeletionClaim<'a>>) -> Self {
+        self.claim = claim;
+        self
     }
 
     pub(super) fn note_soft_scrub_committed(&self) {
         self.soft_scrub_committed.set(true);
     }
+}
+
+/// Makes `gate`'s claim for `tombstone`'s request in `txn`: the tombstone
+/// publication, or the purge transaction recording `receipt`. With nothing
+/// published the purge linearizes the delete, so its call makes the claim.
+pub(super) fn claim_in_txn(
+    gate: Option<&GatedDeletion<'_>>,
+    txn: &mut heed::RwTxn<'_>,
+    tombstone: &super::tombstone::TombstoneValueV2,
+    receipt: Option<&EntityId>,
+) -> Result<()> {
+    match gate.and_then(|gate| gate.claim) {
+        Some(claim) => claim(txn, &tombstone.request_id, receipt),
+        None => Ok(()),
+    }
+}
+
+/// A delete that finds no header has no linearizing write for the claim.
+pub(super) fn refuse_claim(gate: Option<&GatedDeletion<'_>>) -> Result<()> {
+    if gate.is_some_and(|gate| gate.claim.is_some()) {
+        return Err(crate::error::Error::ConcurrentWrite("delete preview stale"));
+    }
+    Ok(())
 }
 
 /// Re-runs `gate`'s authority check against `txn`, or passes when the delete is

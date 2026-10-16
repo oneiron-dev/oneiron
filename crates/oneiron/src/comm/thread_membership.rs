@@ -58,9 +58,10 @@ pub(super) fn matching_thread_memberships_in_txn(
         // unaliased thread the standing claims remain authoritative, preserving
         // ordinary membership reads without a COMM_RECORD family scan.
         if !aliases.values().any(|target| target == canonical) {
-            return matching_thread_membership_with_boundary_in_txn(
+            let rows = matching_thread_membership_with_boundary_in_txn(
                 vault, rtxn, party_ref, thread_ref, true, None,
-            );
+            )?;
+            return settled_member(vault, rtxn, rows);
         }
         // Read APIs fold the current source-event union. The projector instead
         // supplies its existing pass index plus re-read peer boundaries below.
@@ -84,14 +85,35 @@ pub(super) fn matching_thread_memberships_in_txn(
             }
         }
     }
-    matching_thread_membership_with_boundary_in_txn(
+    let rows = matching_thread_membership_with_boundary_in_txn(
         vault,
         rtxn,
         party_ref,
         thread_ref,
         active_only,
         boundary,
-    )
+    )?;
+    if active_only {
+        settled_member(vault, rtxn, rows)
+    } else {
+        Ok(rows)
+    }
+}
+
+/// The fold reads every row, so a held leave boundary still vetoes; the hold
+/// applies to the winning join only. A held winner makes no member, and an
+/// older join does not stand in for it.
+fn settled_member(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    rows: Vec<(EntityId, CommClaim)>,
+) -> CommResult<Vec<(EntityId, CommClaim)>> {
+    if let Some((id, _)) = rows.first()
+        && !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, id)?
+    {
+        return Ok(Vec::new());
+    }
+    Ok(rows)
 }
 
 fn matching_thread_membership_with_boundary_in_txn(
@@ -151,7 +173,7 @@ pub(crate) fn active_thread_refs_in_txn(
     let aliases = crate::thread_passport::thread_aliases_in_txn(vault, rtxn)?;
     let mut candidates = BTreeSet::new();
     for id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(rtxn, &id)? else {
             continue;
         };
         if body.predicate == PREDICATE_COMM_THREAD_MEMBER

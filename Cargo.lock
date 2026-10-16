@@ -3329,7 +3329,7 @@ dependencies = [
 [[package]]
 name = "formualizer-common"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=23207d03f9e668b10b8e4036280c5d0bac808089#23207d03f9e668b10b8e4036280c5d0bac808089"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
 dependencies = [
  "chrono",
 ]
@@ -3337,7 +3337,7 @@ dependencies = [
 [[package]]
 name = "formualizer-eval"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=23207d03f9e668b10b8e4036280c5d0bac808089#23207d03f9e668b10b8e4036280c5d0bac808089"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -3364,7 +3364,7 @@ dependencies = [
 [[package]]
 name = "formualizer-macros"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=23207d03f9e668b10b8e4036280c5d0bac808089#23207d03f9e668b10b8e4036280c5d0bac808089"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
 dependencies = [
  "formualizer-common",
  "proc-macro2",
@@ -3375,7 +3375,7 @@ dependencies = [
 [[package]]
 name = "formualizer-parse"
 version = "3.1.2"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=23207d03f9e668b10b8e4036280c5d0bac808089#23207d03f9e668b10b8e4036280c5d0bac808089"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
 dependencies = [
  "formualizer-common",
  "once_cell",
@@ -3385,7 +3385,7 @@ dependencies = [
 [[package]]
 name = "formualizer-workbook"
 version = "0.9.3"
-source = "git+https://github.com/oneiron-dev/formualizer?rev=23207d03f9e668b10b8e4036280c5d0bac808089#23207d03f9e668b10b8e4036280c5d0bac808089"
+source = "git+https://github.com/oneiron-dev/formualizer?rev=f01d8effe81747841f9a0ea9ac595789140cfbf6#f01d8effe81747841f9a0ea9ac595789140cfbf6"
 dependencies = [
  "calamine",
  "chrono",
@@ -7986,6 +7986,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-browser"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "oneiron-container",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oneiron-code-check"
 version = "0.1.0"
 dependencies = [
@@ -7998,6 +8010,17 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "wasmtime",
+]
+
+[[package]]
+name = "oneiron-container"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-spawn",
+ "serde",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]

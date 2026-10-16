@@ -22,6 +22,19 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
     open_test_vault_with(cfg)
 }
 
+/// A vault that receives passports from another device. With no rule naming
+/// them, an imported passport or alias resolves critical and waits for this
+/// device's owner to confirm it, and the thread graph never acts on a held row.
+fn replicating_test_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = test_vault();
+    crate::test_util::declare_predicates_normal(
+        &vault,
+        &[PREDICATE_THREAD_PASSPORT, PREDICATE_THREAD_ALIAS],
+    )
+    .expect("declare the passport predicates");
+    (dir, vault)
+}
+
 /// Creates a live `ChannelIdentity` record so passports have a legal subject.
 fn seed_identity(vault: &Vault, id: EntityId, address: &str) {
     let identity = ChannelIdentity::requested(
@@ -211,6 +224,66 @@ fn sticky_identity_and_facet() {
             .sticky_thread_mask(&mid("reply@x").minted_thread_ref(), None)
             .expect("unrelated ref is its own thread"),
         StickyMaskDecision::Unset
+    );
+}
+
+/// A first passport awaiting its owner's confirm still pins its thread's
+/// mask, but it routes nothing: no lookup serves it and a reply to it mints
+/// its own thread.
+#[test]
+fn a_held_first_passport_still_pins_its_mask_and_never_routes() {
+    let (_dir, vault) = test_vault();
+    let (first, second) = (entity(0x61), entity(0x62));
+    seed_identity(&vault, first, "one@example.com");
+    seed_identity(&vault, second, "two@example.com");
+    let root = vault
+        .record_thread_passport(input(first, "<root@x>", OBSERVED_AT))
+        .expect("root passport");
+    let claim = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        let rows = active_passport_rows(&vault, &rtxn).expect("passport rows");
+        let [row] = rows.as_slice() else {
+            panic!("one passport");
+        };
+        row.claim_id
+    };
+    crate::test_util::hold_claim_for_critical_confirm(&vault, claim, 0x71);
+    let (thread, pinned) = (root.canonical_thread_ref, root.passport.mask);
+    let other = ThreadMask::new(second, entity(0xB9));
+    assert_eq!(
+        vault.sticky_thread_mask(&thread, None).expect("held pin"),
+        StickyMaskDecision::Keep(pinned)
+    );
+    assert_eq!(
+        vault
+            .sticky_thread_mask(&thread, Some(other))
+            .expect("held pin"),
+        StickyMaskDecision::Conflict {
+            pinned,
+            requested: other
+        }
+    );
+    assert!(
+        vault
+            .thread_passport(&first, &mid("root@x"))
+            .expect("lookup")
+            .is_none()
+    );
+    let reply = vault
+        .record_thread_passport(
+            ThreadPassportInput::new(second, entity(0xB9), mid("<reply@x>"), OBSERVED_AT + 1)
+                .with_in_reply_to(mid("<root@x>")),
+        )
+        .expect("reply");
+    assert_eq!(
+        reply.canonical_thread_ref,
+        mid("reply@x").minted_thread_ref()
+    );
+    assert_eq!(
+        vault
+            .sticky_thread_mask(&reply.canonical_thread_ref, None)
+            .expect("reply thread"),
+        StickyMaskDecision::Keep(other)
     );
 }
 

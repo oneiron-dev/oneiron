@@ -679,7 +679,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         rtxn,
         id,
         filters.world_scope,
-        filters.world_active_set,
+        (filters.world_active_set, filters.stale_worlds),
     )? {
         return Ok(false);
     }
@@ -781,10 +781,22 @@ fn pipeline_candidate_matches_world_filter(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     scope: &WorldScope,
-    active_set: Option<&WorldAuthoritySet>,
+    (active_set, stale_worlds): (
+        Option<&WorldAuthoritySet>,
+        Option<&std::collections::BTreeMap<EntityId, crate::federation::WorldStaleStamp>>,
+    ),
 ) -> Result<bool> {
     let target = match scope {
-        WorldScope::All => return Ok(true),
+        // As the post-fusion filter does: a stale federated world's claims
+        // leave the scope that never named that world.
+        WorldScope::All => {
+            let Some(stale) = stale_worlds else {
+                return Ok(true);
+            };
+            return Ok(!record_world(store, rtxn, id)?
+                .flatten()
+                .is_some_and(|world| stale.contains_key(&world)));
+        }
         WorldScope::Base => None,
         WorldScope::World(id) => Some(*id),
         WorldScope::CodebaseSet(scope_key) => {

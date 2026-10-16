@@ -8,6 +8,8 @@ use super::pin_index::{NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_SOURCE};
 use super::side_keys::HexHexHash;
 use super::{NoteBody, NoteKind, encode_note_body};
 use crate::batch::secret_scan::{SecretScanMode, scan_write_payload, secret_scan_mode_in_txn};
+use crate::consent::AuthenticatedOwner;
+use crate::entity_doc::PurgeReceipt;
 use crate::error::Result;
 use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::ports::{DocumentRowStore, DocumentSlot};
@@ -261,8 +263,40 @@ impl Memory<'_> {
     /// Discarding history is the ladder's erase (ARCH-0038): an Owner's own
     /// act, so writing the note is not enough.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
+        self.purge_note_history_with(None, note, Some(through))
+            .map(|_| ())
+    }
+
+    /// [`Self::purge_note_history`] as `owner`, whose proof is rechecked in the
+    /// transaction that commits. Without `through` it erases up to the oldest
+    /// pin, or up to the head when nothing pins the note. The receipt lands
+    /// beside the entity-text purge receipts.
+    pub fn purge_note_history_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        note: EntityId,
+        through: Option<&[u8]>,
+    ) -> MemoryResult<PurgeReceipt> {
+        self.purge_note_history_with(Some(owner), note, through)
+    }
+
+    fn purge_note_history_with(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        note: EntityId,
+        requested: Option<&[u8]>,
+    ) -> MemoryResult<PurgeReceipt> {
         self.with_actor_content_write_txn(|content| {
             content.update_note(note, |txn| {
+                if let Some(owner) = owner
+                    && owner.revalidate_in_txn(self.vault(), txn)? != self.actor()
+                {
+                    return Err(MemoryError::new(
+                        crate::memory::MEMORY_CODE_FORBIDDEN,
+                        "the owner proof names another actor than this facade",
+                        &[],
+                    ));
+                }
                 require_note_writer(self, txn, note)?;
                 crate::memory::verify_deletion_authority_in_txn(
                     self.vault(),
@@ -271,15 +305,33 @@ impl Memory<'_> {
                     self.actor_class(),
                 )?;
                 let doc = load(self.vault(), txn, note)?;
-                let through = frontier(through)?;
                 let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+                let mut pins = Vec::new();
                 for (_, pin) in NOTE_PIN_SOURCE.scan_from(&self.vault().store, txn, &key_prefix)? {
                     pin.validate()?;
-                    match doc.doc.cmp_frontiers(&through, &frontier(&pin.frontier)?) {
-                        Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) => {}
-                        _ => return Err(invalid("NOTE purge would pass a cited frontier").into()),
-                    }
+                    pins.push(frontier(&pin.frontier)?);
                 }
+                let at_or_before = |a: &loro::Frontiers, b: &loro::Frontiers| {
+                    matches!(
+                        doc.doc.cmp_frontiers(a, b),
+                        Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
+                    )
+                };
+                let through = match requested {
+                    Some(bytes) => frontier(bytes)?,
+                    None if pins.is_empty() => doc.doc.oplog_frontiers(),
+                    None => pins
+                        .iter()
+                        .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)))
+                        .cloned()
+                        .ok_or_else(|| {
+                            invalid("NOTE pins are causally incomparable; name a frontier")
+                        })?,
+                };
+                if !pins.iter().all(|pin| at_or_before(&through, pin)) {
+                    return Err(invalid("NOTE purge would pass a cited frontier").into());
+                }
+                let live_text_hash = *blake3::hash(doc.view()?.markdown.as_bytes()).as_bytes();
                 let snapshot = doc
                     .doc
                     .export(loro::ExportMode::shallow_snapshot(&through))
@@ -292,7 +344,21 @@ impl Memory<'_> {
                     slot,
                     &shallow.doc.shallow_since_vv().to_vv().encode(),
                 )?;
-                Ok(())
+                let applied = through.encode();
+                let receipt_id = self.vault().new_entity_id()?;
+                let receipt = PurgeReceipt {
+                    receipt: receipt_id.to_hex(),
+                    entity: note.to_hex(),
+                    document: slot.to_hex(),
+                    actor: self.actor().to_hex(),
+                    requested: requested.map_or_else(|| applied.clone(), <[u8]>::to_vec),
+                    applied,
+                    at: self.vault().now_recorded_at(),
+                    live_text_hash,
+                };
+                self.vault()
+                    .put_text_purge_receipt_in_txn(txn, &note, receipt_id, &receipt)?;
+                Ok(receipt)
             })
         })
     }

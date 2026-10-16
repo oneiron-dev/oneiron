@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `23207d03f9e668b10b8e4036280c5d0bac808089` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `f01d8effe81747841f9a0ea9ac595789140cfbf6` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -50,14 +50,14 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "23207d03f9e668b10b8e4036280c5d0bac808089" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "23207d03f9e668b10b8e4036280c5d0bac808089" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "23207d03f9e668b10b8e4036280c5d0bac808089" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "23207d03f9e668b10b8e4036280c5d0bac808089" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "23207d03f9e668b10b8e4036280c5d0bac808089" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.12), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.13), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -302,11 +302,37 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.12), over `362becff`:
   stack (`EvalConfig::worker_stack_bytes`); `23207d03` evaluates a defined name or LAMBDA body as
   its tree reads instead of planning every operand again (a name of n chained terms cost about n^3:
   400 terms took 13 s; 16,384 now take 0.85 s in release). Still 2,967 of 2,967 and 811/811.
+- `23207d03..f01d8eff` (stage 2 wave 2 review fixes, 2026-10-08): five commits, each measured
+  against Excel for Windows 16.0.20430 first. `468a333b` has CELL resolve a reference computed at
+  run time before any info type and print the sheet as the workbook spells it (a sheet the workbook
+  lacks is `#REF!`, a name it does not define the name's `#NAME?`). Precision as displayed:
+  `5f3cbabb` refuses, after evaluating, a workbook with a live circular reference (Excel keeps the
+  saved value of `=A1` over itself and of every formula reading it; the engine calculated the
+  readers again), refuses a format Excel will not open a workbook with (`0.0@`, `@;0`, `[>1]@`,
+  `0;0;0;0`, `# ?/100000`, `0.0 ?/?`, `E+0`, `[Foo]0`, `[Red][Blue]0`, three conditions, a bare
+  `g`) and a fixed fraction denominator past 32768, and reads the last of two or three sections as
+  the text section when it holds `@` (`0;@` stores -2/3 as -1); `d890db6d` reads a denominator as
+  what is typed bare after the slash (`# ?/05` stores fifths, `# ?/0"5"` takes one digit: the
+  quoted 5 is text), refuses a placeholder beside a denominator's digits (`# ?/5?`) and a color
+  index that is not digits (`[Color+5]0`), and recalculates codes of 124 to 126 characters, which
+  Excel opens. Of the 424 workbooks Excel saved in the precision probes
+  (`ops/excel-precision-probe-20261008.md`, 532 cases) the fork refuses 26 and reproduces 10,287 of
+  the other 398's 10,394 formula cells; 102 of the 107 others are constants in date- or
+  time-formatted cells, which the dense Calamine ingest reads to whole seconds with or without the
+  option. Parsing: `c6f1aee7` has `&` and CONCATENATE keep the first 32,767 characters of a longer
+  join, reads INDIRECT text ending in `#`, and refuses a cycle closed only through a spill
+  reference's anchor; `f01d8eff` has the writer refuse a workbook whose join past 32,767 UTF-16
+  units cuts through a character outside the Basic Multilingual Plane (Excel keeps half of it, which
+  no Rust string holds, and IFERROR could catch the engine's `#N/IMPL!`:
+  `IFERROR(LEN(REPT("a",32766)&UNICHAR(128512)),42)` cached 42 where Excel has 32766), counts
+  CONCAT's and TEXTJOIN's limit in UTF-16 units, gives REPLACE past it `#VALUE!`, and makes a
+  criterion longer than 255 units `#VALUE!` in COUNTIF, SUMIF, AVERAGEIF and the IFS functions.
+  Still 2,967 of 2,967 and 811/811.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.13`.
 
 ## Licences and attribution
 

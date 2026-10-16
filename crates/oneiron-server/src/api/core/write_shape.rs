@@ -4,6 +4,7 @@ use super::super::unix_seconds_now;
 use super::batch::CoreTextField;
 use super::batch::core_body_for_write;
 use super::batch::encode_core_body;
+use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use serde::Deserialize;
 use serde::Serialize;
@@ -258,6 +259,20 @@ pub(crate) fn stage_core_entity_put<'a>(
         batch = batch.text(id, &refs);
     }
     Ok(batch)
+}
+
+/// Commits `batch` as `auth` wrote it. Below owner grade, a put that turns an
+/// agent definition back on is refused
+/// ([`oneiron::BatchBuilder::commit_below_owner`]).
+pub(crate) fn commit_core_batch(
+    auth: &CoreAuth,
+    batch: oneiron::BatchBuilder<'_>,
+) -> oneiron::Result<()> {
+    if auth.is_owner_grade() {
+        batch.commit()
+    } else {
+        batch.commit_below_owner()
+    }
 }
 
 pub(crate) fn core_text_fields(

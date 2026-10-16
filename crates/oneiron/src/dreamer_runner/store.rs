@@ -220,6 +220,37 @@ impl<'a> DreamerRunnerStore<'a> {
         )
     }
 
+    /// Wakes the Coach on one failure-ladder case: a `coach.heal` attempt whose
+    /// input is the case ref, parented to the failing attempt and deduped per
+    /// case, so a re-routed case finds the attempt it already woke.
+    pub(crate) fn enqueue_coach_heal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        case: &crate::failure_ladder::HealerCase,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<AttemptId> {
+        let outcome = self.enqueue_kind_in_txn(
+            wtxn,
+            super::COACH_HEAL_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: super::COACH_HEAL_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::from(case.case_ref.as_str()),
+                parent_attempt: Some(case.failing_attempt_id),
+            },
+            Some(format!(
+                "{}:{}",
+                super::COACH_HEAL_ATTEMPT_KIND,
+                case.case_ref
+            )),
+            run_id,
+            now,
+        )?;
+        let (EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
+        Ok(status.attempt.id)
+    }
+
     /// Co-commits a Timer/Macro wake and its cleanup attempt.
     pub(crate) fn enqueue_timer_wake(
         &self,
@@ -682,6 +713,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
         || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+        || kind == super::COACH_HEAL_ATTEMPT_KIND
 }
 
 /// The refusal-facing name of a wake trigger.

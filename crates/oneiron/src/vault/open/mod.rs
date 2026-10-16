@@ -567,6 +567,7 @@ impl Vault {
             message_streams: Default::default(),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
+            trusted_contact_send_order: Default::default(),
             housekeeping: Default::default(),
             #[cfg(feature = "sync")]
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
@@ -586,7 +587,10 @@ impl Vault {
         // the authority a restore carried in; the stored shell edges follow
         // it before any caller observes this vault (H161).
         vault.reconcile_identity_topology_on_open()?;
-        vault.with_write_txn_grouped(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
+        vault.with_write_txn_grouped(|txn| {
+            vault.dreamer_authority_in_txn(txn, 0)?;
+            vault.coach_authority_in_txn(txn)
+        })?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now

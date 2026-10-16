@@ -120,6 +120,7 @@ impl Vault {
                 ))?;
         if provenance.lifecycle != ClaimLifecycleStatus::Active
             || provenance.predicate == ORIGIN_PUBLICATION_PREDICATE
+            || !self.claim_settled_and_active(&request.provenance_claim_id)?
         {
             return Err(Error::InvariantViolation(
                 "origin publication provenance is not an active source claim",
@@ -459,7 +460,7 @@ impl Vault {
     /// is still readable: a later publication of its ref may have released
     /// them, and resolution is about to make the record certify its ref's
     /// value again.
-    fn repin_origin_dependencies(
+    pub(in crate::origin) fn repin_origin_dependencies(
         &self,
         git: &GitWire<'_>,
         repo: &GitWireRepo,
@@ -609,7 +610,13 @@ impl Vault {
                         "origin publication has no claim id",
                     ))?;
                 let body = publication_claim_body(&terminal)?;
-                self.put_claim_in_txn(wtxn, &claim_id, &body, terminal.occurred, learned_at)?;
+                self.put_reserved_claim_in_txn(
+                    wtxn,
+                    &claim_id,
+                    &body,
+                    terminal.occurred,
+                    learned_at,
+                )?;
                 let change_id = self.put_origin_change_in_txn(wtxn, &terminal, learned_at)?;
                 // Transfer reachability to the durable change-index before releasing
                 // the temporary publication owner. The physical root already exists.
@@ -760,6 +767,9 @@ impl Vault {
         if record.status == OriginPublicationStatus::Prepared {
             return Ok(());
         }
+        // Held throughout, so no push is accepted between what is read below
+        // and the release it decides.
+        let _coordinator = lock_repository(repo.common_dir())?;
         self.unpin_origin_object(
             git,
             repo,
@@ -778,9 +788,19 @@ impl Vault {
                 )?
                 .is_some_and(|id| id == record.publication_id)
         };
-        if record.status != OriginPublicationStatus::Published
+        let released = record.status != OriginPublicationStatus::Published
             || !owns_visible_slot
-            || git.read_ref(repo, &record.ref_name)?.as_ref() != Some(&record.new_oid)
+            || git.read_ref(repo, &record.ref_name)?.as_ref() != Some(&record.new_oid);
+        // A push of this record's own move that is still pending lands on this
+        // record, and its proof needs every dependency: they stay rooted until
+        // that push settles.
+        if released
+            && !(record.status == OriginPublicationStatus::Published
+                && record
+                    .required_objects
+                    .iter()
+                    .any(|oid| oid != &record.new_oid)
+                && self.receive_pack_move_pending(repo.repo_root(), record)?)
         {
             for oid in &record.required_objects {
                 if oid != &record.new_oid {

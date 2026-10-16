@@ -198,6 +198,17 @@ impl DeferredWork {
     /// Delete only after durable import or successful direct-response enqueue.
     /// A crash before deletion safely replays the same deterministic CRDT ops.
     pub(in crate::sync) fn complete(&self, vault: &Vault, peer: &FederationPeer) -> Result<()> {
+        self.settle(vault, peer, false)
+    }
+
+    /// Retires an update the admission door refused as the peer's own bytes
+    /// when it was retried, recorded as a structural failure as a live refusal
+    /// is, so the work behind it drains.
+    pub(in crate::sync) fn reject(&self, vault: &Vault, peer: &FederationPeer) -> Result<()> {
+        self.settle(vault, peer, true)
+    }
+
+    fn settle(&self, vault: &Vault, peer: &FederationPeer, structural_failure: bool) -> Result<()> {
         peer.revalidate(vault)?;
         if self.peer != peer.digest() || self.selector != encode_sync_selector(&peer.selector)? {
             return Err(corrupt());
@@ -213,7 +224,7 @@ impl DeferredWork {
                     .sync_queue
                     .put(txn, &self.completion_key(), &self.id)?;
             }
-            observations::outcome_in_txn(vault, txn, peer, false)
+            observations::outcome_in_txn(vault, txn, peer, structural_failure)
         })
     }
 

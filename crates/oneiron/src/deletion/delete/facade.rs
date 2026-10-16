@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 
 use super::super::erase::{stage_sweep_refs_in_txn, sweep_extras};
 use super::super::gate::{
-    GatedDeletion, reverify_deletion_authority_before_publication,
+    GatedDeletion, claim_in_txn, reverify_deletion_authority_before_publication,
     reverify_deletion_authority_when_unpublished,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
@@ -782,6 +782,7 @@ impl Vault {
             },
             sweep_extras(captured.as_ref()),
         )?;
+        claim_in_txn(gate.as_ref(), &mut wtxn, &tombstone, Some(&receipt_id))?;
 
         wtxn.commit()?;
         self.notify_local_delete_materialized(&affected);

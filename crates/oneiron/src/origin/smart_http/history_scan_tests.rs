@@ -511,12 +511,17 @@ fn hook_refuses_a_blob_past_its_bound_or_the_disk_floor_before_announcing_it() {
                 .stderr(Stdio::piped())
                 .spawn()
                 .expect("spawn hook");
-            child
+            // A refusing hook can exit before it reads its update; the
+            // asserts on its exit and stderr below decide either way.
+            match child
                 .stdin
                 .take()
                 .expect("hook stdin")
                 .write_all(updates.as_bytes())
-                .expect("ref update");
+            {
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+                written => written.expect("ref update"),
+            }
             let output = child.wait_with_output().expect("hook exits");
             let request = fs::read(hooks.request_path()).ok();
             let blobs = fs::read(hooks.blobs_path()).ok();
@@ -557,8 +562,8 @@ fn hook_refuses_a_blob_past_its_bound_or_the_disk_floor_before_announcing_it() {
         "limits.git_scan_disk_floor_bytes",
     );
     // Every framed byte counts, the tip's and the headers' too. The tip's
-    // `README.md` frames 5 + 128 + 9 bytes and each history record 4,400 +
-    // 128 + 8: 9,214 in all. A 9,100-byte allowance (9 KiB free, a 116-byte
+    // move header frames 40 + 40 + 7 bytes, its `README.md` 5 + 128 + 9, and
+    // each history record 4,400 + 128 + 8: 9,301 in all. A 9,100-byte allowance (9 KiB free, a 116-byte
     // floor) refuses it, where the blob bytes alone or the history alone fit.
     refused_naming(
         4400,
@@ -594,8 +599,8 @@ fn hook_refuses_a_blob_past_its_bound_or_the_disk_floor_before_announcing_it() {
     }
 
     // Three hundred refs naming one move frame its blobs once (rule-5 review
-    // r1, both F3): the tip's README record and the two history records,
-    // 9,214 bytes, fit 16 KiB free, where a record per ref would not. The
+    // r1, both F3): the tip's move, its README record and the two history
+    // records, 9,301 bytes, fit 16 KiB free, where a record per ref would not. The
     // request still names every ref.
     let updates: String = (0..300)
         .map(|n| creation(&format!("refs/heads/alias-{n:03}")))
