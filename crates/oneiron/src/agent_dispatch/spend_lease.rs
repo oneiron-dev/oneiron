@@ -25,8 +25,8 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 
 use super::AgentDispatcher;
 use super::spend_record::{
-    ChildSpend, MAX_SPEND_DEPTH, SCOPE, SpendRead, SpendRefused, SpendScope, SpendScopeId,
-    SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, MAX_SPEND_DEPTH, SCOPE, SpendPayer, SpendRead, SpendRefused, SpendScope,
+    SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 use super::widen_record::invalid;
 
@@ -55,6 +55,53 @@ impl AgentDispatcher<'_> {
         shown: Option<MaximumShown>,
         now: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
+        self.open_root_in_txn(txn, launch, maximum, shown, None, now)
+    }
+
+    /// [`Self::open_root_spend_scope`] for a tree a payer funds (OF-531):
+    /// `payer` was shown this cap for this scope and accepted it, and the root
+    /// records that consent. Refuses a payer that is not a live PERSON, or a
+    /// grantor that is neither the payer nor an actor anchored to the payer.
+    /// Re-opening the same root with the same cap and payer returns it.
+    pub fn open_root_spend_scope_for_payer(
+        &self,
+        launch: SpendScopeId,
+        maximum: DeclaredMaximum,
+        shown: Option<MaximumShown>,
+        payer: SpendPayer,
+        now: u64,
+    ) -> std::result::Result<SpendScope, SpendRefused> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let scope = self
+            .open_root_spend_scope_for_payer_in_txn(&mut txn, launch, maximum, shown, payer, now)?;
+        txn.commit()?;
+        Ok(scope)
+    }
+
+    pub fn open_root_spend_scope_for_payer_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        launch: SpendScopeId,
+        maximum: DeclaredMaximum,
+        shown: Option<MaximumShown>,
+        payer: SpendPayer,
+        now: u64,
+    ) -> std::result::Result<SpendScope, SpendRefused> {
+        if !payer_binds_in_txn(self.vault, txn, &payer)? {
+            return Err(invalid("the payer's consent is not bound to the payer").into());
+        }
+        self.open_root_in_txn(txn, launch, maximum, shown, Some(payer), now)
+    }
+
+    fn open_root_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        launch: SpendScopeId,
+        maximum: DeclaredMaximum,
+        shown: Option<MaximumShown>,
+        payer: Option<SpendPayer>,
+        now: u64,
+    ) -> std::result::Result<SpendScope, SpendRefused> {
         // The owner's start conditions are JobMaximum's; one rule, one place.
         JobMaximum::start(launch.as_str(), maximum.clone(), shown).map_err(SpendRefused::Start)?;
         SpendScopeId::launch(launch.as_str())?;
@@ -63,10 +110,13 @@ impl AgentDispatcher<'_> {
                 && existing.hard
                 && existing.unit == maximum.unit
                 && existing.cap_units == maximum.units
+                && existing.payer == payer
             {
                 return Ok(existing);
             }
-            return Err(invalid("the launch's spend scope exists with another cap").into());
+            return Err(
+                invalid("the launch's spend scope exists with another cap or payer").into(),
+            );
         }
         let scope = SpendScope {
             scope: launch,
@@ -81,6 +131,7 @@ impl AgentDispatcher<'_> {
             opened_at: now,
             closed_at: None,
             agent: None,
+            payer,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
@@ -147,6 +198,7 @@ impl AgentDispatcher<'_> {
             opened_at: now,
             closed_at: None,
             agent,
+            payer: None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
@@ -180,6 +232,7 @@ impl AgentDispatcher<'_> {
             opened_at: now,
             closed_at: None,
             agent,
+            payer: None,
         };
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
         Ok(scope)
@@ -251,6 +304,29 @@ impl AgentDispatcher<'_> {
     pub fn read_spend_scope(&self, scope: &SpendScopeId) -> Result<Option<SpendScope>> {
         let txn = self.vault.store.env.read_txn()?;
         SCOPE.get(&self.vault.store, &txn, &scope.0)
+    }
+
+    /// `scope` and the root it spends under, in the caller's snapshot; `None`
+    /// when no such scope exists. The root's payer is the only consent a tree
+    /// carries (OF-531): a cap or an open scope is none.
+    pub(crate) fn scope_with_root_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        scope: &SpendScopeId,
+    ) -> Result<Option<(SpendScope, SpendScope)>> {
+        let Some(row) = SCOPE.get(&self.vault.store, txn, &scope.0)? else {
+            return Ok(None);
+        };
+        let mut root = row.clone();
+        for _ in 0..MAX_SPEND_DEPTH {
+            let Some(parent) = root.parent.clone() else {
+                return Ok(Some((row, root)));
+            };
+            root = SCOPE
+                .get(&self.vault.store, txn, &parent.0)?
+                .ok_or_else(|| invalid("spend scope ancestor is missing"))?;
+        }
+        Err(invalid("spend scope ancestor bound"))
     }
 
     /// The scope an attempt spends under. A retry spends under the scope of
@@ -528,4 +604,22 @@ impl AgentDispatcher<'_> {
         }
         Ok(chain.swap_remove(0).0)
     }
+}
+
+/// Whether `payer`'s evidence binds its grantor to the payer: the payer is a
+/// live PERSON, and the grantor is that PERSON or an actor whose stored
+/// subject anchor names it. Read from stored bindings, never from labels.
+pub(crate) fn payer_binds_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    payer: &SpendPayer,
+) -> Result<bool> {
+    if !crate::consent::person_is_live_in_txn(vault, txn, &payer.party)? {
+        return Ok(false);
+    }
+    let at = vault.store.clock.now_recorded_at();
+    Ok(
+        crate::workspace_roster::person_of_actor_in_txn(vault, txn, payer.granted_by, at)?
+            == Some(payer.party),
+    )
 }

@@ -435,7 +435,7 @@ impl Vault {
         self.attendee_identity_in_txn(&txn, session_key, speaker_key, roster_revision)
     }
 
-    /// [`Self::attendee_identity`] in the caller's snapshot.
+    /// [`Self::attendee_identity`] as `txn` reads it.
     pub(crate) fn attendee_identity_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

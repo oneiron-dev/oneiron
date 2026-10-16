@@ -325,9 +325,9 @@ impl Vault {
             Some(from),
         )
     }
-    /// [`Self::join_member`] inside the caller's write transaction, for a
-    /// join that commits with the record it belongs to.
-    pub(super) fn join_member_in_txn(
+    /// [`Self::join_member`] in the caller's write transaction: a room join
+    /// (OF-531) seats the person in the same commit as its receipt.
+    pub(crate) fn join_member_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         conversation: EntityId,

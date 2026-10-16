@@ -20,6 +20,7 @@ pub(crate) use deletion::{
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
+pub(crate) use roles::{RoomHost, room_host_in_txn};
 pub use session::{SessionMode, SessionPresence};
 pub use turn_actions::{
     TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine,

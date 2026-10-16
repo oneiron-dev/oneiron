@@ -224,8 +224,9 @@ impl Vault {
     ///   key yet, the key is minted in this commit, and any refusal (no keystore, a
     ///   keystore failure, no machine identity) refuses the edit: a private world
     ///   never commits keyless on a machine that could mint its key.
-    /// - A world whose live edits outgrow one key record commits keyless with
-    ///   OF-520's question raised: the rate law refuses no edit for a count.
+    /// - A world whose live edits outgrow one key record still mints its first
+    ///   key, on this machine's own record (Docs Q06), with OF-520's question
+    ///   raised: the rate law refuses no edit for a count.
     /// - Otherwise a refusal leaves the edit standing, as before: another reader
     ///   mints, or the new recipients are wrapped on that reader's next ensure.
     pub(crate) fn world_key_for_edit_in_txn(
@@ -279,7 +280,7 @@ impl Vault {
         }
         require_mine_reader(&fold, world, secret.machine, &signing)?;
         let root = self.pinned_root_recipient_in_txn(txn, &fold)?;
-        let allowed = recipients(&fold, world, root);
+        let allowed = recipients(&fold, world, root.clone());
         let mut seq = SequenceCounter::new();
         let Some(current) = fold.current_world_key(world) else {
             let key = WorldKey::mint(world, FIRST_GENERATION)?;
@@ -298,7 +299,27 @@ impl Vault {
                 &mut seq,
             )? {
                 Ok(records) => records,
-                Err(wide) => return Ok(Err(wide)),
+                // A first key never leaves the world keyless for a count (Docs
+                // Q06): this machine's own record, and the root's, on bounded
+                // parents. The question stays raised; the other readers are
+                // wrapped once the settings merge.
+                Err(wide) => {
+                    let mine = WrapRecipient::Machine(secret.machine);
+                    let Some((_, own)) = allowed.iter().find(|(to, _)| *to == mine) else {
+                        return Ok(Err(wide));
+                    };
+                    vec![self.append_bridge_wrap_in_txn(
+                        txn,
+                        &fold,
+                        &signing,
+                        secret.machine,
+                        &key,
+                        owner,
+                        root.as_ref(),
+                        own,
+                        &mut seq,
+                    )?]
+                }
             };
             self.require_counted_in_txn(txn, &records)?;
             return Ok(Ok(WorldKeyStatus::Minted(id)));
@@ -569,8 +590,8 @@ impl Vault {
     }
 
     /// This machine's own record of `key` when no record names the world's
-    /// whole frontier ([`FrontierWide`]). It wraps the key to `root` and to
-    /// this machine only, whatever the frontier, so a flood can make it wrap
+    /// whole frontier ([`FrontierWide`]). It wraps the key to `root`, when
+    /// there is one, and to this machine only, whatever the frontier, so a flood can make it wrap
     /// to no one else. Its parents are the rows this machine's standing rests
     /// on, the root records, and as many of the world's live edits as one
     /// record still names; its policy is the revision at those parents. A
@@ -589,13 +610,13 @@ impl Vault {
         machine: EntityId,
         key: &WorldKey,
         owner: EntityId,
-        root: &RootRecipient,
+        root: Option<&RootRecipient>,
         own: &HybridPublicKey,
         seq: &mut SequenceCounter,
     ) -> Result<AuthorityEntryHash> {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let mut parents = standing_rows(fold, machine);
-        parents.insert(root.entry);
+        parents.extend(root.map(|root| root.entry));
         if let Some(pinned) = self.pinned_root_recipient_in_txn(txn, fold)? {
             parents.insert(pinned.entry);
         }
@@ -617,10 +638,11 @@ impl Vault {
             commitment: key.commitment(),
         };
         parents.extend(live);
-        let wraps = vec![
-            (WrapRecipient::RecoveryRoot(root.id), &root.key),
-            (WrapRecipient::Machine(machine), own),
-        ];
+        let wraps = root
+            .map(|root| (WrapRecipient::RecoveryRoot(root.id), &root.key))
+            .into_iter()
+            .chain([(WrapRecipient::Machine(machine), own)])
+            .collect();
         self.put_wrap_records_in_txn(
             txn,
             fold,

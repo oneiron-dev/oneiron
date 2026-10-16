@@ -57,6 +57,41 @@ pub(super) fn role_in(
     Ok(role)
 }
 
+/// Who may admit to a room (OF-531): its owner, or a member whose role the
+/// room policy lets delegate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RoomHost {
+    Owner,
+    Delegate,
+}
+
+/// `actor`'s host standing in `room`, read live. A non-PERSON actor, or one
+/// [`role_in`] refuses, is no host: `None`, never an error, so a join decision
+/// can name the host it still needs.
+pub(crate) fn room_host_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: WriteActor,
+) -> Result<Option<RoomHost>> {
+    if vault.get_entity_type_in_txn(txn, &actor.entity_ref())? != Some(ENTITY_TYPE_PERSON) {
+        return Ok(None);
+    }
+    let role = match role_in(vault, txn, room, actor) {
+        Ok(role) => role,
+        Err(Error::Record(crate::error::RecordError::ConversationDenied)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if role == RoomRole::Owner {
+        return Ok(Some(RoomHost::Owner));
+    }
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    Ok(
+        crate::gate::room_policy_allows(&policy, room, crate::gate::RoomAction::Delegate, role)
+            .then_some(RoomHost::Delegate),
+    )
+}
+
 impl Vault {
     /// Sets a current member's room role. Only the vault owner or a room owner
     /// may delegate; the local grant and body update commit together.
