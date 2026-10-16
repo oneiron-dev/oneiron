@@ -23982,6 +23982,7 @@
      "kind": "src",
      "notable": [
       "AssetConsumer",
+      "HydratedAsset",
       "LandedImage",
       "ResolvedAsset",
       "ServedAssetForm"
@@ -23990,8 +23991,8 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 4,
+      "enum": 2,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -53584,6 +53585,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/asset_forms.rs",
+     "purpose": "OF-329's hydrate doors: a text-only agent that hydrates a generated image, on `/v1` core hydrate and on…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -57548,7 +57557,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 197,
+     "files": 198,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57789,7 +57798,7 @@
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 355,
-   "test_files": 169
+   "test_files": 170
   },
   "oneiron-spawn": {
    "files": [
