@@ -680,6 +680,33 @@ fn a_held_record_is_erased_once_its_owners_veto_window_runs_out() {
     );
 }
 
+/// A record erased without its act's claim (another delete, or a recovery that finished a
+/// publish whose claim never committed) reads as erased, and nothing is erased again.
+#[test]
+fn an_act_whose_record_was_erased_without_its_claim_reads_as_erased() {
+    let owners = two_owners();
+    let act = hold_b(&owners);
+    owners
+        .vault
+        .delete_entity_with_reason(&owners.b, DeleteReason::UserHardDelete)
+        .expect("another delete erases the held record");
+    owners.clock.set(100 + WEEK);
+
+    let receipt = facade_for(&owners.vault, owners.me.actor())
+        .execute_completed_entity_erase(&owners.me, &act)
+        .expect("reads as erased");
+
+    assert_eq!(
+        receipt,
+        DeleteReceipt {
+            existed: true,
+            reason: "user_hard_delete".to_owned(),
+            receipt_ref: None,
+        }
+    );
+    assert!(erased(&owners.vault, &owners.b));
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn a_held_erase_failing_after_its_tombstone_stays_claimed_by_that_request() {
