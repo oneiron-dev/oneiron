@@ -27,7 +27,7 @@ pub(super) enum McpCarrierPolicy {
     /// This result carries its OWN freshly minted keyframe. `Some` is a frame
     /// the producer has not enqueued yet (setup mints one outside the
     /// registry); `None` is one the producer already enqueued (the engine's own
-    /// `board.refresh` does). Either way the queue behind it is EXPLICITLY
+    /// `self.focus.refresh` does). Either way the queue behind it is EXPLICITLY
     /// superseded and then drained, so no older carrier rides beside a fresh
     /// keyframe and none is left stranded.
     ///
@@ -210,7 +210,7 @@ impl McpBoardState {
 /// The epoch is minted by the registry from a hash of the rendered state, not
 /// from a clock: a call a minute later over identical state gets the SAME
 /// epoch, and a mutation a millisecond later gets the next one. The registry
-/// RETAINS that snapshot, so a later `board.expand`/`board.refresh` fences
+/// RETAINS that snapshot, so a later `describe`/`self.focus.refresh` fences
 /// against the exact snapshot setup returned.
 pub(super) async fn mcp_current_board(
     server: &Arc<SyncServer>,
