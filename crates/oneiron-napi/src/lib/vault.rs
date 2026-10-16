@@ -62,6 +62,8 @@ impl NapiVault {
         validate_dimensions(config.dimensions).map_err(napi::Error::from_reason)?;
         let dimensions = config.dimensions;
         let vault = Vault::open(&path, config).map_err(to_napi_err)?;
+        // Signing doors (delete receipts) need this install's keys from the keystore.
+        vault.install_default_keystore(std::path::Path::new(&path));
         Ok(Self {
             vault: Arc::new(vault),
             dimensions,

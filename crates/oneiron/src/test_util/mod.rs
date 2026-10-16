@@ -377,6 +377,10 @@ pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vaul
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
     clear_default_policy_manifest_for_legacy_tests(&vault);
+    // Signing doors load this install's keys from a keystore (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     (dir, vault)
 }
 

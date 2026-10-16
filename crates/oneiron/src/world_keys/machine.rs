@@ -23,23 +23,30 @@ pub fn machine_secret(
         install,
         kind: SlotKind::MachineEncryption,
     };
-    let seed = match keystore.get(&slot).map_err(keystore_error)? {
-        Some(seed) => seed,
-        None => {
-            let mut fresh = Zeroizing::new([0u8; 32]);
-            os_fill(&mut fresh[..])?;
-            match keystore.create(&slot, &fresh) {
-                Ok(()) | Err(KeystoreError::AlreadyExists) => {}
-                Err(e) => return Err(keystore_error(e)),
-            }
-            keystore
-                .get(&slot)
-                .map_err(keystore_error)?
-                .ok_or_else(|| refused("the keystore lost a slot it just created"))?
-        }
-    };
+    let seed = slot_seed(keystore, &slot)?;
     HybridSecretKey::from_seed(&seed, MACHINE_KEY_LABEL)
         .map_err(|_| refused("the machine seed does not expand"))
+}
+
+/// `slot`'s seed, created from the OS CSPRNG on first use. The keystore is
+/// create-only, so a concurrent first use keeps the slot's first seed.
+pub(crate) fn slot_seed(
+    keystore: &dyn DeviceKeystore,
+    slot: &KeystoreSlot,
+) -> Result<Zeroizing<[u8; 32]>> {
+    if let Some(seed) = keystore.get(slot).map_err(keystore_error)? {
+        return Ok(seed);
+    }
+    let mut fresh = Zeroizing::new([0u8; 32]);
+    os_fill(&mut fresh[..])?;
+    match keystore.create(slot, &fresh) {
+        Ok(()) | Err(KeystoreError::AlreadyExists) => {}
+        Err(e) => return Err(keystore_error(e)),
+    }
+    keystore
+        .get(slot)
+        .map_err(keystore_error)?
+        .ok_or_else(|| refused("the keystore lost a slot it just created"))
 }
 
 /// The public half of [`machine_secret`]: what the machine profile carries.
@@ -53,7 +60,7 @@ pub fn machine_encryption_key(
         .clone())
 }
 
-fn keystore_error(e: KeystoreError) -> Error {
+pub(crate) fn keystore_error(e: KeystoreError) -> Error {
     match e {
         KeystoreError::Unavailable(reason) => {
             Error::Secret(SecretError::KeystoreUnavailable(reason))

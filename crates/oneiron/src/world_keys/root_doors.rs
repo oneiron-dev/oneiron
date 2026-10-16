@@ -354,6 +354,7 @@ impl Vault {
         confirm: Option<KitConfirmation>,
     ) -> Result<AnchoredMachine> {
         this_machine_only(origin)?;
+        self.load_install_signing_if_minted()?;
         let own = {
             let txn = self.store.env.read_txn()?;
             let machine = crate::identity::read_machine_id_in_txn(self, &txn)?;

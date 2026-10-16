@@ -37,6 +37,9 @@ pub use memory::MemoryKeystore;
 pub enum SlotKind {
     /// The seed of this machine's hybrid encryption key for one vault.
     MachineEncryption,
+    /// The seed this install's signing keys are derived from: the machine key and
+    /// the device key that signs receipts.
+    DeviceSigning,
 }
 
 impl SlotKind {
@@ -45,6 +48,7 @@ impl SlotKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::MachineEncryption => "machine-encryption",
+            Self::DeviceSigning => "device-signing",
         }
     }
 }
@@ -127,6 +131,43 @@ pub trait DeviceKeystore: Send + Sync + 'static {
     /// Empties the slot. An empty slot is not an error.
     fn delete(&self, slot: &KeystoreSlot) -> Result<()>;
     fn locality(&self) -> KeystoreLocality;
+}
+
+/// The keychain service the Apple adapter files slots under by default.
+pub const DEFAULT_KEYCHAIN_SERVICE: &str = "oneiron.device-keys";
+
+/// The default key directory on Unix systems other than Apple:
+/// `$XDG_STATE_HOME/oneiron/keys`, else `$HOME/.local/state/oneiron/keys`. Unset,
+/// empty and relative variables name no place a key may be written, so `None`.
+#[must_use]
+pub fn default_key_dir() -> Option<std::path::PathBuf> {
+    let absolute = |key: &str| {
+        let path = std::path::PathBuf::from(std::env::var_os(key)?);
+        path.is_absolute().then_some(path)
+    };
+    if let Some(state) = absolute("XDG_STATE_HOME") {
+        return Some(state.join("oneiron").join("keys"));
+    }
+    absolute("HOME").map(|home| {
+        home.join(".local")
+            .join("state")
+            .join("oneiron")
+            .join("keys")
+    })
+}
+
+/// [`platform_keystore`] at the defaults: [`DEFAULT_KEYCHAIN_SERVICE`] and
+/// [`default_key_dir`]. For a local host with no keystore settings of its own.
+pub fn default_platform_keystore(
+    vault_dirs: &[&std::path::Path],
+) -> Result<std::sync::Arc<dyn DeviceKeystore>> {
+    #[cfg(all(unix, not(target_vendor = "apple")))]
+    let dir = default_key_dir().ok_or(KeystoreError::Unavailable(
+        "neither XDG_STATE_HOME nor HOME names an absolute key directory",
+    ))?;
+    #[cfg(not(all(unix, not(target_vendor = "apple"))))]
+    let dir = default_key_dir().unwrap_or_default();
+    platform_keystore(DEFAULT_KEYCHAIN_SERVICE, &dir, vault_dirs)
 }
 
 /// This platform's this-device-only keystore.

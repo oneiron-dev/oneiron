@@ -180,6 +180,7 @@ impl Vault {
     /// Emits all three receipts in one transaction. Each contains counts so
     /// empty denominators remain explicit instead of yielding NaN rates.
     pub fn emit_healer_oversight(&self, now: u64) -> Result<Vec<OversightReceipt>> {
+        self.prepare_install_signing()?;
         self.with_write_txn_grouped(|txn| {
             let identity = crate::identity::ensure_device_identity_in_txn(self, txn)?;
             let mut counts = OversightCounts {

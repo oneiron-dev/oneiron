@@ -40,6 +40,8 @@ impl Vault {
                 return Ok(DeleteEntityOutcome::missing());
             }
         }
+        // Load the receipt's device key before the first txn (P6c).
+        self.prepare_install_signing()?;
         // Order the raced-delete fixture after a positive scope probe, before
         // any write lock. This rendezvous is a no-op in non-test builds.
         signal_after_delete_probe(self);

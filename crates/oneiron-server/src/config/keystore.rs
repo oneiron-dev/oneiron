@@ -1,10 +1,11 @@
 //! The `[keystore]` section: where this install keeps its this-device-only key
-//! slots (world privacy P6b). The engine keeps one secret there per vault: the seed
-//! of this machine's encryption key, which opens the world keys wrapped to it.
+//! slots (world privacy P6b, P6c). The engine keeps two secrets there per vault: the
+//! seed of this machine's encryption key, which opens the world keys wrapped to it,
+//! and the seed of its signing keys (receipts, settings edits, key records).
 //!
 //! - `backend = "platform"` (the default) is the Apple data-protection keychain, or
 //!   a 0700 key directory on other Unix systems. `"off"` installs none, and every
-//!   world-key door then answers `KeystoreUnavailable`.
+//!   signing and world-key door then answers `KeystoreUnavailable`.
 //! - `dir` is that key directory. It defaults to `$XDG_STATE_HOME/oneiron/keys`,
 //!   then `$HOME/.local/state/oneiron/keys`, and it must lie outside the vault.
 //! - `service` is the Apple keychain service name.
@@ -15,7 +16,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 /// The keychain service the Apple adapter files slots under by default.
-pub const DEFAULT_KEYCHAIN_SERVICE: &str = "oneiron.device-keys";
+pub use oneiron_keystore::DEFAULT_KEYCHAIN_SERVICE;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -75,18 +76,22 @@ impl KeystoreConfig {
         Ok(Some(keystore))
     }
 
-    /// Installs this platform's keystore on `vault`, opened at `vault_path`.
-    /// A platform with none does not stop serve: only the world-key doors need
-    /// one, and they answer `KeystoreUnavailable` without it. True when one
-    /// was installed.
+    /// Installs this platform's keystore on `vault`, opened at `vault_path`, and
+    /// loads this install's signing keys from it before any signing work is
+    /// admitted. A platform with none does not stop serve: the signing and
+    /// world-key doors answer `KeystoreUnavailable` without it, and reads and sync
+    /// go on. True when one was installed.
     pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
         match self.open(vault_path) {
             Ok(Some(keystore)) => {
                 vault.install_device_keystore(keystore);
+                vault.prepare_install_signing_logged();
                 true
             }
             Ok(None) => {
-                tracing::info!("keystore backend is off; world-key doors are unavailable");
+                tracing::info!(
+                    "keystore backend is off; signing and world-key doors are unavailable"
+                );
                 false
             }
             Err(error) => {
@@ -94,7 +99,7 @@ impl KeystoreConfig {
                 // directory; never the chain's text.
                 tracing::warn!(
                     reason = ?error.downcast_ref::<oneiron_keystore::KeystoreError>(),
-                    "no this-device-only keystore; world-key doors are unavailable"
+                    "no this-device-only keystore; signing and world-key doors are unavailable"
                 );
                 false
             }
@@ -102,27 +107,14 @@ impl KeystoreConfig {
     }
 }
 
-/// `$XDG_STATE_HOME/oneiron/keys`, else `$HOME/.local/state/oneiron/keys`. Unset,
-/// empty and relative variables name no place a key may be written.
+/// The keystore crate's default key directory, or why there is none.
 fn default_key_dir() -> anyhow::Result<PathBuf> {
-    let absolute = |key: &str| {
-        let path = PathBuf::from(std::env::var_os(key)?);
-        path.is_absolute().then_some(path)
-    };
-    if let Some(state) = absolute("XDG_STATE_HOME") {
-        return Ok(state.join("oneiron").join("keys"));
-    }
-    if let Some(home) = absolute("HOME") {
-        return Ok(home
-            .join(".local")
-            .join("state")
-            .join("oneiron")
-            .join("keys"));
-    }
-    anyhow::bail!(
-        "the key directory is unresolvable: neither XDG_STATE_HOME nor HOME names an absolute \
-         directory; set keystore.dir (ONEIRON_KEYSTORE_DIR)"
-    )
+    oneiron_keystore::default_key_dir().ok_or_else(|| {
+        anyhow::anyhow!(
+            "the key directory is unresolvable: neither XDG_STATE_HOME nor HOME names an \
+             absolute directory; set keystore.dir (ONEIRON_KEYSTORE_DIR)"
+        )
+    })
 }
 
 /// One layer's `[keystore]` keys.

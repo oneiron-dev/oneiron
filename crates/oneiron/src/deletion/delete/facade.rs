@@ -262,6 +262,9 @@ impl Vault {
         // raced-delete harness recv()s here so the eraser commits AFTER this
         // header read, forcing the headerful leg every run. No-op in
         // production.
+        // The receipt is signed in the last txn; load the device key before
+        // the first, so no tombstone commits on an install that cannot sign.
+        self.prepare_install_signing()?;
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
         self.reserve_user_brief_delete(id, reason, gate.as_ref())?;

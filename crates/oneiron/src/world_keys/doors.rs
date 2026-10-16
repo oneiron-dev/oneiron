@@ -108,6 +108,8 @@ impl Vault {
     /// machine with no identity yet has no secret: no door mints one here.
     pub(crate) fn machine_secret_outside_txn(&self) -> Result<MachineSecret> {
         let keystore = self.device_keystore()?;
+        // The door signs its record with the machine key in its txn: load it here.
+        self.load_install_signing_if_minted()?;
         let (machine, vault_id) = {
             let txn = self.store.env.read_txn()?;
             let machine = crate::identity::read_machine_id_in_txn(self, &txn)?

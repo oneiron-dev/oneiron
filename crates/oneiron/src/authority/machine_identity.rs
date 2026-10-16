@@ -119,6 +119,7 @@ pub fn machine_proof_header_value(machine: EntityId, signature: &[u8; 64]) -> St
 impl Vault {
     /// This install's machine and, once the owner enrolled it, its profile.
     pub fn local_machine(&self) -> Result<Option<LocalMachine>> {
+        self.load_install_signing_if_minted()?;
         let txn = self.store.env.read_txn()?;
         let Some(id) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
             return Ok(None);
@@ -137,7 +138,8 @@ impl Vault {
     }
 
     /// Called on the machine that joins: mints (once) and keeps this install's
-    /// machine id and key, and signs its identity for `vault_id` with that key.
+    /// machine id, loads its machine key from the keystore, and signs its identity
+    /// for `vault_id` with that key.
     /// `encryption_key` must be this install's own for `vault_id`
     /// ([`Vault::machine_encryption_key`]), derived under the machine id the request
     /// signs: a key from another slot, or one taken before the id changed, is refused.
@@ -155,7 +157,7 @@ impl Vault {
         }
         let mut request = None;
         self.with_write_txn_grouped(|wtxn| {
-            let (machine, key) = crate::identity::load_or_mint_machine_in_txn(self, wtxn)?;
+            let (machine, key) = crate::identity::machine_signer_in_txn(self, wtxn)?;
             if machine != derived_under {
                 return Err(crate::world_keys::refused(
                     "the machine identity changed after its encryption key was read",
@@ -438,6 +440,7 @@ impl Vault {
         timestamp: u64,
         nonce: &str,
     ) -> Result<Option<(EntityId, [u8; 64])>> {
+        self.load_install_signing_if_minted()?;
         let txn = self.store.env.read_txn()?;
         let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
             return Ok(None);

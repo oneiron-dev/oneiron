@@ -437,15 +437,16 @@ impl Vault {
                     .vault_id
                     .ok_or_else(invalid_authority)?;
                 // A request carries this install's own encryption key (world
-                // privacy P6b). With no keystore on the handle, a process-memory
-                // one lends it the key for the request alone, so the settings
-                // door below still runs with none, as before.
-                let keystore = &self.world_keys.keystore;
-                let lent = keystore
+                // privacy P6b) and is signed by its machine key (P6c). With no
+                // keystore on the handle, a process-memory one holds both for
+                // this test handle.
+                let none = self
+                    .world_keys
+                    .keystore
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .is_none();
-                if lent {
+                if none {
                     self.install_device_keystore(std::sync::Arc::new(
                         oneiron_keystore::MemoryKeystore::default(),
                     ));
@@ -453,11 +454,6 @@ impl Vault {
                 let request = self
                     .machine_encryption_key(vault_id)
                     .and_then(|own| self.machine_enrolment_request(vault_id, own));
-                if lent {
-                    *keystore
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                }
                 let request = request?;
                 self.enroll_machine(
                     issuer,

@@ -1,9 +1,10 @@
-//! Device identity for REDACTION_AUDIT origin attestation (ONE-1140).
+//! Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this
+//! install's machine identity (world privacy P1, P6c).
 //!
 //! A BASE module (not sync-gated): receipts mint — and are signed — in base
-//! delete paths, including the non-sync build. Rows live in the `sync_state`
-//! DB, which is unconditional (the `dt:` precedent — local truth, not
-//! sync-only state):
+//! delete paths, including the non-sync build. Public rows live in the
+//! `sync_state` DB, which is unconditional (the `dt:` precedent — local truth,
+//! not sync-only state):
 //!
 //! - `m:client_id` — this device's stable id (u64 LE, 8 bytes), minted once
 //!   per install. Semantics preserved from the sync client (the mint was
@@ -12,17 +13,25 @@
 //!   length, or an 8-byte row decoding to 0 (the mint loop never produces
 //!   0, and 0 collides with Loro's unset peer id, ONE-1155) — fails closed:
 //!   silently re-minting would change this device's identity mid-install.
-//! - `m:device_sk` — 32 B Ed25519 signing-key seed. Stored plaintext:
-//!   vault-at-rest trust = data trust (OD-2).
-//! - `m:device_pk` — 32 B Ed25519 verifying key, a derived cache of the
-//!   seed. A present row that does not match the seed-derived key fails
-//!   closed (`CorruptedIndex`) — signing with a key peers no longer hold
-//!   would silently orphan every new receipt at their replay doors.
+//! - `m:machine_id` — the MACHINE row this install is (16 B). It names the
+//!   install's incarnation: every keystore slot of the install is named by it.
+//! - `m:device_pk` — 32 B Ed25519 verifying key of the device key, a cache
+//!   for verifiers that never load a secret. A present row that does not
+//!   match the derived key fails closed (`CorruptedIndex`) — signing with a
+//!   key peers no longer hold would silently orphan every new receipt at
+//!   their replay doors.
 //!
-//! Identity is minted lazily inside the CALLER's write transaction (LMDB is
-//! single-writer; every receipt-mint path already holds a wtxn), so the
-//! first hard delete on a fresh vault self-provisions the keypair in the
-//! same txn that writes the receipt.
+//! No signing secret is in LMDB (P6c, ruling R2). One 32-byte seed in the
+//! install's `DeviceSigning` keystore slot, named by the store's id and the
+//! machine id, derives both signing keys: the machine key (settings edits,
+//! key records, enrolment, admission seals) and the device key (receipts,
+//! detector runs, oversight, outbound bindings). A checkpoint carries
+//! neither, and a restore that makes a new machine id gets a new slot.
+//!
+//! The keystore is never touched inside a write transaction. A door loads
+//! the keys first ([`Vault::prepare_install_signing`]) and the handle keeps
+//! them; a signer inside a transaction reads that copy only and refuses
+//! `KeystoreUnavailable` when there is none.
 
 use ed25519_dalek::SigningKey;
 
@@ -37,31 +46,25 @@ use crate::vault::Vault;
 /// which deliberately seed malformed rows the typed encoder could never write.
 #[cfg(test)]
 const KEY_CLIENT_ID: &str = "m:client_id";
-/// `m:device_sk` sync_state row (32 B Ed25519 seed).
-///
-/// Kept as a plain string, like [`KEY_CLIENT_ID`] above: this module's own
-/// tests and `crate::authority`'s tests address this row directly through
-/// this constant (raw `sync_state` reads/writes) to seed malformed rows the
-/// typed [`DEVICE_SK`] encoder could never write.
+/// The retired `m:device_sk` row name, for tests that check it stays absent.
 #[cfg(test)]
 pub(crate) const KEY_DEVICE_SK: &str = "m:device_sk";
-/// `m:device_pk` sync_state row (32 B Ed25519 verifying key). See [`KEY_DEVICE_SK`].
+/// `m:device_pk` sync_state row (32 B Ed25519 verifying key).
 #[cfg(test)]
 pub(crate) const KEY_DEVICE_PK: &str = "m:device_pk";
 
 /// This device's stable client id. Key: `()` (singleton).
 const CLIENT_ID: SideTable<(), ClientId, Raw> = SideTable::new(&side_table::IDENTITY_CLIENT_ID);
-/// This device's Ed25519 signing-key seed, stored plaintext. Key: `()`.
-const DEVICE_SK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_SK);
-/// Cached Ed25519 verifying key derived from the seed. Key: `()`.
+/// Cached Ed25519 verifying key of the device key. Key: `()`.
 const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_PK);
-/// The MACHINE row this install is (16 B entity id), minted once with
-/// [`MACHINE_SK`]. Not the client id: that is a CRDT peer id. Key: `()`.
+/// The MACHINE row this install is (16 B entity id). Not the client id: that
+/// is a CRDT peer id. A checkpoint image restored directly drops it, so a copy
+/// on another install never is this machine. Key: `()`.
 const MACHINE_ID: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_ID);
-/// This install's machine signing-key seed (32 B), minted with [`MACHINE_ID`].
-/// Not the device key: a checkpoint image restored directly drops both
-/// machine rows, so a copy on another install never is this machine. Key: `()`.
-const MACHINE_SK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_SK);
+
+/// `derive_key` contexts for the two keys of one `DeviceSigning` seed.
+const MACHINE_SIGNING_CONTEXT: &str = "oneiron/install-signing/machine/v1";
+const DEVICE_SIGNING_CONTEXT: &str = "oneiron/install-signing/device/v1";
 
 /// [`CLIENT_ID`]'s value: u64 LE, nonzero (ONE-1155 — 0 collides with Loro's
 /// unset peer id). A wrong-length row and an 8-byte zero row are distinct
@@ -84,6 +87,48 @@ impl RawValue for ClientId {
 pub(crate) struct DeviceIdentity {
     pub(crate) client_id: u64,
     pub(crate) signing_key: SigningKey,
+}
+
+/// This install's signing keys for one machine id, derived from the seed in
+/// its `DeviceSigning` slot. Held on the vault handle only; no `Debug`.
+pub(crate) struct InstallSigner {
+    pub(crate) machine: crate::EntityId,
+    pub(crate) machine_key: SigningKey,
+    pub(crate) device_key: SigningKey,
+}
+
+impl InstallSigner {
+    pub(crate) fn derive(machine: crate::EntityId, seed: &[u8; 32]) -> Self {
+        let key = |context: &str| {
+            let derived = zeroize::Zeroizing::new(blake3::derive_key(context, seed));
+            SigningKey::from_bytes(&derived)
+        };
+        Self {
+            machine,
+            machine_key: key(MACHINE_SIGNING_CONTEXT),
+            device_key: key(DEVICE_SIGNING_CONTEXT),
+        }
+    }
+}
+
+fn signer_not_loaded() -> Error {
+    Error::Secret(crate::error::SecretError::KeystoreUnavailable(
+        "this install's signing keys are not loaded; the host installs a keystore",
+    ))
+}
+
+/// The handle's signer for the machine id in `txn`'s snapshot. Never touches
+/// the keystore: with no loaded signer, or one for another machine id, this
+/// refuses `KeystoreUnavailable`.
+pub(crate) fn loaded_signer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::sync::Arc<InstallSigner>> {
+    let machine = read_machine_id_in_txn(vault, txn)?;
+    match (machine, vault.loaded_install_signer()) {
+        (Some(machine), Some(signer)) if signer.machine == machine => Ok(signer),
+        _ => Err(signer_not_loaded()),
+    }
 }
 
 /// Loads `m:client_id` inside the caller's txn, minting it once (u64 LE,
@@ -136,47 +181,38 @@ pub(crate) fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
     Ok(client_id.expect("closure ran on Ok"))
 }
 
-/// Ensures the full device identity (client id + Ed25519 keypair) exists,
-/// minting any missing piece inside the CALLER's txn (OD-2).
+/// The full device identity (client id + Ed25519 keypair) inside the
+/// CALLER's txn (OD-2): the client id is minted when missing, the key is the
+/// handle's loaded device key ([`loaded_signer_in_txn`]).
 pub(crate) fn ensure_device_identity_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<DeviceIdentity> {
     let client_id = load_or_mint_client_id_in_txn(vault, wtxn)?;
-
-    let signing_key = match DEVICE_SK.get(&vault.store, wtxn, &())? {
-        Some(raw) => {
-            let seed: [u8; 32] = raw
-                .as_slice()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("device signing key row"))?;
-            SigningKey::from_bytes(&seed)
-        }
-        None => {
-            let key = SigningKey::generate(&mut rand_core::OsRng);
-            DEVICE_SK.put(&vault.store, wtxn, &(), &key.as_bytes().to_vec())?;
-            key
-        }
-    };
-
-    let derived_pk = signing_key.verifying_key().to_bytes();
-    match DEVICE_PK.get(&vault.store, wtxn, &())? {
-        Some(raw) if raw == derived_pk => {}
-        Some(_) => {
-            // A pk row that disagrees with the seed is corruption, not a
-            // healable cache miss: receipts signed under EITHER key would
-            // be unverifiable against the other at peer replay doors.
-            return Err(Error::CorruptedIndex("device public key row"));
-        }
-        None => {
-            DEVICE_PK.put(&vault.store, wtxn, &(), &derived_pk.to_vec())?;
-        }
-    }
-
+    let signer = loaded_signer_in_txn(vault, wtxn)?;
+    put_or_check_device_pk_in_txn(vault, wtxn, &signer.device_key)?;
     Ok(DeviceIdentity {
         client_id,
-        signing_key,
+        signing_key: signer.device_key.clone(),
     })
+}
+
+/// Writes `m:device_pk` for `key` when absent; a present row for another key
+/// fails closed.
+pub(crate) fn put_or_check_device_pk_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &SigningKey,
+) -> Result<()> {
+    let derived_pk = key.verifying_key().to_bytes();
+    match DEVICE_PK.get(&vault.store, wtxn, &())? {
+        Some(raw) if raw == derived_pk => Ok(()),
+        // A pk row that disagrees with the key is corruption, not a
+        // healable cache miss: receipts signed under EITHER key would
+        // be unverifiable against the other at peer replay doors.
+        Some(_) => Err(Error::CorruptedIndex("device public key row")),
+        None => DEVICE_PK.put(&vault.store, wtxn, &(), &derived_pk.to_vec()),
+    }
 }
 
 /// This device's verifying key under the caller's transaction, or `None`
@@ -195,26 +231,28 @@ pub(crate) fn read_device_verifying_key_in_txn(
         .transpose()
 }
 
-/// This install's machine, its MACHINE id and signing key, minted together
-/// once inside the caller's txn. One row without the other is corruption.
-pub(crate) fn load_or_mint_machine_in_txn(
+/// This install's MACHINE id, minted once inside the caller's txn. The keys
+/// for it come from its keystore slot, loaded outside any transaction.
+pub(crate) fn load_or_mint_machine_id_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-) -> Result<(crate::EntityId, SigningKey)> {
-    match (
-        read_machine_id_in_txn(vault, wtxn)?,
-        read_machine_signing_key_in_txn(vault, wtxn)?,
-    ) {
-        (Some(id), Some(key)) => Ok((id, key)),
-        (None, None) => {
-            let id = vault.store.clock.entity_id()?;
-            let key = SigningKey::generate(&mut rand_core::OsRng);
-            MACHINE_ID.put(&vault.store, wtxn, &(), &id.as_bytes().to_vec())?;
-            MACHINE_SK.put(&vault.store, wtxn, &(), &key.as_bytes().to_vec())?;
-            Ok((id, key))
-        }
-        _ => Err(Error::CorruptedIndex("machine identity rows")),
+) -> Result<crate::EntityId> {
+    if let Some(id) = read_machine_id_in_txn(vault, wtxn)? {
+        return Ok(id);
     }
+    let id = vault.store.clock.entity_id()?;
+    MACHINE_ID.put(&vault.store, wtxn, &(), &id.as_bytes().to_vec())?;
+    Ok(id)
+}
+
+/// This install's machine id and machine key in the caller's snapshot, from
+/// the handle's loaded signer ([`loaded_signer_in_txn`]).
+pub(crate) fn machine_signer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(crate::EntityId, SigningKey)> {
+    let signer = loaded_signer_in_txn(vault, txn)?;
+    Ok((signer.machine, signer.machine_key.clone()))
 }
 
 /// This install's MACHINE id, or `None` before it asked to join a vault.
@@ -233,31 +271,29 @@ pub(crate) fn read_machine_id_in_txn(
         .transpose()
 }
 
-/// This install's machine signing key, or `None` before it asked to join a
-/// vault. Never mints: a request that only names the machine must not take
-/// the writer.
+/// This install's machine signing key, or `None` before it has a machine id.
+/// Never touches the keystore: an install with an id and no loaded signer
+/// refuses `KeystoreUnavailable`.
 pub(crate) fn read_machine_signing_key_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<SigningKey>> {
-    MACHINE_SK
-        .get(&vault.store, txn, &())?
-        .map(|raw| {
-            <[u8; 32]>::try_from(raw.as_slice())
-                .map(|seed| SigningKey::from_bytes(&seed))
-                .map_err(|_| Error::CorruptedIndex("machine signing key row"))
-        })
-        .transpose()
+    if read_machine_id_in_txn(vault, txn)?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(loaded_signer_in_txn(vault, txn)?.machine_key.clone()))
 }
 
 /// A machine identity row: a checkpoint image restored directly, which may
-/// land on any install, leaves these behind. The pinned root goes with them:
+/// land on any install, leaves these behind. The device key's public cache
+/// goes with them, since the new machine's slot holds another seed. The
+/// pinned root goes with them too:
 /// a new machine trusts no root until a pin door on its own install pins one,
 /// so an old image never rolls trust back to an older root, and an image a
 /// host made never arrives pinned to the host's.
 pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
     key == side_table::IDENTITY_MACHINE_ID.prefix
-        || key == side_table::IDENTITY_MACHINE_SK.prefix
+        || key == side_table::IDENTITY_DEVICE_PK.prefix
         || crate::authority::is_pinned_root_row(key)
 }
 
@@ -268,13 +304,15 @@ pub(crate) fn drop_machine_identity_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
     MACHINE_ID.delete(store, wtxn, &())?;
-    MACHINE_SK.delete(store, wtxn, &())?;
+    DEVICE_PK.delete(store, wtxn, &())?;
     crate::authority::drop_pinned_root_in_txn(store, wtxn)
 }
 
-/// Own-txn wrapper around [`ensure_device_identity_in_txn`].
+/// Own-txn wrapper around [`ensure_device_identity_in_txn`]: loads the
+/// install's signing keys first, outside the transaction.
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
+    vault.prepare_install_signing()?;
     let mut identity = None;
     vault.with_write_txn_grouped(|wtxn| {
         identity = Some(ensure_device_identity_in_txn(vault, wtxn)?);
