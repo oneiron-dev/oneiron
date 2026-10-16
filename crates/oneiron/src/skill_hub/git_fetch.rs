@@ -101,7 +101,10 @@ impl GitEndpointSkillHubAdapter {
 }
 impl super::pack_catalog::PackSourceAdapter for GitEndpointSkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<super::pack_catalog::PackSource> {
-        super::pack_catalog::PackSource::from_files(self.fetch_tree(reference)?)
+        Ok(super::pack_catalog::PackSourceAdapter::fetch_pack_tree(self, reference)?.source)
+    }
+    fn fetch_pack_tree(&self, reference: &HubRef) -> Result<super::pack_catalog::PackTree> {
+        super::pack_catalog::PackSource::from_tree(self.fetch_tree(reference)?)
     }
 }
 impl SkillHubAdapter for GitEndpointSkillHubAdapter {

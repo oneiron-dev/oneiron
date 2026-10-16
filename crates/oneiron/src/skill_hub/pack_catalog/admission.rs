@@ -648,6 +648,13 @@ pub(super) fn pack_permissions(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
+    let organs: Vec<_> = source
+        .organs()
+        .iter()
+        .flat_map(super::PackOrgan::capability_tokens)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let section_verbs: Vec<_> = section_verbs.into_iter().collect();
     let section_authorities: Vec<_> = section_authorities.into_iter().collect();
     let added = |requested: &[String], previous: &[String]| {
@@ -723,6 +730,7 @@ pub(super) fn pack_permissions(
         widening_grants: added(&grants, prior.map_or(empty, |row| &row.permissions.grants)),
         widening_wakes: added(&wakes, prior.map_or(empty, |row| &row.permissions.wakes)),
         widening_hooks: added(&hooks, prior.map_or(empty, |row| &row.permissions.hooks)),
+        widening_organs: added(&organs, prior.map_or(empty, |row| &row.permissions.organs)),
         widening_section_verbs: added(
             &section_verbs,
             prior.map_or(empty, |row| &row.permissions.section_verbs),
@@ -734,6 +742,7 @@ pub(super) fn pack_permissions(
         grants,
         wakes,
         hooks,
+        organs,
         section_verbs,
         section_authorities,
     })

@@ -10,6 +10,7 @@ mod hub_install;
 mod local;
 mod manifest;
 mod migrations;
+mod organs;
 mod source;
 
 pub use crate::gate::PackInstallPolicyOverride;
@@ -23,6 +24,10 @@ pub use hub_install::hub_pin;
 pub use local::LOCAL_PACK_NAME;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
+pub use organs::{
+    MAX_ORGAN_BUILD_BYTES, PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree,
+    host_platform,
+};
 pub use screening::PackInstallRules;
 pub use source::{PackSection, PackSource};
 

@@ -157,16 +157,19 @@ impl SkillHubAdapter for HttpEndpointSkillHubAdapter {
 }
 impl super::pack_catalog::PackSourceAdapter for HttpEndpointSkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<super::pack_catalog::PackSource> {
+        Ok(super::pack_catalog::PackSourceAdapter::fetch_pack_tree(self, reference)?.source)
+    }
+    fn fetch_pack_tree(&self, reference: &HubRef) -> Result<super::pack_catalog::PackTree> {
         let (entry, files) = self.fetch_tree(reference)?;
-        let source = super::pack_catalog::PackSource::from_files(files)?;
-        let manifest = source.manifest();
+        let tree = super::pack_catalog::PackSource::from_tree(files)?;
+        let manifest = tree.source.manifest();
         if manifest.name != entry.name
             || manifest.version != entry.version
             || manifest.description != entry.description
         {
             return Err(invalid("pack identity or index metadata drift"));
         }
-        Ok(source)
+        Ok(tree)
     }
 }
 impl HttpEndpointSkillHubAdapter {
