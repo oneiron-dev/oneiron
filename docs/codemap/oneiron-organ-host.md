@@ -30,8 +30,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/regions.rs` | src | s | 5 crate-vis | — | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
 | `src/route.rs` | src | m | 3 struct · 2 enum · 1 trait · 5 fn | NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes | Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on… |
 | `src/sandbox.rs` | src | s | 2 crate-vis | — | What the host does to an organ process between fork and exec |
-| `src/seal.rs` | src | m | 6 struct · 1 enum · 1 trait · 4 fn · 7 const | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealLimits, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
+| `src/seal.rs` | src | m | 6 struct · 1 enum · 1 trait · 5 fn · 7 const · 1 re-export | HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealLimits, SealSettings, SealTsa | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `src/seal/binding.rs` | src | m | 8 crate-vis | — | The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`) |
+| `src/seal/file_keys.rs` | src | s | 1 struct · 3 fn | FileSealKeys | A seal key held in files (OF-415): a PKCS#8 private key and its PEM certificate chain, named by the host's… |
 | `src/slot.rs` | src | m | 1 struct · 1 enum · 14 crate-vis | OrganState, OrganStatus | One installed organ: its process, its crash history, its condition |
 | `src/spec.rs` | src | s | 8 struct · 2 enum · 3 fn | AskGrant, CallClass, FetchGrant, FetchOrigin, HostConfig, LentInput, OrganCall, OrganInput +2 | What the engine installs and what a caller asks |
 | `src/wait.rs` | src | s | 2 struct · 2 enum · 2 fn | OrganJob, Redrive, Redriven, Submitted | Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: "one node is too weak, means… |
