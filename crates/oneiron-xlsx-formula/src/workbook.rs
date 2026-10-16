@@ -178,6 +178,9 @@ fn options(
         timezone: TimeZoneSpec::FixedOffsetSeconds(i32::from(clock.utc_offset_minutes()) * 60),
     };
     options.eval_config.workbook_seed = clock.seed();
+    // Long formulas recurse deeply; the writer evaluates on threads with a
+    // stack for the longest Excel saves (`crate::context`).
+    options.eval_config.worker_stack_bytes = Some(crate::context::EVAL_STACK_BYTES);
     if let Some(location) = location {
         options.eval_config.workbook_directory = Some(location.directory().to_owned());
         options.eval_config.workbook_file_name = Some(location.file_name().to_owned());

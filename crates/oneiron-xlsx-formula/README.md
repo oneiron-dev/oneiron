@@ -97,9 +97,17 @@ refused workbooks only. The adapter refuses, before any output:
   reference (Excel keeps the saved values of the cycle and of every formula reading it). The last
   three are refused after evaluation. The writer otherwise stores each formula result as its cell's
   format shows it, as Excel for Windows does, and formulas read the stored value (see below);
-- a formula over the size, token or nesting bound that keeps evaluation off deep recursion,
-  or one the parser cannot read;
+- a formula longer than Excel saves (more than 8,192 tokens or 4,096 nested operations; the
+  writer evaluates on threads with a stack for the longest Excel saves, 64 MiB in release
+  builds), or one the parser cannot read (its own bound stops nesting past 72 frames, where
+  Excel takes 200 nested parentheses);
 - what the writer cannot write exactly, such as a dynamic array larger than its saved extent;
+- a circular reference that only a spill reference's anchor closes (`ROWS(A1#)+1` in A1):
+  Excel calculates some such formulas (that one is 2) and finds others circular
+  (`SEQUENCE(ROWS(A1#)+1)`);
+- a text join past Excel's 32,767 characters whose cut falls inside a character outside the
+  Basic Multilingual Plane: Excel keeps half of that character, which the writer cannot hold
+  (a join cut elsewhere keeps its first 32,767 characters natively, as in Excel);
 - a result the host could not read back under its own limits, such as a worksheet whose new
   caches take it over the XML node limit;
 - a recalculation the edit gate would refuse: one that changes `xl/richData/` (the rich value
@@ -245,6 +253,9 @@ CELL("filename") reads the caller's location, else the workbook's cached path (m
 recalculate past CELL and stop at the depth bound, and given the file the Excel truth was recorded
 from, `recalc_native --location`, the 6 of SpreadsheetBench 342-46 recalculate natively and match
 Excel).
+The formula bounds admit every formula Excel saves (measured at fork `f01d8eff` before the
+linked-workbook forms above, 2026-10-09): the 5 that fell back over the old token bound recalculate
+natively and match Excel on every scored cell.
 
 Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.13`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
