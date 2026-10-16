@@ -2,6 +2,7 @@
 use super::*;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route("/report", post(report))
         .route("/self.memory.diary", post(self_memory_diary))
         .route("/cancel", post(cancel))
         .route("/steer", post(steer))
@@ -93,6 +94,30 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/connector.outbound.schedule",
             post(connector_outbound_schedule),
         )
+}
+async fn report(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("report", &value)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_output(
+        server
+            .report_off_runtime(
+                actor,
+                class,
+                auth.verified_slip().cloned(),
+                auth.locality(),
+                facade_room_turn(&headers)?,
+                facade_input(value)?,
+            )
+            .await?,
+    )?))
 }
 async fn self_memory_diary(
     auth: CoreAuth,
