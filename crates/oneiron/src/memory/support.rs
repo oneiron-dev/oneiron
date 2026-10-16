@@ -122,18 +122,19 @@ pub(crate) fn verify_actor_binding_in_txn(
 /// binding `{signing key in the live owner-capable roster, actor_ref == actor,
 /// actor_class == "human" EXACTLY, live epoch}`.
 ///
-/// Enforcement scales with declared authority: a vault with no folded genesis
-/// has not declared an authority root, so it keeps the store-truth check only.
-/// The moment a host establishes a root, owner verbs require the binding —
-/// which is exactly the pressure that makes the atomic `[genesis, bind]`
-/// ceremony the natural path. No dual-mode shim, no flag.
+/// A vault with no folded genesis has declared no authority root, so no
+/// binding there can hold. Its own live embedded owner passes: the host that
+/// holds the vault in process can act as it anyway, and an embedded vault has
+/// no root to bind it under. Every other PERSON is refused (H149): store
+/// truth alone would let any PERSON named `human`, an agent's persona
+/// included, act as the owner. A self-hosted host that roots the vault binds
+/// its owner in the same transaction ([`Vault::ensure_host_root_slip`]).
 ///
 /// A missing `vault_id` is NOT one state. The fold also returns `None` when the
 /// log carries several independently rooted vaults, and that collapse clears
-/// `actor_bindings` wholesale — so treating every `None` as "unrooted" would
-/// hand full owner rights to exactly the vault whose authority root is under
-/// attack. Multi-root therefore fails CLOSED and unrooted keeps the spec'd
-/// pass-through.
+/// `actor_bindings` wholesale. Multi-root is refused as INVALID_STATE (the
+/// vault's authority is broken), unrooted as OWNER_BINDING_REQUIRED (the
+/// ceremony has not run).
 ///
 /// An UNCOMPUTABLE fold is a third state, and it is the one this gate must not
 /// paper over. When an AUTHORITY_LOG row has lost its first-seen sidecar after
@@ -183,7 +184,22 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
         ));
     }
     if fold.vault_id.is_none() {
-        return Ok(());
+        if actor == crate::vault::embedded_owner_actor_id()?
+            && crate::consent::person_is_live_in_txn(vault, txn, &actor)?
+        {
+            return Ok(());
+        }
+        return Err(MemoryError::new(
+            MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            format!(
+                "actor {} holds no owner binding: this vault has no authority root",
+                actor.to_hex()
+            ),
+            &[
+                "Root the vault under its host key: a self-hosted root binds the vault's owner.",
+                "Actor keys assert identity; the authority log decides whether it holds.",
+            ],
+        ));
     }
     if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
         return Ok(());

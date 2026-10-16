@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn safe_delete_requires_named_reason_and_returns_receipt() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xB5);
+    let actor = put_owner(&vault);
     let facade = facade_for(&vault, actor);
 
     let soft_target = put_person(&vault, 0xB6);
@@ -99,7 +99,7 @@ fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
             },
         )
         .expect("open vault");
-        let alice = put_person(&vault, 0xC1);
+        let alice = put_owner(&vault);
         let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
         crate::conversation_dag::fixtures::grant(&vault, owner, true);
         let room = EntityId::now();
@@ -221,7 +221,7 @@ fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
             ..VaultConfig::default()
         };
         let mut vault = crate::Vault::open(dir.path(), model.clone()).expect("open vault");
-        let alice = put_person(&vault, 0xC2);
+        let alice = put_owner(&vault);
         let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
         crate::conversation_dag::fixtures::grant(&vault, owner, true);
         let room = EntityId::now();
@@ -315,7 +315,7 @@ fn safe_delete_txn1_crash_recovers_purge_with_one_authority_record() {
         let vault = Arc::new(
             crate::Vault::open(dir.path(), VaultConfig::default()).expect("open first vault"),
         );
-        let actor = put_person(&vault, 0xBC);
+        let actor = put_owner(&vault);
         let victim = put_person(&vault, 0xBD);
         // Keep the deletion window live so TXN1 covers the observer-A
         // suppression path as well as the transient document path.
@@ -473,7 +473,7 @@ fn safe_delete_live_tombstone_reaches_attached_outbound_channel() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
-    let actor = put_person(&vault, 0xC1);
+    let actor = put_owner(&vault);
     let victim = put_person(&vault, 0xC2);
     let manager = Arc::new(WindowManager::new(
         Arc::clone(&vault),
@@ -528,7 +528,7 @@ fn live_tombstone_persist_failure_requires_complete_authority_sidecar() {
         let vault = Arc::new(
             crate::Vault::open(dir.path(), VaultConfig::default()).expect("open first vault"),
         );
-        let actor = put_person(&vault, 0xC3);
+        let actor = put_owner(&vault);
         let victim = put_person(&vault, 0xC4);
         let manager = Arc::new(WindowManager::new(
             Arc::clone(&vault),
