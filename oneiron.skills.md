@@ -550,6 +550,7 @@ Response fields:
 - `capabilities.modes`: supported mode names: `flash`, `thinking`, `pro`, `ultra`.
 - `formats`: `json`, `yaml`, `toon`, `markdown`, `plaintext`.
 - `rate_limit`: server-side rate-limit metadata for HTTP and websocket surfaces.
+- `artifact_port`: present when an artifact-only listener serves `/a/`; open artifacts at this server's scheme and host with this port.
 
 Example response:
 
@@ -615,7 +616,9 @@ Response:
 
 Method: `GET`
 
-Authentication: configured API bearer credential, unless the server explicitly allows unauthenticated development access.
+Authentication: none for a public pin or a link-token URL; a world-member pin needs a verified read credential (see the serving tiers below).
+
+Origins: ordinary serve answers `/a/` on a second listener of its own, at the port `/api/health` reports as `artifact_port`, which serves nothing else. Open bundles there: a code bundle keeps that origin, so its module scripts and fonts load. The API's own `/a/` still answers, but there a code bundle is sandboxed into an opaque origin, where module scripts and fonts do not load. A server with no artifact listener (managed serve) answers `/a/` on the API's origin as before.
 
 Path parameters:
 
