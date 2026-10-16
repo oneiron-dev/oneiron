@@ -174,8 +174,8 @@ pub(crate) use join_consent::person_of_actor_in_txn;
 pub use join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
     ConsentState, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, MembershipConsent,
-    RequiredParty, RoomWork, SpendConsent, decide_join_in_txn, require_join_for_branch_in_txn,
-    require_join_in_txn,
+    RequiredParty, RoomWork, SpendConsent, decide_join_in_txn, require_actor_join_in_txn,
+    require_join_for_branch_in_txn, require_join_in_txn,
 };
 pub use join_door::{
     ConsentAnswer, JoinDecisionView, JoinOutcome, rooms_consent_in_txn, rooms_join_in_txn,

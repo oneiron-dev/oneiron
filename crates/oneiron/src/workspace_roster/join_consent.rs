@@ -378,6 +378,25 @@ pub fn require_join_for_branch_in_txn(
     Ok(JoinReceiptRef::for_join(&receipt.join_ref))
 }
 
+/// [`require_join_for_branch_in_txn`] for an actor a room door already
+/// verified. Its subject comes from the actor's stored entity kind (a PERSON
+/// is a person, an AGENT_DEF an agent), never from a label or its class.
+pub fn require_actor_join_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    branch: Option<EntityId>,
+    actor: EntityId,
+    scope: Option<&SpendScopeId>,
+) -> Result<JoinReceiptRef> {
+    let subject = match vault.get_entity_type_in_txn(txn, &actor)? {
+        Some(ENTITY_TYPE_PERSON) => JoinSubject::Person(actor),
+        Some(ENTITY_TYPE_AGENT_DEF) => JoinSubject::Agent(actor),
+        _ => return Err(not_joined("only a person or an agent joins a room")),
+    };
+    require_join_for_branch_in_txn(vault, txn, room, branch, &subject, scope)
+}
+
 fn not_joined(reason: &'static str) -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
 }
