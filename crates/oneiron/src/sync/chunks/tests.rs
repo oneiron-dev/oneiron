@@ -341,3 +341,50 @@ fn an_object_only_a_device_only_world_owns_leaves_by_no_chunk_door() -> Result<(
     }
     Ok(())
 }
+
+/// Review r9 (Astra R9-4, P2): a want for one chunk of an object whose
+/// manifest no frame carries read that manifest whole, more than once, past
+/// the room its server counted for the exchange. Such a want is refused
+/// before the manifest row is copied.
+#[test]
+fn a_want_never_reads_a_manifest_no_frame_carries() -> Result<()> {
+    use crate::store::ManifestDbs as _;
+    let (_dir, vault, oid, manifest, principal, grant_id) = chunk_grant_fixture(|_| {})?;
+    let asset = vault.lfs_object(oid)?.expect("object").asset_id;
+    // The stored row, grown past a frame with bytes a test can find in a copy.
+    let needle = b"a manifest row past one frame";
+    let mut row = vault.get_raw(&asset)?.expect("manifest row");
+    while row.len() <= MAX_CHUNK_SYNC_FRAME {
+        row.extend_from_slice(needle);
+    }
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .entities()
+        .put(&mut txn, asset.as_bytes(), &row)?;
+    txn.commit()?;
+    let selector = SyncSelector::new(
+        grant_id,
+        principal,
+        crate::sync::selector::SyncSelectorWorld::All,
+        vec![],
+        vec![crate::federation::SelectorRange::Family(
+            crate::registry::TypeByteFamily::Content,
+        )],
+    );
+    let want = encode_chunk_request(&ChunkSyncRequest {
+        oid: *oid.as_bytes(),
+        selector: encode_sync_selector(&selector)?,
+        have: vec![],
+        want: Some(vec![manifest.chunks[0].hash]),
+    })?;
+    crate::ports::row_copies::watch(needle);
+    let served = serve_chunk_request(&vault, principal, FederationGrantScope::vault(7), &want);
+    assert!(served.is_err(), "the want is refused");
+    assert!(
+        crate::ports::row_copies::sites().is_empty(),
+        "the manifest row was never copied: {:?}",
+        crate::ports::row_copies::sites()
+    );
+    Ok(())
+}
