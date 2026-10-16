@@ -17,6 +17,7 @@ use super::*;
 use crate::HostingPrivacyPosture::Hosted;
 use crate::authority::entry_transition::TRANSITIONED_FOR_TEST;
 use crate::authority::fold_resume::{FoldBase, RESUMED_FOR_TEST, StoredLog, fold_stored_log};
+use crate::authority::log_budget::fold_projected_bytes;
 use crate::world_keys::{
     FIRST_GENERATION, PolicyRevision, RecoveryRootSeed, WorldKey, WorldKeyBinding, WrapRecipient,
     seal_world_key,
@@ -35,6 +36,7 @@ struct Under {
     policy: AuthorityObservationPolicy,
     posture: crate::HostingPrivacyPosture,
     pin: Option<PinnedRoot>,
+    peers: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     /// Rows with no first-seen receipt; every other row was first seen at 1.
     unseen: BTreeSet<AuthorityEntryHash>,
     now: u64,
@@ -49,6 +51,7 @@ impl Default for Under {
             policy: AuthorityObservationPolicy::default(),
             posture: crate::HostingPrivacyPosture::default(),
             pin: None,
+            peers: BTreeMap::new(),
             unseen: BTreeSet::new(),
             now: 2,
         }
@@ -87,7 +90,7 @@ impl Misses {
             unvouched: under.unvouched,
             policy: under.policy,
         };
-        let peers = BTreeMap::new();
+        let peers = &under.peers;
         let before = RESUMED_FOR_TEST.with(Cell::get);
         TRANSITIONED_FOR_TEST.with(|rows| *rows.borrow_mut() = Some(Vec::new()));
         let (fold, next) = fold_stored_log(
@@ -95,7 +98,7 @@ impl Misses {
                 entries,
                 first_seen_at_secs: &first_seen,
                 now_secs: under.now,
-                peer_consent_roots: &peers,
+                peer_consent_roots: peers,
                 observations: &observations,
                 posture: under.posture,
                 pin: under.pin.as_ref(),
@@ -108,7 +111,7 @@ impl Misses {
             entries,
             &first_seen,
             under.now,
-            &peers,
+            peers,
             &observations,
             under.posture,
             under.pin.as_ref(),
@@ -225,17 +228,18 @@ impl Chain {
         )
     }
 
-    /// An inert row on `parent`: 0 enrols an agent, 1 binds one (or
-    /// enrols), 2 is a federation confirm, 3 a critical-write confirm, 4
-    /// consumes a slip (or mints one), 5 mints one.
+    /// An inert row on `parent`. An agent enrolled and not yet bound is
+    /// bound first, as a system actor: until then it counts toward the
+    /// quorum an owner-only row needs. Otherwise 0 and 1 enrol an agent, 2
+    /// is a federation confirm, 3 a critical-write confirm, 4 consumes a
+    /// slip (or mints one), 5 mints one.
     fn inert(&mut self, kind: usize, parent: AuthorityEntryHash) -> AuthorityLogEntry {
+        if let Some(agent) = self.unbound.pop() {
+            let actor = self.entity();
+            let op = bind_op(&authority_key_from_ed(&agent), actor, "system", 1);
+            return self.row(parent, op, Some(&agent));
+        }
         match kind {
-            1 if !self.unbound.is_empty() => {
-                let agent = self.unbound.remove(0);
-                let actor = self.entity();
-                let op = bind_op(&authority_key_from_ed(&agent), actor, "system", 1);
-                self.row(parent, op, Some(&agent))
-            }
             2 => {
                 let op = self.confirm();
                 self.row(parent, op, None)
@@ -404,6 +408,8 @@ impl Chain {
             "another policy",
             "another posture",
             "another pin",
+            "a peer root",
+            "another peer root",
             "a vouched row",
             "a vouched base row",
             "no vouch",
@@ -424,6 +430,13 @@ impl Chain {
                 "another policy" => under.policy.stale_roster_window_secs = 99,
                 "another posture" => under.posture = Hosted,
                 "another pin" => under.pin = Some(pin(&other_root)),
+                "a peer root" => {
+                    under.peers.insert([78; 32], BTreeSet::new());
+                }
+                "another peer root" => {
+                    let key = authority_key_from_ed(&ed_key(78));
+                    under.peers.insert([79; 32], BTreeSet::from([key]));
+                }
                 "a vouched row" => {
                     under.vouched.insert(hash(&row));
                 }
@@ -471,16 +484,23 @@ fn a_generated_chain_of_inert_rows_resumes_and_each_disqualifier_falls_back() {
         let mut log = scale_log(shape, 2 * rng.gen_range(1..5));
         let mut chain = Chain::after(&log);
         let mut under = Under::default();
+        if rng.gen_bool(0.5) {
+            let key = authority_key_from_ed(&ed_key(79));
+            under.peers.insert([79; 32], BTreeSet::from([key]));
+        }
         let mut base = misses.fold(&format!("seed {seed}: the log"), &log, &under, None, false);
+        // At least `rows` rows, the last of them with every agent bound.
         let rows = rng.gen_range(1..10);
-        for n in 1..=rows {
+        let mut n = 0;
+        while n < rows || !chain.unbound.is_empty() {
+            n += 1;
             let row = chain.inert(rng.gen_range(0..6), hash(log.last().unwrap()));
             // A row with no first-seen receipt still resumes.
             if rng.gen_bool(0.3) {
                 under.unseen.insert(hash(&row));
             }
             log.push(row);
-            if n == rows || rng.gen_bool(0.5) {
+            if (n >= rows && chain.unbound.is_empty()) || rng.gen_bool(0.5) {
                 // Past the stale-roster window, the install view still
                 // matches.
                 under.now = if rng.gen_bool(0.3) { 86_402 } else { 2 };
@@ -497,7 +517,8 @@ fn a_generated_chain_of_inert_rows_resumes_and_each_disqualifier_falls_back() {
     misses.assert_none();
 }
 
-/// Folds `log` for a base, then `log` and `rows` from it.
+/// Folds `log` for a base, then `log` and `rows` from it: all at once, and
+/// one row at a time from each fold's own base.
 fn check(
     misses: &mut Misses,
     case: &str,
@@ -506,10 +527,19 @@ fn check(
     under: &Under,
     resumes: bool,
 ) {
-    let base = misses.fold(&format!("{case}: the log"), log, under, None, false);
-    misses.expect(&format!("{case}: the log leaves a base"), base.is_some());
+    let first = misses.fold(&format!("{case}: the log"), log, under, None, false);
+    misses.expect(&format!("{case}: the log leaves a base"), first.is_some());
     let entries = [log.to_vec(), rows].concat();
-    misses.fold(case, &entries, under, base.as_ref(), resumes);
+    misses.fold(case, &entries, under, first.as_ref(), resumes);
+    let mut base = first;
+    for len in log.len() + 1..entries.len() {
+        let case = format!("{case}: to {len} rows");
+        base = misses.fold(&case, &entries[..len], under, base.as_ref(), resumes);
+    }
+    if entries.len() > log.len() + 1 {
+        let case = format!("{case}: row by row");
+        misses.fold(&case, &entries, under, base.as_ref(), resumes);
+    }
 }
 
 #[test]
@@ -556,6 +586,24 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
             None,
         ));
     }
+    // The owner over the floor, before an unbound agent counts toward the
+    // quorum an owner-only row needs.
+    let strong = owner_row(
+        floored_id,
+        &owner,
+        9,
+        vec![tip(&floored)],
+        confirm_op(100),
+        None,
+    );
+    check(
+        &mut misses,
+        "the owner over the genesis floor",
+        &floored,
+        vec![strong],
+        &plain,
+        true,
+    );
     floored.push(owner_row(
         floored_id,
         &owner,
@@ -579,22 +627,6 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         vec![weak],
         &plain,
         false,
-    );
-    let strong = owner_row(
-        floored_id,
-        &owner,
-        10,
-        vec![tip(&floored)],
-        confirm_op(100),
-        None,
-    );
-    check(
-        &mut misses,
-        "the owner over the genesis floor",
-        &floored,
-        vec![strong],
-        &plain,
-        true,
     );
 
     // A pre-handoff floor, then a handoff: the successor's agent row.
@@ -677,6 +709,13 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
     for (case, row) in rows {
         check(&mut misses, case, &revoked, vec![row], &plain, false);
     }
+    let late = Under {
+        now: 86_402,
+        ..Under::default()
+    };
+    let row = confirm(&revoked, &owner, 10, 102, None);
+    let case = "the owner past the stale window after a revocation";
+    check(&mut misses, case, &revoked, vec![row], &late, true);
 
     // A machine row and its install key.
     let install = ed_key(70);
@@ -766,10 +805,17 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         &mut misses,
         "a world's key record",
         &with_settings,
-        vec![wraps],
+        vec![wraps.clone()],
         &plain,
         false,
     );
+    // A base that holds a world and its key carries on, row by row, off
+    // its main head (the machine's profile).
+    let keyed = [with_settings, vec![wraps]].concat();
+    let one = confirm(&machined, &owner, 10, 100, None);
+    let two = owner_row(id, &owner, 11, vec![hash(&one)], confirm_op(101), None);
+    let case = "confirms over a world's key record";
+    check(&mut misses, case, &keyed, vec![one, two], &plain, true);
 
     // A side row in the log that names the new row as its parent.
     let row = confirm(&machined, &owner, 10, 100, None);
@@ -790,6 +836,103 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         &plain,
         false,
     );
+
+    // A log the fold refuses or cannot settle leaves no base: a second
+    // root, a main row whose parent never arrived.
+    let rival = genesis_entry(92, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let orphan = owner_row(id, &owner, 9, vec![[0xEE; 32]], confirm_op(100), None);
+    for (case, extra) in [
+        ("a second root", rival),
+        ("a main row without its parent", orphan),
+    ] {
+        let log = [chain_log.clone(), vec![extra]].concat();
+        let base = misses.fold(&format!("{case}: the log"), &log, &plain, None, false);
+        misses.expect(&format!("{case}: no base"), base.is_none());
+        let row = confirm(&chain_log, &owner, 10, 101, None);
+        let entries = [log, vec![row]].concat();
+        misses.fold(case, &entries, &plain, base.as_ref(), false);
+    }
+
+    // The memory floor over the whole log, the issuer's uncounted slip rows
+    // included: a row at the floor resumes, a row past it falls back to the
+    // refusal.
+    let mut slipped = chain_log.clone();
+    let mut chain = Chain::after(&slipped);
+    for kind in [5, 4] {
+        let row = chain.inert(kind, tip(&slipped));
+        slipped.push(row);
+    }
+    let row = chain.inert(2, tip(&slipped));
+    let rows = slipped.len() + 1;
+    let bytes = fold_projected_bytes(rows, (rows * (rows - 1) / 2) as u64);
+    for (case, floor, resumes) in [
+        ("a row at the memory floor", bytes, true),
+        ("a row past the memory floor", bytes - 1, false),
+    ] {
+        let under = Under {
+            policy: AuthorityObservationPolicy {
+                log_fold_memory_floor_bytes: Some(floor),
+                ..AuthorityObservationPolicy::default()
+            },
+            ..Under::default()
+        };
+        check(
+            &mut misses,
+            case,
+            &slipped,
+            vec![row.clone()],
+            &under,
+            resumes,
+        );
+    }
+
+    // A missing receipt reads at its signer's high-water mark (F4, F16):
+    // the head's floor is its own sequence while it is the newest row, and
+    // the new row's once that lands, which puts the head below it.
+    let head = chain_log.last().unwrap();
+    let at_head = Under {
+        floors: BTreeMap::from([(hash(head), head.seq)]),
+        ..Under::default()
+    };
+    let case = "a missing receipt";
+    let base = misses.fold(
+        &format!("{case}: the log"),
+        &chain_log,
+        &at_head,
+        None,
+        false,
+    );
+    misses.expect(&format!("{case}: the log leaves a base"), base.is_some());
+    let row = confirm(&chain_log, &owner, 9, 100, None);
+    let raised = Under {
+        floors: BTreeMap::from([(hash(head), row.seq)]),
+        ..Under::default()
+    };
+    let entries = [chain_log, vec![row]].concat();
+    let case = "a missing receipt read at the new high-water mark";
+    misses.fold(case, &entries, &raised, base.as_ref(), false);
+
+    misses.assert_none();
+}
+
+#[test]
+fn a_pact_hosted_or_pinned_log_resumes_only_under_its_own_inputs() {
+    let mut misses = Misses::default();
+    let plain = Under::default();
+    let owner = ed_key(91);
+    let chain_log = scale_log("chain", 8);
+    let id = genesis_vault_id(&chain_log[0]).unwrap();
+    let tip = |log: &[AuthorityLogEntry]| hash(log.last().unwrap());
+    let confirm = |log: &[AuthorityLogEntry], signer: &SigningKey, seq, n| {
+        owner_row(id, signer, seq, vec![tip(log)], confirm_op(n), None)
+    };
+    let agent = AuthorityOp::EnrollDevice {
+        device: device(
+            authority_key_from_ed(&ed_key(7)),
+            ROLE_AGENT,
+            AuthorityTier::Software,
+        ),
+    };
 
     // A pact the head's state holds narrower than the merge does not
     // capture; the other order does.
@@ -826,7 +969,7 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
             &format!("{case}: a base is {captures}"),
             base.is_some() == captures,
         );
-        let row = confirm(&pacts, &owner, 12, 100, None);
+        let row = confirm(&pacts, &owner, 12, 100);
         let entries = [pacts, vec![row]].concat();
         misses.fold(case, &entries, &plain, base.as_ref(), captures);
     }
@@ -850,7 +993,7 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
             None,
         ));
     }
-    let row = owner_row(hosted_id, &owner, 9, vec![tip(&hosted_log)], agent(7), None);
+    let row = owner_row(hosted_id, &owner, 9, vec![tip(&hosted_log)], agent, None);
     check(
         &mut misses,
         "a hosted vault's agent",
@@ -876,7 +1019,7 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         pin: Some(pin(&root)),
         ..Under::default()
     };
-    let row = confirm(&pinned_log, &owner, 9, 100, None);
+    let row = confirm(&pinned_log, &owner, 9, 100);
     check(
         &mut misses,
         "a pinned install",

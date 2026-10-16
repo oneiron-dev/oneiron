@@ -9,6 +9,7 @@
 //! `star:<n>` (n confirms, each under genesis alone).
 use super::support::*;
 use super::*;
+use crate::authority::fold_resume::{FoldBase, RESUMED_FOR_TEST, StoredLog, fold_stored_log};
 
 pub(super) fn agent_key(n: usize) -> SigningKey {
     let mut seed = [0xA6; 32];
@@ -114,13 +115,8 @@ pub(super) fn scale_log(shape: &str, rows: usize) -> Vec<AuthorityLogEntry> {
     entries
 }
 
-/// The vault door's fold of `entries` under no memory floor.
-pub(super) fn vault_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
-    let first_seen: BTreeMap<_, _> = entries
-        .iter()
-        .map(|entry| (authority_entry_hash(entry).unwrap(), 1))
-        .collect();
-    let observations = AuthorityLocalObservations {
+fn unfloored() -> AuthorityLocalObservations {
+    AuthorityLocalObservations {
         sequence_floors: BTreeMap::new(),
         vouched: BTreeSet::new(),
         unvouched: false,
@@ -128,7 +124,20 @@ pub(super) fn vault_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
             log_fold_memory_floor_bytes: Some(u64::MAX),
             ..AuthorityObservationPolicy::default()
         },
-    };
+    }
+}
+
+fn seen(entries: &[AuthorityLogEntry]) -> BTreeMap<AuthorityEntryHash, u64> {
+    entries
+        .iter()
+        .map(|entry| (authority_entry_hash(entry).unwrap(), 1))
+        .collect()
+}
+
+/// The vault door's fold of `entries` under no memory floor.
+pub(super) fn vault_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
+    let first_seen = seen(entries);
+    let observations = unfloored();
     fold_authority_log_with_local_observations_and_posture(
         entries,
         &first_seen,
@@ -137,6 +146,28 @@ pub(super) fn vault_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
         &observations,
         crate::HostingPrivacyPosture::default(),
         None,
+    )
+}
+
+/// [`vault_fold`] through the stored-log fold, resumed from `base` where it
+/// can be, and its next base.
+fn stored_fold(
+    entries: &[AuthorityLogEntry],
+    base: Option<&FoldBase>,
+) -> (AuthorityFold, Option<FoldBase>) {
+    let first_seen = seen(entries);
+    let observations = unfloored();
+    fold_stored_log(
+        StoredLog {
+            entries,
+            first_seen_at_secs: &first_seen,
+            now_secs: 2,
+            peer_consent_roots: &BTreeMap::new(),
+            observations: &observations,
+            posture: crate::HostingPrivacyPosture::default(),
+            pin: None,
+        },
+        base,
     )
 }
 
@@ -150,7 +181,9 @@ fn status_kib(field: &str) -> u64 {
 }
 
 /// Measurement: one fold of `ONEIRON_FOLD_SCALE`'s log, its peak resident
-/// bytes over the process's before it, its time, and its ancestor pairs.
+/// bytes over the process's before it, its time, and its ancestor pairs;
+/// then its last row's fold resumed from a base one row short, a write's
+/// fold on the fast path.
 #[test]
 #[ignore = "measurement: run one shape per process on Linux, see the module doc"]
 fn measure() {
@@ -178,5 +211,19 @@ fn measure() {
         fold.counted_ancestor_pairs,
         peak / pairs.max(1),
         peak / n,
+    );
+    let (_, base) = stored_fold(&entries[..entries.len() - 1], None);
+    let before = RESUMED_FOR_TEST.with(std::cell::Cell::get);
+    let started = Instant::now();
+    let (resumed, _) = stored_fold(&entries, base.as_ref());
+    let resume_secs = started.elapsed().as_secs_f64();
+    assert!(
+        RESUMED_FOR_TEST.with(std::cell::Cell::get) > before,
+        "the last row resumes"
+    );
+    assert_eq!(resumed, fold);
+    eprintln!(
+        "FOLD-SCALE-RESUME shape={shape} rows={n} resume_ms={:.3}",
+        resume_secs * 1e3
     );
 }
