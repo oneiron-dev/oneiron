@@ -577,6 +577,15 @@ it from the cases where a person changed the answer. A host passes it to
 `DecisionBandPolicy::set_person_threshold`. Without the row, the person
 reading is recorded on every receipt and routes nothing.
 
+To tune it, the host keeps each changed answer
+(`HumanDecisionRequest::changed_by`) with `Vault::record_person_changed_answer`,
+bound to its ask. The Coach's nightly `coach.person_threshold` job (a host job:
+lease it with `admit_next_coach_host_job`, run it with
+`Vault::run_coach_person_threshold`) reads each record once, asks the host's
+`PersonThresholdPolicy` for a number and files it as a Proposed
+`coach.person_threshold.proposal` row. The Coach never sets the live row; the
+host applies an accepted proposal with `set_person_threshold`.
+
 The owner can probe the read at `POST /v1/llm/decision_read`
 (`oneiron.skills.md`): it returns the raw read, writes nothing and decides
 nothing. Each probe is a paid call on `models.raw_budget_units`, and past
