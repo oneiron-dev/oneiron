@@ -371,6 +371,12 @@ impl Vault {
                     )?;
                     self.store
                         .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                    // A held provenance claim stamped no flags on its edge.
+                    if removal == crate::store::TrayRemoval::Answered
+                        && body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE
+                    {
+                        self.restamp_cleared_edge_provenance_in_txn(wtxn, &binding.claim_id)?;
+                    }
                     // A Clear changes no claim bytes, so it logs a mutation of
                     // its own: a consumer that skipped the held claim, such as
                     // the Dreamer wake count, meets it again.

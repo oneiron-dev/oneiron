@@ -726,4 +726,44 @@ impl Vault {
         }
         Ok(eligible)
     }
+
+    /// Re-stamps the edge of `claim_id`, an `edge.provenance` Claim its owner
+    /// just cleared, from the D14 winner of its eligible live cohort: held, it
+    /// stamped no flags, and cleared, it may win now. A no-op when the Claim
+    /// is no longer live or its edge is gone.
+    pub(crate) fn restamp_cleared_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<()> {
+        let claim = self.load_provenance_claim_in_txn(wtxn, claim_id)?;
+        let subject = claim.subject;
+        let Some(edge) =
+            self.store
+                .port_edge_get(wtxn, &subject.source, subject.kind, &subject.target)?
+        else {
+            return Ok(());
+        };
+        let live = self.live_edge_provenance_claims_in_txn(wtxn, &subject, None)?;
+        if !live.iter().any(|cohort| cohort.id == *claim_id) {
+            return Ok(());
+        }
+        let winners = self.eligible_provenance_claims_in_txn(wtxn, live)?;
+        let precedence: Vec<ProvenancePrecedence> = winners
+            .iter()
+            .map(StoredProvenanceClaim::precedence)
+            .collect();
+        let Some(winner) = winner_index(&precedence) else {
+            return Ok(());
+        };
+        let flags = winners[winner].flags();
+        if edge.provenance == Some(flags) {
+            return Ok(());
+        }
+        restamp_edge_flags(&self.store, wtxn, &subject, flags)?;
+        ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
+        // The stamp moves edge bytes outside any edge write's own bump, as in
+        // RETRACT.
+        ppr::increment_graph_version(&self.store, wtxn)
+    }
 }

@@ -244,14 +244,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
         format!("recipient:cold_external:{}", id.to_hex()),
         actor.to_hex(),
     )?;
-    let owner_id = EntityId::now();
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:owner",
@@ -637,7 +630,7 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = std::rc::Rc::new(Vault::open(dir.path(), crate::VaultConfig::default())?);
     let actor = EntityId::now();
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     for id in [actor, owner_id] {
         vault.put_entity(
             &id,

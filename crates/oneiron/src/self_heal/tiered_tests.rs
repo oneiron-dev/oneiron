@@ -72,15 +72,7 @@ fn run(v: &Vault, at: u64, miss: bool) -> RetrievalRunRecord {
     row
 }
 fn owner(v: &Vault) -> crate::consent::AuthenticatedOwner {
-    let id = EntityId::now();
-    v.put_entity(
-        &id,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )
-    .unwrap();
+    let id = v.ensure_embedded_owner_actor().unwrap();
     v.authenticate_owner(id, "owner", true, crate::store::GateDecisionId::now())
         .unwrap()
 }

@@ -151,6 +151,21 @@ pub enum IdentityTopologyRejection {
         /// Lexicographically-last side of the covered pair.
         b: EntityId,
     },
+    /// A merge names the vault's embedded owner among its sources. A merge
+    /// source stops being a live PERSON, and a personal vault's owner is that
+    /// PERSON, so the merge would lock the owner out of every owner door.
+    /// Merge the other way instead: the owner as the survivor.
+    OwnerMergedAway {
+        /// The embedded owner the merge would retire.
+        owner: EntityId,
+    },
+    /// A split names the vault's embedded owner as its original. The original
+    /// of a split stops being a live PERSON, so the split would lock the
+    /// owner out of every owner door, as [`Self::OwnerMergedAway`] would.
+    OwnerSplitAway {
+        /// The embedded owner the split would retire.
+        owner: EntityId,
+    },
     /// undo names an event that is not the current topology writer for its
     /// entities (already undone, superseded by a later re-apply, parked, or
     /// never applied, including one the effective ledger never admitted), or
