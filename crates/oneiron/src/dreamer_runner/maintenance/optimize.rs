@@ -6,7 +6,7 @@ use crate::dreamer_runner::{DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DreamerAdmitted
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
-    HeldOutReplayScorer, PROVENANCE_OPTIMIZE_ATTEMPT_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
+    HeldOutReplayNotes, PROVENANCE_OPTIMIZE_ATTEMPT_KEY, SKILL_OPTIMIZE_BIRTH_PATH,
     SkillEditDisposition, SkillOptimizeAuthor, run_skill_optimize, run_skill_optimize_for_resident,
     score_gate_skill_edit_in_cycle, skill_edit_verdict, skill_tradeoff_ask,
 };
@@ -17,7 +17,7 @@ use rmpv::Value;
 /// held-out judge. The judge's decision clock must fit inside the wake clock.
 pub struct CoachSkillOptimizer<'a> {
     pub author: &'a (dyn SkillOptimizeAuthor + Send + Sync),
-    pub scorer: &'a (dyn HeldOutReplayScorer + Send + Sync),
+    pub scorer: &'a (dyn HeldOutReplayNotes + Send + Sync),
 }
 
 fn invalid() -> Error {

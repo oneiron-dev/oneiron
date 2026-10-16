@@ -1023,7 +1023,8 @@ CODE_MODE_DTS_REGENERATE = 'ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron
 # self {`, `declare const vault: {`, `declare function describe(input: …`,
 # `const focus: {`, `claims: {`, `upsert(input: …`, or a verb that holds
 # verbs, `diary: ((input: …) => Promise<unknown>) & {`.
-DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \{| \{)')
+# `self.fold` is the one positional verb, `fold: (span: …` (ARCH-0067 #folds).
+DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \(span: |: \{| \{)')
 def code_mode_dts_current():
     declared, scope = set(), []
     for line in (ROOT/CODE_MODE_DTS).read_text().splitlines():
@@ -1033,7 +1034,7 @@ def code_mode_dts_current():
         head = DTS_LINE.match(text)
         if not head: continue
         name, form = head.groups()
-        if 'input' in form: declared.add('.'.join(scope + [name]))
+        if 'input' in form or 'span' in form: declared.add('.'.join(scope + [name]))
         if text.endswith('{'): scope.append(name)
     return declared == {r['name'] for r in ROWS + RUN_ROWS}
 
