@@ -774,7 +774,7 @@ impl OneironClient {
                     oneiron::office_body::DeckReviewView,
                 >(client, verb, &input),
                 "vault.artifacts.body.deck.merge" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::oneiron_docedit::live::LandingReceipt,
+                    oneiron::office_body::LandingReceipt,
                 >(client, verb, &input),
                 "vault.artifacts.body.deck.export" => remote_agent_verb_output::<
                     oneiron::office_body::DeckExportView,
@@ -3850,7 +3850,7 @@ impl OneironClient {
     pub fn vault_artifacts_body_deck_merge(
         &self,
         input: &oneiron::office_body::DeckForkMergeRequest,
-    ) -> Result<oneiron_docedit::live::LandingReceipt, MemoryError> {
+    ) -> Result<oneiron::office_body::LandingReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

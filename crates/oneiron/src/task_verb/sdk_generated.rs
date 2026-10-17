@@ -7105,7 +7105,7 @@ pub fn vault_artifacts_body_deck_review(
 pub fn vault_artifacts_body_deck_merge(
     memory: &Memory<'_>,
     input: crate::office_body::DeckForkMergeRequest,
-) -> MemoryResult<oneiron_docedit::live::LandingReceipt> {
+) -> MemoryResult<crate::office_body::LandingReceipt> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.artifacts.body.deck.merge",

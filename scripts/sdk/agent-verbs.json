@@ -4390,7 +4390,7 @@
         "/fork_ref"
       ],
       "input": "crate::office_body::DeckForkMergeRequest",
-      "output": "oneiron_docedit::live::LandingReceipt",
+      "output": "crate::office_body::LandingReceipt",
       "call": "memory.artifacts_body_deck_merge(&input)?",
       "scope": "Write",
       "admission": {
