@@ -4,9 +4,12 @@ use super::{
     DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
     MAX_EVENTS_PER_RUN,
 };
+use crate::retrieval_quality::RetrievalQuality;
 use crate::{
     EntityId, Result, Vault,
-    receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord},
+    receipt::{
+        CallOutcome, CallReceipt, CallTransport, ReceiptKind, ReceiptQuery, ReceiptRecord,
+    },
     store::RetrievalRunRecord,
 };
 use rmpv::Value;
@@ -93,6 +96,17 @@ point_detector!(
     SilentConversationDegradation,
     DreamerEventDag
 );
+point_detector!(
+    McpActionRejectedDetector,
+    "mcp.rejected.v1",
+    "mcp_rejected",
+    McpActionRejected,
+    Receipt
+);
+
+fn default_retrieval_regressions() -> u64 {
+    32
+}
 
 /// One fixed-window bound resolved from the vault's POLICY_MANIFEST rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +115,10 @@ pub struct TripwireBounds {
     pub window_secs: u64,
     pub consent_depth: u64,
     pub actor_writes: u64,
+    /// Degraded retrieval runs inside one window that read as a regression
+    /// (the ARCH-0037 kill-criterion shape, ARCH-0066 §4).
+    #[serde(default = "default_retrieval_regressions")]
+    pub retrieval_regressions: u64,
 }
 impl Default for TripwireBounds {
     fn default() -> Self {
@@ -108,13 +126,14 @@ impl Default for TripwireBounds {
             window_secs: 600,
             consent_depth: 1_000,
             actor_writes: 100,
+            retrieval_regressions: default_retrieval_regressions(),
         }
     }
 }
 impl TripwireBounds {
     pub(crate) fn decode(value: &Value) -> Option<Self> {
         let entries = value.as_map()?;
-        if entries.len() != 3 {
+        if !(3..=4).contains(&entries.len()) {
             return None;
         }
         let field = |name| {
@@ -131,6 +150,10 @@ impl TripwireBounds {
             window_secs: field("window_secs")?,
             consent_depth: field("consent_depth")?,
             actor_writes: field("actor_writes")?,
+            retrieval_regressions: match entries.len() {
+                4 => field("retrieval_regressions")?,
+                _ => default_retrieval_regressions(),
+            },
         };
         bounds.valid().then_some(bounds)
     }
@@ -139,6 +162,7 @@ impl TripwireBounds {
         self.window_secs > 0
             && (1..=MAX_EVENTS_PER_RUN as u64).contains(&self.consent_depth)
             && (1..=MAX_EVENTS_PER_RUN as u64).contains(&self.actor_writes)
+            && (1..=MAX_EVENTS_PER_RUN as u64).contains(&self.retrieval_regressions)
     }
 }
 pub struct ConsentStormDetector {
@@ -150,10 +174,15 @@ pub struct PredicateDriftDetector {
     pub window_end: u64,
     pub actor: EntityId,
 }
+pub struct RetrievalRegressionDetector {
+    pub bounds: TripwireBounds,
+    pub window_end: u64,
+}
 struct WindowRule {
     id: &'static str,
     kind: &'static str,
     class: DiagnosticEventClass,
+    source: DiagnosticSourceKind,
 }
 fn window_event(
     rule: WindowRule,
@@ -181,7 +210,7 @@ fn window_event(
     let Some(last) = observations.last() else {
         return vec![];
     };
-    let mut event = draft(rule.id, rule.class, DiagnosticSourceKind::Receipt, last);
+    let mut event = draft(rule.id, rule.class, rule.source, last);
     event.actor_ref = actor;
     event.expected = Value::from(threshold);
     event.actual = Value::from(observations.len() as u64);
@@ -205,6 +234,7 @@ impl DeterministicDetector for ConsentStormDetector {
                 id: self.detector_id(),
                 kind: "consent_pending",
                 class: DiagnosticEventClass::ConsentDenied,
+                source: DiagnosticSourceKind::Receipt,
             },
             input,
             self.bounds,
@@ -224,12 +254,33 @@ impl DeterministicDetector for PredicateDriftDetector {
                 id: self.detector_id(),
                 kind: "predicate_drift",
                 class: DiagnosticEventClass::ConsolidationError,
+                source: DiagnosticSourceKind::Receipt,
             },
             input,
             self.bounds,
             self.window_end,
             self.bounds.actor_writes,
             Some(self.actor),
+        )
+    }
+}
+impl DeterministicDetector for RetrievalRegressionDetector {
+    fn detector_id(&self) -> &'static str {
+        "retrieval.regression.v1"
+    }
+    fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent> {
+        window_event(
+            WindowRule {
+                id: self.detector_id(),
+                kind: "retrieval_degraded",
+                class: DiagnosticEventClass::RetrievalMiss,
+                source: DiagnosticSourceKind::RetrievalTelemetry,
+            },
+            input,
+            self.bounds,
+            self.window_end,
+            self.bounds.retrieval_regressions,
+            None,
         )
     }
 }
@@ -263,6 +314,37 @@ impl DiagnosticObservation {
             run.started_at,
             run,
         )
+    }
+    /// A served retrieval run whose execution degraded: a non-full quality
+    /// tier or any engine-recorded degradation marker. The windowed
+    /// regression detector counts these; one degraded run alone is not a
+    /// finding.
+    pub fn from_retrieval_degradation(run: &RetrievalRunRecord) -> Option<Self> {
+        if run.version != 0
+            || run.claims_suppressed > run.total_in_scope
+            || (run.quality != Some(RetrievalQuality::Degraded)
+                && run.quality != Some(RetrievalQuality::Passthrough)
+                && run.degradation.is_empty())
+        {
+            return None;
+        }
+        observation(
+            EntityId::from_bytes(run.run_id.as_bytes()).ok()?,
+            "retrieval_degraded",
+            run.started_at,
+            run,
+        )
+    }
+    /// A served MCP `tools/call` the boundary refused, from its lasting
+    /// call receipt. The refusal code stays in the cited receipt; the
+    /// diagnostic carries no text.
+    pub fn from_mcp_call_receipt(id: EntityId, receipt: &CallReceipt) -> Option<Self> {
+        if receipt.transport != CallTransport::Mcp
+            || !matches!(receipt.outcome, CallOutcome::Refused { .. })
+        {
+            return None;
+        }
+        observation(id, "mcp_rejected", receipt.at, receipt)
     }
     pub fn from_consolidation_receipt(receipt: &ReceiptRecord) -> Option<Self> {
         if receipt.receipt_kind != ReceiptKind::Gate
@@ -300,6 +382,30 @@ pub struct DreamerRunFacts {
     pub conversation: bool,
 }
 impl DreamerRunFacts {
+    /// A served conversation turn that returned nothing with no recorded
+    /// reason and no degradation marker: the conversation went silent
+    /// without anything explaining it. An explained empty turn is the
+    /// retrieval-miss detector's fact, never this one.
+    pub fn from_retrieval_turn(run: &RetrievalRunRecord) -> Option<Self> {
+        if run.version != 0
+            || run.turn.is_none()
+            || !run.result_ids.is_empty()
+            || run.total_in_scope <= run.claims_suppressed
+            || run.empty_reason.as_ref().is_some_and(|r| !r.is_empty())
+            || !run.degradation.is_empty()
+        {
+            return None;
+        }
+        Some(Self {
+            run_ref: EntityId::from_bytes(run.run_id.as_bytes()).ok()?,
+            completed_at: run.started_at,
+            completed: true,
+            output_expected: true,
+            output: String::new(),
+            error_count: 0,
+            conversation: true,
+        })
+    }
     fn observation(&self) -> Option<DiagnosticObservation> {
         if !self.completed || !self.output_expected || !self.output.trim().is_empty() {
             return None;
@@ -502,7 +608,7 @@ impl Vault {
 /// fail direction is silence, never a spurious heal.
 pub const TIER1_DETECTOR_INSTANCE: &str = "tier1";
 
-fn run(
+pub(super) fn run(
     vault: &Vault,
     scope: &str,
     mut observations: Vec<DiagnosticObservation>,
