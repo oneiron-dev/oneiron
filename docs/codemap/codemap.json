@@ -65357,7 +65357,7 @@
      "path": "src/api/ai/options.rs",
      "purpose": "`ai.options` (OF-131, OF-140; FIX 2942): the model rows a caller could call now",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -66285,7 +66285,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -66435,7 +66435,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 61
+      "crate-vis": 62
      }
     },
     {
@@ -71158,7 +71158,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CodeRunLimits",
@@ -71171,7 +71171,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -71608,7 +71608,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 16,
       "struct": 3
      }
@@ -72744,7 +72744,7 @@
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -73790,7 +73790,7 @@
     "mcp": {
      "files": 22,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "MCP connector actor registry"
     },
@@ -73935,7 +73935,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 54,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 623,
    "test_files": 182
