@@ -180,7 +180,8 @@ impl Vault {
     }
 
     /// The kit-restored seed rule in `txn`: the seed's root, and whether the
-    /// door publishes it first.
+    /// door publishes it first. A root this vault's kit inventory lists as
+    /// pending is refused: only the kit's confirm makes it live.
     fn kit_seed_gate_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -192,6 +193,11 @@ impl Vault {
             .vault_id
             .ok_or_else(|| refused("the vault has no authority genesis yet"))?;
         let root = seed.public(&vault_id)?;
+        if self.kit_root_pending_in_txn(txn, root.id)? {
+            return Err(refused(
+                "this vault's kit for this root is still pending: confirm the kit first",
+            ));
+        }
         let records = owner_root_records_in_txn(&self.store, txn, fold)?;
         let publish = kit_seed_gate(
             &records,
