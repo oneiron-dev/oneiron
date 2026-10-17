@@ -5,29 +5,30 @@
 //! will not open goes over the chat HTTP path, whole, as before.
 //!
 //! With `store` on (OF-602), the provider keeps every response, so a
-//! conversation's chain outlives its socket: a replaced or reconnected socket
-//! takes it up and still sends only the new items.
+//! conversation's chain outlives its socket: its last response is kept in the
+//! vault, and a replaced or reconnected socket, after a restart too, takes it
+//! up and still sends only the new items.
 //!
 //! Each call is still one gated call: a socket open is no admission, and a
 //! dropped call drops its socket, which ends the response on it.
-use std::collections::VecDeque;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use oneiron::llm::SingleRouteBackend;
 use oneiron::{
     BudgetLease, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream,
-    LlmStreamResult, ModelId,
+    LlmStreamResult, ModelId, Vault,
 };
 use oneiron_llm_openai::{
     OpenAiCompatBackend, OpenAiCompatProviderStream, OpenAiCompatStreamFrame,
     OpenAiCompatTransportError, OpenAiResponsesChain, OpenAiResponsesLlmStream,
     OpenAiResponsesTurn, RESPONSES_PREVIOUS_NOT_FOUND, RESPONSES_SOCKET_LIMIT,
     build_openai_responses_turn, responses_can_carry, responses_error_code,
-    responses_event_is_terminal, responses_event_type,
+    responses_event_is_terminal, responses_event_type, responses_item_digests,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue, header::AUTHORIZATION};
@@ -48,9 +49,33 @@ const RETIRE_BEFORE_LIMIT: Duration = Duration::from_secs(300);
 const IDLE_KEEP: Duration = Duration::from_secs(600);
 /// The most idle sockets one provider keeps.
 const IDLE_SOCKETS: usize = 8;
-/// The most conversations whose stored chain one provider keeps, with
-/// `store` on.
-const STORED_CHAINS: usize = 32;
+/// The `MODEL_RESPONSES_CHAIN` side table: each conversation's last stored
+/// response, by provider. Never replicated, and runtime to a checkpoint.
+const CHAIN_PREFIX: &str = "models:responses-chain:v1:";
+
+/// The vault the stored chains are kept in, set at start-up.
+static CHAIN_VAULT: RwLock<Option<Weak<Vault>>> = RwLock::new(None);
+
+/// Keeps every provider's stored chains in `vault`.
+pub(crate) fn set_responses_chain_vault(vault: &Arc<Vault>) {
+    *CHAIN_VAULT.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::downgrade(vault));
+}
+
+fn chain_vault() -> Option<Arc<Vault>> {
+    CHAIN_VAULT
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()?
+        .upgrade()
+}
+
+/// One conversation's stored chain, as its row keeps it.
+#[derive(Serialize, Deserialize)]
+struct ChainRow {
+    response_id: String,
+    /// When the row was written, on the vault's recorded-at clock.
+    updated: u64,
+}
 
 /// The owner's Responses `store` switch (OF-602), off by default: read from
 /// the vault at start-up and set again when the owner changes it.
@@ -95,9 +120,9 @@ pub(super) struct ResponsesSockets {
     /// Set when the origin refused the upgrade for good: every later call
     /// takes HTTP for this process's life.
     refused: AtomicBool,
-    /// The last completed chain of each recent conversation sent with
-    /// `store` on, newest last.
-    stored: Mutex<VecDeque<OpenAiResponsesChain>>,
+    /// Whose stored chains these are: hex16 of the socket URL and the key
+    /// binding.
+    provider_key: String,
 }
 
 impl ResponsesSockets {
@@ -133,6 +158,11 @@ impl ResponsesSockets {
             value.set_sensitive(true);
             headers.push((AUTHORIZATION, value));
         }
+        let mut provider_key = blake3::Hasher::new();
+        provider_key.update(url.as_bytes());
+        provider_key.update(&[0]);
+        provider_key.update(provider.key_env.as_deref().unwrap_or_default().as_bytes());
+        let provider_key = provider_key.finalize().to_hex()[..16].to_owned();
         Ok(Self {
             url,
             headers,
@@ -141,7 +171,7 @@ impl ResponsesSockets {
             max_age: Duration::from_secs(max_age_secs).saturating_sub(RETIRE_BEFORE_LIMIT),
             idle: Mutex::new(Vec::new()),
             refused: AtomicBool::new(false),
-            stored: Mutex::new(VecDeque::new()),
+            provider_key,
         })
     }
 
@@ -188,49 +218,100 @@ impl ResponsesSockets {
                 None => break self.open().await?,
             }
         };
-        Some(self.resume(session, turn))
+        Some(self.resume(session, turn).await)
+    }
+
+    /// The row key of the conversation whose items have `digests`.
+    fn chain_key(&self, digests: &[u64]) -> String {
+        let mut hasher = blake3::Hasher::new();
+        for digest in digests {
+            hasher.update(&digest.to_le_bytes());
+        }
+        format!(
+            "{CHAIN_PREFIX}{}:{}",
+            self.provider_key,
+            hasher.finalize().to_hex()
+        )
     }
 
     /// A stored turn on a socket whose chain it does not extend takes up its
-    /// conversation's stored chain, as far as that chain reaches.
-    fn resume(&self, mut session: Session, turn: &OpenAiResponsesTurn) -> Session {
-        if turn.stored() && !session.chain.extended_by(&turn.items) {
-            let stored = self
-                .stored
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(chain) = stored
-                .iter()
-                .filter(|chain| chain.extended_by(&turn.items))
-                .max_by_key(|chain| chain.covered())
-            {
-                session.chain = chain.clone();
-            }
+    /// conversation's stored chain: the longest stored prefix of its items
+    /// that leaves at least one item to send.
+    async fn resume(&self, mut session: Session, turn: &OpenAiResponsesTurn) -> Session {
+        if !turn.stored() || session.chain.extended_by(&turn.items) {
+            return session;
+        }
+        let Some(vault) = chain_vault() else {
+            return session;
+        };
+        let digests = responses_item_digests(&turn.items);
+        let mut hasher = blake3::Hasher::new();
+        let mut keys = Vec::with_capacity(digests.len());
+        // The key of each prefix that leaves at least one item, as
+        // `chain_key` writes it.
+        for (covered, digest) in (1..digests.len()).zip(&digests) {
+            hasher.update(&digest.to_le_bytes());
+            keys.push((
+                covered,
+                format!(
+                    "{CHAIN_PREFIX}{}:{}",
+                    self.provider_key,
+                    hasher.finalize().to_hex()
+                ),
+            ));
+        }
+        let found = tokio::task::spawn_blocking(move || {
+            keys.into_iter().rev().find_map(|(covered, key)| {
+                let bytes = vault.sync_state_get(&key).ok()??;
+                let row = rmp_serde::from_slice::<ChainRow>(&bytes).ok()?;
+                Some((covered, row.response_id))
+            })
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some((covered, response_id)) = found {
+            session.chain = OpenAiResponsesChain::resumed(&turn.items[..covered], response_id);
         }
         session
     }
 
-    /// Keeps `chain` as its conversation's stored chain, in place of the one
-    /// it continues.
-    fn keep(&self, chain: &OpenAiResponsesChain) {
-        let mut stored = self
-            .stored
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        stored.retain(|kept| !kept.continued_by(chain));
-        if stored.len() >= STORED_CHAINS {
-            stored.pop_front();
-        }
-        stored.push_back(chain.clone());
+    /// Writes `chain` as its conversation's stored chain, and drops the row
+    /// at `continued`, the chain it extended.
+    fn keep(&self, chain: &OpenAiResponsesChain, continued: Option<String>) {
+        let (Some(vault), Some(response_id)) = (chain_vault(), chain.response_id()) else {
+            return;
+        };
+        let key = self.chain_key(chain.digests());
+        let row = ChainRow {
+            response_id: response_id.to_owned(),
+            updated: vault.now_recorded_at(),
+        };
+        let Ok(bytes) = rmp_serde::to_vec_named(&row) else {
+            return;
+        };
+        tokio::task::spawn_blocking(move || {
+            if vault.sync_state_put(&key, &bytes).is_err() {
+                tracing::warn!(
+                    reason = "responses_chain_unwritten",
+                    "a stored Responses chain could not be kept; its next new socket sends the whole conversation"
+                );
+                return;
+            }
+            if let Some(continued) = continued.filter(|continued| *continued != key) {
+                let _ = vault.sync_state_delete(&continued);
+            }
+        });
     }
 
-    /// Drops the stored chain that ends at `response_id`: the provider no
-    /// longer has it.
-    fn forget(&self, response_id: &str) {
-        self.stored
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .retain(|kept| kept.response_id() != Some(response_id));
+    /// Drops the stored chain row at `key`: the provider no longer has it.
+    fn forget(&self, key: String) {
+        let Some(vault) = chain_vault() else {
+            return;
+        };
+        tokio::task::spawn_blocking(move || {
+            let _ = vault.sync_state_delete(&key);
+        });
     }
 
     async fn open(&self) -> Option<Session> {
@@ -337,8 +418,8 @@ impl ResponsesSockets {
                 // The socket no longer holds the chained response, and said so
                 // before generating anything: the turn goes again, whole.
                 Some(RESPONSES_PREVIOUS_NOT_FOUND) if chained => {
-                    if let Some(id) = session.chain.response_id() {
-                        self.forget(id);
+                    if turn.stored() {
+                        self.forget(self.chain_key(session.chain.digests()));
                     }
                     session.chain.clear();
                     chained = false;
@@ -373,9 +454,11 @@ impl ResponsesSockets {
             // may have dropped it: the next turn sends everything.
             match event.get("response") {
                 Some(response) if responses_event_type(&event) == "response.completed" => {
+                    let continued =
+                        (turn.stored() && chained).then(|| self.chain_key(session.chain.digests()));
                     session.chain.record(&turn.items, response);
-                    if turn.stored() && session.chain.response_id().is_some() {
-                        self.keep(&session.chain);
+                    if turn.stored() {
+                        self.keep(&session.chain, continued);
                     }
                 }
                 _ => session.chain.clear(),
