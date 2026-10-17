@@ -3281,7 +3281,7 @@
      "purpose": "The claim-authoring tournament as a strategy skill on an OF-351 campaign (OF-366)",
      "surface": {
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 4
      }
     },
@@ -10688,8 +10688,8 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 8,
-      "re-export": 1
+      "crate-vis": 9,
+      "re-export": 2
      }
     },
     {
@@ -10725,6 +10725,22 @@
      "purpose": "Deterministic conversation, turn and message ids derived from a run's identity",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WaitDeliveries",
+      "WaitDelivery",
+      "WaitKey"
+     ],
+     "path": "src/code_run/storage/wait_delivery.rs",
+     "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 7,
+      "struct": 3
      }
     },
     {
@@ -15849,7 +15865,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 9
      }
     },
@@ -17476,10 +17492,28 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 14,
-      "crate-vis": 7,
+      "const": 15,
+      "crate-vis": 8,
       "fn": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HealDecisions",
+      "HealRoute",
+      "IssuesRun"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach_heal.rs",
+     "purpose": "The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -17574,16 +17608,17 @@
       "IdentityHint",
       "IdentityOption",
       "IdentityRuling",
-      "IdentitySettled"
+      "IdentitySettled",
+      "MentionProvenance"
      ],
      "path": "src/dreamer_runner/maintenance/identity.rs",
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 8,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -17596,7 +17631,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 7,
+      "mod": 8,
       "re-export": 3
      }
     },
@@ -20010,7 +20045,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -20031,7 +20066,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 43
      }
     },
     {
@@ -20127,6 +20162,7 @@
       "JsResultCall",
       "JsResultRef",
       "JsResultTarget",
+      "ParkedWait",
       "SelfDispatchResponse"
      ],
      "path": "src/engine_executor/types.rs",
@@ -20135,8 +20171,8 @@
       "const": 6,
       "crate-vis": 3,
       "enum": 5,
-      "fn": 7,
-      "struct": 9,
+      "fn": 8,
+      "struct": 10,
       "trait": 2,
       "type": 1
      }
@@ -24799,7 +24835,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -26113,7 +26149,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 34,
+      "const": 35,
       "fn": 1,
       "struct": 1
      }
@@ -26181,7 +26217,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 10,
+      "fn": 13,
       "struct": 9,
       "trait": 3
      }
@@ -26209,14 +26245,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DecisionAudio",
       "DecisionImage"
      ],
      "path": "src/llm/decision/media.rs",
-     "purpose": "Images a typed decision reads",
+     "purpose": "Images and audio clips a typed decision reads",
      "surface": {
-      "const": 4,
-      "fn": 5,
-      "struct": 1
+      "const": 7,
+      "fn": 10,
+      "struct": 2
      }
     },
     {
@@ -26262,7 +26299,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GraphAnswerer",
@@ -26278,7 +26315,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 5,
       "struct": 7,
@@ -27190,7 +27227,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 5
      }
     },
@@ -27203,7 +27240,7 @@
      "path": "src/llm/step/peer_wait.rs",
      "purpose": "Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 1
      }
@@ -27292,7 +27329,7 @@
      "path": "src/llm/step/trap.rs",
      "purpose": "Unified dreamer.trap record lifecycle: open/wait/signal/consume and supersession-chain transitions",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 6
      }
     },
@@ -27303,7 +27340,7 @@
      "path": "src/llm/step/trap_binding.rs",
      "purpose": "Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -27482,7 +27519,7 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 12,
       "struct": 8
@@ -27967,7 +28004,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 33
+      "re-export": 34
      }
     },
     {
@@ -30801,7 +30838,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
+      "re-export": 1,
       "struct": 3
      }
     },
@@ -33142,15 +33180,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChangeLogStoreRead",
       "DeletionFamily",
+      "DeletionMarker",
       "DeletionState",
       "EdgeStoreRead",
       "EntityStoreRead",
       "EntityTime",
+      "EntityWriteSegmentRead",
       "JobQueueRead",
       "RetrievalIndexRead",
       "ShortIdStoreRead",
@@ -33161,9 +33201,9 @@
      "path": "src/ports/query.rs",
      "purpose": "Read halves of the storage ports",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "struct": 3,
-      "trait": 7,
+      "trait": 8,
       "type": 1
      }
     },
@@ -36680,6 +36720,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports.rs",
+     "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/self_heal/canonical_tests.rs",
@@ -36824,7 +36874,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 6,
       "re-export": 9
      }
@@ -42802,7 +42852,7 @@
      "path": "src/tagging/save.rs",
      "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -48553,7 +48603,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48812,7 +48862,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49463,7 +49513,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49792,9 +49842,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 112,
+   "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3006,
+   "source_files": 3009,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52851,7 +52901,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -52867,7 +52917,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 14,
+      "const": 15,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -56480,7 +56530,7 @@
      "path": "src/lib/wire.rs",
      "purpose": "Chat-completions protocol mapping: request build, response parse, message/tool codecs, usage, status…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     }
@@ -59821,6 +59871,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_heal.rs",
+     "purpose": "The host Coach (ARCH-0066 #coach, OF-418)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/code_mode.rs",
      "purpose": "MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the…",
      "surface": {
@@ -59897,7 +59957,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 19,
       "re-export": 1,
       "struct": 2
@@ -62532,7 +62592,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/big_rung.rs",
@@ -66775,7 +66835,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66798,7 +66858,7 @@
     "big_rung": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)"
     },
@@ -67078,7 +67138,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 475,
+   "source_files": 476,
    "test_files": 182
   },
   "oneiron-spawn": {

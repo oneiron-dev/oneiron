@@ -16,7 +16,7 @@ declare function cancel(input: { task_ref: string }): Promise<unknown>;
 declare const connector: {
   list(input: { query?: string | null }): Promise<unknown>;
   outbound: {
-    schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
+    schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; mention?: { end: number; message: string; start: number; turn: string } | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
   };
   status(input: { name: string }): Promise<unknown>;
 };
