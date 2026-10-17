@@ -4739,7 +4739,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -17724,7 +17724,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health.rs",
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
-      "const": 10,
+      "const": 11,
       "crate-vis": 2,
       "enum": 6,
       "fn": 12,
@@ -17755,6 +17755,26 @@
       "fn": 3,
       "struct": 6,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/check_repeat.rs",
+     "purpose": "`failed_check_repeat` (agent-mind §3.4): the same tool run fails the same way again",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/run_loop.rs",
+     "purpose": "`loop` over an agent run's own calls",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -21092,8 +21112,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 4,
-      "fn": 9,
-      "re-export": 3,
+      "fn": 10,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -21124,9 +21144,28 @@
       "const": 5,
       "crate-vis": 2,
       "enum": 8,
-      "fn": 3,
+      "fn": 5,
       "struct": 6,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FailureSignalBatch",
+      "FailureSignalDelivery",
+      "FailureSignalTransport",
+      "FailureSignalTransportRequest"
+     ],
+     "path": "src/failure_signals/delivery.rs",
+     "purpose": "Delivery of the failure-signal exports to the deployment's publisher (OF-380)",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -26737,7 +26776,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -49583,7 +49622,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 42,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -49681,7 +49720,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -50565,7 +50604,7 @@
    },
    "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3053,
+   "source_files": 3056,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60797,6 +60836,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/failure_signals.rs",
+     "purpose": "The host's failure-signal sender (OF-380)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/harness.rs",
      "purpose": "The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit…",
      "surface": {
@@ -60833,7 +60882,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -64251,6 +64300,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FailureSignalsConfig"
+     ],
+     "path": "src/config/failure_signals.rs",
+     "purpose": "The `[failure_signals]` section: the publisher this deployment's failure signals go to (OF-380, DEC-0005…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "FeedbackConfig",
       "FeedbackInboxConfig"
      ],
@@ -64349,7 +64413,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 11,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -68008,7 +68072,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68071,7 +68135,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68332,7 +68396,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 504,
+   "source_files": 506,
    "test_files": 182
   },
   "oneiron-spawn": {
