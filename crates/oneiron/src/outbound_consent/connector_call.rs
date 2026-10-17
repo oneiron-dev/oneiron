@@ -625,3 +625,15 @@ fn now_ms() -> u64 {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
 }
+
+/// One held call's principal, connector name and tool, so the owner's
+/// connector consent binds exactly the actor that will resume it.
+pub(crate) fn held_connector_call_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    call_ref: &EntityId,
+) -> crate::Result<Option<(String, String, String)>> {
+    Ok(PENDING_CALLS
+        .get(store, txn, call_ref)?
+        .map(|row| (row.principal_ref, row.name, row.tool)))
+}

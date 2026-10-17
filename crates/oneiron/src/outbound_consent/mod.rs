@@ -22,6 +22,7 @@ pub(crate) use self::authority::FrozenCallValidation;
 pub use self::authority::{
     FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization,
 };
+pub(crate) use self::connector_call::held_connector_call_in_txn;
 pub use self::connector_call::{
     CONNECTOR_REPLY_MAX_BYTES, ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome,
     ConnectorCallRequest, UntrustedToolResult,

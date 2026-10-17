@@ -180,6 +180,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
+        self.carry_tool_grants_in_txn(&mut wtxn, &active, at)?;
         wtxn.commit().map_err(Error::from)?;
         Ok((active, report))
     }

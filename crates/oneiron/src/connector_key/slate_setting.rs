@@ -1,6 +1,7 @@
 //! The four capability settings at call time (DEC-0006 §MCP connector
-//! permissions). A key with no slate (a legacy or per-grant key) has no rows
-//! and stays on the per-call verdict. No setting widens scope or passes the
+//! permissions). A per-grant key meets its catalog connector's slate
+//! (ONE-1794); a key with no slate either way (a legacy key) has no rows and
+//! stays on the per-call verdict. No setting widens scope or passes the
 //! catastrophe floor: `always allow` is only a covering grant.
 use super::record::{ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance};
 use super::slate::{SlateDisposition, read_slate_in_store_txn};
@@ -16,7 +17,11 @@ pub(crate) fn connector_tool_setting_in_txn(
     key: &ConnectorKeyRecord,
     tool: &str,
 ) -> Result<SlateDisposition> {
-    let Some(slate_id) = key.slate_ref else {
+    let slate_ref = match key.slate_ref {
+        Some(slate_id) => Some(slate_id),
+        None => super::lifecycle::derived_key_catalog_slate_in_txn(store, txn, key)?,
+    };
+    let Some(slate_id) = slate_ref else {
         return Ok(SlateDisposition::Auto);
     };
     let slate = read_slate_in_store_txn(store, txn, slate_id)?
