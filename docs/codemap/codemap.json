@@ -26583,7 +26583,9 @@
      "kind": "src",
      "notable": [
       "CoordinationCost",
+      "DuplicateLabeller",
       "DuplicateWork",
+      "DuplicateWorkKind",
       "ReuseDelay",
       "TeamEvent"
      ],
@@ -26591,7 +26593,7 @@
      "purpose": "Coordination cost of a team (ARCH-0079 #coordination-cost, DLM-005): where its time went",
      "surface": {
       "const": 3,
-      "enum": 1,
+      "enum": 3,
       "fn": 7,
       "struct": 3
      }
@@ -37574,7 +37576,7 @@
      "path": "src/registry/pack_byte_map/doors.rs",
      "purpose": "Local installation commands and name-based instance admission",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6
      }
     },
