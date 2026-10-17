@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 259 facade rows, 976 declarations.
-Inputs: 215 of 259 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 209 of 259 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
+Census: 261 facade rows, 988 declarations.
+Inputs: 217 of 261 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 211 of 261 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
@@ -4782,6 +4782,7 @@ class OfficeBodyEdit(TypedDict):
 class OfficeBodyForkOpenRequest(TypedDict):
     artifact_ref: str
     run_root_ref: NotRequired[str | None]
+    proposal_ref: NotRequired[str | None]
 class ForkStateOpen(TypedDict):
     state: Literal["open"]
 class ForkStateMerged(TypedDict):
@@ -4822,6 +4823,7 @@ class BodyConflict(TypedDict):
 class OfficeBodyDiff(TypedDict):
     base: list[int]
     head: list[int]
+    fork_head: list[int]
     proposal: list[BlockChange]
     current: list[BlockChange]
     conflicts: list[BodyConflict]
@@ -4829,6 +4831,66 @@ class OfficeBodyForkMergeRequest(TypedDict):
     artifact_ref: str
     fork_ref: str
     reviewed_head: list[int]
+    reviewed_fork: list[int]
+class OfficeBodyProposalRequest(TypedDict):
+    artifact_ref: str
+    proposal_ref: str
+class ProposalHeader(TypedDict):
+    proposal: EntityId
+    artifact: EntityId
+    opener: EntityId
+    run_root: NotRequired[EntityId | None]
+    opened_at: int
+MemberVerdict = Literal["waiting", "landed", "rejected", "let_go"]
+class AnsweringAuthorityWord(TypedDict):
+    kind: Literal["word"]
+    person: EntityId
+class AnsweringAuthorityGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+    decision: str
+AnsweringAuthority = AnsweringAuthorityWord | AnsweringAuthorityGrant
+class MemberAnswer(TypedDict):
+    by: AnsweringAuthority
+    caller: EntityId
+    head: list[int]
+    fork_head: list[int]
+    landed: NotRequired[list[int] | None]
+    at: int
+class ProposalMember(TypedDict):
+    fork: EntityId
+    opener: EntityId
+    run_root: NotRequired[EntityId | None]
+    verdict: MemberVerdict
+    answer: NotRequired[MemberAnswer | None]
+BundleVerdict = Literal["landed", "rejected", "mixed", "let_go"]
+class ProposalSettlement(TypedDict):
+    verdict: BundleVerdict
+    at: int
+    reason: NotRequired[str | None]
+class OfficeBodyProposal(TypedDict):
+    header: ProposalHeader
+    members: list[ProposalMember]
+    settlement: NotRequired[ProposalSettlement | None]
+SettleVerdict = Literal["accept", "reject"]
+class ApproveScopeThisActor(TypedDict):
+    this_actor: str
+class ApproveScopeThisRunAndChildren(TypedDict):
+    this_run_and_children: str
+class ApproveScopeOneItem(TypedDict):
+    one_item: str
+ApproveScope = ApproveScopeThisActor | ApproveScopeThisRunAndChildren | ApproveScopeOneItem
+class OfficeBodyReviewedFork(TypedDict):
+    fork_ref: str
+    reviewed_fork: list[int]
+class OfficeBodyProposalSettleRequest(TypedDict):
+    artifact_ref: str
+    proposal_ref: str
+    verdict: SettleVerdict
+    scope: NotRequired[ApproveScope | None]
+    reviewed_head: list[int]
+    reviewed: list[OfficeBodyReviewedFork]
+    reason: NotRequired[str | None]
 class OfficeBodyExportVerbRequest(TypedDict):
     artifact_ref: str
     run_ref: str
@@ -4954,13 +5016,6 @@ class DeckReviewView(TypedDict):
     replay_refusals: list[str]
     stale_units: list[NodeId]
     evidence_refusal: NotRequired[str | None]
-class ApproveScopeThisActor(TypedDict):
-    this_actor: str
-class ApproveScopeThisRunAndChildren(TypedDict):
-    this_run_and_children: str
-class ApproveScopeOneItem(TypedDict):
-    one_item: str
-ApproveScope = ApproveScopeThisActor | ApproveScopeThisRunAndChildren | ApproveScopeOneItem
 Landing = Literal["merge", "switch"]
 class DeckForkMergeRequest(TypedDict):
     artifact_ref: str

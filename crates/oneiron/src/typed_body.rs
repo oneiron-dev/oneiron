@@ -328,6 +328,60 @@ pub(crate) fn merge_typed_body_fork_in_txn(
     Ok(head)
 }
 
+/// Lands an open fork whose proposal an office settlement answered (OF-505):
+/// [`merge_typed_body_fork_in_txn`] without its opener check. The answer, a
+/// person's word from outside the opener's lineage or a standing grant minted
+/// outside it, is what admits the landing, so the opener may be the one that
+/// asks for it; only a settlement constructs the admission.
+pub(crate) fn merge_admitted_typed_body_fork_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    fork: &EntityId,
+    expected_head: &[u8],
+    actor: WriteActor,
+    admission: &crate::office_body::MergeAdmission,
+) -> Result<TypedBodyHead> {
+    if admission.fork() != fork {
+        return Err(invalid("the admission names another fork"));
+    }
+    let key = (*entity, *fork);
+    let mut record = FORKS
+        .get(&vault.store, txn, &key)?
+        .ok_or(Error::EntityNotFound)?;
+    if record.state != TypedForkState::Open {
+        return Err(invalid("the fork is not open"));
+    }
+    validate_actor(vault, txn, actor)?;
+    require_live(&vault.store, txn, entity)?;
+    let mut head = HEADS
+        .get(&vault.store, txn, entity)?
+        .ok_or(Error::EntityNotFound)?;
+    if head.frontier != expected_head {
+        return Err(invalid(
+            "the body moved since the review; read the fork again",
+        ));
+    }
+    let live = load(DOCS.get(&vault.store, txn, entity)?, Some(&head.frontier))?;
+    let proposal = load(FORK_DOCS.get(&vault.store, txn, &key)?, None)?;
+    let updates = proposal
+        .export(ExportMode::updates(&live.oplog_vv()))
+        .map_err(|_| invalid("typed body fork export"))?;
+    import(&live, &updates)?;
+    head.frontier = live.oplog_frontiers().encode();
+    head.commits += record.commits;
+    DOCS.put(&vault.store, txn, entity, &snapshot(&live)?)?;
+    HEADS.put(&vault.store, txn, entity, &head)?;
+    record.state = TypedForkState::Merged {
+        by: actor.entity_ref(),
+        at: vault.now_recorded_at(),
+        head: head.frontier.clone(),
+    };
+    FORKS.put(&vault.store, txn, &key, &record)?;
+    FORK_DOCS.delete(&vault.store, txn, &key)?;
+    Ok(head)
+}
+
 /// Abandons an open fork's unlanded work.
 pub(crate) fn discard_typed_body_fork_in_txn(
     vault: &Vault,

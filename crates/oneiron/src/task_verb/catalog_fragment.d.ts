@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 317 code-mode rows (299 host rows, 18 run rows), 1080 declarations.
-// Replies: 257 fully typed, 47 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 319 code-mode rows (301 host rows, 18 run rows), 1092 declarations.
+// Replies: 259 fully typed, 47 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -984,7 +984,7 @@ declare namespace Sdk {
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
   type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt };
-  type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null };
+  type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null };
   type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
   type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
   type OfficeBodyForkEditRequest = { artifact_ref: string; fork_ref: string; ops: OfficeBodyOps; made_by?: unknown | null };
@@ -993,8 +993,21 @@ declare namespace Sdk {
   type BlockChange = { block: string; kind: ChangeKind };
   type ConflictKind = "delete_edit" | "competing_move" | "both_edited" | "both_set";
   type BodyConflict = { block: string; kind: ConflictKind };
-  type OfficeBodyDiff = { base: number[]; head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
-  type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[] };
+  type OfficeBodyDiff = { base: number[]; head: number[]; fork_head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
+  type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] };
+  type OfficeBodyProposalRequest = { artifact_ref: string; proposal_ref: string };
+  type ProposalHeader = { proposal: EntityId; artifact: EntityId; opener: EntityId; run_root?: EntityId | null; opened_at: number };
+  type MemberVerdict = "waiting" | "landed" | "rejected" | "let_go";
+  type AnsweringAuthority = { kind: "word"; person: EntityId } | { kind: "grant"; grant_ref: string; decision: string };
+  type MemberAnswer = { by: AnsweringAuthority; caller: EntityId; head: number[]; fork_head: number[]; landed?: number[] | null; at: number };
+  type ProposalMember = { fork: EntityId; opener: EntityId; run_root?: EntityId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
+  type BundleVerdict = "landed" | "rejected" | "mixed" | "let_go";
+  type ProposalSettlement = { verdict: BundleVerdict; at: number; reason?: string | null };
+  type OfficeBodyProposal = { header: ProposalHeader; members: ProposalMember[]; settlement?: ProposalSettlement | null };
+  type SettleVerdict = "accept" | "reject";
+  type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
+  type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
+  type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null };
   type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
@@ -1012,7 +1025,6 @@ declare namespace Sdk {
   type RenderPair = { head: RenderSide; candidate: RenderSide; changed: NodeId[] };
   type DeckDiff = { base_version: number; head_version: number; proposal_version: number; added: NodeId[]; removed: NodeId[]; moved: NodeMove[]; text_changed: NodeId[]; formatting_changed: NodeId[]; geometry_changed: NodeId[]; payload_changed: NodeId[]; opaque_changed: OpaqueChange[]; affected_slides: NodeId[]; head_only: NodeId[]; conflicts: Conflict[]; relationships: RelationshipChange[]; renders?: RenderPair | null };
   type DeckReviewView = { head: number[]; head_version: number; ok: boolean; diff: DeckDiff; replay_refusals: string[]; stale_units: NodeId[]; evidence_refusal?: string | null };
-  type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
   type Landing = "merge" | "switch";
   type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
   type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] };
@@ -1357,9 +1369,9 @@ declare const vault: Sdk.VaultHost & {
         discard(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.OfficeBodyFork | StoredResult>;
         /** The opener's typed DOCX, XLSX or deck operations on its open fork of a live body. */
         edit(input: Sdk.OfficeBodyForkEditRequest): Promise<Sdk.OfficeBodyEdit | StoredResult>;
-        /** A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses. */
+        /** Lands one reviewed fork, naming the head and fork head the review read, on the caller's word from outside the opener's lineage or on a standing grant; a moved head, a blocking conflict or no answer refuses. */
         merge(input: Sdk.OfficeBodyForkMergeRequest): Promise<Sdk.OfficeBodyDiff | StoredResult>;
-        /** Opens a fork of the live body at its head for machine work, in an optional run. */
+        /** Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own. */
         open(input: Sdk.OfficeBodyForkOpenRequest): Promise<Sdk.OfficeBodyFork | StoredResult>;
       };
       /** An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none. */
@@ -1368,6 +1380,12 @@ declare const vault: Sdk.VaultHost & {
       import(input: Sdk.OfficeBodyImportRequest): Promise<Sdk.OfficeBodyHead | StoredResult>;
       /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
       preview(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.XlsxPreview | StoredResult>;
+      proposal: {
+        /** An office proposal on the artifact: its opener and run, each member fork with its verdict and answer, and its settlement. */
+        read(input: Sdk.OfficeBodyProposalRequest): Promise<Sdk.OfficeBodyProposal | StoredResult>;
+        /** Accepts or rejects the reviewed forks of an office proposal that the scope covers; each lands on a person's word from outside the opener's lineage or on a standing grant, or waits. */
+        settle(input: Sdk.OfficeBodyProposalSettleRequest): Promise<Sdk.OfficeBodyProposal | StoredResult>;
+      };
       /** Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history. */
       read(input: Sdk.OfficeBodyReadRequest): Promise<Sdk.OfficeBodyView | StoredResult>;
     };

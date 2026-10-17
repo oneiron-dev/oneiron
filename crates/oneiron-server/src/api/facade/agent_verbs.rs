@@ -249,6 +249,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.artifacts.body.fork.diff", post(facade_route))
         .route("/vault.artifacts.body.fork.merge", post(facade_route))
         .route("/vault.artifacts.body.fork.discard", post(facade_route))
+        .route("/vault.artifacts.body.proposal.read", post(facade_route))
+        .route("/vault.artifacts.body.proposal.settle", post(facade_route))
         .route("/vault.artifacts.body.export", post(facade_route))
         .route("/vault.artifacts.body.preview", post(facade_route))
         .route("/vault.artifacts.body.deck.review", post(facade_route))

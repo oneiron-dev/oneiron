@@ -479,7 +479,7 @@ pub(super) fn diff(
     base: &XlsxBody,
     current: &XlsxBody,
     proposal: &XlsxBody,
-    frontiers: (Vec<u8>, Vec<u8>),
+    frontiers: (Vec<u8>, Vec<u8>, Vec<u8>),
 ) -> OfficeBodyDiff {
     let theirs = side(base, current);
     let ours = side(base, proposal);
@@ -509,6 +509,7 @@ pub(super) fn diff(
     OfficeBodyDiff {
         base: frontiers.0,
         head: frontiers.1,
+        fork_head: frontiers.2,
         proposal: list(ours),
         current: list(theirs),
         conflicts,
