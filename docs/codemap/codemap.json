@@ -27358,7 +27358,7 @@
      "purpose": "One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 19,
       "struct": 2
@@ -36412,7 +36412,7 @@
      "purpose": "`host.budget.hit` (ARCH-0080 §5): a budget line spent under its exhaustion policy",
      "surface": {
       "const": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -36510,7 +36510,7 @@
      "path": "src/runtime_hooks/replay.rs",
      "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -39314,10 +39314,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "HookActorClass",
+      "HookAuthor",
       "HookOutcomeKind",
       "HookPhase",
       "HookRenderClass",
@@ -39328,9 +39329,10 @@
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 8,
-      "enum": 4,
-      "fn": 4,
+      "const": 1,
+      "crate-vis": 11,
+      "enum": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -39422,6 +39424,8 @@
      "notable": [
       "ConnectorPackQualification",
       "PackConnectorReceipt",
+      "PackHookQualification",
+      "PackHookReplay",
       "ProbePackQualifier",
       "QualifiedPackFitPolicy",
       "SetupCheckQualifier"
@@ -39430,8 +39434,8 @@
      "purpose": "Connector packs use the engine's real wire probes, never a publisher's grade",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
-      "struct": 5
+      "fn": 2,
+      "struct": 7
      }
     },
     {
@@ -39667,7 +39671,7 @@
      "path": "src/skill_hub/publisher.rs",
      "purpose": "A publisher is a foreign actor with an owner-minted, revocable offer-only grant",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
      }
@@ -50548,7 +50552,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 132,
+   "over_bar": 133,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3052,
    "test_files": 903
@@ -57776,7 +57780,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -66351,7 +66355,7 @@
      "purpose": "Where the server's run receipts go by default: one structured log line per row",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 1
      }
     },
@@ -67417,6 +67421,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChatBrain",
+      "ChatBrainBindings"
+     ],
+     "path": "src/voice_host/brain.rs",
+     "purpose": "The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67467,7 +67485,7 @@
      "surface": {
       "enum": 1,
       "fn": 7,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -68235,7 +68253,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68272,7 +68290,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 500,
+   "source_files": 501,
    "test_files": 182
   },
   "oneiron-spawn": {
