@@ -33,6 +33,9 @@ struct ApiErrorBody {
     /// A verb hook's stop: skipped, pending on an ask, or hidden.
     #[serde(default)]
     hook: Option<oneiron::runtime_hooks::VerbHookStop>,
+    /// When to call again, in seconds, on a provider outage (FIX 3194).
+    #[serde(default, rename = "retryAfter")]
+    retry_after: Option<u64>,
 }
 
 /// Serializes a request body and enforces the 64 MiB request ceiling.
@@ -177,6 +180,7 @@ pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         policy_denial: None,
         wrong_root: envelope.error.wrong_root.map(Box::new),
         hook: envelope.error.hook.map(Box::new),
+        retry_after: envelope.error.retry_after,
     })
 }
 

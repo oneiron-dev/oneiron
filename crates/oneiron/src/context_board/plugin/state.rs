@@ -106,6 +106,7 @@ fn refused_block() -> MemoryError {
         policy_denial: None,
         wrong_root: None,
         hook: None,
+        retry_after: None,
     }
 }
 

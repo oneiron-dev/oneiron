@@ -160,6 +160,11 @@ pub struct MemoryError {
     /// is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hook: Option<Box<VerbHookStop>>,
+    /// When to call again, in seconds, on a refusal no provider answered
+    /// (FIX 3194): nothing keeps the call, so its caller sends it again.
+    /// Absent on every other refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<u64>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -213,6 +218,7 @@ impl MemoryError {
             policy_denial: None,
             wrong_root: None,
             hook: None,
+            retry_after: None,
         }
     }
 

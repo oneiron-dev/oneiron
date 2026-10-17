@@ -337,6 +337,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -379,6 +380,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -400,6 +402,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -421,6 +424,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -442,6 +446,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -463,6 +468,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1475,6 +1481,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1496,6 +1503,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1517,6 +1525,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1538,6 +1547,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1559,6 +1569,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1580,6 +1591,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1601,6 +1613,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1622,6 +1635,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1643,6 +1657,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1664,6 +1679,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1685,6 +1701,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1706,6 +1723,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1739,6 +1757,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1760,6 +1779,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1781,6 +1801,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1802,6 +1823,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1823,6 +1845,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -1844,6 +1867,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -1862,6 +1886,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
@@ -2560,6 +2585,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2581,6 +2607,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2602,6 +2629,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2623,6 +2651,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2644,6 +2673,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2665,6 +2695,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2686,6 +2717,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2707,6 +2739,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2728,6 +2761,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2749,6 +2783,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2770,6 +2805,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2794,6 +2830,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2815,6 +2852,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2836,6 +2874,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2857,6 +2896,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2878,6 +2918,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2899,6 +2940,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2920,6 +2962,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2941,6 +2984,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -2962,6 +3006,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -3055,6 +3100,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
@@ -3076,6 +3122,7 @@ impl NativeClient {
                 policy_denial: None,
                 wrong_root: None,
                 hook: None,
+                retry_after: None,
             })
         })?;
         let output = self
