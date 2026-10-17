@@ -156,7 +156,7 @@ pub use self::brief::{
     SkillOptimizeAuthor, SkillOptimizeBrief, optimize_brief, optimize_brief_for_principal_at,
     skill_optimize_call_purpose,
 };
-pub use self::decisions::{SkillOptimizeDecisions, SkillReplayPair};
+pub use self::decisions::{SkillOptimizeDecisions, SkillReplayPair, judgment_kind};
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
@@ -180,8 +180,8 @@ pub use self::job::{
 };
 pub(crate) use self::judge_swap::run_judge_swap;
 pub use self::judge_swap::{
-    JUDGE_SWAP_NOTIFICATION_PRODUCER, JudgeIncumbent, JudgeShadowAnswer, JudgeShadowCase,
-    JudgeShadowHost, JudgeSwapDisagreement, JudgeSwapPick, JudgeSwapPolicy, JudgeSwapReceipt,
+    JUDGE_SWAP_NOTIFICATION_PRODUCER, JudgeIncumbent, JudgeOutcomeLink, JudgeShadowAnswer,
+    JudgeShadowCase, JudgeShadowHost, JudgeSwapDisagreement, JudgeSwapPick, JudgeSwapPolicy, JudgeSwapReceipt,
     JudgeSwapReport, JudgeSwapSettledBy, JudgeTieBreaker, judge_incumbent, judge_swap_policy,
     judge_swap_receipts, pick_judge_swap_case, set_judge_swap_policy,
 };

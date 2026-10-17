@@ -499,6 +499,8 @@ pub enum HumanAskReason {
     NeedsPerson,
     /// The deadline cut the call, and its step cannot take an unfinished answer.
     Deadline,
+    /// A run would pass its project goal's exploration slice.
+    ExplorationBudget,
 }
 
 pub(super) fn invalid(message: &str) -> Error {

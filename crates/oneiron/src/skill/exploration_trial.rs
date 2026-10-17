@@ -754,7 +754,7 @@ fn overrun_request(
         },
         principal: trial.project,
         evidence: vec![*proposal, trial.target, trial.goal_claim],
-        reason: HumanAskReason::OwnerSelected,
+        reason: HumanAskReason::ExplorationBudget,
         prior: None,
         prior_provider: None,
         queue_pin: ProviderPin {

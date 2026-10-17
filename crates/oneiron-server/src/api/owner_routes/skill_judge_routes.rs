@@ -392,7 +392,8 @@ async fn swaps(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRe
 
 /// `POST /v1/owner/skills/judge/swaps/pick`: the owner's hand-test pick on
 /// one disagreement. It decides that case in every later pass between the
-/// two judges, and can re-pin a takeover it contradicts.
+/// two judges, and can re-pin a takeover it contradicts. On a skill's case it
+/// is a label in the skill's judge anchor; either way it is final.
 async fn swap_pick(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
