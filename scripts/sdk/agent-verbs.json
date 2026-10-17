@@ -1189,7 +1189,7 @@
     },
     {
       "name": "vault.authority.audit",
-      "description": "One page of the dated authority log audit: grants, revokes and confirms, for the owner.",
+      "description": "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind.",
       "input": "crate::receipt::AuthorityAuditQuery",
       "output": "crate::receipt::AuthorityAuditPage",
       "call": "crate::receipt::authority_audit_embedded(memory, input)?",
@@ -4574,6 +4574,19 @@
       "input": "crate::blob_artifact::ArtifactCreateRequest",
       "output": "Option<crate::blob_artifact::ArtifactView>",
       "call": "memory.artifacts_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.esign.create",
+      "description": "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act.",
+      "refs": ["/document_ref", "/draft/items/*/artifact_ref"],
+      "input": "crate::blob_artifact::esign::EsignCreateRequest",
+      "output": "crate::blob_artifact::esign::EsignDraftView",
+      "call": "memory.esign_create(&input)?",
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"spec": "$"},
