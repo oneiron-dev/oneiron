@@ -298,8 +298,9 @@ pub fn filtered_window_doc(
 
 /// Destination-aware selector export. The transport supplies a proven machine,
 /// never the selector's actor id; the proof is rechecked in the export snapshot.
-/// Rows' births go only to a machine of this vault's that proved itself; any
-/// other peer is another vault's, and gets none (OF-491).
+/// Rows' births go whole only to a machine of this vault's that proved
+/// itself; any other peer is another vault's, and gets them rewritten, each
+/// ref the copy does not carry masked (OF-491, Q26 = B).
 pub fn filtered_window_doc_for_peer(
     vault: &Vault,
     source: &LoroDoc,
