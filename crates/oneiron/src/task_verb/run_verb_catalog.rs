@@ -14,6 +14,8 @@ pub enum RunVerb {
     SelfFolds,
     TasksRefuse,
     SelfSkillsCall,
+    SelfSpawn,
+    TasksWait,
 }
 impl RunVerb {
     pub const ALL: &[Self] = &[
@@ -27,6 +29,8 @@ impl RunVerb {
         Self::SelfFolds,
         Self::TasksRefuse,
         Self::SelfSkillsCall,
+        Self::SelfSpawn,
+        Self::TasksWait,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -43,6 +47,8 @@ impl RunVerb {
             Self::SelfFolds => "self.folds",
             Self::TasksRefuse => "tasks.refuse",
             Self::SelfSkillsCall => "self.skills.call",
+            Self::SelfSpawn => "self.spawn",
+            Self::TasksWait => "tasks.wait",
         }
     }
     pub const fn writes(self) -> bool {
@@ -56,6 +62,7 @@ impl RunVerb {
                 | Self::SelfUnfold
                 | Self::TasksRefuse
                 | Self::SelfSkillsCall
+                | Self::SelfSpawn
         )
     }
     pub const fn effect(self) -> crate::code_run::SelfEffect {
@@ -70,6 +77,8 @@ impl RunVerb {
             Self::SelfFolds => crate::code_run::SelfEffect::Fold,
             Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
             Self::SelfSkillsCall => crate::code_run::SelfEffect::SkillsCall,
+            Self::SelfSpawn => crate::code_run::SelfEffect::ReaderSpawn,
+            Self::TasksWait => crate::code_run::SelfEffect::TasksWaitSet,
         }
     }
 }

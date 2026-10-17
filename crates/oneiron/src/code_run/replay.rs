@@ -148,6 +148,15 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::SkillCall(_) if self.effect != SelfEffect::SkillsCall => Err(
                 invalid_code_run_replay("skill call answer belongs to another effect"),
             ),
+            SelfDispatchOutcome::ReaderSpawn(_) if self.effect != SelfEffect::ReaderSpawn => Err(
+                invalid_code_run_replay("reader spawn receipt belongs to another effect"),
+            ),
+            SelfDispatchOutcome::ReaderReport(_) if self.effect != SelfEffect::ReaderReport => Err(
+                invalid_code_run_replay("reader report receipt belongs to another effect"),
+            ),
+            SelfDispatchOutcome::TaskWaitSet(_) if self.effect != SelfEffect::TasksWaitSet => Err(
+                invalid_code_run_replay("task wait set answer belongs to another effect"),
+            ),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(

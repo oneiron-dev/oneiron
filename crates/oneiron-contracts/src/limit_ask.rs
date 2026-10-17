@@ -50,11 +50,15 @@ pub enum EngineLimit {
     /// served as its handle alone, and asks whether everything is okay: the
     /// crossing measures the bytes its smallest form needed.
     ImageRoomBytes,
+    /// Readers one run has queued and not yet started. Past it asks whether
+    /// everything is okay and keeps queueing; it never refuses and never
+    /// bounds the active window.
+    CodeReaderBacklog,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -62,6 +66,7 @@ impl EngineLimit {
         Self::CodeResultMemoryBytes,
         Self::CodeResultSessionMemoryBytes,
         Self::ImageRoomBytes,
+        Self::CodeReaderBacklog,
     ];
 
     /// The config key that sets the row.
@@ -74,6 +79,7 @@ impl EngineLimit {
             Self::CodeResultMemoryBytes => "limits.code_result_memory_bytes",
             Self::CodeResultSessionMemoryBytes => "limits.code_result_session_memory_bytes",
             Self::ImageRoomBytes => "limits.image_room_bytes",
+            Self::CodeReaderBacklog => "limits.code_reader_backlog",
         }
     }
 
@@ -87,6 +93,7 @@ impl EngineLimit {
             Self::CodeResultMemoryBytes => memory_share(8),
             Self::CodeResultSessionMemoryBytes => memory_share(64),
             Self::ImageRoomBytes => 32 << 20,
+            Self::CodeReaderBacklog => 256,
         }
     }
 }

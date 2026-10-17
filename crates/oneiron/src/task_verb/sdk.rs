@@ -202,6 +202,16 @@ pub struct WorkCompanionSetRequest {
 pub struct TaskRequest {
     pub task_ref: String,
 }
+/// `tasks.update`: the owner's acknowledgement of a TASK, or, from a code
+/// run's reader child, the finding its result name `resultRef` holds. Only a
+/// run resolves its result names, so a host door refuses `resultRef`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskUpdateRequest {
+    pub task_ref: String,
+    #[serde(default, rename = "resultRef", skip_serializing_if = "Option::is_none")]
+    pub result_ref: Option<String>,
+}
 /// `vault.projects.proposals`: the conversation whose project cards to read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

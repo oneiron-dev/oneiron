@@ -235,8 +235,10 @@ pub enum JsResultCall {
     /// `describe(r)`: the card of one of the run's results.
     Describe(JsResultTarget),
     /// `can({read: r})`: whether this run may read one of its results now,
-    /// by the checks a read makes, without reading it.
-    CanRead(JsResultTarget),
+    /// by the checks a read makes, without reading it. With `child`
+    /// (`can({read: r, child: {}})`), also whether a reader child could be
+    /// spawned over it now, by the checks a spawn makes, writing nothing.
+    CanRead { target: JsResultTarget, child: bool },
     /// `slice`, `search`, `query` or `chunks` of one of the run's results:
     /// the facet, and its input less the reference.
     Read {

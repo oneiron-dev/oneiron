@@ -371,6 +371,20 @@ side_tables! {
     CODE_RUN_RAW_OUTPUT_TAINT: VaultMeta b"code_run:raw_output:taint:v1:" Raw;
     /// A code run's raw output bytes, keyed by their deterministic content handle. Key: string.
     CODE_RUN_RAW_OUTPUT: VaultMeta b"code_run:raw_output:v1:" Raw;
+    /// The index rows of a code run's reader children, by a one-byte tag: `c` id16(parent) +
+    /// be64(ordinal) + id16(task) (children in spawn order), `f` id16(parent) + handle -> id16(task)
+    /// (findings), `q` be64(enqueued ms) + id16(task) (the queue), `w` id16(task) + id16(set)
+    /// (a child's waits), `d` be64(due ms) + id16(set or task) -> `s` or `j` (the due sweep).
+    CODE_RUN_READER_INDEX: VaultMeta b"code_run:reader_index:v1:" Raw;
+    /// One reader child of a code run: its binding, state, generation and latest finding (JSON).
+    /// Key: id16(task).
+    CODE_RUN_READER_JOB: VaultMeta b"code_run:reader_job:v1:" Raw;
+    /// A code run's reader row: its children's clock, fixed at its first spawn, their spend scope
+    /// and its counts (JSON). Key: id16(run).
+    CODE_RUN_READER_PARENT: VaultMeta b"code_run:reader_parent:v1:" Raw;
+    /// One wait over a code run's reader children, and its first done reduction (JSON). Key:
+    /// id16(set).
+    CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +

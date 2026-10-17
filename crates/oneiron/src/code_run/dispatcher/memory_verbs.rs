@@ -99,7 +99,13 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::Express
             // A fold is the run's own view of its own log: its ledger rides
             // the room's route into the overlay and evaporates with it.
-            | SelfEffect::Fold => Ok(()),
+            | SelfEffect::Fold
+            // A reader child, its finding and a wait over children are the
+            // run's own job rows on the same route: they evaporate with the
+            // room, and their spend scopes hold units and ids, no content.
+            | SelfEffect::ReaderSpawn
+            | SelfEffect::ReaderReport
+            | SelfEffect::TasksWaitSet => Ok(()),
         }
     }
 

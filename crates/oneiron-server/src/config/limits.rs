@@ -235,6 +235,7 @@ impl LimitsConfig {
             code_result_memory_bytes,
             code_result_session_memory_bytes,
             image_room_bytes,
+            code_reader_backlog,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -280,6 +281,7 @@ impl LimitsConfig {
                 code_result_session_memory_bytes,
             ),
             (EngineLimit::ImageRoomBytes, image_room_bytes),
+            (EngineLimit::CodeReaderBacklog, code_reader_backlog),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -394,4 +396,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) code_result_memory_bytes: Option<u64>,
     pub(super) code_result_session_memory_bytes: Option<u64>,
     pub(super) image_room_bytes: Option<u64>,
+    pub(super) code_reader_backlog: Option<u64>,
 }
