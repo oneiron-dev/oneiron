@@ -63789,7 +63789,7 @@
      "path": "src/builtin_host.rs",
      "purpose": "The served host's side of the built-in connector packs (OF-519): the connection checks only a served host…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -63810,6 +63810,16 @@
      "purpose": "One handle per served built-in channel: its adapter, the provider account its check bound, and the…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/builtin_host/slack_app.rs",
+     "purpose": "The served Slack app and the provider URLs of the built-in channels (OF-519): the manifest the owner creates…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -68297,7 +68307,7 @@
      "purpose": "Broadcast group for multi-device fan-out with echo suppression"
     },
     "builtin_host": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -68586,7 +68596,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 511,
+   "source_files": 512,
    "test_files": 182
   },
   "oneiron-spawn": {
