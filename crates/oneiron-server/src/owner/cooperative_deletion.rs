@@ -131,7 +131,8 @@ pub(crate) fn sent(server: &SyncServer) -> OwnerResult<Vec<CourtesyDeleteSent>> 
         .collect())
 }
 
-/// Every ask filed here, with each named world's stale stamp.
+/// Every ask filed here, with each named world's stale stamp and the
+/// records the ask covers.
 pub(crate) fn incoming(server: &SyncServer) -> OwnerResult<Vec<CourtesyDeleteIncoming>> {
     let vault = server.vault();
     let fold = vault.authority_fold()?;
@@ -147,9 +148,26 @@ fn incoming_ask(
     fold: &oneiron::authority::AuthorityFold,
     filed: IncomingCooperativeDeletion,
 ) -> OwnerResult<CourtesyDeleteIncoming> {
-    let pact_status = parse_hex::<32>(&filed.connection_id)
+    let pact = parse_hex::<32>(&filed.connection_id);
+    let pact_status = pact
         .and_then(|pact| fold.federation_pacts.get(&pact))
         .map(|state| format!("{:?}", state.status));
+    // The records the pact delivered that the ask covers (FIX 321). A named
+    // world that does not parse matches nothing: it never widens the ask to
+    // every world.
+    let named: Vec<oneiron::EntityId> = filed
+        .worlds
+        .iter()
+        .filter_map(|world| oneiron::EntityId::from_hex(world).ok())
+        .collect();
+    let candidates = match pact {
+        Some(pact) if named.len() == filed.worlds.len() => vault
+            .cooperative_deletion_candidates(&pact, &named, filed.epoch_cutoff)?
+            .iter()
+            .map(oneiron::EntityId::to_hex)
+            .collect(),
+        _ => Vec::new(),
+    };
     let worlds = filed
         .worlds
         .iter()
@@ -173,6 +191,7 @@ fn incoming_ask(
         requester: filed.requester_vault_id,
         worlds,
         epoch_cutoff: filed.epoch_cutoff,
+        candidates,
         requested: rfc3339_secs(filed.requested_at),
         received: rfc3339_secs(filed.received_at),
         answer: filed.disposition.map(|choice| CourtesyDeleteChoice {

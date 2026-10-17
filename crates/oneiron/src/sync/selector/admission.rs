@@ -1,6 +1,6 @@
 //! Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone rejection.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use loro::{CommitOptions, ExportMode, LoroDoc};
 #[cfg(feature = "sync")]
@@ -191,6 +191,7 @@ pub(crate) struct AdmittedUpdate {
     early: EarlyStamps,
     births: Vec<(EntityId, Vec<u8>)>,
     peer_rows: Vec<(EntityId, [u8; 32])>,
+    delivered: BTreeMap<EntityId, [u8; 32]>,
     born_with: Vec<super::born_with::CarriedText>,
     lane: Option<String>,
 }
@@ -253,6 +254,12 @@ impl AdmittedUpdate {
     /// each with the digest of the bytes the update brings.
     pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
         &self.peer_rows
+    }
+
+    /// Every row the update brings, with the digest of its bytes: what a
+    /// pact delivers when the update's import writes it (FIX 321).
+    pub(crate) const fn delivered(&self) -> &BTreeMap<EntityId, [u8; 32]> {
+        &self.delivered
     }
 
     /// After the update's import, keeps the born-with text the sender let
@@ -395,6 +402,7 @@ fn admit_window_update(
         None => Vec::new(),
     };
     let peer_rows = crate::sync::ingest::peer_rows(&admitted.get_map("entities"));
+    let delivered = crate::sync::ingest::delivered_rows(&admitted.get_map("entities"));
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
     let rows = admitted.get_map("entities").len() + admitted.get_map("edges").len();
     let bytes = admitted
@@ -406,6 +414,7 @@ fn admit_window_update(
         early,
         births,
         peer_rows,
+        delivered,
         born_with,
         lane,
     })

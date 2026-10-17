@@ -107,6 +107,11 @@ side_tables! {
     /// Durable settlement receipt (before/after causal frontier) for one fork's merge/switch/reject
     /// verdict, keyed by entity then receipt id. Key: hex32 ":" hex32.
     ENTITY_DOC_RECEIPT: SyncState b"entity_doc:v1:receipt:" Named;
+    /// A record one federation pact delivered here at one consent epoch (FIX 321), written in the
+    /// transaction that materialized it. Local to this vault: never replicated or exported. Value:
+    /// the world the record sits in (16 raw bytes; empty for base reality). Key: hex64 (pact id)
+    /// ":" hex16 (epoch) ":" hex32 (record id).
+    FEDERATION_DELIVERED_RECORD: SyncState b"feddelivered:" Raw;
     /// A federated `FacetOf` stamp sent ahead of its source row, held out of the window document
     /// until the same sender's birth of the row has applied here. Local to this vault: never
     /// replicated or exported. Value: when it was held (u64 big-endian), the grant it was held

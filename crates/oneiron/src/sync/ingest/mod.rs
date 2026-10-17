@@ -7,12 +7,16 @@
 //! hydration and the recovery preflight call the same entity ladder.
 
 mod birth_watch;
+mod delivery;
 mod entity;
 mod order;
 mod peer_import;
 mod tombstone;
 
 pub(in crate::sync) use self::birth_watch::{note_born, watch_births, watches};
+pub(in crate::sync) use self::delivery::{
+    Delivery, delivered_rows, note_delivered_in_txn, with_delivery,
+};
 
 pub(in crate::sync) use self::entity::{
     EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_savepoint,

@@ -10,7 +10,8 @@ use crate::EntityId;
 use crate::error::Result;
 use crate::sync::ingest::{
     EntityStep, IngestCtx, RefusalRetry, Residence, authority_parent_order,
-    ingest_entity_in_savepoint, is_authority_row, note_born, waits_for_sibling_row, watches,
+    ingest_entity_in_savepoint, is_authority_row, note_born, note_delivered_in_txn,
+    waits_for_sibling_row, watches,
 };
 use loro::{LoroValue, ValueOrContainer};
 
@@ -51,6 +52,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 None => false,
             };
             let step = ingest_entity_in_savepoint(&ingest, wtxn, key, value)?;
+            if let (Some(id), Some(blob)) = (step.written(), value) {
+                note_delivered_in_txn(vault, wtxn, id, blob)?;
+            }
             Ok((step, unborn))
         }) {
             Ok((step, unborn)) => {

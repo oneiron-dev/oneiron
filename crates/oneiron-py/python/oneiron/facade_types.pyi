@@ -3112,6 +3112,7 @@ class CourtesyDeleteIncoming(TypedDict):
     requester: str
     worlds: list[CourtesyDeleteAskedWorld]
     epoch_cutoff: int
+    candidates: list[str]
     requested: str
     received: str
     answer: NotRequired[CourtesyDeleteChoice | None]

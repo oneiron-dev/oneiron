@@ -680,6 +680,10 @@ pub(super) fn materialize_edges_from_delta(
                 affected.extend(old_parents.symmetric_difference(&new_parents).copied());
             }
         }
+        // A hydrated endpoint a pact's delivery brought is that pact's (FIX 321).
+        for (id, blob) in &hydrated_endpoints {
+            crate::sync::ingest::note_delivered_in_txn(vault, wtxn, *id, blob)?;
+        }
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(
