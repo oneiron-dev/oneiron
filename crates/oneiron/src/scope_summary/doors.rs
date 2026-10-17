@@ -6,16 +6,19 @@ use super::codec::{
 };
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ClaimSubject, ScopedRead};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
-    AppendRecord, ScopePath, ScopeSelector, actor_in_txn, append_in_txn, conversation_of, edge_ids,
-    is_sub_session_record, prove_branch_anchor, prove_branch_span, require_type, resolve_in_txn,
+    APPEND_ROW, AppendFailure, AppendRecord, ScopePath, ScopeSelector, actor_in_txn,
+    admit_append_prose, append_in_txn, append_references, conversation_of, edge_ids,
+    is_sub_session_record, prove_branch_anchor, prove_branch_span, receipt_append_refusal,
+    require_append_references_in_txn, require_type, resolve_in_txn,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::memory::{Memory, MemoryError};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_TURN,
@@ -348,15 +351,61 @@ pub(super) fn header_landed_in_txn(
     Ok(false)
 }
 
+/// The read lane a header's reply TURN is checked against (OF-063): its
+/// requester's, opened only when a reply is asked for, and before the
+/// landing's writer, since a lane takes its own snapshot.
+pub(super) fn reply_lane<'m>(
+    requester: &'m Memory<'_>,
+    as_record: bool,
+) -> Result<Option<ScopedRead<'m>>> {
+    if !as_record {
+        return Ok(None);
+    }
+    requester
+        .read_lane(ClaimReadStatus::Recorded)
+        .map(Some)
+        .map_err(header_refusal)
+}
+
+/// A landing's answer once its writer has closed: a reply TURN's prose links
+/// are admitted as its requester's, as an AI writer's append admits them,
+/// and a reply ref the requester does not read is receipted as refused, the
+/// landing having rolled back whole.
+pub(super) fn settle_header<T>(
+    requester: &Memory<'_>,
+    outcome: std::result::Result<(T, Option<AppendRecord>), AppendFailure>,
+) -> Result<T> {
+    match outcome {
+        Ok((landed, reply)) => {
+            if let Some(reply) = &reply {
+                admit_append_prose(requester, APPEND_ROW, reply);
+            }
+            Ok(landed)
+        }
+        Err(AppendFailure::Engine(error)) => Err(error),
+        Err(AppendFailure::Unresolved(pointer)) => Err(header_refusal(receipt_append_refusal(
+            requester, APPEND_ROW, &pointer,
+        ))),
+    }
+}
+
+/// A requester's refusal, answered on the engine's error.
+fn header_refusal(error: MemoryError) -> Error {
+    Error::InvalidConfig(format!("summary header refused: {}", error.message))
+}
+
+/// Lands `summary`'s merge header on `turn` as `actor`'s, and with `reply`,
+/// the requester's read lane, its trunk reply TURN, returned for
+/// [`settle_header`].
 pub(super) fn land_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     summary: &EntityId,
     turn: &EntityId,
     actor: WriteActor,
-    as_record: bool,
+    reply: Option<&ScopedRead<'_>>,
     now: u64,
-) -> Result<LandedHeader> {
+) -> std::result::Result<(LandedHeader, Option<AppendRecord>), AppendFailure> {
     actor_in_txn(&vault.store, txn, actor)?;
     let body = summary_in_txn(vault, txn, summary)?;
     crate::conversation_dag::migrate_in_txn(vault, txn, &body.scope.conversation)?;
@@ -399,7 +448,7 @@ pub(super) fn land_in_txn(
             now,
         )
         .apply(txn)?;
-    let record = if as_record {
+    let reply = if let Some(lane) = reply {
         let scope = ScopeSelector {
             conversation: body.scope.conversation,
             session: None,
@@ -416,39 +465,39 @@ pub(super) fn land_in_txn(
         // The reply copies the summary's words, so it depends on everything
         // they came from: erasing any of it invalidates the reply as well.
         let sources = word_sources(&body).copied().collect::<Vec<_>>();
-        let appended = append_in_txn(
-            vault,
-            txn,
-            &AppendRecord {
-                conversation: body.scope.conversation,
-                parent: head,
-                reply_to: Some(*turn),
-                quote: None,
-                address: crate::conversation_dag::AddressMode::Broadcast,
-                recipients: vec![],
-                advance: true,
-                kind: ENTITY_TYPE_TURN,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                body: record_body,
-                text: vec![("txt".to_owned(), body.text)],
-                session: None,
-                actor,
+        let input = AppendRecord {
+            conversation: body.scope.conversation,
+            parent: head,
+            reply_to: Some(*turn),
+            quote: None,
+            address: crate::conversation_dag::AddressMode::Broadcast,
+            recipients: vec![],
+            advance: true,
+            kind: ENTITY_TYPE_TURN,
+            occurred: TimeRange {
+                start: now,
+                end: now,
             },
-            Some(*summary),
-            false,
-        )?;
+            learned_at: now,
+            body: record_body,
+            text: vec![("txt".to_owned(), body.text)],
+            session: None,
+            actor,
+        };
+        // The reply is the requester's append: every ref it names reads for
+        // them in this writer, as the public append doors check.
+        let refs = append_references(&input, None);
+        require_append_references_in_txn(vault, lane, txn, &input, &refs)?;
+        let appended = append_in_txn(vault, txn, &input, Some(*summary), false)?;
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &appended.id, source)?;
         }
-        Some(appended.id)
+        Some((appended.id, input))
     } else {
         None
     };
-    Ok(LandedHeader { claim, record })
+    let (record, reply) = reply.unzip();
+    Ok((LandedHeader { claim, record }, reply))
 }
 
 pub(crate) fn body_covers_in_txn(
@@ -598,7 +647,8 @@ impl Vault {
         text: &str,
         actor: WriteActor,
     ) -> Result<(EntityId, LandedHeader)> {
-        self.with_write_txn_grouped(|txn| {
+        let requester = self.memory(actor.entity_ref(), actor.actor_class());
+        let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             let selected = selected_thread_in_txn(self, txn, trunk)?
                 .ok_or_else(|| invalid("trunk has no thread"))?;
             let scope = ScopeSelector {
@@ -613,7 +663,7 @@ impl Vault {
             if prove_branch_span(&self.store, txn, &scope, selected.trunk, selected.tip)?
                 != selected.replies
             {
-                return Err(invalid("selected thread differs from bounded span"));
+                return Err(invalid("selected thread differs from bounded span").into());
             }
             let now = self.store.clock.now_recorded_at();
             let content = SummaryContent::whole_scope(self, txn, &scope, text)?;
@@ -626,9 +676,10 @@ impl Vault {
                 now,
                 content,
             )?;
-            let landed = land_in_txn(self, txn, &summary, &trunk, actor, false, now)?;
-            Ok((summary, landed))
-        })
+            let (landed, reply) = land_in_txn(self, txn, &summary, &trunk, actor, None, now)?;
+            Ok(((summary, landed), reply))
+        });
+        settle_header(&requester, outcome)
     }
 
     /// Mints and optionally lands a summary atomically. A gate refusal cannot
@@ -646,7 +697,9 @@ impl Vault {
         if as_record && land_on.is_none() {
             return Err(invalid("as_record requires land_on"));
         }
-        self.with_write_txn_grouped(|txn| {
+        let requester = self.memory(actor.entity_ref(), actor.actor_class());
+        let lane = reply_lane(&requester, as_record)?;
+        let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             let now = self.store.clock.now_recorded_at();
             let content = SummaryContent::whole_scope(self, txn, scope, text)?;
             let summary = mint_in_txn(
@@ -658,15 +711,18 @@ impl Vault {
                 now,
                 content,
             )?;
-            let landed = land_on
-                .map(|turn| land_in_txn(self, txn, &summary, &turn, actor, as_record, now))
-                .transpose()?;
-            Ok((summary, landed))
-        })
+            let (landed, reply) = land_on
+                .map(|turn| land_in_txn(self, txn, &summary, &turn, actor, lane.as_ref(), now))
+                .transpose()?
+                .unzip();
+            Ok(((summary, landed), reply.flatten()))
+        });
+        settle_header(&requester, outcome)
     }
 
     /// Lands exactly one write-gated claim, optionally with one visible trunk
-    /// reply. Neither mode changes any retained sub-session record.
+    /// reply, whose refs must read for `actor`. Neither mode changes any
+    /// retained sub-session record.
     pub fn land_header(
         &self,
         summary: &EntityId,
@@ -674,17 +730,20 @@ impl Vault {
         actor: WriteActor,
         as_record: bool,
     ) -> Result<LandedHeader> {
-        self.with_write_txn_grouped(|txn| {
+        let requester = self.memory(actor.entity_ref(), actor.actor_class());
+        let lane = reply_lane(&requester, as_record)?;
+        let outcome = self.try_with_write_txn_grouped(|txn| {
             land_in_txn(
                 self,
                 txn,
                 summary,
                 turn,
                 actor,
-                as_record,
+                lane.as_ref(),
                 self.store.clock.now_recorded_at(),
             )
-        })
+        });
+        settle_header(&requester, outcome)
     }
 
     /// Reads the complete body truth list, not just the first 256 edges.

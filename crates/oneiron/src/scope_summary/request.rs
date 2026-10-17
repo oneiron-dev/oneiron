@@ -10,15 +10,18 @@ use super::codec::SummarySourceMessage;
 use super::codec::{invalid, parse_scope, scope_value};
 use super::doors::{
     LandedHeader, ScopeSources, SummaryContent, header_landed_in_txn, land_in_txn, mint_in_txn,
-    scope_sources_in_txn, standing_composition_in_txn, validate_landing_in_txn,
+    reply_lane, scope_sources_in_txn, settle_header, standing_composition_in_txn,
+    validate_landing_in_txn,
 };
 use crate::attempt_queue::AttemptId;
 use crate::conversation_dag::{
-    ScopePath, ScopeSelector, actor_in_txn, prove_branch_span, selected_thread_in_txn,
+    AppendFailure, ScopePath, ScopeSelector, actor_in_txn, prove_branch_span,
+    selected_thread_in_txn,
 };
 use crate::dreamer_consolidation::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::dreamer_runner::{DreamerAttemptPayload, DreamerConsolidationScope};
 use crate::error::{Error, Result};
+use crate::memory::Memory;
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
@@ -108,6 +111,17 @@ impl ScopeSummaryPlan {
             hasher.update(part.as_bytes());
         }
         Ok(*hasher.finalize().as_bytes())
+    }
+
+    /// The requester's surface a landing's reply is checked and receipted on
+    /// (OF-063), bound from the declaration's admitted byline.
+    fn requester_surface<'v>(&self, vault: &'v Vault) -> Memory<'v> {
+        vault.memory(self.requester.entity_ref(), self.requester.actor_class())
+    }
+
+    /// Whether the declaration lands a reply TURN with its header.
+    fn asks_reply(&self) -> bool {
+        self.as_record && self.land_on.is_some()
     }
 }
 
@@ -271,30 +285,35 @@ impl Vault {
         first: &EntityId,
         memo: &[u8; 32],
     ) -> Result<bool> {
-        self.with_write_txn(|txn| {
+        let requester = plan.requester_surface(self);
+        let lane = reply_lane(&requester, plan.asks_reply())?;
+        let outcome = self.try_with_write_txn::<_, _, AppendFailure>(|txn| {
             let current = scope_sources_in_txn(self, txn, &plan.scope)?;
             if current.members != plan.members || current.sources != plan.sources {
-                return Ok(false);
+                return Ok((false, None));
             }
             let Some(summary) = standing_composition_in_txn(self, txn, first, memo)? else {
-                return Ok(false);
+                return Ok((false, None));
             };
+            let mut reply = None;
             if let Some(turn) = plan.land_on
                 && !header_landed_in_txn(self, txn, &summary, &turn)?
             {
                 let now = self.store.clock.now_recorded_at();
-                land_in_txn(
+                reply = land_in_txn(
                     self,
                     txn,
                     &summary,
                     &turn,
                     plan.requester,
-                    plan.as_record,
+                    lane.as_ref(),
                     now,
-                )?;
+                )?
+                .1;
             }
-            Ok(true)
-        })
+            Ok((true, reply))
+        });
+        settle_header(&requester, outcome)
     }
 
     /// Lands a body the Dreamer composed over `plan`, once per attempt.
@@ -315,22 +334,25 @@ impl Vault {
             ));
         }
         let id = composed_summary_id(attempt);
-        self.with_write_txn(|txn| {
+        let requester = plan.requester_surface(self);
+        let lane = reply_lane(&requester, plan.asks_reply())?;
+        let outcome = self.try_with_write_txn::<_, _, AppendFailure>(|txn| {
             if let LiveEntityRow::Live { entity_type, .. } =
                 live_entity_row_in_txn(&self.store, txn, &id)?
             {
                 if entity_type != ENTITY_TYPE_SUMMARY {
-                    return Err(Error::CorruptedIndex(
-                        "composed summary id names another entity",
-                    ));
+                    return Err(
+                        Error::CorruptedIndex("composed summary id names another entity").into(),
+                    );
                 }
-                return Ok((id, None));
+                return Ok(((id, None), None));
             }
             let current = scope_sources_in_txn(self, txn, &plan.scope)?;
             if current.members != plan.members || current.sources != plan.sources {
                 return Err(Error::ConcurrentWrite(
                     "summary scope changed while the Dreamer composed it",
-                ));
+                )
+                .into());
             }
             let now = self.store.clock.now_recorded_at();
             let content = SummaryContent {
@@ -340,12 +362,14 @@ impl Vault {
                 memo: Some(composed.memo),
             };
             mint_in_txn(self, txn, id, &plan.scope, author, now, content)?;
-            let landed = plan
+            let (landed, reply) = plan
                 .land_on
-                .map(|turn| land_in_txn(self, txn, &id, &turn, plan.requester, plan.as_record, now))
-                .transpose()?;
-            Ok((id, landed))
-        })
+                .map(|turn| land_in_txn(self, txn, &id, &turn, plan.requester, lane.as_ref(), now))
+                .transpose()?
+                .unzip();
+            Ok(((id, landed), reply.flatten()))
+        });
+        settle_header(&requester, outcome)
     }
 }
 
