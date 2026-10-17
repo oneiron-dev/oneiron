@@ -210,10 +210,10 @@ pub use gate::{
     score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap, set_skill_edit_goal_axes,
     set_skill_goal_project, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask,
     settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest, skill_edit_cycle_cap,
-    skill_edit_goal, skill_edit_goal_axis_report, skill_edit_score_call_purpose,
-    skill_edit_verdict, skill_edit_verdicts, skill_edit_verdicts_for_proposal,
-    skill_edit_needs_goal_axis_report, skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for,
-    skill_tradeoff_preferences, supersede_skill_edit_judge,
+    skill_edit_goal, skill_edit_goal_axis_report, skill_edit_needs_goal_axis_report,
+    skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
+    skill_edit_verdicts_for_proposal, skill_goal_axis_plan, skill_goal_project, skill_tradeoff_ask,
+    skill_tradeoff_asks_for, skill_tradeoff_preferences, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
     SkillEditTrialBasis, check_optimizer_admission_in_txn, displaced_judge_revision_in_txn,

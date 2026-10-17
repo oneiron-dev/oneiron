@@ -336,6 +336,19 @@ impl AgentDispatcher<'_> {
         self.scope_for_attempt_in_txn(&txn, attempt)
     }
 
+    /// The scope row `attempt` spends under, in the caller's snapshot: a
+    /// retry's is the try it retries. `None`: unmetered.
+    pub(crate) fn attempt_spend_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: AttemptId,
+    ) -> Result<Option<SpendScope>> {
+        match self.scope_for_attempt_in_txn(txn, attempt)? {
+            Some(scope) => SCOPE.get(&self.vault.store, txn, &scope.0),
+            None => Ok(None),
+        }
+    }
+
     /// Settles a child at its attempt's terminal: closes its scope, charges
     /// its spend to its parent, releases the unused hold, folds one
     /// calibration sample for its agent, and settles the exploration-slice

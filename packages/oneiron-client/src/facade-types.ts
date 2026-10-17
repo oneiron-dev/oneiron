@@ -94,6 +94,7 @@ export type DescribeRequest = {
 export type TaskCreateRequest = {
   spec: unknown
   label?: string | null
+  assignee?: unknown | null
 }
 export type BoardRefreshRequest = {
   frame_epoch?: number | null
@@ -362,6 +363,7 @@ export type WitnessMessage = {
 export type WitnessTurn = {
   conversation_ref: string
   turn_ref?: string | null
+  quote?: unknown | null
   messages: (WitnessMessage)[]
   occurred_at: number
 }

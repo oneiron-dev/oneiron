@@ -328,6 +328,9 @@ struct IdentityCardQuery {
     prompt: Option<String>,
     #[serde(default)]
     someone_new: Option<String>,
+    /// A provisional candidate's button, with `{name}` and `{day}`.
+    #[serde(default)]
+    provisional: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -351,6 +354,7 @@ async fn identity_asks(
         someone_new: query
             .someone_new
             .unwrap_or_else(|| IDENTITY_SOMEONE_NEW.to_owned()),
+        provisional: query.provisional,
     };
     let asks = blocking(move || -> OwnerResult<Vec<IdentityAskCard>> {
         let vault = server.vault();
@@ -384,12 +388,9 @@ async fn answer_identity_ask(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let settled = blocking(move || -> OwnerResult<IdentitySettled> {
-        Ok(server.vault().answer_identity_ask(
-            &owner,
-            &request.ask,
-            &request.choice,
-            now_secs(),
-        )?)
+        Ok(server
+            .vault()
+            .answer_identity_ask(&owner, &request.ask, &request.choice, now_secs())?)
     })
     .await?;
     Ok(Json(settled))

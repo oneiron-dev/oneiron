@@ -12,11 +12,11 @@ use crate::design_plan::{
     AssetBinding, Brief, CompileError, KeptBrief, MediaType, Outcome, compile_with_fonts,
 };
 use crate::docx_body::{project_docx, read_docx_blocks};
+use crate::edit::EditRefusal;
 use crate::edit::transaction::{
     AssetRef, Assets, DeckTransaction, Digest, IdMarks, StepRefusal, TransactionError,
     run_transaction,
 };
-use crate::edit::EditRefusal;
 use crate::emit::{EmitError, EmitInputs, Names, StoredAsset, emit};
 use crate::fonts::{FontBook, FontError};
 use crate::graphic::{AssetRecord, GraphicLimits, Origin};
@@ -121,8 +121,8 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
             ))
         }
         Op::DeckRead(args) => {
-            let package = Package::open(input(inputs, args.deck)?, args.limits.package())
-                .map_err(package)?;
+            let package =
+                Package::open(input(inputs, args.deck)?, args.limits.package()).map_err(package)?;
             let view = DeckView::read(&package).map_err(deck_error)?;
             Ok(Done::reply(Reply::Deck(read_deck(&package, &view)?)))
         }
@@ -195,7 +195,11 @@ fn shape(view: &ShapeView) -> DeckShape {
             text.paragraphs
                 .iter()
                 .map(|paragraph| {
-                    paragraph.runs.iter().map(|run| run.text.as_str()).collect::<String>()
+                    paragraph
+                        .runs
+                        .iter()
+                        .map(|run| run.text.as_str())
+                        .collect::<String>()
                 })
                 .collect()
         }),
@@ -247,10 +251,7 @@ fn media(media: AssetMedia) -> MediaType {
     }
 }
 
-fn deck_transaction(
-    args: &DeckTransactionArgs,
-    inputs: &[&[u8]],
-) -> Result<Done, ContractError> {
+fn deck_transaction(args: &DeckTransactionArgs, inputs: &[&[u8]]) -> Result<Done, ContractError> {
     let base = input(inputs, args.deck)?;
     let transaction =
         DeckTransaction::parse(&args.transaction.to_string()).map_err(transaction_error)?;
@@ -290,7 +291,9 @@ fn deck_create(args: &DeckCreateArgs, inputs: &[&[u8]]) -> Result<Done, Contract
     let template = Package::open(input(inputs, args.template)?, limits).map_err(package)?;
     let mut fonts = FontBook::new();
     for font in &args.fonts {
-        fonts.add(input(inputs, *font)?.to_vec()).map_err(font_error)?;
+        fonts
+            .add(input(inputs, *font)?.to_vec())
+            .map_err(font_error)?;
     }
     let bindings: BTreeMap<String, AssetBinding> = args
         .assets

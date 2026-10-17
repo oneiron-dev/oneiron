@@ -3,7 +3,9 @@
 use super::super::held::{cut_text, fit_state};
 use super::super::types::paired_valid;
 use super::{records::AnswerRecord, store::encode};
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
+};
 use crate::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt,
     DecisionRung, EvidenceVersion, MAX_DECISION_AUDIO, MAX_DECISION_AUDIO_BYTES,
@@ -763,7 +765,7 @@ pub(super) fn unit_audio(
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
 /// well formed.
-pub(super) fn validate_decision(
+pub(crate) fn validate_decision(
     question: &DecisionQuestion,
     principal: EntityId,
     decision: &TypedDecision,

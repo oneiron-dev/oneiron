@@ -17,7 +17,9 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
+pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
+pub(crate) use history::erase_room_side_rows;
 pub(in crate::workspace_roster) use history::thread_turns_in;
 pub use hosting::{
     HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
@@ -36,7 +38,7 @@ pub(crate) use participation::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
     record_participation_in_txn, require_join_covering_in_txn,
 };
-use participation::{Claimant, require_reader};
+use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thread_reader};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
@@ -430,9 +432,15 @@ impl Memory<'_> {
             // role, and winning the turn appoints no host.
             claimant.admit_speech_in(self.vault(), txn)?;
             // An agent holding the thread's open task counts as addressed.
+            // An agent speaks only when it is addressed or holds a task
+            // there (ARCH-0006a, ruled 2026-09-23), so it claims no turn
+            // that names no one either; a person still may.
             let named = addressed.addressed_agents.contains(&self.actor().to_hex());
             let task = claimant.held_task_in_txn(self.vault(), txn, &addressed)?;
-            if !addressed.addressed_agents.is_empty() && !named && task.is_none() {
+            if (claimant.is_agent() || !addressed.addressed_agents.is_empty())
+                && !named
+                && task.is_none()
+            {
                 return Ok(RoomClaimOutcome::NotAddressed);
             }
             if let Some(claim) = CLAIMS.get(&self.vault().store, txn, &turn)? {

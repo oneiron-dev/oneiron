@@ -2,6 +2,7 @@
 mod advisories;
 mod agent_facets;
 mod builtin;
+pub use builtin::CheckedBuiltinConnection;
 pub(crate) use builtin::seed_builtin_packs;
 mod codec;
 mod doors;
@@ -21,7 +22,8 @@ pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub(crate) use hooks::is_hook_binding;
 pub use hooks::{
-    HookActorClass, HookOutcomeKind, HookPhase, HookSelector, PackHook, PackHookBinding,
+    HookActorClass, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHook,
+    PackHookBinding,
 };
 pub use hub_install::hub_pin;
 pub use local::LOCAL_PACK_NAME;

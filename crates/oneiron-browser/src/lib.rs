@@ -15,11 +15,17 @@ use std::collections::BTreeMap;
 mod cdp;
 #[cfg(feature = "driver")]
 mod driver;
+mod library;
 #[cfg(feature = "driver")]
 mod outline;
 #[cfg(feature = "driver")]
 mod session;
 
+pub use library::{
+    LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRunInput, LibraryRunOutput,
+    ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES,
+    WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, site_of,
+};
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
 #[cfg(feature = "driver")]
@@ -54,6 +60,10 @@ pub struct Observation {
     /// page it acted on. A plain `observe` carries none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt: Option<EffectReceipt>,
+    /// The library's programs for the page's site, on an `open`: repeated
+    /// work on a site tries them first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub library: Vec<LibraryCard>,
 }
 
 /// One effect's receipt: what acted, on which page, under which press, and
@@ -440,6 +450,10 @@ pub struct BatchInput {
     /// step starts it; every later step reads the same one.
     #[serde(default)]
     pub until_ms: Option<u64>,
+    /// Routine steps take only a rule's answer, never a model's: the
+    /// library's replay check runs so.
+    #[serde(default)]
+    pub no_model: bool,
 }
 
 /// How a batched subgoal program ended. The big model is the fallback only:
@@ -493,19 +507,28 @@ pub struct RoutineAsk<'a> {
     pub misses: u32,
     /// The subgoal's one clock, once started.
     pub until_ms: Option<u64>,
+    /// Only a rule may answer, never a model.
+    pub no_model: bool,
 }
 
 /// The decider's answer, as the driver acts on it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RoutineAnswer {
     /// Act on this candidate.
-    Act { candidate: String },
+    Act {
+        candidate: String,
+    },
     /// Act at this point of the step's screenshot, in fractions of it.
-    Point { x: f64, y: f64 },
+    Point {
+        x: f64,
+        y: f64,
+    },
     None,
     Reobserve,
     /// The step goes back to the planner, with the ladder's reason.
-    AskUp { reason: Option<String> },
+    AskUp {
+        reason: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -574,6 +597,10 @@ pub enum BrowserError {
     AskUp(String),
     #[error("the routine decider gave no answer: {0}")]
     Decider(String),
+    #[error("the library holds no workflow {0}")]
+    NoWorkflow(String),
+    #[error("the workflow library failed: {0}")]
+    Library(String),
 }
 
 /// Steps one batched subgoal program may hold.
@@ -597,6 +624,33 @@ pub trait BrowserDriver: Send {
     fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError>;
     /// The PNG bytes of a held image, while the driver holds them.
     fn image_bytes(&self, image: &str) -> Option<Vec<u8>>;
+
+    /// The replay library's programs for a site. A driver with no library
+    /// refuses the library verbs.
+    fn library_find(
+        &mut self,
+        _input: LibraryFindInput,
+    ) -> Result<LibraryFindOutput, BrowserError> {
+        Err(BrowserError::Library(
+            "this browser host keeps no library".to_owned(),
+        ))
+    }
+
+    /// Offers a solved run's program to the library: it joins only once the
+    /// solved page and a no-model replay both meet its postcondition.
+    fn library_propose(&mut self, _input: ProposeInput) -> Result<ProposeOutput, BrowserError> {
+        Err(BrowserError::Library(
+            "this browser host keeps no library".to_owned(),
+        ))
+    }
+
+    /// Runs a library program live; a missed postcondition goes back to the
+    /// planner.
+    fn library_run(&mut self, _input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {
+        Err(BrowserError::Library(
+            "this browser host keeps no library".to_owned(),
+        ))
+    }
 
     /// Runs one batched program for a subgoal; a routine step has no
     /// decider here, so it goes up.
@@ -631,6 +685,7 @@ pub trait BrowserDriver: Send {
         let mut routine = Routine {
             decider,
             until_ms: input.until_ms,
+            no_model: input.no_model,
             misses: 0,
             decisions: Vec::new(),
         };
@@ -737,6 +792,7 @@ pub const ROUTINE_MAX_CANDIDATES: usize = 61;
 struct Routine<'d> {
     decider: &'d mut dyn RoutineDecider,
     until_ms: Option<u64>,
+    no_model: bool,
     misses: u32,
     decisions: Vec<serde_json::Value>,
 }
@@ -809,6 +865,7 @@ impl Routine<'_> {
                 state: serde_json::json!({"url": page.url, "title": page.title}),
                 misses: self.misses,
                 until_ms: self.until_ms,
+                no_model: self.no_model,
             })?;
             self.until_ms = reply.until_ms.or(self.until_ms);
             self.decisions.push(reply.decision);
@@ -903,6 +960,8 @@ impl BrowserError {
             Self::StaleImage(_) => "browser_stale_image",
             Self::AskUp(_) => "routine_ask_up",
             Self::Decider(_) => "routine_decider_failed",
+            Self::NoWorkflow(_) => "browser_no_workflow",
+            Self::Library(_) => "browser_library_failed",
         }
     }
 }

@@ -320,20 +320,27 @@ fn mcp_task_in_world(
     scope: &crate::mcp::McpConnectorScope,
     id: &oneiron::EntityId,
 ) -> Result<bool, McpGatewayError> {
-    use oneiron::federation::{ScopeAxis, ScopeId};
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
     let Some(position) = vault
         .record_scope(id)
         .map_err(|error| mcp_engine_error("mcp scope record read failed", error))?
     else {
         return Ok(false);
     };
-    let inside = |stamped: &ScopeAxis<ScopeId>, ceiling: Option<oneiron::EntityId>| {
-        ceiling.is_none_or(|ceiling| {
-            !stamped.is_bottom()
-                && stamped.is_narrowing_of(&ScopeAxis::Some([ScopeId(ceiling)].into()))
-        })
+    let Some(ceiling) = scope.world_ref else {
+        return Ok(true);
     };
-    Ok(inside(&position.worlds, scope.world_ref))
+    // The registration's world and the TASK's birth position, each as a
+    // world-only Scope, in the one Scope order.
+    let stamped = Scope {
+        worlds: position.worlds,
+        ..Scope::top()
+    };
+    let registered = Scope {
+        worlds: ScopeAxis::Some([ScopeId(ceiling)].into()),
+        ..Scope::top()
+    };
+    Ok(!stamped.worlds.is_bottom() && stamped.is_narrowing_of(&registered))
 }
 
 /// Narrows the TASKS rows to the credential's registered world/facet and its
@@ -425,9 +432,16 @@ fn mcp_row_position_inside(
     else {
         return Ok(false);
     };
+    // Positional: the row's world/facet stamp against the slip's world/facet
+    // projection, never the slip's other bounds.
+    let projection = |worlds, facets| oneiron::federation::Scope {
+        worlds,
+        facets,
+        ..oneiron::federation::Scope::top()
+    };
+    let stamped = projection(position.worlds, position.facets);
     Ok(granted.is_none_or(|granted| {
-        position.worlds.is_narrowing_of(&granted.worlds)
-            && position.facets.is_narrowing_of(&granted.facets)
+        stamped.is_narrowing_of(&projection(granted.worlds.clone(), granted.facets.clone()))
     }))
 }
 

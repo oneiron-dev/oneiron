@@ -10,7 +10,7 @@ use super::store::{
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
-use crate::compaction::{FoldMark, FoldRecord, GatedCompaction, fold_handle};
+use crate::compaction::{CompactHooks, FoldMark, FoldRecord, GatedCompaction, fold_handle};
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
@@ -36,6 +36,7 @@ impl EngineNativeExecutor<'_> {
         if let Some((_, byline, _)) = seat.swap_seat() {
             self.land_folds(byline, finished.folds);
         }
+        let hooks = finished.hooks;
         let landed = match finished.epoch {
             None => Ok(()),
             Some(Err(suppression)) => {
@@ -57,6 +58,11 @@ impl EngineNativeExecutor<'_> {
                         match self.integrate_placed(driver, byline, placement, gated) {
                             Ok(plan) => {
                                 seat.swapped(plan.epoch, first, last);
+                                if let crate::code_run::ExecutorStorage::Canonical(vault) =
+                                    &self.storage
+                                {
+                                    vault.post_compact_hooks(hooks, &plan, first, last);
+                                }
                                 Ok(())
                             }
                             Err(error) => {
@@ -133,22 +139,24 @@ impl EngineNativeExecutor<'_> {
                     return Ok(super::compaction::Flight::default());
                 }
                 let note = asked.clone().flatten();
-                let epoch = match watermark {
-                    Some(watermark) => self.seal_compaction_window(
-                        driver,
-                        config,
-                        record,
-                        watermark,
-                        note.clone(),
-                    )?,
-                    None => None,
+                let (epoch, hooks) = match watermark {
+                    Some(watermark) => self
+                        .seal_compaction_window(driver, config, record, watermark, note.clone())?
+                        .map_or((None, CompactHooks::default()), |(request, hooks)| {
+                            (Some(request), hooks)
+                        }),
+                    None => (None, CompactHooks::default()),
                 };
                 let folds = self.seal_folds(driver, config, record, &marks, note.as_deref())?;
                 if asked.is_some() {
                     self.storage
                         .update_code_run_folds(run_id, |ledger| ledger.compact = None)?;
                 }
-                Ok(super::compaction::Flight { epoch, folds })
+                Ok(super::compaction::Flight {
+                    epoch,
+                    folds,
+                    hooks,
+                })
             },
         );
         self.compaction = Some(seat);
@@ -391,7 +399,8 @@ impl EngineNativeExecutor<'_> {
     /// longer than the backend takes whole, or whose pins the summary could
     /// not hold, stops at the last step that fits; the next crossing seals
     /// the rest. A run in an off-record room reads all of it through its
-    /// room's overlay over base.
+    /// room's overlay over base. A canonical run's window, keep list and
+    /// ceiling then pass `host.compact`'s pre-hooks, which may pin more.
     fn seal_compaction_window(
         &self,
         driver: &mut crate::compaction::CompactionDriver,
@@ -399,7 +408,7 @@ impl EngineNativeExecutor<'_> {
         record: &CodeRunReplayRecord,
         watermark: u64,
         note: Option<String>,
-    ) -> EngineExecutorResult<Option<crate::compaction::CompactionRequest>> {
+    ) -> EngineExecutorResult<Option<(crate::compaction::CompactionRequest, CompactHooks)>> {
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
         // The run's position is its coverage rows, withdrawn summaries
@@ -514,23 +523,37 @@ impl EngineNativeExecutor<'_> {
             }
             pins = super::compaction::window_pins(&window);
         }
+        let fits = |pins: &[String]| {
+            count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
+                && room.is_none_or(|room| {
+                    crate::compaction::compaction_input_tokens(
+                        start,
+                        &window,
+                        pins,
+                        note.as_deref(),
+                        budget,
+                    ) <= room
+                })
+        };
         super::compaction::add_profile_pins(
             &mut pins,
             &window,
             &driver.memory_profile().verbatim_pins,
-            |pins| {
-                count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
-                    && room.is_none_or(|room| {
-                        crate::compaction::compaction_input_tokens(
-                            start,
-                            &window,
-                            pins,
-                            note.as_deref(),
-                            budget,
-                        ) <= room
-                    })
-            },
+            &fits,
         );
+        // A run bound to a room runs no hooks: their receipts would land on
+        // record.
+        let hooks = match &self.storage {
+            crate::code_run::ExecutorStorage::Canonical(vault) => vault.pre_compact_hooks(
+                crate::compaction::compact_invocation(run_id.as_bytes(), watermark),
+                self.gated_write.actor().entity_ref(),
+                &window,
+                &mut pins,
+                budget,
+                &fits,
+            ),
+            crate::code_run::ExecutorStorage::Session(_) => CompactHooks::default(),
+        };
         // Nested provenance: the newest epoch stands for every id the calls
         // before its count served, and for the epochs before it, since those
         // are its own sources. Only the calls since then are read here, so a
@@ -572,9 +595,10 @@ impl EngineNativeExecutor<'_> {
         let prior = prior.map(|(epoch, last)| crate::compaction::PriorEpoch::new(epoch, last));
         let calls = u64::try_from(record.bridge_calls.len())
             .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
-        Ok(Some(driver.request_for_log(
+        let request = driver.request_for_log(
             request_id, &session, window, pins, sources, prior, calls, note,
-        )?))
+        )?;
+        Ok(Some((request, hooks)))
     }
 
     /// This run's swapped epochs with their summaries' prose, and its fold

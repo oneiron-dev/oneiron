@@ -85,14 +85,16 @@ impl<'a> ServedChannelSink<'a> {
         };
         let body = serde_json::json!({ "channel": request.intent.target, "text": text });
         let mut outcome = None;
-        let _door = self
-            .vault
-            .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
+        let _door = self.vault.inject_secret_at_door(
+            &secret.name,
+            &secret.effector,
+            &mut |value: &[u8]| {
                 let token = std::str::from_utf8(value)
                     .map_err(|_| Error::InvalidClaimBody("the stored credential is not text"))?;
                 outcome = Some(self.slack_send(token.trim(), &body));
                 Ok(())
-            });
+            },
+        );
         // Once the POST ran, what Slack said is the delivery fact, whatever
         // the door reports after it.
         outcome.unwrap_or_else(|| OutboundExecutionOutcome::failed("slack_credential_unavailable"))
@@ -164,7 +166,10 @@ impl<'a> ServedChannelSink<'a> {
 
 impl OutboundExecutionSink for ServedChannelSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        match (request.intent.channel.as_str(), request.intent.verb.as_str()) {
+        match (
+            request.intent.channel.as_str(),
+            request.intent.verb.as_str(),
+        ) {
             ("slack", "send") => self.slack_post(request),
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }

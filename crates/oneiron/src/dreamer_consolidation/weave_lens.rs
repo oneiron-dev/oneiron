@@ -8,8 +8,8 @@
 //! opening the digest composes it into the reader's lens.
 
 use super::step_charge::StepChargeTally;
-use crate::WriteActor;
-use crate::claim::{WeaveLensPlan, WeaveLensRender};
+use crate::claim::{WeaveLensPlan, WeaveLensRender, WeaveLiveLens};
+use crate::{Vault, WriteActor};
 use crate::dreamer_runner::{DREAMER_WEAVE_LENS_ATTEMPT_KIND, DreamerAdmittedAttempt};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
@@ -19,7 +19,8 @@ use crate::llm::manifest::ModelRole;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
+    ModelId, ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
+    call_as_step,
 };
 use std::collections::BTreeMap;
 
@@ -47,6 +48,82 @@ fn invalid(reason: &str) -> Error {
 
 fn owed_nothing() -> Result<DreamerAttemptExecution> {
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+}
+
+/// The generate step's request: the skill's SKILL.md as the instruction,
+/// the keyed items as the input, and the plan's schema as the answer's form.
+fn lens_request(
+    model: ModelId,
+    locality: ModelLocality,
+    instruction: String,
+    text: String,
+) -> Result<LlmRequest> {
+    Ok(LlmRequest {
+        model,
+        envelope: CallEnvelope {
+            seat_effort: None,
+            scope: crate::llm::Scope::default(),
+            // The items leave the vault as an extraction's records do, so
+            // they pass the same egress gate.
+            purpose: CallPurpose::Extraction,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::Extraction,
+                ModelTierRef("consolidation".into()),
+            ),
+            response_format: ResponseFormat::Json {
+                schema: crate::claim::weave_lens_plan_schema()?,
+            },
+            locality,
+        }
+        .with_purpose_defaults(),
+        messages: vec![
+            LlmMessage {
+                role: LlmMessageRole::System,
+                content: vec![ContentPart::Text { text: instruction }],
+            },
+            LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text { text }],
+            },
+        ],
+        tools: Vec::new(),
+        params: BTreeMap::new(),
+        provider_options: BTreeMap::new(),
+    })
+}
+
+/// A live render's generate step (`vault.weave.lens`), for a host that calls
+/// its route itself: the period render's request over `live`, authorized as
+/// a call of `role` on `inference`, at the reasoning level a Dreamer call
+/// carries. `takes_reasoning` says whether the route's model takes
+/// reasoning controls.
+///
+/// # Errors
+///
+/// The inference policy's refusal; a binding that names no locality.
+pub fn live_weave_lens_request(
+    vault: &Vault,
+    live: &WeaveLiveLens,
+    role: ModelRole,
+    model: ModelId,
+    inference: &HostInferenceContext<'_>,
+    takes_reasoning: bool,
+) -> Result<LlmRequest> {
+    let locality = inference
+        .selected_locality()
+        .ok_or_else(|| invalid("the host binding names no locality"))?;
+    let request = lens_request(
+        model,
+        locality,
+        live.instruction.clone(),
+        live.input.clone(),
+    )?;
+    let mut request = vault
+        .authorize_model_role(role, request, inference)?
+        .into_request();
+    super::roles::bind_reasoning_for(vault, takes_reasoning, &mut request)?;
+    Ok(request)
 }
 
 /// Renders one period: re-reads it for its reader, loads the skill, asks
@@ -98,39 +175,7 @@ pub async fn run_weave_lens(
         .inference
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
-    let request = LlmRequest {
-        model: model.model.clone(),
-        envelope: CallEnvelope {
-            seat_effort: None,
-            scope: crate::llm::Scope::default(),
-            // The period's items leave the vault as an extraction's records
-            // do, so they pass the same egress gate.
-            purpose: CallPurpose::Extraction,
-            class: CallClass::BestEffort,
-            tier: TierPrecedence::for_purpose(
-                &CallPurpose::Extraction,
-                ModelTierRef("consolidation".into()),
-            ),
-            response_format: ResponseFormat::Json {
-                schema: crate::claim::weave_lens_plan_schema()?,
-            },
-            locality,
-        }
-        .with_purpose_defaults(),
-        messages: vec![
-            LlmMessage {
-                role: LlmMessageRole::System,
-                content: vec![ContentPart::Text { text: instruction }],
-            },
-            LlmMessage {
-                role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text }],
-            },
-        ],
-        tools: Vec::new(),
-        params: BTreeMap::new(),
-        provider_options: BTreeMap::new(),
-    };
+    let request = lens_request(model.model.clone(), locality, instruction, text)?;
     let mut request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?

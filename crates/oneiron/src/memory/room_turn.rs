@@ -158,4 +158,40 @@ impl<'v> Memory<'v> {
         }
         Ok(handle)
     }
+
+    /// The reads of thread `thread` of `room` for this actor (OF-529): the
+    /// turn's world, facet, audience, peer and P7 gates under the ceiling
+    /// that thread puts on it ([`Self::thread_ceiling`]), met into the turn
+    /// this handle is bound to, if any. An agent standing on that thread's
+    /// own Ready receipt reads it this way without a seat, and reads nothing
+    /// else of the room. Unlike [`Self::for_room_projection`], P7 binds it
+    /// outside a turn too: a thread's reader is no member reading its own.
+    pub(crate) fn for_thread_projection(
+        &self,
+        room: EntityId,
+        thread: EntityId,
+    ) -> MemoryResult<RoomTurnHandle<'v>> {
+        self.verified_actor_class()?;
+        self.require_room_in_facets(room)?;
+        let ceiling = self.thread_ceiling(room, thread)?;
+        Ok(RoomTurnHandle {
+            memory: Memory {
+                vault: self.vault,
+                actor: self.actor,
+                actor_class: self.actor_class,
+                session_key: self.session_key,
+                machine_signer: self.machine_signer,
+                read_proof: self.read_proof.clone(),
+                room_turn: Some(ceiling),
+                host_origin: self.host_origin.clone(),
+                locality: self.locality,
+                producers: self.producers,
+                birth_position: self.birth_position,
+                // A thread's read writes nothing as the owner in person.
+                owner_authorship: None,
+                invocation: self.invocation,
+                task_host: None,
+            },
+        })
+    }
 }
