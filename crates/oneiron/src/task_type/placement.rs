@@ -464,6 +464,7 @@ pub fn place_task(
         big: decisions.ladder.big,
         human: decisions.ladder.human,
         human_pin: decisions.ladder.human_pin.clone(),
+        ask_to: decisions.ladder.ask_to,
         person: decisions.ladder.person,
         presence: decisions.ladder.presence,
     };

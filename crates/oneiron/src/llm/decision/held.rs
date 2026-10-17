@@ -60,6 +60,7 @@ impl HeldLadder {
             big: self.big.as_deref(),
             human: self.human.as_ref(),
             human_pin: self.human_pin.clone(),
+            ask_to: None,
             person: self.person.as_ref(),
             presence: self.presence.as_ref(),
         }

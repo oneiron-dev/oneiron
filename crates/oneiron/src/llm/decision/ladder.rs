@@ -11,6 +11,7 @@ use super::{
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -336,6 +337,8 @@ pub struct HumanDecisionRequest {
     pub prior_provider: Option<ProviderPin>,
     /// Host-issued versioned queue identity; the host renders its own text.
     pub queue_pin: ProviderPin,
+    /// Who the ask goes to, as the caller bound it ([`DecisionLadder::ask_to`]).
+    pub to: AskTo,
 }
 
 impl HumanDecisionRequest {
@@ -376,6 +379,136 @@ pub trait HumanDecisionQueue: Send + Sync {
     fn queue(&self, request: HumanDecisionRequest) -> Result<()>;
 }
 
+/// A role an ask can go to (Q3 by role). A role names authority, not a person: the host
+/// resolves who holds it when the ask is queued, and the answer door rechecks it. The
+/// model asks for escalation; it never names the role or the actor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "role", rename_all = "snake_case")]
+pub enum AskRole {
+    /// The actor responsible for what the question is over (a schedule's, a question's or
+    /// a unit's), as the caller binds it; with a project, the chain then walks that
+    /// project's boards.
+    Responsible {
+        #[serde(with = "super::codec::entity")]
+        actor: EntityId,
+        #[serde(default, with = "super::codec::optional_entity")]
+        project: Option<EntityId>,
+    },
+    /// A project's effective board; the chain then walks its parents' boards.
+    Board {
+        #[serde(with = "super::codec::entity")]
+        project: EntityId,
+    },
+    /// The vault's live owners, where every chain ends.
+    Owner,
+}
+
+impl AskRole {
+    /// Where the role sits on a chain.
+    #[must_use]
+    pub fn rank(&self) -> RoleRank {
+        match self {
+            Self::Responsible { .. } => RoleRank::Responsible,
+            Self::Board { .. } => RoleRank::Board,
+            Self::Owner => RoleRank::Owner,
+        }
+    }
+}
+
+/// How far up a chain a role sits: an ask climbs from its role toward the owners.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoleRank {
+    Responsible,
+    Board,
+    Owner,
+}
+
+/// What an answer to an ask authorises. An e-signature or a person-authorised payment
+/// resolves only to a natural person, whoever else holds the role.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskAct {
+    #[default]
+    Judgment,
+    ESignature,
+    Payment,
+}
+
+impl AskAct {
+    /// Whether only a natural person may answer.
+    #[must_use]
+    pub fn person_only(self) -> bool {
+        matches!(self, Self::ESignature | Self::Payment)
+    }
+}
+
+/// Who a call's ask goes to: bound by the caller from trusted context, never from
+/// model-authored state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AskTo {
+    /// The role asked first.
+    pub role: AskRole,
+    /// The highest rank the ask may climb to.
+    pub ceiling: RoleRank,
+    pub act: AskAct,
+}
+
+impl AskTo {
+    /// The vault's owners, for a judgment: where an ask goes when its caller names no role.
+    #[must_use]
+    pub fn owner() -> Self {
+        Self {
+            role: AskRole::Owner,
+            ceiling: RoleRank::Owner,
+            act: AskAct::Judgment,
+        }
+    }
+
+    /// A role at or under its ceiling.
+    pub fn validate(&self) -> Result<()> {
+        if self.role.rank() > self.ceiling {
+            return Err(invalid("an ask's role is above its ceiling"));
+        }
+        Ok(())
+    }
+}
+
+/// Whether a role holder is a natural person or a bound agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HolderKind {
+    Person,
+    Agent,
+}
+
+/// A live actor holding a role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoleHolder {
+    #[serde(with = "super::codec::entity")]
+    pub actor: EntityId,
+    pub kind: HolderKind,
+}
+
+/// A role on an ask's chain and the live actors who held it, as resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedRole {
+    pub role: AskRole,
+    /// Never empty.
+    pub holders: Vec<RoleHolder>,
+}
+
+/// The host's role chain (Q3 by role): the next role an ask goes to.
+pub trait AskRoleResolver: Send + Sync {
+    /// The first role on `to`'s chain after `after` (from `to.role` when none), up to
+    /// `to.ceiling`, with a live holder who may answer for `to.act`. None when no role up
+    /// to the ceiling has one: the ask stays unresolved, never with wider authority.
+    fn next_role(&self, to: &AskTo, after: Option<&AskRole>) -> Result<Option<ResolvedRole>>;
+}
+
 /// Slots are fixed. A step up skips a rung with no provider, up to the dial's
 /// ceiling, and the receipt's pins name every rung that ran. The last rung is a
 /// queue, not a model-produced human answer.
@@ -387,6 +520,9 @@ pub struct DecisionLadder<'a> {
     pub big: Option<&'a dyn DecisionProvider>,
     pub human: &'a dyn HumanDecisionQueue,
     pub human_pin: ProviderPin,
+    /// Who the person rung's ask goes to; none is the vault's owners ([`AskTo::owner`]).
+    /// The caller binds it from trusted context, never the model.
+    pub ask_to: Option<&'a AskTo>,
     /// The host's versioned person question ("ask a person?"). When the dial reaches the
     /// person and the policy has a person row, every read asks it beside the call's
     /// questions as its own typed question.
@@ -883,6 +1019,7 @@ impl DecisionLadder<'_> {
                 prior_provider: prior.as_ref().and(readings.pins.last().cloned()),
                 prior,
                 queue_pin: self.human_pin.clone(),
+                to: self.ask_to.cloned().unwrap_or_else(AskTo::owner),
             })?;
             readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
