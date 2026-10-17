@@ -47,6 +47,10 @@ pub(crate) struct ScopedSearchResponse {
     #[serde(flatten)]
     response: super::SearchResponse,
     narrowing: Vec<oneiron::claim::ScopedReadReceipt>,
+    /// On a machine that syncs only what it opened, the home's answer to a
+    /// text search (OF-534).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    residence: Option<ResidenceAnswer>,
 }
 impl ScopedSearchResponse {
     /// Says whether the request's `limit` was served at the ceiling; a page
@@ -55,12 +59,95 @@ impl ScopedSearchResponse {
         self.response.meta.limit_clamped = clamped;
         self
     }
+
+    fn residence(mut self, answer: Option<ResidenceAnswer>) -> Self {
+        self.residence = answer;
+        self
+    }
 }
 impl std::ops::Deref for ScopedSearchResponse {
     type Target = super::SearchResponse;
     fn deref(&self) -> &Self::Target {
         &self.response
     }
+}
+
+/// The home's answer to a text search on a machine that syncs only what it
+/// opened (OF-534). `home` is complete; `localOnly` is not: the home was out
+/// of reach or not asked, and the hits are this device's opened items alone.
+/// A hit the page lacks is one the device does not hold; its window opens it.
+#[derive(Serialize)]
+struct ResidenceAnswer {
+    source: &'static str,
+    complete: bool,
+    hits: Vec<ResidenceAnswerHit>,
+}
+
+#[derive(Serialize)]
+struct ResidenceAnswerHit {
+    id: String,
+    score: f32,
+    window: String,
+}
+
+impl ResidenceAnswer {
+    /// The local page alone, which the home did not complete.
+    fn local_only() -> Self {
+        Self {
+            source: "localOnly",
+            complete: false,
+            hits: Vec::new(),
+        }
+    }
+}
+
+impl From<oneiron::sync::ResidenceSearch> for ResidenceAnswer {
+    fn from(search: oneiron::sync::ResidenceSearch) -> Self {
+        Self {
+            source: match search.source {
+                oneiron::sync::SearchSource::Home => "home",
+                oneiron::sync::SearchSource::LocalOnly => "localOnly",
+            },
+            complete: search.complete,
+            hits: search
+                .hits
+                .into_iter()
+                .map(|hit| ResidenceAnswerHit {
+                    id: hit.entity_id,
+                    score: hit.score,
+                    window: hit.window.to_string(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Asks the home a text search an opened machine cannot answer locally
+/// (ARCH-0023b partial sync). `None` on a machine that holds every window.
+/// The home scopes its answer to this device's own grants, so only an
+/// owner-grade caller gets its hits; a narrower one gets the local page,
+/// marked incomplete. A deadline bounds the ask as it bounds the page.
+async fn ask_home(
+    home: Option<Arc<oneiron::sync::HomeSearch>>,
+    owner_grade: bool,
+    query: String,
+    limit: usize,
+    due: Option<Instant>,
+) -> Option<ResidenceAnswer> {
+    let home = home?;
+    if !owner_grade {
+        return Some(ResidenceAnswer::local_only());
+    }
+    let search = home.search(&query, limit);
+    let answer = match due {
+        Some(due) => tokio::time::timeout_at(due.into(), search).await.ok(),
+        None => Some(search.await),
+    };
+    // A refused or late ask leaves the local page, marked incomplete.
+    Some(match answer {
+        Some(Ok(search)) => search.into(),
+        Some(Err(_)) | None => ResidenceAnswer::local_only(),
+    })
 }
 
 /// Query parameters for vector similarity search.
@@ -410,6 +497,14 @@ pub(crate) async fn search_text(
     )?;
     let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
     let deadline = search_deadline(params.deadline_ms)?;
+    // An opened machine asks its home alongside its own page (OF-534).
+    let home = ask_home(
+        server.vault().home_search(),
+        auth.is_owner_grade(),
+        params.query.clone(),
+        page_limit,
+        deadline.map(|budget| arrived + budget),
+    );
     let page = SearchPage {
         probe: SearchProbe::Text {
             query: params.query,
@@ -420,9 +515,11 @@ pub(crate) async fn search_text(
         page_limit,
         auth,
     };
-    search_page_by_deadline(server, arrived, deadline, page)
-        .await
-        .map(|page| Json(page.limit_clamped(clamped)))
+    let (page, residence) = tokio::join!(
+        search_page_by_deadline(server, arrived, deadline, page),
+        home
+    );
+    page.map(|page| Json(page.limit_clamped(clamped).residence(residence)))
 }
 
 /// A blank `queryText` is an ABSENT one.

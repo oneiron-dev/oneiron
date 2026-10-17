@@ -8,7 +8,9 @@ use std::collections::BTreeSet;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::ports::{DeletionMarker, EntityStoreRead, TimelineQuery, TombstoneStoreRead};
+use crate::ports::{
+    DeletionMarker, EntityStoreRead, TimelineQuery, TombstoneStoreRead, WindowDeletionRows,
+};
 
 use crate::sync::types::WindowKey;
 
@@ -67,18 +69,33 @@ pub fn discover_local_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
             }
         }
     }
-    for prefix in ["d:w:", "u:w:", "pt:"] {
-        for row in vault.store.sync_state.prefix_iter(&txn, prefix)? {
-            let (name, _) = row?;
-            let suffix = &name[prefix.len()..];
-            let key = if prefix == "d:w:" {
-                suffix
-            } else {
-                suffix.split(':').next().unwrap_or("")
-            };
-            if let Some(key) = WindowKey::try_new(key) {
-                keys.insert(key.to_string());
-            }
+    // A snapshot's whole label names its window; an update or pending tombstone names it by
+    // the first segment of its key.
+    let first_segment = |name: &str, prefix: &str| {
+        WindowKey::try_new(name[prefix.len()..].split(':').next().unwrap_or(""))
+    };
+    for row in vault
+        .store
+        .port_window_doc_rows_raw(&txn, |window, _| WindowKey::try_new(window.as_str()))?
+    {
+        if let Some(key) = row? {
+            keys.insert(key.to_string());
+        }
+    }
+    for row in vault
+        .store
+        .port_window_update_keys(&txn, None, |name| first_segment(name, "u:w:"))?
+    {
+        if let Some(key) = row? {
+            keys.insert(key.to_string());
+        }
+    }
+    for row in vault
+        .store
+        .port_pending_tombstone_rows_raw(&txn, |name, _| first_segment(name, "pt:"))?
+    {
+        if let Some(key) = row? {
+            keys.insert(key.to_string());
         }
     }
     keys.into_iter()

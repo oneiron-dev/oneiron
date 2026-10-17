@@ -3504,7 +3504,7 @@ impl AgentVerb {
                 "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export."
             }
             Self::VaultArtifactsBodyPreview => {
-                "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands."
+                "The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands."
             }
             Self::VaultArtifactsBodyDeckReview => {
                 "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names."
