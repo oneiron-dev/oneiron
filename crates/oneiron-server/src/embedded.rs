@@ -120,6 +120,7 @@ async fn serve_prepared<A: AppHost>(
     {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
+    crate::owner::house::bind_house_leader_at_start(&vault, server_config.auth_secret.as_deref());
     if server_config.auth_secret.is_none() && !server_config.allow_unauthenticated {
         tracing::warn!(
             "embedded server started with no auth_secret and allow_unauthenticated=false; refusing all requests"
@@ -149,12 +150,19 @@ async fn serve_prepared<A: AppHost>(
     // The paired-machine mesh listener (OF-535): off unless the host names
     // its bind address.
     let mesh = crate::handler::mesh::start(
-        mesh_server,
+        Arc::clone(&mesh_server),
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
         config.limits.connections(),
     )
     .await?;
+    // A machine that is not the elected home dials its home on that mesh.
+    let device_sync = crate::device_sync::DeviceSyncHost::start(
+        &mesh_server,
+        config.device_sync.as_ref(),
+        mesh.as_ref(),
+    )
+    .await;
     host.ready()?;
     let (stopping, mut stopped) = (started.stopping, started.stopped);
     let api = serve_channel(connections, app, header_read_timeout, stopped.clone());
@@ -183,6 +191,9 @@ async fn serve_prepared<A: AppHost>(
             tracing::warn!("connections still open after the drain grace; stopping anyway");
         }
         () = forward_wakes(&mut host, next_wake, &ai) => {}
+    }
+    if let Some(device_sync) = device_sync {
+        device_sync.stop().await;
     }
     if let Some(mesh) = mesh {
         mesh.stop().await;

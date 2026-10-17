@@ -221,6 +221,11 @@ side_tables! {
     /// which keeps none. Key: hex64 (blake3 of the offer's adapter, origin, key binding and wire
     /// model).
     MODEL_OFFER_COOLDOWN: SyncState b"models:offer-cooldown:v1:" Named;
+    /// The last response a provider kept (`store`, OF-602) for one conversation, and when it was
+    /// written, so a reconnected Responses socket resumes the chain: this deployment's routing
+    /// state, never replicated, and runtime to a checkpoint. Key: hex16 (blake3 of the provider's
+    /// socket URL and key binding) ":" hex64 (blake3 of the conversation's item digests).
+    MODEL_RESPONSES_CHAIN: SyncState b"models:responses-chain:v1:" Named;
     /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
     SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
@@ -267,6 +272,10 @@ side_tables! {
     /// Queued tombstone re-assertion for an entity whose local hard-delete residue reappeared in a
     /// window doc. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REASSERT_MARKER: SyncState b"ra:w:" Raw;
+    /// A room's host pin or platform handle this device changed while no open window carried the
+    /// room (FIX 1794), mirrored as the room's window opens. Key: string (the cell's `room_facts`
+    /// map key).
+    SYNC_ROOM_FACT_DIRTY: SyncState b"rfd:" Raw;
     /// A thin-residence item's opened entity blob. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw;
     /// A thin-residence item's opened document state. Key: hex32 (entity id).
