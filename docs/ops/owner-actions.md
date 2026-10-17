@@ -410,6 +410,9 @@ oneiron api raw POST /v1/owner/secrets/bind \
   --data '{"handle": "sc12", "effector": "connector:slack"}'
 ```
 
+For an agent's `connector.call` with the secret, bind it to the connector the call routes to,
+such as `connector:github`.
+
 Name the secret by `handle` or `name`. `tier_ceiling` is the binding's rung, 0 (doored) by default
 and never above the class's live floor, and `scopes` defaults to `["read"]`. A binding for the same
 effector is replaced. The reply lists the record's bindings and the Gate record that keeps the
@@ -1140,8 +1143,9 @@ path.
 ## Live agent runs
 
 The actions that act for one running agent need a live-run handle: `tasks.refuse`,
-`self.agents.spawn`, `self.team.start`, `self.team.record`, and the leader's
-`self.leader.advice` and `self.leader.pattern`. An outside harness gets and uses one like this:
+`self.agents.spawn`, `self.team.start`, `self.team.record`, `self.team.submit`, and the
+leader's `self.leader.advice` and `self.leader.pattern`. An outside harness gets and uses one
+like this:
 1. Pair a credential with write scope to that agent's AGENT_DEF: `POST /v1/core/pairing/links`
    with `principal.holder_ref` set to the AGENT_DEF id and `principal.actor_class` set to
    `agent`. The harness redeems the link at `POST /v1/core/pairing/redeem`.

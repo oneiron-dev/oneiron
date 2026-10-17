@@ -857,6 +857,46 @@
       }
     },
     {
+      "name": "vault.campaign.program.create",
+      "description": "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns.",
+      "input": "crate::campaign::surface::CreateCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.read",
+      "description": "One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now.",
+      "input": "crate::campaign::surface::CampaignProgramReadRequest",
+      "output": "crate::campaign::surface::CampaignProgramReadResult",
+      "call": "memory.campaign_program_read(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.update",
+      "description": "Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops.",
+      "input": "crate::campaign::surface::UpdateCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_update(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.archive",
+      "description": "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops.",
+      "input": "crate::campaign::surface::ArchiveCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_archive(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.weave.report",
       "description": "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role.",
       "input": "crate::claim::WeaveReportRequest",
@@ -1772,6 +1812,8 @@
       "input": "crate::task_verb::sdk::SecretUseRequest",
       "output": "crate::task_verb::sdk::SecretUseAnswer",
       "call": "crate::task_verb::sdk::use_secret_as_caller(memory, input)?",
+      "host_door": true,
+      "host_door_caller": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5073,6 +5115,14 @@
       "name": "self.team.record",
       "input": "crate::team::TeamRecordInput",
       "output": "crate::team::TeamRunAnswer",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
+      "name": "self.team.submit",
+      "input": "crate::code_run::TeamSubmitInput",
+      "output": "crate::code_run::TeamSubmitAnswer",
       "scope": "Write",
       "context": "run",
       "effect": "Team"

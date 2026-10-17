@@ -212,6 +212,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
             ),
             (
+                "vault.campaign.program.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CreateCampaignProgramRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.program.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CampaignProgramReadRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.program.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::UpdateCampaignProgramRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.program.archive",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::ArchiveCampaignProgramRequest,
+                >(),
+            ),
+            (
                 "vault.weave.report",
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveReportRequest>(),
             ),
@@ -1569,6 +1593,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
             ),
             (
+                "self.team.submit",
+                crate::code_run::vault_read::request_schema::<crate::code_run::TeamSubmitInput>(),
+            ),
+            (
                 "self.spawn",
                 crate::code_run::vault_read::request_schema::<crate::code_run::ReaderSpawnInput>(),
             ),
@@ -1921,6 +1949,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.kv.namespaces" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.program.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.program.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.program.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.program.archive" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3643,6 +3699,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "vault.campaign.program.create" => {
+            let _input: crate::campaign::surface::CreateCampaignProgramRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.program.read" => {
+            let _input: crate::campaign::surface::CampaignProgramReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.program.update" => {
+            let _input: crate::campaign::surface::UpdateCampaignProgramRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.program.archive" => {
+            let _input: crate::campaign::surface::ArchiveCampaignProgramRequest =
+                decode(value.clone())?;
+        }
         "vault.weave.report" => {
             let _input: crate::claim::WeaveReportRequest = decode(value.clone())?;
         }
@@ -4532,6 +4604,18 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.campaign.program.create" => {
+            encode(vault_campaign_program_create(memory, decode(value)?)?)
+        }
+        "vault.campaign.program.read" => {
+            encode(vault_campaign_program_read(memory, decode(value)?)?)
+        }
+        "vault.campaign.program.update" => {
+            encode(vault_campaign_program_update(memory, decode(value)?)?)
+        }
+        "vault.campaign.program.archive" => {
+            encode(vault_campaign_program_archive(memory, decode(value)?)?)
+        }
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.weave.lens" => encode(vault_weave_lens(memory, decode(value)?)?),
@@ -5418,6 +5502,30 @@ pub fn vault_kv_namespaces(
     input: crate::memory::KeyValueNamespaces,
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
+}
+pub fn vault_campaign_program_create(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CreateCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+    memory.campaign_program_create(&input)
+}
+pub fn vault_campaign_program_read(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CampaignProgramReadRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramReadResult> {
+    memory.campaign_program_read(&input)
+}
+pub fn vault_campaign_program_update(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::UpdateCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+    memory.campaign_program_update(&input)
+}
+pub fn vault_campaign_program_archive(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::ArchiveCampaignProgramRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+    memory.campaign_program_archive(&input)
 }
 pub fn vault_weave_report(
     memory: &Memory<'_>,
