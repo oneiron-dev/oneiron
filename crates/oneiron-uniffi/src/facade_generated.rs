@@ -965,6 +965,11 @@ export_facade! {
     let output = client.vault_questions_pause(&input)?;
     crate::codec::lift_record("vault.questions.pause", &output)
 };
+"vault.questions.backfill" => fn vault_questions_backfill(&self, input: QuestionBackfillRequest) -> ScheduledBackfill = |client| {
+    let input: oneiron::receipt::QuestionBackfillRequest = crate::codec::lower_record("vault.questions.backfill", input)?;
+    let output = client.vault_questions_backfill(&input)?;
+    crate::codec::lift_record("vault.questions.backfill", &output)
+};
 "vault.questions.read" => fn vault_questions_read(&self, input: QuestionReadRequest) -> Option<QuestionRecord> = |client| {
     let input: oneiron::receipt::QuestionReadRequest = crate::codec::lower_record("vault.questions.read", input)?;
     let output = client.vault_questions_read(&input)?;
