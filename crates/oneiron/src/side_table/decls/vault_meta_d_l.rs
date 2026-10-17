@@ -597,6 +597,10 @@ side_tables! {
     /// A call a verb hook's ask stopped: the call, its re-validated args, the hook's place in the
     /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
     HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
+    /// The instrument a credential caller's request was admitted on, pinned beside its stopped
+    /// call for the drain to verify again: a slip, its holder's challenge and signature, never a
+    /// secret. Pruned with the call. Key: id16 (invocation).
+    HOOKS_VERB_ASK_WITNESS: VaultMeta b"hooks:verb_ask_witness:v1:" Named;
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;

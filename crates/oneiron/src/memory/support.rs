@@ -445,6 +445,12 @@ pub struct Memory<'v> {
     /// A host bound this surface for a caller its credential admitted
     /// (`for_credential`); only that host verifies the credential again.
     pub(super) credential: bool,
+    /// The exact instrument that credential is, when the host can verify it
+    /// again (`with_credential_instrument`).
+    pub(super) credential_instrument: Option<crate::runtime_hooks::verb::VerbAskInstrument>,
+    /// The door the caller came in by, when its host can run the call again
+    /// through it (`with_credential_door`).
+    pub(super) credential_door: Option<crate::runtime_hooks::verb::VerbAskDoor>,
     /// The door's own admission of a hook's rewritten args
     /// (`with_rewrite_admit`).
     pub(super) rewrite_admit: Option<RewriteAdmit>,
@@ -531,6 +537,8 @@ impl Vault {
             task_host: None,
             off_record_session: None,
             credential: false,
+            credential_instrument: None,
+            credential_door: None,
             rewrite_admit: None,
         }
     }
@@ -571,6 +579,8 @@ impl Vault {
             task_host: None,
             off_record_session: None,
             credential: false,
+            credential_instrument: None,
+            credential_door: None,
             rewrite_admit: None,
         }
     }
@@ -620,6 +630,8 @@ impl<'v> Memory<'v> {
                 task_host: self.task_host.clone(),
                 off_record_session: self.off_record_session.clone(),
                 credential: self.credential,
+                credential_instrument: self.credential_instrument.clone(),
+                credential_door: self.credential_door.clone(),
                 rewrite_admit: self.rewrite_admit.clone(),
             },
         })
@@ -774,6 +786,69 @@ impl Memory<'_> {
     pub fn for_credential(mut self) -> Self {
         self.credential = true;
         self
+    }
+
+    /// Binds the exact instrument the caller's credential is, which its host
+    /// verifies again (ARCH-0080 §3 Ask). It grants and narrows nothing: with
+    /// a door bound too ([`Self::with_credential_door`]), a verb hook's ask
+    /// on this surface's call saves a reference to both, so settlement runs
+    /// the call again through that door once the host verified the
+    /// credential again.
+    #[must_use]
+    pub fn with_credential_instrument(
+        mut self,
+        instrument: crate::runtime_hooks::verb::VerbAskInstrument,
+    ) -> Self {
+        self.credential_instrument = Some(instrument);
+        self
+    }
+
+    /// Binds the door the caller came in by, which its host can run the call
+    /// through again. It grants and narrows nothing.
+    #[must_use]
+    pub fn with_credential_door(mut self, door: crate::runtime_hooks::verb::VerbAskDoor) -> Self {
+        self.credential_door = Some(door);
+        self
+    }
+
+    /// The reference a verb hook's ask saves for this credential caller's
+    /// call, with the instrument its request was admitted on as its witness:
+    /// only for a verified slip whose instrument and door a host bound, in
+    /// the room turn that door named, if any, and with nothing else on the
+    /// surface its door could not rebuild (a host origin, a machine signer, a
+    /// TASK host, an off-record session or a thread's turn). `None` resumes
+    /// only on the caller's retry.
+    #[must_use]
+    pub fn verb_ask_credential(&self) -> Option<crate::runtime_hooks::verb::VerbAskCredential> {
+        use crate::runtime_hooks::verb::{VerbAskCredential, VerbAskCredentialRef, VerbAskDoor};
+        let door = self.credential_door.as_ref()?;
+        let room = match door {
+            VerbAskDoor::Facade { room } => *room,
+            VerbAskDoor::Mcp { .. } => None,
+        };
+        let rebuilt = self.credential
+            && self.read_proof.is_some()
+            && self.room_turn.as_ref().map(|turn| turn.room) == room
+            && self
+                .room_turn
+                .as_ref()
+                .is_none_or(|turn| turn.branch.is_none())
+            && self.host_origin.is_none()
+            && self.machine_signer.is_none()
+            && self.task_host.is_none()
+            && self.off_record_session.is_none();
+        if !rebuilt {
+            return None;
+        }
+        let reference = VerbAskCredentialRef {
+            instrument: self.credential_instrument.clone()?,
+            door: door.clone(),
+            on_device: self.locality == crate::claim::CallerLocality::OnDevice,
+        };
+        Some(VerbAskCredential::new(
+            reference,
+            self.invocation_slip.clone()?,
+        ))
     }
 
     /// Binds the door's admission of a hook's rewritten args: a rewrite the

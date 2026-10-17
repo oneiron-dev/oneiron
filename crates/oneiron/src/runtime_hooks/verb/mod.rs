@@ -10,6 +10,7 @@
 
 mod ask;
 mod chain;
+mod credential;
 mod redact;
 mod resume;
 mod served;
@@ -24,6 +25,11 @@ use crate::memory::MemoryResult;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
+pub use credential::{
+    VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
+    VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope, VerbAskInstrument, VerbAskRefusal,
+    VerbAskResumed, VerbAskSavedCall,
+};
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
 pub use state::{InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait};
@@ -225,6 +231,32 @@ impl Vault {
         resume: Option<VerbResume>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
         chain::pre(self, call, args, check, resume.as_ref())
+    }
+
+    /// [`Self::pre_verb_hooks`] for a credential caller's call its host can
+    /// run again through the door it came in by: an ask saves `credential`'s
+    /// reference and pins its witness in the ask's own write, so settlement
+    /// resumes the call through the host's check, and a retry presenting the
+    /// same reference reads what it returned. With no check installed, or
+    /// `None`, only the caller's retry resumes it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors as they occur; a hook's own failure is never one.
+    pub fn pre_verb_hooks_for_credential(
+        &self,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        credential: Option<VerbAskCredential>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        let credential = credential.filter(|_| self.verb_hook_state.credential_check().is_some());
+        let resume = credential.as_ref().map(|credential| VerbResume::Credential {
+            reference: credential.reference().clone(),
+        });
+        let _witness =
+            credential::WitnessScope::enter(credential.map(VerbAskCredential::into_witness));
+        self.pre_verb_hooks_resumable(call, args, check, resume)
     }
 
     /// Runs the post chain over the verb's `result`: the caller's view after
