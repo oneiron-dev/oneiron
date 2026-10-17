@@ -688,6 +688,13 @@ fn backfill_answer(
             },
             &answer,
         )?;
+        super::arrival::watch_sources(
+            &vault.store,
+            txn,
+            question,
+            answer.unit,
+            &answer.decision.evidence,
+        )?;
         QUESTION_BACKFILL.put(
             &vault.store,
             txn,

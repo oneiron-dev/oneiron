@@ -224,6 +224,9 @@ pub fn edit_question(
             if !definition.refresh.on_arrival || !definition.units.contains(unit) {
                 super::arrival::PENDING.delete(&vault.store, txn, &(id, *unit))?;
             }
+            if !definition.units.contains(unit) {
+                super::arrival::unwatch_sources(&vault.store, txn, id, *unit)?;
+            }
         }
         let record = QuestionRecord {
             schema_version: 1,
