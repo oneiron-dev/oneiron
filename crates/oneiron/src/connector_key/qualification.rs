@@ -8,7 +8,8 @@ use std::time::Instant;
 mod receipt;
 use receipt::QualificationEvidence;
 pub use receipt::{
-    CONNECTOR_QUALIFICATION_SUITE, ConnectorQualificationReceipt, SETUP_CHECK_QUALIFICATION_SUITE,
+    CONNECTOR_QUALIFICATION_SUITE, ConnectorQualificationReceipt,
+    PROXY_ADMISSION_QUALIFICATION_SUITE, SETUP_CHECK_QUALIFICATION_SUITE,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
