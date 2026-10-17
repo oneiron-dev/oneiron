@@ -4784,6 +4784,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/lift_history/attempts.rs",
+     "purpose": "The attempt records (`job_records`), with the intake events their rows carry",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/lift_history/authored.rs",
      "purpose": "The authored carriers whose writers already mask a new write: an owner-policy ruling or proposal, an eval…",
      "surface": {
@@ -4797,7 +4807,17 @@
      "path": "src/batch/secret_scan/lift_history/carriers.rs",
      "purpose": "Carriers no door rewrites",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/loro_blocks.rs",
+     "purpose": "Loro blocks a carrier stores, read decompressed before the census scans them (OF-067)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -4805,9 +4825,12 @@
      "kind": "src",
      "notable": [
       "LiftCause",
+      "LiftCauseCount",
+      "LiftCloseReason",
       "LiftCounts",
       "LiftFamily",
       "LiftTrigger",
+      "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
       "SecretLiftReceipt",
@@ -4818,9 +4841,39 @@
      "purpose": "The historical lift sweep (OF-067; ARCH-0069 #mask-on-write)",
      "surface": {
       "crate-vis": 3,
-      "enum": 3,
-      "fn": 4,
-      "struct": 6
+      "enum": 4,
+      "fn": 8,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/notice.rs",
+     "purpose": "The needs-you notice of the lift proposals (OF-067)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/proposals.rs",
+     "purpose": "Closing a lift proposal (OF-067)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/record_text.rs",
+     "purpose": "Text a record keeps beside its body and the text it was indexed with, which the records census reads too…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -4830,7 +4883,7 @@
      "path": "src/batch/secret_scan/lift_history/records.rs",
      "purpose": "The entity table",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -4850,7 +4903,7 @@
      "path": "src/batch/secret_scan/lift_history/side_rows.rs",
      "purpose": "The side tables the catalog classes as authored",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -30820,7 +30873,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 29,
+      "crate-vis": 30,
       "enum": 3,
       "fn": 4,
       "re-export": 10,
@@ -38742,7 +38795,7 @@
      "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 2,
       "re-export": 1,
@@ -43526,7 +43579,7 @@
      "purpose": "Durable admission txn, attempt payload codec, dispatch handoff, and status reads",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 4,
       "fn": 11,
       "struct": 5,
@@ -43567,6 +43620,7 @@
      "path": "src/surface_event/mod.rs",
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)",
      "surface": {
+      "crate-vis": 1,
       "re-export": 5
      }
     },
@@ -48223,7 +48277,7 @@
      "path": "src/vault/entity_revision/pending_index.rs",
      "purpose": "Caller-supplied index inputs retained until atomic idle publication",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -51859,7 +51913,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 120,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53289,7 +53343,7 @@
    },
    "over_bar": 169,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3232,
+   "source_files": 3237,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66116,6 +66170,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/secret_lift_routes.rs",
+     "purpose": "`/v1/owner/secrets/lift*`: the owner's side of the historical lift sweep's proposals (OF-067)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/secret_reveal_routes.rs",
      "purpose": "`/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check)",
      "surface": {
@@ -71944,7 +72008,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 297,
+     "files": 298,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72331,7 +72395,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 589,
+   "source_files": 590,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72890,6 +72954,8 @@
       "LensSlot",
       "LensSlotDecision",
       "LiftCause",
+      "LiftCauseCount",
+      "LiftCloseReason",
       "LiftCounts",
       "LiftFamily",
       "LiftTrigger",
@@ -73155,6 +73221,7 @@
       "ScratchpadRecallReply",
       "ScratchpadRecallReplyLine",
       "ScratchpadRecallRequest",
+      "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
       "SecretLiftProposal",
@@ -73380,8 +73447,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 245,
-      "struct": 611
+      "enum": 246,
+      "struct": 613
      }
     },
     {
