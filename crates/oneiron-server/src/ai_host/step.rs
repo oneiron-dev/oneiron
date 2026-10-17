@@ -5,6 +5,11 @@
 //! (briefing, then each earlier step's output) as user messages. A first step
 //! with no context is asked its definition's own `desc`. No text is invented
 //! here; the output's raw bytes become the step's durable result.
+//!
+//! A step whose task fits one objective is also asked for its confession
+//! (OF-544, ARCH-0079): after a DONE line, one fenced block naming that
+//! objective, whether it was met, and any flaw or doubt. A step that gives
+//! none, or one that does not parse, records none.
 use std::collections::{BTreeMap, HashMap};
 
 use std::sync::{Arc, Mutex};
@@ -14,6 +19,7 @@ use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispat
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
+use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, LlmMessage,
     LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
@@ -24,6 +30,10 @@ use crate::models::ModelRuntime;
 
 /// The purpose a workflow step's calls are metered and routed under.
 const STEP_PURPOSE: &str = "workflow_step";
+/// The longest objective a confession names, in bytes: the seal's bound.
+const OBJECTIVE_MAX_BYTES: usize = 256;
+/// The fence that opens a step's confession block, after its DONE line.
+const CONFESSION_FENCE: &str = "```oneiron-confession";
 
 pub(super) struct StepRunner {
     /// Steps run on the generative role, admitted against the vault's live
@@ -48,6 +58,67 @@ pub(super) struct ModelStep<'a> {
     pub(super) purpose: &'a str,
     pub(super) messages: Vec<LlmMessage>,
     pub(super) response_format: ResponseFormat,
+}
+
+/// A step's raw output and, when it was asked for one and gave one that
+/// parses, its confession (OF-544).
+pub(super) struct StepOutput {
+    pub(super) bytes: Vec<u8>,
+    pub(super) confession: Option<Vec<ObjectiveConfession>>,
+}
+
+/// The objectives a step is asked to confess against: the one its task names,
+/// whitespace folded, when it fits a seal objective. The spawn's planned need
+/// comes first, then the step's briefing, then the definition's `desc` when
+/// that is what the step was asked. A task too long for one objective asks
+/// no confession: an objective is never cut or made up.
+fn step_objectives(step: &AgentDispatchStatus, request: Option<&str>) -> Vec<String> {
+    step.input
+        .plan
+        .as_ref()
+        .map(|plan| plan.asked.need.as_str())
+        .into_iter()
+        .chain(request)
+        .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .find(|text| !text.is_empty())
+        .filter(|text| text.len() <= OBJECTIVE_MAX_BYTES)
+        .into_iter()
+        .collect()
+}
+
+/// The ask for a confession against `objectives`, after the step's task.
+fn confession_ask(objectives: &[String]) -> String {
+    let listed = serde_json::to_string(objectives).unwrap_or_default();
+    format!(
+        "Objectives assigned to this attempt: {listed}\n\
+         When your result is complete, end it with a line that is exactly DONE, then one \
+         block fenced ```oneiron-confession holding \
+         {{\"objectives\":[{{\"objective\":\"<the assigned objective, copied exactly>\",\
+         \"met\":<true or false>,\"flaw\":<null or what is wrong>,\
+         \"uncertainty\":<null or what you are unsure of>}}]}} with one row per assigned \
+         objective, in order. Say plainly what you did not meet, any flaw and any doubt: a \
+         confession never costs the score. Nothing follows the closing fence."
+    )
+}
+
+/// The confession `output` ends with, when it is a DONE line, then one
+/// ```oneiron-confession block whose rows name exactly `objectives`, in
+/// order. Anything else is no confession.
+fn parse_confession(output: &[u8], objectives: &[String]) -> Option<Vec<ObjectiveConfession>> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Block {
+        objectives: Vec<ObjectiveConfession>,
+    }
+    let text = std::str::from_utf8(output).ok()?.trim_end();
+    let (head, block) = text.strip_suffix("```")?.rsplit_once(CONFESSION_FENCE)?;
+    let head = head.trim_end();
+    if head != "DONE" && !head.ends_with("\nDONE") {
+        return None;
+    }
+    let rows = serde_json::from_str::<Block>(block.trim()).ok()?.objectives;
+    let named = rows.iter().map(|row| &row.objective);
+    (rows.len() == objectives.len() && named.eq(objectives)).then_some(rows)
 }
 
 /// Why a step did not produce its output, and whether a later try of the
@@ -117,7 +188,7 @@ impl StepRunner {
         vault: &Vault,
         step: &AgentDispatchStatus,
         context: ResolvedContextProjection,
-    ) -> Result<Vec<u8>, StepFault> {
+    ) -> Result<StepOutput, StepFault> {
         let definition = &step.input.definition;
         let mut messages = Vec::new();
         if let Some(instructions) = definition
@@ -127,8 +198,9 @@ impl StepRunner {
         {
             messages.push(message(LlmMessageRole::System, instructions.clone()));
         }
-        if let Some(briefing) = context.briefing.filter(|text| !text.trim().is_empty()) {
-            messages.push(message(LlmMessageRole::User, briefing));
+        let briefing = context.briefing.filter(|text| !text.trim().is_empty());
+        if let Some(briefing) = &briefing {
+            messages.push(message(LlmMessageRole::User, briefing.clone()));
         }
         for earlier in &context.workflow_output_refs {
             let bytes = restore_output(vault, earlier.source)?;
@@ -137,10 +209,18 @@ impl StepRunner {
                 String::from_utf8_lossy(&bytes).into_owned(),
             ));
         }
-        if !messages.iter().any(|m| m.role == LlmMessageRole::User) {
+        let asked_desc = !messages.iter().any(|m| m.role == LlmMessageRole::User);
+        if asked_desc {
             messages.push(message(LlmMessageRole::User, definition.desc.clone()));
         }
-        self.generate(
+        let request = briefing
+            .as_deref()
+            .or(asked_desc.then_some(definition.desc.as_str()));
+        let objectives = step_objectives(step, request);
+        if !objectives.is_empty() {
+            messages.push(message(LlmMessageRole::User, confession_ask(&objectives)));
+        }
+        let bytes = self.generate(
             runtime,
             vault,
             ModelStep {
@@ -151,7 +231,13 @@ impl StepRunner {
                 messages,
                 response_format: ResponseFormat::Text,
             },
-        )
+        )?;
+        let confession = if objectives.is_empty() {
+            None
+        } else {
+            parse_confession(&bytes, &objectives)
+        };
+        Ok(StepOutput { bytes, confession })
     }
 
     pub(super) fn generate(
