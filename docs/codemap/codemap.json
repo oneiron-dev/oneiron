@@ -11248,7 +11248,7 @@
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
       "crate-vis": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -11557,6 +11557,8 @@
       "LeaderPatternFile",
       "LeaderPatternInput",
       "LeaderPatternOutput",
+      "LeaderSplitInput",
+      "LeaderSplitOutput",
       "MemoryClaimInput",
       "MemoryEdgeInput",
       "MemoryEdgeOutput",
@@ -11584,7 +11586,7 @@
       "const": 1,
       "enum": 7,
       "fn": 1,
-      "struct": 20
+      "struct": 22
      }
     },
     {
@@ -47153,7 +47155,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 10,
+      "fn": 12,
       "re-export": 23,
       "struct": 36
      }
@@ -47324,7 +47326,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 333
+      "fn": 334
      }
     },
     {
@@ -50446,7 +50448,7 @@
      "surface": {
       "crate-vis": 12,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -56703,7 +56705,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 48,
+      "const": 49,
       "crate-vis": 1
      }
     },
@@ -61894,7 +61896,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 286
+      "fn": 287
      }
     },
     {
@@ -61953,6 +61955,7 @@
       "NapiOutboundIntentReceipt",
       "NapiPendingWrite",
       "NapiQueryAffect",
+      "NapiQuoteSpan",
       "NapiReadReceipt",
       "NapiReadScope",
       "NapiRecallMedia",
@@ -61971,7 +61974,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 56
+      "struct": 57
      }
     },
     {
@@ -62911,7 +62914,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 287
+      "fn": 288
      }
     },
     {
@@ -65621,7 +65624,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -65771,7 +65774,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 53
+      "crate-vis": 54
      }
     },
     {
@@ -65792,6 +65795,16 @@
      "purpose": "The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/project_card_doors.rs",
+     "purpose": "The host door of the owner's project-card tap (OF-501): `vault.projects.confirm`",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72747,7 +72760,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 307,
+     "files": 308,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73141,7 +73154,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 608,
+   "source_files": 609,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -74127,6 +74140,7 @@
       "StepOutcome",
       "StopCause",
       "StoredShapeSeed",
+      "TaskAccept",
       "TaskAnswerRequest",
       "TaskAskAnswer",
       "TaskAskBranch",
@@ -74185,6 +74199,7 @@
       "TaskRow",
       "TaskStatusView",
       "TaskTerminalDisposition",
+      "TaskTtl",
       "TaskUpdateReceipt",
       "TaskUpdateRequest",
       "TaskWaitRequest",
@@ -74257,7 +74272,7 @@
      "purpose": "—",
      "surface": {
       "enum": 258,
-      "struct": 664
+      "struct": 666
      }
     },
     {

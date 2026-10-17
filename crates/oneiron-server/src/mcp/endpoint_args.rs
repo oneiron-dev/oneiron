@@ -292,10 +292,25 @@ pub struct McpVerbArguments {
     /// `tasks.create`'s typed assignee (OF-532), decoded with the input.
     #[serde(default)]
     pub assignee: Option<Value>,
+    /// `tasks.create`'s post key (OF-220): with `brief`, a post.
+    #[serde(default)]
+    pub intent_key: Option<String>,
+    /// `tasks.create`'s typed brief (OF-220), decoded with the input.
+    #[serde(default)]
+    pub brief: Option<Value>,
+    /// `tasks.create`'s absolute expiry, decoded with the input.
+    #[serde(default)]
+    pub ttl: Option<Value>,
+    /// `describe`'s task highway handle (OF-220), decoded with the input.
+    #[serde(default)]
+    pub handle: Option<Value>,
+    /// `describe`'s last observed status digest for its handle.
+    #[serde(default)]
+    pub after: Option<String>,
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 13] {
+    fn present_fields(&self) -> [(&'static str, bool); 18] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -310,6 +325,11 @@ impl McpVerbArguments {
             ("request", self.request.is_some()),
             ("label", self.label.is_some()),
             ("assignee", self.assignee.is_some()),
+            ("intent_key", self.intent_key.is_some()),
+            ("brief", self.brief.is_some()),
+            ("ttl", self.ttl.is_some()),
+            ("handle", self.handle.is_some()),
+            ("after", self.after.is_some()),
         ]
     }
 

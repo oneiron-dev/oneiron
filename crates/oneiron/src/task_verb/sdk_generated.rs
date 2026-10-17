@@ -180,6 +180,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
             (
+                "tasks.accept",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
+            ),
+            (
                 "vault.witness",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
@@ -1930,6 +1934,14 @@ pub fn mcp_arguments_schema_from_input(
                 "frame_epoch".to_owned(),
                 schema.pointer("/properties/frame_epoch")?.clone(),
             );
+            properties.insert(
+                "handle".to_owned(),
+                schema.pointer("/properties/handle")?.clone(),
+            );
+            properties.insert(
+                "after".to_owned(),
+                schema.pointer("/properties/after")?.clone(),
+            );
             &[]
         }
         "tasks.create" => {
@@ -1945,6 +1957,15 @@ pub fn mcp_arguments_schema_from_input(
                 "assignee".to_owned(),
                 schema.pointer("/properties/assignee")?.clone(),
             );
+            properties.insert(
+                "intent_key".to_owned(),
+                schema.pointer("/properties/intent_key")?.clone(),
+            );
+            properties.insert(
+                "brief".to_owned(),
+                schema.pointer("/properties/brief")?.clone(),
+            );
+            properties.insert("ttl".to_owned(), schema.pointer("/properties/ttl")?.clone());
             &["spec"]
         }
         "tasks.wave" => {
@@ -1983,6 +2004,17 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "task_ref".to_owned(),
+                schema.pointer("/properties/task_ref")?.clone(),
+            );
+            &["spec", "task_ref"]
+        }
+        "tasks.accept" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3865,6 +3897,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.update" => {
             let _input: TaskUpdateRequest = decode(value.clone())?;
         }
+        "tasks.accept" => {
+            let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
+        }
         "vault.witness" => {
             let input: crate::memory::WitnessTurn = decode(value.clone())?;
             crate::memory::caps::check_witness_turn(&input)?;
@@ -4859,6 +4894,7 @@ pub fn invoke(
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
+        "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
@@ -5656,6 +5692,8 @@ pub fn describe(
         Err(MemoryError::bad_request(
             "describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds",
         ))?
+    } else if input.handle.is_some() || input.after.is_some() {
+        crate::task_verb::sdk::describe_handle_status(memory, &input)?
     } else {
         memory.describe(
             input
@@ -5719,6 +5757,18 @@ pub fn tasks_update(
         &["/task_ref"],
     )?;
     memory.tasks_update_request(&input)
+}
+pub fn tasks_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAccept,
+) -> MemoryResult<crate::task_verb::TaskCallReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.accept",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.tasks_accept(input)
 }
 pub fn vault_witness(
     memory: &Memory<'_>,
