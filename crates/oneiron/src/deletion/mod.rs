@@ -132,9 +132,9 @@ pub(crate) use sweep_queue::{
     HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, encode_hard_erase_sweep_job,
     encode_hard_erase_sweep_key,
 };
-pub(crate) use tombstone::{
-    parse_window_label, pending_tombstone_key, window_label_from_timestamp,
-};
+#[cfg(test)]
+pub(crate) use tombstone::pending_tombstone_key;
+pub(crate) use tombstone::{parse_window_label, window_label_from_timestamp};
 
 // The flat deletion.rs module used to provide this name to the test module
 // through `use super::*`; after the directory split the seam re-imports it so

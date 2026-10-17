@@ -291,18 +291,20 @@ pub fn decode_tombstone_value(value: &[u8]) -> DecodedTombstoneValue {
 // (`sync::window::replay_pending_tombstones`) and then clears them.
 
 /// `sync_state` key prefix for pending-tombstone markers.
+#[cfg(test)]
 pub(crate) const PENDING_TOMBSTONE_PREFIX: &str = "pt:";
 
 /// Builds the `pt:{window}:{entity_hex}` marker key.
+#[cfg(test)]
 pub(crate) fn pending_tombstone_key(window_label: &str, id: &EntityId) -> String {
     format!("{PENDING_TOMBSTONE_PREFIX}{window_label}:{}", id.to_hex())
 }
 
 /// The typed pending-tombstone table `deletion/`'s own reads and writes go
 /// through; `pub(crate)` because `recovery/` also reads this deletion-owned
-/// marker while reconstructing a canonical snapshot. Other modules outside
-/// both slices keep using [`pending_tombstone_key`] plus their own raw
-/// `sync_state` access.
+/// marker while reconstructing a canonical snapshot. Other readers go through
+/// the window deletion-row port, or the sync layer's own binding of the same
+/// declaration.
 pub(crate) const PENDING_TOMBSTONE: SideTable<PendingTombstoneKey, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_PENDING_TOMBSTONE);
 

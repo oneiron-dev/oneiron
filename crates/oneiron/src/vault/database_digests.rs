@@ -2,6 +2,7 @@
 //! same writes can be held to, database by database.
 
 use crate::error::{Error, Result};
+use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::vault::Vault;
 
 impl Vault {
@@ -25,8 +26,17 @@ impl Vault {
         let txn = store.env.read_txn()?;
         let mut digests: Vec<(&'static str, [u8; 32])> = Vec::new();
         let mut job_meta: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        // A retrieval-index table, named `[IndexRows]`, is read through the inventory port; the
+        // rest straight from the store.
         macro_rules! digest {
-            ($($name:literal => $field:ident),* $(,)?) => {$(
+            (@rows $name:literal [$index:ident]) => {
+                store
+                    .port_index_rows(&txn, IndexRows::$index, |key, value| {
+                        (key.to_vec(), value.to_vec())
+                    })?
+                    .collect::<Result<Vec<_>>>()?
+            };
+            (@rows $name:literal $field:ident) => {{
                 let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
                 for row in store.$field.iter(&txn)? {
                     let (key, value) = row?;
@@ -40,6 +50,10 @@ impl Vault {
                         rows.push(row);
                     }
                 }
+                rows
+            }};
+            ($($name:literal => $source:tt),* $(,)?) => {$(
+                let rows = digest!(@rows $name $source);
                 digests.push(($name, digest_rows($name, rows)?));
             )*};
         }
@@ -49,14 +63,14 @@ impl Vault {
             "short_ids" => short_ids,
             "short_ids_reverse" => short_ids_reverse,
             "vault_meta" => vault_meta,
-            "vectors" => vectors,
-            "hnsw_neighbors" => hnsw_neighbors,
-            "hnsw_meta" => hnsw_meta,
-            "text_postings" => text_postings,
-            "text_meta" => text_meta,
-            "text_forward" => text_forward,
-            "text_bm25_field_stats" => text_bm25_field_stats,
-            "text_doc_field_lengths" => text_doc_field_lengths,
+            "vectors" => [Vectors],
+            "hnsw_neighbors" => [HnswNeighbors],
+            "hnsw_meta" => [HnswMeta],
+            "text_postings" => [TextPostings],
+            "text_meta" => [TextMeta],
+            "text_forward" => [TextForward],
+            "text_bm25_field_stats" => [TextBm25FieldStats],
+            "text_doc_field_lengths" => [TextDocFieldLengths],
             "edges_out" => edges_out,
             "edges_in" => edges_in,
             "ppr_cache" => ppr_cache,
@@ -65,8 +79,8 @@ impl Vault {
             "temporal_occurred_end" => temporal_occurred_end,
             "temporal_learned" => temporal_learned,
             "temporal_long_intervals" => temporal_long_intervals,
-            "phonetic_index" => phonetic_index,
-            "phonetic_forward" => phonetic_forward,
+            "phonetic_index" => [PhoneticIndex],
+            "phonetic_forward" => [PhoneticForward],
             "sync_state" => sync_state,
             "sync_queue" => sync_queue,
             "job_records" => attempt_records,

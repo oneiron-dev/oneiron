@@ -49,8 +49,7 @@ impl SyncServer {
         &self,
         key: &WindowKey,
     ) -> Result<Arc<LoadedWindow>, oneiron::Error> {
-        let snapshot_key = format!("d:w:{key}");
-        let had_snapshot = self.vault.sync_state_get(&snapshot_key)?.is_some();
+        let had_snapshot = server_state::window_snapshot_present(&self.vault, key)?;
         let window = self.reassert_manager.open_window(key)?;
 
         if !had_snapshot {

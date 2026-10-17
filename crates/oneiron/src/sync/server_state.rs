@@ -22,6 +22,7 @@ use super::loro_support::{doc_from_snapshot, doc_version_vector, export_snapshot
 use super::types::WindowKey;
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::sync::window_rows::{
     ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE, WINDOW_SHALLOW_FENCE,
     WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR, WINDOW_UPDATE, WINDOW_UPDATE_SEQ, WindowUpdateKey,
@@ -97,6 +98,16 @@ pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) ->
     })?;
 
     Ok(state)
+}
+
+/// Whether window `key` has a persisted snapshot (`d:w:{key}`), read in its own transaction
+/// without copying the snapshot.
+pub fn window_snapshot_present(vault: &Vault, key: &WindowKey) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .port_window_doc_with_raw(&rtxn, WindowAddress::new(key.as_str()), |_| Ok(()))?
+        .is_some())
 }
 
 /// Persists the root Doc snapshot inside the CALLER's write txn (ONE-1140).
@@ -177,7 +188,11 @@ pub fn persisted_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
     let rtxn = vault.store.env.read_txn()?;
 
     let mut keys = Vec::new();
-    for entry in WINDOW_SNAPSHOT.scan_keys(&vault.store, &rtxn, &[])? {
+    for entry in vault
+        .store
+        .port_window_doc_rows_raw(&rtxn, |window, _| window.as_str().to_owned())?
+        .collect::<Result<Vec<_>>>()?
+    {
         match WindowKey::try_new(entry.clone()) {
             Some(key) => keys.push(key),
             None => {

@@ -209,13 +209,12 @@ pub(crate) fn remove_local_replica_window_in_txn(
 /// `d:w:` snapshot, or a fresh document, with every `u:w:` row on top, as the
 /// manager's open path loads it.
 fn persisted_window_doc(store: &Store, txn: &RoTxn<'_>, window: &WindowKey) -> Result<LoroDoc> {
-    let doc = match WINDOW_SNAPSHOT.get(store, txn, &window.as_str().to_owned())? {
-        Some(snapshot) => doc_from_snapshot(&snapshot)?,
-        None => LoroDoc::new(),
-    };
-    for row in WINDOW_UPDATE.iter_from(store, txn, format!("{window}:").as_bytes())? {
-        let (_, update) = row?;
-        import_doc(&doc, &update)?;
+    let address = WindowAddress::new(window.as_str());
+    let doc = store
+        .port_window_doc_with_raw(txn, address, doc_from_snapshot)?
+        .unwrap_or_else(LoroDoc::new);
+    for row in store.port_window_updates(txn, address, |_, update| import_doc(&doc, update))? {
+        row??;
     }
     Ok(doc)
 }

@@ -185,9 +185,10 @@ pub fn prepare_replacement(
     let vv = doc_version_vector(&candidate);
     let stale_updates: Vec<_> = {
         let rtxn = vault.store.env.read_txn()?;
-        WINDOW_UPDATE
-            .iter_from(&vault.store, &rtxn, format!("{key}:").as_bytes())?
-            .filter_map(|row| row.ok().map(|(update, _)| update))
+        vault
+            .store
+            .port_window_updates(&rtxn, WindowAddress::new(key.as_str()), |update, _| update)?
+            .filter_map(Result::ok)
             .collect()
     };
     vault.with_write_txn_grouped(|wtxn| {

@@ -83,4 +83,47 @@ pub(crate) trait WindowDeletionRows: Transactions {
     where
         R: 'a,
         F: FnMut(&str, &[u8]) -> R + 'a;
+    /// The window document's updates in key order, each key decoded as the caller pulls it. A
+    /// key that does not decode is that row's error; `inspect` sees the value in place.
+    #[cfg(feature = "sync")]
+    fn port_window_updates<'a, R, F>(
+        &self,
+        txn: &'a Self::Read<'_>,
+        window: WindowAddress<'_>,
+        inspect: F,
+    ) -> Result<PortRows<'a, R>>
+    where
+        R: 'a,
+        F: FnMut(crate::sync::window_rows::WindowUpdateKey, &[u8]) -> R + 'a;
+    /// Every pending tombstone of every window in key order. `inspect` sees each full key and
+    /// value in place; no key is decoded, so a malformed key is still a row.
+    fn port_pending_tombstone_rows_raw<'a, R, F>(
+        &self,
+        txn: &'a Self::Read<'_>,
+        inspect: F,
+    ) -> Result<PortRows<'a, R>>
+    where
+        R: 'a,
+        F: FnMut(&str, &[u8]) -> R + 'a;
+    /// Every window document's snapshot in key order. `inspect` sees each label as stored and
+    /// the value in place; no label is checked.
+    fn port_window_doc_rows_raw<'a, R, F>(
+        &self,
+        txn: &'a Self::Read<'_>,
+        inspect: F,
+    ) -> Result<PortRows<'a, R>>
+    where
+        R: 'a,
+        F: FnMut(WindowAddress<'_>, &[u8]) -> R + 'a;
+    /// The full key of every window update in key order, or of one window's when `window` is
+    /// named. No key is decoded, so a malformed key is still a row.
+    fn port_window_update_keys<'a, R, F>(
+        &self,
+        txn: &'a Self::Read<'_>,
+        window: Option<WindowAddress<'_>>,
+        inspect: F,
+    ) -> Result<PortRows<'a, R>>
+    where
+        R: 'a,
+        F: FnMut(&str) -> R + 'a;
 }

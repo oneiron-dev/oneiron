@@ -19,6 +19,7 @@ use super::window_rows::{
 };
 use crate::Vault;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use loro::{LoroDoc, Subscription};
 
 mod admission;
@@ -296,8 +297,9 @@ pub(crate) fn write_window_svf_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     key: &WindowKey,
 ) -> Result<()> {
-    let has_pending = WINDOW_UPDATE
-        .iter_from(&vault.store, wtxn, format!("{key}:").as_bytes())?
+    let has_pending = vault
+        .store
+        .port_window_updates(wtxn, WindowAddress::new(key.as_str()), |_, _| ())?
         .next()
         .transpose()?
         .is_some();
@@ -384,11 +386,19 @@ pub(crate) fn merge_persisted_state_into_doc(
     let mut blobs: Vec<Vec<u8>> = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        if let Some(state) = WINDOW_SNAPSHOT.get(&vault.store, &rtxn, &key.as_str().to_owned())? {
+        let address = WindowAddress::new(key.as_str());
+        if let Some(state) = vault
+            .store
+            .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?
+        {
             blobs.push(state);
         }
-        for (update_key, blob) in
-            WINDOW_UPDATE.scan_from(&vault.store, &rtxn, format!("{key}:").as_bytes())?
+        for (update_key, blob) in vault
+            .store
+            .port_window_updates(&rtxn, address, |update_key, blob| {
+                (update_key, blob.to_vec())
+            })?
+            .collect::<Result<Vec<_>>>()?
         {
             update_keys.push(
                 String::from_utf8(WINDOW_UPDATE.key_bytes(&update_key))
@@ -407,8 +417,11 @@ pub(crate) fn merge_persisted_state_into_doc(
 pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
 
-    let state = WINDOW_SNAPSHOT
-        .get(&vault.store, &rtxn, &key.as_str().to_owned())?
+    let state = vault
+        .store
+        .port_window_doc_with_raw(&rtxn, WindowAddress::new(key.as_str()), |raw| {
+            Ok(raw.to_vec())
+        })?
         .ok_or_else(|| {
             Error::Sync(SyncError::WindowNotFound {
                 window_key: key.as_str().to_string(),
@@ -444,11 +457,14 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 /// helpers are invisible to integration-test crates.
 pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
+    let address = WindowAddress::new(key.as_str());
     // Lazy prefix iterator (B-tree range seek); `{seq:08x}` keys sort in order.
     let mut applied = 0u32;
-    for entry in WINDOW_UPDATE.iter_from(&vault.store, &rtxn, format!("{key}:").as_bytes())? {
-        let (_, v) = entry?;
-        import_doc(doc, &v)?;
+    for entry in vault
+        .store
+        .port_window_updates(&rtxn, address, |_, v| import_doc(doc, v))?
+    {
+        entry??;
         applied += 1;
     }
     Ok(applied)

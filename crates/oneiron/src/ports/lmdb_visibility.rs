@@ -1,5 +1,5 @@
 //! Transaction-local visibility ledger for canonical and composed session views.
-use super::{DeletionMarker, DeletionState, TombstoneStoreRead};
+use super::{DeletionMarker, DeletionState, TombstoneStoreRead, WindowAddress, WindowDeletionRows};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result, store::ManifestDbs};
 use heed::RoTxn;
@@ -96,9 +96,7 @@ pub(crate) fn removed_in_txn(
                 // A local delete whose publication is pending.
                 Some(raw) => {
                     let window = crate::deletion::deletion_window_for_row(dbs, txn, id, &raw)?;
-                    dbs.sync_state()
-                        .get(txn, &crate::deletion::pending_tombstone_key(&window, id))?
-                        .is_some()
+                    dbs.port_pending_tombstone_present(txn, WindowAddress::new(&window), id)?
                 }
                 None => false,
             },

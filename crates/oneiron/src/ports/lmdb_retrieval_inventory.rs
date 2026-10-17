@@ -10,11 +10,13 @@ fn table(dbs: &impl ManifestDbs, rows: IndexRows) -> &OverlayDb {
     match rows {
         IndexRows::Vectors => dbs.vectors(),
         IndexRows::HnswNeighbors => dbs.hnsw_neighbors(),
+        IndexRows::HnswMeta => dbs.hnsw_meta(),
         IndexRows::TextPostings => dbs.text_postings(),
         IndexRows::TextMeta => dbs.text_meta(),
         IndexRows::TextForward => dbs.text_forward(),
         IndexRows::TextBm25FieldStats => dbs.text_bm25_field_stats(),
         IndexRows::TextDocFieldLengths => dbs.text_doc_field_lengths(),
+        IndexRows::PhoneticIndex => dbs.phonetic_index(),
         IndexRows::PhoneticForward => dbs.phonetic_forward(),
     }
 }
