@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 208 facade rows, 706 declarations.
+Census: 208 facade rows, 708 declarations.
 Inputs: 181 of 208 fully typed, 26 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 168 of 208 fully typed, 32 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 46; unread shapes: 1.
@@ -519,6 +519,12 @@ class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
+MediaQueryKind = Literal["text", "image", "audio"]
+class ContextPackMediaQuery(TypedDict):
+    space: str
+    mime: str
+    bytes_b64: str
+    kinds: NotRequired[list[MediaQueryKind]]
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -527,6 +533,7 @@ class RecallRequest(TypedDict):
     format: NotRequired[str | None]
     as_of: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
+    media: NotRequired[ContextPackMediaQuery | None]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -3211,7 +3218,8 @@ class QuestionCriteria(TypedDict):
 QuestionAudience = Literal["asker"]
 HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class QuestionMedia(TypedDict):
-    images: bool
+    images: NotRequired[bool]
+    audio: NotRequired[bool]
 class QuestionDefinition(TypedDict):
     question: DecisionQuestion
     adapter: str
