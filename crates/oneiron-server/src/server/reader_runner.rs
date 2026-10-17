@@ -17,6 +17,7 @@
 //! Each child runs on its own thread with its own reactor, as `execute_code`
 //! does: a fresh sandbox, a dispatcher bound to its job, a door that admits
 //! only its report and its reads, and a backend that spends on its own child
+//! scope, or on the host's code-mode meter when its run spends under no
 //! scope. It stops at its cutoff and settles as its run ended. An off-record
 //! session's children run in its overlay and are not restart-durable: the
 //! overlay evaporates.
@@ -30,7 +31,8 @@ use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
-    ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, RunDeadline,
+    ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
+    RunDeadline,
     SUMMARY_READ_BYTES_PER_TOKEN, SpawnHostSeat, SummarizeRecipe, SummaryRead, reader_task_brief,
     summarize_input, summarize_prompt, summary_exceeds_window, summary_token_budget,
 };
@@ -69,13 +71,6 @@ const SUMMARY_PURPOSE_NAME: &str = "code-reader-summary";
 /// `self.context` and `self.think`, and its reads: the engine's own word.
 pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 
-/// The root scope a code run's launch opens under the run's own id.
-/// `execute_code` carries no shown maximum and opens none, so its spawns
-/// answer `reader_spawn_unmetered` until a host opens one.
-pub(crate) fn run_launch_scope(run: EntityId) -> Option<SpendScopeId> {
-    SpendScopeId::launch(format!("code-run:{}", run.to_hex())).ok()
-}
-
 /// The seats hosts lend their runs to spawn readers under, and where each
 /// parent run's caller sits, as its host noted it at the run's last entry.
 pub(crate) struct ReaderSeats {
@@ -93,24 +88,26 @@ impl ReaderSeats {
         }
     }
 
-    /// The seat run `run` spawns its children under. `spend` is the scope
-    /// they spend under; one that is not open answers every spawn
-    /// `reader_spawn_unmetered`. Their clock is one window from now, which
-    /// the run's first spawn fixes. `caller` is where the run's caller sits,
-    /// noted for its children's reads. `window_tokens` is the input window
-    /// of the model its children and summaries run on, when its host knows
-    /// it.
+    /// The seat run `run` spawns its children under. `scope` is the scope
+    /// the run's own model calls spend under, if any, and
+    /// [`ReaderSpend::for_run_scope`] picks what its children spend on from
+    /// it: under that scope, where one that is not open answers every spawn
+    /// `reader_spawn_unmetered`, else on the host's meter. Their clock is
+    /// one window from now, which the run's first spawn fixes. `caller` is
+    /// where the run's caller sits, noted for its children's reads.
+    /// `window_tokens` is the input window of the model its children and
+    /// summaries run on, when its host knows it.
     pub(crate) fn seat(
         &self,
         run: EntityId,
-        spend: SpendScopeId,
+        scope: Option<SpendScopeId>,
         caller: CallerLocality,
         window_tokens: Option<u64>,
     ) -> SpawnHostSeat {
         let now = unix_millis_now();
         lock(&self.callers).insert(run, (caller, now));
         SpawnHostSeat {
-            spend,
+            spend: ReaderSpend::for_run_scope(scope),
             deadline: RunDeadline::with_default_reserve(
                 now.saturating_add(DEFAULT_READER_WINDOW_MS),
                 now,
@@ -473,10 +470,9 @@ impl Child {
         }
     }
 
-    /// Runs the child on its own child scope's meter: its backend spends on
-    /// a guard of what the scope may still spend, and what the guard used is
-    /// recorded on the scope once the run ends. A summary job makes its one
-    /// model call instead of a run.
+    /// Runs the child, or a summary job's one model call, on its meter
+    /// ([`Child::meter`]), and records what it used on its child scope once
+    /// the run ends when it spends under one.
     fn metered(
         &self,
         vault: &Vault,
@@ -484,14 +480,9 @@ impl Child {
         door: Arc<dyn AgentVerbDoor>,
     ) -> ReaderRunEnd {
         let job = &self.job;
-        let scope = SpendScopeId::for_attempt(&job.attempt);
-        let spend = AgentDispatcher::new(vault);
-        let guard = match spend.guard_for_scope(&scope) {
-            Ok(guard) => guard,
-            Err(error) => {
-                tracing::warn!(%error, task = %job.task.to_hex(), "a reader child's meter did not open");
-                return ReaderRunEnd::Failed("reader_meter_failed".to_owned());
-            }
+        let (guard, recorded) = match self.meter(vault) {
+            Ok(meter) => meter,
+            Err(end) => return end,
         };
         let Some(backend) = self.provider.reader_backend(guard.clone()) else {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
@@ -511,10 +502,38 @@ impl Child {
                 *window_tokens,
             ),
         };
-        if let Err(error) = spend.record_guard_spend(&scope, guard.read().used_units) {
+        if let Some(scope) = recorded
+            && let Err(error) =
+                AgentDispatcher::new(vault).record_guard_spend(&scope, guard.read().used_units)
+        {
             tracing::warn!(%error, task = %job.task.to_hex(), "a reader child's spend was not recorded");
         }
         end
+    }
+
+    /// The guard a child's model calls spend on, and the child scope what it
+    /// used is recorded on afterwards. Under a scope: a guard of what its
+    /// own child scope may still spend. On the host's meter: the host's
+    /// shared guard, which settles each call itself as it does the parent's,
+    /// so nothing is recorded after; a provider with none to lend fails the
+    /// child `reader_meter_unbound`.
+    fn meter(&self, vault: &Vault) -> Result<(BudgetGuard, Option<SpendScopeId>), ReaderRunEnd> {
+        let job = &self.job;
+        if job.binding.spend.scope().is_none() {
+            return self
+                .provider
+                .host_meter()
+                .map(|guard| (guard, None))
+                .ok_or_else(|| ReaderRunEnd::Failed("reader_meter_unbound".to_owned()));
+        }
+        let scope = SpendScopeId::for_attempt(&job.attempt);
+        match AgentDispatcher::new(vault).guard_for_scope(&scope) {
+            Ok(guard) => Ok((guard, Some(scope))),
+            Err(error) => {
+                tracing::warn!(%error, task = %job.task.to_hex(), "a reader child's meter did not open");
+                Err(ReaderRunEnd::Failed("reader_meter_failed".to_owned()))
+            }
+        }
     }
 
     /// The child's run: a fresh sandbox and a dispatcher bound to its job
