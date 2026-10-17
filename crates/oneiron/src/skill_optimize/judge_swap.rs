@@ -3,7 +3,10 @@
 //! judgments hold. While the incumbent still answers, the Coach retests it on
 //! its own kept cases, so its retest noise is measured before a swap needs
 //! it. When another judge answers, that judge scores the incumbent's kept
-//! cases again. It takes over only when its divergence, grouped by source
+//! cases again. Each retest keeps both of the incumbent's answers beside its
+//! marker: a flip, one case answered two ways, is the judge's own uncertainty,
+//! and the Coach's calibration pass puts it to a person as an A/B ask. It
+//! takes over only when its divergence, grouped by source
 //! family, stays within the incumbent's noise or the owner's pinned rate; its
 //! overlap scores then fit the conversion that carries the incumbent's scored
 //! history onto its scale. Too few cases or no measured noise reads unknown,
@@ -102,6 +105,20 @@ pub struct JudgeShadowAnswer {
     /// The judge that answered, `model@version`.
     pub judge: String,
     pub answer: DecisionAnswer,
+}
+
+/// One retest, kept under its case's marker: the incumbent's kept answer and
+/// its answer when asked again. Two answers that do not agree are a flip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct JudgeRetestMark {
+    pub(crate) case_ref: String,
+    /// The skill the case judged, as hex: a pick on a flip is a label in that
+    /// skill's judge anchor.
+    pub(crate) skill: Option<String>,
+    pub(crate) kept: JudgeShadowAnswer,
+    pub(crate) rerun: JudgeShadowAnswer,
+    pub(crate) agreed: bool,
+    pub(crate) at: u64,
 }
 
 /// What the host lends the Coach: its kept judgments, the judge that answers
@@ -389,6 +406,7 @@ fn retest(
         if again.judge != incumbent {
             break;
         }
+        let agreed = agree(&case.answer, &again.answer);
         record_retest(
             vault,
             &Retest {
@@ -398,12 +416,26 @@ fn retest(
                 type_ref: None,
                 receipt: format!("judge-retest:{}", case.case_ref),
                 first: RetestScore::Pass(true),
-                second: RetestScore::Pass(agree(&case.answer, &again.answer)),
+                second: RetestScore::Pass(agreed),
                 at: now,
             },
             now,
         )?;
-        vault.sync_state_put(&key, &now.to_be_bytes())?;
+        save(
+            vault,
+            &key,
+            &JudgeRetestMark {
+                case_ref: case.case_ref.clone(),
+                skill: judged_skill(&case.state),
+                kept: JudgeShadowAnswer {
+                    judge: case.judge.clone(),
+                    answer: case.answer.clone(),
+                },
+                rerun: again,
+                agreed,
+                at: now,
+            },
+        )?;
         retests += 1;
     }
     Ok(JudgeSwapReport::Retested {
@@ -1056,7 +1088,11 @@ fn tradeoff_answer(vault: &Vault, proposal: &str, digest: &str) -> Result<Option
                 return None;
             }
             match verdict.disposition {
-                SkillEditDisposition::AcceptedTradeoff => Some("approve".to_owned()),
+                // A deferral carries a resolution only when it deferred an
+                // approval.
+                SkillEditDisposition::AcceptedTradeoff
+                | SkillEditDisposition::DeferredCycleCap
+                | SkillEditDisposition::DeferredJudgeCadence => Some("approve".to_owned()),
                 SkillEditDisposition::RejectedTradeoff => Some("reject".to_owned()),
                 _ => None,
             }
@@ -1282,6 +1318,52 @@ pub(crate) fn swap_case_ask(
     };
     let campaign = label_campaign(&pair_tag(&swap.from_judge, &swap.to_judge));
     Some((skill, campaign, [label_option(first), label_option(second)]))
+}
+
+/// The judge a label option names: the inverse of [`label_option`]. `None`
+/// for an option no judge answer wrote.
+pub(crate) fn label_judge(option: &str) -> Option<&str> {
+    option.split_once(": ").map(|(judge, _)| judge)
+}
+
+/// The incumbent's retest flips, newest first: each a kept case it answered
+/// one way and, asked again, another.
+///
+/// # Errors
+///
+/// Storage errors; a kept marker that does not decode.
+pub(crate) fn judge_retest_flips(vault: &Vault) -> Result<Vec<JudgeRetestMark>> {
+    let mut flips = Vec::new();
+    for key in vault.sync_state_keys_with_prefix(RETESTED_PREFIX)? {
+        if let Some(mark) = load::<JudgeRetestMark>(vault, &key)?
+            && !mark.agreed
+        {
+            flips.push(mark);
+        }
+    }
+    flips.sort_by_key(|mark| std::cmp::Reverse(mark.at));
+    Ok(flips)
+}
+
+/// The calibration ask a retest flip raises, the judge's uncertainty on one
+/// case: the skill whose anchor the pick joins, the judge's retest campaign,
+/// and its two answers as options, the kept one first. Its evidence is the
+/// case's ref. `None` for an agreeing retest or a case that names no skill.
+pub(crate) fn retest_flip_ask(flip: &JudgeRetestMark) -> Option<(EntityId, String, [String; 2])> {
+    if flip.agreed {
+        return None;
+    }
+    let skill = flip
+        .skill
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())?;
+    let judge = blake3::hash(flip.kept.judge.as_bytes()).to_hex();
+    let campaign = format!("judge_retest:{}", &judge[..32]);
+    Some((
+        skill,
+        campaign,
+        [label_option(&flip.kept), label_option(&flip.rerun)],
+    ))
 }
 
 /// The same answer, or two scores within [`SCORE_AGREEMENT`].
