@@ -282,6 +282,20 @@ export class Oneiron {
       outcomes: (input: Facade.SharedVaultRequest): Facade.SharedActOutcome[] => this.#call(() => this.#client.vaultSharedOutcomes(input) as Facade.SharedActOutcome[]),
       /** The executed delete-the-vault act, if any. */
       deletion: (input: Facade.EmptyRequest = {}): Facade.SharedVaultDeletion | null => this.#call(() => this.#client.vaultSharedDeletion(input) as Facade.SharedVaultDeletion | null),
+      /** A holder of a pending shared act's objector role objects inside its veto window. */
+      object: (input: Facade.SharedActRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedObject(input) as Facade.PendingAuthorityAct),
+      /** The holder withdraws their objection; past the deadline the last withdrawal releases the act. */
+      withdraw_objection: (input: Facade.SharedActRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedWithdrawObjection(input) as Facade.PendingAuthorityAct),
+      /** The caller's own notices of shared acts started in the vault. */
+      started: (input: Facade.SharedVaultRequest): Facade.PendingActStarted[] => this.#call(() => this.#client.vaultSharedStarted(input) as Facade.PendingActStarted[]),
+      /** The caller's own notices of shared acts whose veto window has passed. */
+      matured: (input: Facade.SharedVaultRequest): Facade.PendingActMatured[] => this.#call(() => this.#client.vaultSharedMatured(input) as Facade.PendingActMatured[]),
+      /** A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing. */
+      erase_ask: (input: Facade.SharedEraseAskRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedEraseAsk(input) as Facade.SharedEraseAsk),
+      /** The erase asks the caller may see: every ask for an Owner, their own for anyone else. */
+      erase_asks: (input: Facade.SharedVaultRequest): Facade.SharedEraseAsk[] => this.#call(() => this.#client.vaultSharedEraseAsks(input) as Facade.SharedEraseAsk[]),
+      /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */
+      close_erase_ask: (input: Facade.SharedEraseAskCloseRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedCloseEraseAsk(input) as Facade.SharedEraseAsk),
     },
     members: {
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
