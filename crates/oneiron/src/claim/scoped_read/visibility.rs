@@ -310,16 +310,14 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
-        let deletion = match self.session_view {
-            Some(view) => crate::ports::TombstoneStoreRead::port_deletion_state(view, rtxn, id)?,
-            None => crate::ports::TombstoneStoreRead::port_deletion_state(self.vault, rtxn, id)?,
-        };
         // A non-CLAIM body carries its own `stale: true` once withdrawn; a
-        // CLAIM's staleness is judged by its claim read below.
-        if deletion.deleted
-            || deletion.stale
-            || (header.entity_type != ENTITY_TYPE_CLAIM
-                && crate::ports::body_is_stale(&raw[ENTITY_METADATA_HEADER_LEN..]))
+        // CLAIM's staleness is judged by its claim read below. A recorded
+        // source that no longer stands withdraws the row, the owner's too.
+        let readable = match self.session_view {
+            Some(view) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
+            None => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
+        };
+        if !readable
             || self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some()
             || (raw.len() == ENTITY_METADATA_HEADER_LEN
                 && self
