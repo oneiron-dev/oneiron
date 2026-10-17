@@ -248,7 +248,7 @@ you want to act as instead.
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
-| `handle.vault.receipts(limit?)` | `FacadeReceipt[]` |
+| `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
 Every other verb in the SDK verb table sits at its SDK path on the handle
 (`handle.vault.people.list(input)`, `handle.self.memory.diary(input)`, ...).
@@ -264,9 +264,13 @@ declarations ship in `@oneiron/client` and, as TypedDicts, in the Python stubs.
 default `"medium"`), `scope` (`{ worldRef?, facet?, kinds? }`), `limit` (default
 `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `asOf` (Unix seconds
 the query's time words resolve against; default now), `deadlineMs` (1 to
-60000) and `media` (`{ space, mime, bytesB64, kinds? }`: bytes the server embeds
+60000), `media` (`{ space, mime, bytesB64, kinds? }`: bytes the server embeds
 into that declared space and searches beside the query, at medium effort or
-above; an embedded client returns `MODEL_UNAVAILABLE`). `kinds` lists the registry kinds to return; unset returns every kind but
+above; an embedded client returns `MODEL_UNAVAILABLE`) and `queryAffect`
+(`{ valence, arousal, dominance }`: the affect the query is asked in, valence
+-1 to 1, arousal and dominance 0 to 1; emotion congruence ranks each item by how
+near its own affect sits, embedded and remote alike; out of range returns
+`BAD_REQUEST`). `kinds` lists the registry kinds to return; unset returns every kind but
 conversations, sessions, facets and worlds. `high`, `xhigh` and `max` need
 a budget lease this package never mints: an embedded client returns `LEASE_REQUIRED`;
 a remote one gets what the server serves (reranked on its `[models]` reranker, or

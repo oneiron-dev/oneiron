@@ -519,11 +519,17 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (limit=None))]
-    fn vault_receipts(&self, py: Python<'_>, limit: Option<usize>) -> PyResult<String> {
+    #[pyo3(signature = (limit=None, kinds=None))]
+    fn vault_receipts(
+        &self,
+        py: Python<'_>,
+        limit: Option<usize>,
+        kinds: Option<Vec<String>>,
+    ) -> PyResult<String> {
         let limit = limit.unwrap_or(100);
+        let kinds = kinds.unwrap_or_default();
         let output = py
-            .detach(|| self.inner.vault_receipts(limit))
+            .detach(|| self.inner.vault_receipts(limit, &kinds))
             .map_err(raise)?;
         encode(&output)
     }

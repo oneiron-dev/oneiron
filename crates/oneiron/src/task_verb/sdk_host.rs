@@ -214,6 +214,28 @@ pub struct AiCallRequest {
     pub references: Vec<AiPart>,
     #[serde(default)]
     pub params: BTreeMap<String, serde_json::Value>,
+    /// A speech call's voice; the provider's default when absent. Any
+    /// other call that names one is refused.
+    #[serde(default)]
+    pub voice: Option<AiVoice>,
+}
+
+/// The voice an `ai.speech` call names (OF-410): a provider's stock voice
+/// by its name, or a banked identity. A banked voice renders on the first
+/// rung of the call's ladder whose target holds its current clone or
+/// reference, and on that rung alone; with none, or once withdrawn, the call
+/// is refused rather than spoken in another voice (ARCH-0061 §5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AiVoice {
+    /// A provider's own voice, by its name.
+    Stock { name: String },
+    /// A banked identity, rendered as its clone on the call's target.
+    Bank {
+        voice_id: String,
+        #[serde(default)]
+        include_generated: bool,
+    },
 }
 
 /// One `ai.*` call's answer: the model that answered, its parts, and what
@@ -271,7 +293,8 @@ pub struct AiVideoJobRequest {
     pub job: String,
 }
 
-/// Where a video job stands; a finished one answers with its clip, once.
+/// Where a video job stands; a finished one answers with its clip on every
+/// poll until `ai.video.cancel` deletes it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AiVideoJob {

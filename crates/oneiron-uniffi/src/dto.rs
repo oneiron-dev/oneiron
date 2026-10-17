@@ -273,12 +273,14 @@ pub struct PendingWrite {
     pub dreamer_run_id: Option<String>,
 }
 
-/// One gate decision receipt.
+/// One governance receipt: a gate decision, or a receipt of another family.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct FacadeReceipt {
-    /// Stable decision ref.
+    /// Stable ref (`gate:<decision-hex>`, or the family receipt's id).
     pub receipt_ref: String,
-    /// Gate outcome.
+    /// The receipt family kind (`gate`, `hook`, `outbound`, ...).
+    pub kind: String,
+    /// Gate outcome; the receipt's own outcome for another kind.
     pub outcome: String,
     /// Unix seconds.
     pub created_at: i64,
@@ -292,6 +294,10 @@ pub struct FacadeReceipt {
     pub content_kind: String,
     /// 32-hex id of the claim the decision covers, if any.
     pub claim_ref: Option<String>,
+    /// A family receipt's own fields (a hook run's hook, CODE id, body hash
+    /// and run key), with its trigger, job and principal refs. Empty on a
+    /// gate-ledger row.
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 // ── entities and graph ──────────────────────────────────────────────────

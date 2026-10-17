@@ -141,6 +141,7 @@ class MemoryPack(TypedDict):
 
 class FacadeReceipt(TypedDict):
     receipt_ref: str
+    kind: str
     outcome: str
     created_at: int
     reason_codes: list[str]
@@ -148,6 +149,7 @@ class FacadeReceipt(TypedDict):
     actor_ref: str | None
     content_kind: str
     claim_ref: str | None
+    fields: NotRequired[dict[str, str]]
 
 
 class KeyValueAddress(TypedDict):
@@ -493,7 +495,7 @@ class Oneiron:
         def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
             """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
     class _VaultReceiptsVerbs:
-        def __call__(self, limit: int = 100) -> list[FacadeReceipt]: ...
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
     class _VaultImagesVerbs:
@@ -979,7 +981,7 @@ class Oneiron:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""
         def poll(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoJob:
-            """Where a video job stands; a finished one answers with its clip, once."""
+            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
         def cancel(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoCancelled:
             """Stops a video job at its provider."""
     class _ConnectorVerbs:

@@ -137,12 +137,14 @@ pub struct NapiPendingWrite {
     pub dreamer_run_id: Option<String>,
 }
 
-/// One gate decision receipt.
+/// One governance receipt: a gate decision, or a receipt of another family.
 #[napi(object)]
 pub struct NapiGateReceipt {
-    /// `gate:<hex>`.
+    /// `gate:<hex>`, or the family receipt's id.
     pub receipt_ref: String,
-    /// `allow` | `pending` | `deny`.
+    /// The receipt family kind (`gate`, `hook`, `outbound`, ...).
+    pub kind: String,
+    /// `allow` | `pending` | `deny`; the receipt's own outcome for another kind.
     pub outcome: String,
     /// Unix seconds.
     pub created_at: i64,
@@ -156,6 +158,10 @@ pub struct NapiGateReceipt {
     pub content_kind: String,
     /// 32-hex claim id, if any.
     pub claim_ref: Option<String>,
+    /// A family receipt's own fields (a hook run's hook, CODE id, body hash
+    /// and run key), with its trigger, job and principal refs. Empty on a
+    /// gate-ledger row.
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 /// Typed entity view.

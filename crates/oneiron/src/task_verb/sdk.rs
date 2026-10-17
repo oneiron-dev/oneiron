@@ -542,7 +542,14 @@ pub fn wrong_root_in(
             .filter(|rest| !rest.is_empty())
         {
             let replacement = format!("{root}{rest}");
-            let schema_ref = verb_schema_ref(&replacement);
+            // A dynamic connector tool (`connector.<name>.<tool>`) is no row
+            // of its own: the guest's proxy sends it as `connector.call`
+            // (ONE-2510), so its correction names that row's schema.
+            let schema_ref = if served.clone().any(|verb| verb == replacement) {
+                verb_schema_ref(&replacement)
+            } else {
+                verb_schema_ref(AgentVerb::ConnectorCall.as_str())
+            };
             return Some(MemoryError::wrong_root(attempted, replacement, schema_ref));
         }
     }

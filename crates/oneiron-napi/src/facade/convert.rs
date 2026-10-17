@@ -282,6 +282,7 @@ pub(super) fn gate_receipt_from_engine(
 ) -> BoundaryResult<NapiGateReceipt> {
     Ok(NapiGateReceipt {
         receipt_ref: record.receipt_ref,
+        kind: record.kind,
         outcome: record.outcome,
         created_at: ts_from_engine(record.created_at, "created_at")?,
         reason_codes: record.reason_codes,
@@ -289,6 +290,7 @@ pub(super) fn gate_receipt_from_engine(
         actor_ref: record.actor_ref,
         content_kind: record.content_kind,
         claim_ref: record.claim_ref,
+        fields: record.fields.into_iter().collect(),
     })
 }
 

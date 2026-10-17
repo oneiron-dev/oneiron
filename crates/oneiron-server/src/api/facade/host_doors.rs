@@ -14,7 +14,7 @@ use std::sync::Arc;
 use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest, Modality};
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use oneiron::runtime_hooks::HookVerdict;
 use oneiron::task_verb::sdk::{
@@ -22,6 +22,7 @@ use oneiron::task_verb::sdk::{
     AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, HookReplayRow,
     HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
+use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId, FatalLlmError, LlmError,
     ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
@@ -33,6 +34,7 @@ use oneiron::task_verb::sdk::{
     PackSetupAnswerRequest, PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
+use crate::api::ai::{VoiceRefusal, bind_voice};
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
 use crate::server::SyncServer;
@@ -234,14 +236,15 @@ pub(crate) async fn ai_options(
     })
 }
 
-/// One media call's answer, from its seat's ladder.
+/// One media call's answer, from its seat's ladder. A banked voice
+/// withdrawn or re-recorded while it rendered is not handed back.
 async fn answered(
     server: &SyncServer,
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
-    let request = admit(server, auth, operation, input)?;
+    let (request, binding) = admit(server, auth, operation, input)?;
     let response = server
         .ai
         .model_runtime()
@@ -249,6 +252,13 @@ async fn answered(
         .run(request)
         .await
         .map_err(|error| failure(operation, &error))?;
+    if binding.is_some_and(|binding| !binding.is_current(&server.vault)) {
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "the voice was withdrawn or its clone replaced while it rendered",
+            &["Provision the voice again, then repeat the call."],
+        ));
+    }
     Ok(response.into())
 }
 
@@ -261,7 +271,7 @@ pub(crate) async fn ai_image(
     answered(server, auth, AiOperation::Image, input).await
 }
 
-/// `ai.speech`: speech audio out of text.
+/// `ai.speech`: speech audio out of text, in the voice the call names.
 pub(crate) async fn ai_speech(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -294,7 +304,7 @@ pub(crate) async fn ai_video(
     auth: &CoreAuth,
     input: AiCallRequest,
 ) -> MemoryResult<AiVideoTicket> {
-    let request = admit(server, auth, AiOperation::Video, input)?;
+    let (request, _) = admit(server, auth, AiOperation::Video, input)?;
     let ticket = server
         .ai
         .model_runtime()
@@ -310,7 +320,7 @@ pub(crate) async fn ai_video(
 }
 
 /// `ai.video.poll`: where a video job stands; a finished one answers with
-/// its clip, once.
+/// its clip on every poll until `ai.video.cancel` deletes it.
 pub(crate) async fn ai_video_poll(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -595,13 +605,14 @@ pub(super) fn internal(verb: &str) -> MemoryError {
 }
 
 /// The owner's call of `operation`, admitted against the vault's inference
-/// policy for the model it names, ready for its seat's ladder.
+/// policy for the model it names, ready for its seat's ladder, with the
+/// banked voice it renders in, if any (bound as `/v1/ai/speech` binds it).
 fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
-) -> MemoryResult<MediaRequest> {
+) -> MemoryResult<(MediaRequest, Option<BankVoiceBinding>)> {
     owner_grade(auth, MEDIA_OWNERS)?;
     let media = server.ai.model_runtime().media();
     let Some((seat, _)) = media.seat(operation) else {
@@ -611,17 +622,25 @@ fn admit(
             &["Configure the operation's media seat on this server."],
         ));
     };
-    let model = match input.model {
+    let mut model = match input.model {
         Some(model) => {
             ModelId::new(model).map_err(|_| MemoryError::bad_request("model is not a model id"))?
         }
         None => seat,
     };
-    let Some(locality) = media.locality(operation, &model) else {
-        return Err(MemoryError::bad_request(format!(
+    let unserved = |model: &ModelId| {
+        MemoryError::bad_request(format!(
             "{model} serves no {} call here",
             operation.as_str()
-        )));
+        ))
+    };
+    if media.locality(operation, &model).is_none() {
+        return Err(unserved(&model));
+    }
+    let (voice, binding) =
+        bind_voice(server, operation, &mut model, input.voice).map_err(voice_refused)?;
+    let Some(locality) = media.locality(operation, &model) else {
+        return Err(unserved(&model));
     };
     let mut parts = Vec::new();
     if let Some(prompt) = input.prompt {
@@ -660,7 +679,7 @@ fn admit(
         parts,
         references,
         params: input.params,
-        voice: None,
+        voice,
     };
     if let Some(key) = request.admission_request().route_selector_override() {
         return Err(MemoryError::bad_request(format!(
@@ -685,7 +704,21 @@ fn admit(
     // The world a caller names does not vouch for what it sends: a
     // fallback judges the call as naming none, as a raw text call is.
     request.envelope.scope.world = None;
-    Ok(request)
+    Ok((request, binding))
+}
+
+/// A refused voice, under the facade's codes: a banked voice no rung holds
+/// is the bank's state (`INVALID_STATE`), any other refusal `BAD_REQUEST`.
+fn voice_refused(refused: VoiceRefusal) -> MemoryError {
+    let (code, suggestion) = match refused {
+        VoiceRefusal::NotSpeech => (MEMORY_CODE_BAD_REQUEST, "Name a voice on ai.speech alone."),
+        VoiceRefusal::Unnamed => (MEMORY_CODE_BAD_REQUEST, "Name the provider's voice."),
+        VoiceRefusal::NotProvisioned => (
+            MEMORY_CODE_INVALID_STATE,
+            "Provision the voice on a target this call's ladder reaches: POST /v1/ai/voices/{voice_id}/targets/{target}.",
+        ),
+    };
+    MemoryError::new(code, refused.message(), &[suggestion])
 }
 
 /// A media call's refusal, under the facade's codes: a spent line or window

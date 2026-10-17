@@ -121,10 +121,13 @@ impl Recall<'_> {
         )
     }
 
-    /// `vault.recall` at the effort asked when the server lists it, else the
-    /// lexical `memory.query`. Light runs no model and embeds nothing;
-    /// medium embeds the query on the server's embedder, so it finds a
-    /// paraphrase; high and above also rerank, under the server's budget.
+    /// `vault.recall` at the effort asked when the server lists it, else
+    /// `memory.query`. Light runs no model and embeds nothing; medium embeds
+    /// the query on the server's embedder, so it finds a paraphrase; high and
+    /// above also rerank, under the server's budget. `memory.query` reads
+    /// lexically, and on the one-space preset (the text kind slot bound to a
+    /// declared space) it also embeds the query through that space's text
+    /// tower.
     fn tool_call(&self, listed: &Value) -> anyhow::Result<(&'static str, Value)> {
         let tools = listed.get("tools").and_then(Value::as_array);
         let tool = |name: &str| {
