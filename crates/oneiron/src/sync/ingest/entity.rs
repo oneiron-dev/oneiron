@@ -428,9 +428,9 @@ fn admit(
     }
     // A federation peer may not turn an agent definition back on (Docs Q04). Window admission
     // judged the row in a read txn; a local revocation may have committed since, so the writer
-    // txn judges it again.
+    // txn judges it again when it holds the exact bytes a peer's import brought.
     if header.entity_type == ENTITY_TYPE_AGENT_DEF
-        && crate::sync::ingest::in_peer_import(vault)
+        && crate::sync::ingest::peer_row_in_txn(vault, wtxn, ctx.window_key, &id, blob)?
         && crate::agent_def::agent_definition_put_widens_in_txn(&vault.store, wtxn, &id, data)?
     {
         return Ok(refuse(
@@ -499,7 +499,7 @@ fn admit(
                     )),
                 )
             };
-            if crate::sync::ingest::in_peer_import(vault) {
+            if crate::sync::ingest::peer_row_in_txn(vault, wtxn, ctx.window_key, &id, blob)? {
                 return Ok(setup_refused(
                     "a peer vault's embedding setup stays in that vault",
                 ));

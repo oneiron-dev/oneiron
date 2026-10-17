@@ -133,6 +133,7 @@ pub(crate) struct AdmittedUpdate {
     rows: u64,
     early: EarlyStamps,
     births: Vec<(EntityId, Vec<u8>)>,
+    peer_rows: Vec<(EntityId, [u8; 32])>,
     lane: Option<String>,
 }
 
@@ -188,6 +189,12 @@ impl AdmittedUpdate {
     /// with the bytes it brings.
     pub(crate) fn births(&self) -> &[(EntityId, Vec<u8>)] {
         &self.births
+    }
+
+    /// The rows whose door judges a peer's row apart from this vault's own,
+    /// each with the digest of the bytes the update brings.
+    pub(crate) fn peer_rows(&self) -> &[(EntityId, [u8; 32])] {
+        &self.peer_rows
     }
 
     /// After the update's import, the stamps on the rows that import birthed
@@ -320,6 +327,7 @@ fn admit_window_update(
         )?,
         None => Vec::new(),
     };
+    let peer_rows = crate::sync::ingest::peer_rows(&admitted.get_map("entities"));
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
     let rows = admitted.get_map("entities").len() + admitted.get_map("edges").len();
     let bytes = admitted
@@ -330,6 +338,7 @@ fn admit_window_update(
         rows: rows as u64,
         early,
         births,
+        peer_rows,
         lane,
     })
 }

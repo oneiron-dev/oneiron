@@ -19,5 +19,7 @@ pub(in crate::sync) use self::entity::{
     ingest_entity_in_txn, waits_for_sibling_row,
 };
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
-pub(in crate::sync) use self::peer_import::{in_peer_import, peer_import};
+pub(in crate::sync) use self::peer_import::{
+    forget_peer_rows, peer_row_in_txn, peer_rows, record_peer_rows,
+};
 pub(in crate::sync) use self::tombstone::{TombstoneStep, classify_tombstone};
