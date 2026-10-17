@@ -140,6 +140,15 @@
       "section": false
     },
     {
+      "name": "self.inbox.concern.move",
+      "input": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest",
+      "output": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome",
+      "call": "memory.concern_move(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.people.list",
       "description": "One page of the people the caller reads, in handle order.",
       "input": "crate::memory::PeopleListRequest",

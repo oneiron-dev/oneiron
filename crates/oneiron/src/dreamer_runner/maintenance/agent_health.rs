@@ -8,7 +8,8 @@
 //! cards and proposed moves, and an agent-health event never feeds the auto
 //! arm (`Vault::is_signed_tripwire`). It reads no diary. A card's recipient
 //! settles it (`self.inbox.concern.outcome`), as the owner does through
-//! `/v1/owner/inbox/concern/outcome`.
+//! `/v1/owner/inbox/concern/outcome`, and may ask the Coach for a proposal
+//! (`self.inbox.concern.move`, `ask`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -41,6 +42,13 @@ use crate::self_heal::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+
+mod ask;
+pub use ask::{
+    AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
+    AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
+    ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
+};
 
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
 /// deduped per wake.
@@ -307,6 +315,9 @@ pub struct AgentHealthCard {
     pub watermark: usize,
     pub opened_at: u64,
     pub updated_at: u64,
+    /// The newest ask of the Coach (`ask_coach`), and its answer once drafted.
+    #[serde(default)]
+    pub coach: Option<AgentHealthCoachAsk>,
 }
 
 impl AgentHealthCard {
@@ -1339,6 +1350,7 @@ fn merge(
         watermark: 0,
         opened_at: now,
         updated_at: now,
+        coach: None,
     });
     keep_newest(&mut card.evidence, &finding.evidence, MAX_CARD_EVIDENCE);
     keep_newest(&mut card.diagnostics, &[diagnostic], MAX_CARD_DIAGNOSTICS);
