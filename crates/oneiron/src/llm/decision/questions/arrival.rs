@@ -98,6 +98,20 @@ fn predicate(source: &OutcomeSource) -> &str {
     }
 }
 
+/// Whether a question watches `unit` for arrivals. A batch that writes such a
+/// unit wakes the question pump after it commits, as a claim write does.
+pub(crate) fn unit_watched_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    unit: &EntityId,
+) -> Result<bool> {
+    Ok(UNIT_WATCH
+        .iter_from(store, txn, unit.as_bytes())?
+        .next()
+        .transpose()?
+        .is_some())
+}
+
 /// Called after the batch's final entity and edge state is installed, on both
 /// ordinary writes and replicated batches. Question metadata remains local.
 pub(crate) fn project_arrivals_in_txn(
