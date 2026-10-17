@@ -15,8 +15,9 @@ use oneiron::{
 };
 
 use super::boundary::{
-    BoundaryResult, boundary_error, decode_blob_base64, facade_error, narrow_to_f32,
-    outbound_schedule_context_to_engine, ts_from_engine, ts_opt_to_engine, ts_to_engine,
+    BoundaryResult, boundary_error, decode_blob_base64, facade_error, mention_to_engine,
+    narrow_to_f32, outbound_schedule_context_to_engine, ts_from_engine, ts_opt_to_engine,
+    ts_to_engine,
 };
 use super::bridge::ActorScopedVault;
 use super::convert::{
@@ -367,7 +368,7 @@ impl ActorScopedVault {
             job_ref: draft.job_ref,
             occurred_at: ts_opt_to_engine(draft.occurred_at, "occurred_at")
                 .map_err(boundary_error)?,
-            mention: None,
+            mention: mention_to_engine(draft.mention).map_err(boundary_error)?,
         };
         let receipt = self
             .facade()?
@@ -484,7 +485,7 @@ impl ActorScopedVault {
                 sequence: input.sequence,
                 ics_blob_ref: input.ics_blob_ref,
                 recipient: input.recipient,
-                mention: None,
+                mention: mention_to_engine(input.mention).map_err(boundary_error)?,
             })
             .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
