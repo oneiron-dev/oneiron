@@ -10162,7 +10162,7 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 5,
-      "crate-vis": 14,
+      "crate-vis": 13,
       "fn": 4,
       "struct": 6
      }
@@ -10199,6 +10199,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "WeaveDigestFramed",
       "WeaveDigestRequest",
       "WeaveDigestView",
       "WeaveItemView",
@@ -10217,8 +10218,8 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 8,
-      "struct": 10
+      "fn": 11,
+      "struct": 11
      }
     },
     {
@@ -46552,7 +46553,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 308
+      "fn": 309
      }
     },
     {
@@ -60894,7 +60895,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 262
+      "fn": 263
      }
     },
     {
@@ -61911,7 +61912,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 263
+      "fn": 264
      }
     },
     {
@@ -64826,7 +64827,7 @@
      "path": "src/api/facade/weave_doors.rs",
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link in their own report…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -72804,9 +72805,7 @@
       "UnsupportedCapability",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
-      "WeaveDigestView",
       "WeaveItemView",
-      "WeaveLensRefusal",
       "WeaveLinkCorrectionView",
       "WeaveReportRequest",
       "WeaveReportView",
@@ -72847,7 +72846,7 @@
      "purpose": "—",
      "surface": {
       "enum": 241,
-      "struct": 594
+      "struct": 592
      }
     },
     {
