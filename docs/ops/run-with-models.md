@@ -963,6 +963,18 @@ call's context gets when its host names none). The agent verb
 "edge"}`) fetches the full pixels behind a handle: the whole image, a crop,
 or a zoom to `edge` pixels.
 
+A hydrate (`/v1/core/hydrate` or `/v1/core/batch/shortId/hydrate`) that
+takes images can also name its task (`"task": "Find the receipt's total"`).
+When `[models.decisions.image_pick]` words the pick (§13), the host then
+asks, for each image it would serve in full, whether the task needs it. The
+question reads the task and the image's description, and goes up the
+ladder's quick rungs only, to System One, each image on its own `budget_ms`
+clock. Only an answer of no inside the band steps the image
+down to its thumbnail or its description. An abstain, an answer outside the
+band or a failed call serves the image in full. The pick is read for the
+caller's principal, or the vault's owner for an owner-grade credential that
+names none.
+
 `POST /v1/ai/ask_image` (`{"handle", "question", "region"}`) asks a small
 vision model about the pixels instead, so they never enter the asker's
 context. Bind that model as its own role:
@@ -1213,6 +1225,11 @@ facet = "code-task"
 model = "Which model should run this task?"
 effort = "At which effort should it run?"
 budget_ms = 2000        # each pick's anytime budget
+
+[models.decisions.image_pick]
+# A hydrate that names its task asks, for each image it would serve in full:
+wording = "Does this task need this image in full?"
+budget_ms = 1000        # each image's anytime budget (the default)
 
 [models.decisions.system_one]
 endpoint = "https://systemone.example/v1/systemone"   # HTTPS, or HTTP on loopback

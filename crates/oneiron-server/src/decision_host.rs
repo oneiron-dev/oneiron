@@ -28,13 +28,16 @@ use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
     ModelId, ReasoningEffort,
 };
+use oneiron::memory::ImagePick;
 use oneiron::task_verb::TaskDecisions;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationDecisions, EntityId, HostingPrivacyPosture,
     Vault,
 };
 
-use crate::config::models::{BigSettings, ModelsConfig, SeatPickSettings, SystemOneSettings};
+use crate::config::models::{
+    BigSettings, ImagePickSettings, ModelsConfig, SeatPickSettings, SystemOneSettings,
+};
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
 
@@ -62,6 +65,7 @@ pub struct DecisionHost {
     asks: Arc<DecisionAsks>,
     bands: DecisionBandPolicy,
     auto_checker: Option<BoundedAutoChecker>,
+    image_pick: Option<ImagePickSettings>,
 }
 
 impl DecisionHost {
@@ -86,6 +90,7 @@ impl DecisionHost {
             asks,
             bands: DecisionBandPolicy::default(),
             auto_checker: None,
+            image_pick: None,
         }
     }
 
@@ -218,6 +223,12 @@ impl DecisionHost {
         self
     }
 
+    /// The per-image pick's wording and budget (OF-329).
+    fn with_image_pick(mut self, settings: Option<&ImagePickSettings>) -> Self {
+        self.image_pick = settings.cloned();
+        self
+    }
+
     /// The ladder every typed decision on this host goes through.
     #[must_use]
     pub fn ladder(&self) -> &HeldLadder {
@@ -301,6 +312,24 @@ impl DecisionHost {
         })
     }
 
+    /// The fast per-image pick (OF-329) for `principal`'s `task`, when
+    /// `[models.decisions.image_pick]` words it. It asks the quick rungs
+    /// only, up to System One, under the host's bands; a pick no rung
+    /// answers in band serves the image in full.
+    #[must_use]
+    pub fn image_pick(&self, principal: EntityId, task: String) -> Option<ImagePick<'_>> {
+        let settings = self.image_pick.as_ref()?;
+        Some(ImagePick {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::SystemOne),
+            bands: self.bands.clone(),
+            wording: settings.wording.clone(),
+            task,
+            budget: settings.budget,
+        })
+    }
+
     /// The code-mode seat pick through this ladder, for `principal`.
     pub(crate) fn seat_decisions(
         &self,
@@ -366,7 +395,8 @@ impl SyncServer {
                 models.raw_budget_units,
                 tokio::runtime::Handle::current(),
             )
-            .with_auto_check(models.decisions.auto_check.as_deref(), principal);
+            .with_auto_check(models.decisions.auto_check.as_deref(), principal)
+            .with_image_pick(models.decisions.image_pick.as_ref());
         self
     }
 
