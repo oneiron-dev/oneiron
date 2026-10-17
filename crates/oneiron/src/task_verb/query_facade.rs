@@ -174,12 +174,16 @@ impl Memory<'_> {
         Ok(TaskUpdateReceipt {
             task_ref,
             acked: task_is_acked(self.vault(), task_ref)?,
+            report: None,
         })
     }
 
-    /// `tasks.update` at a host door: the owner's acknowledgement, as
-    /// [`Self::tasks_update`]. A `resultRef` names a code run's result, which
-    /// only that run resolves, so a host door refuses it.
+    /// `tasks.update` at a host door. Without a report it is the owner's
+    /// acknowledgement, as [`Self::tasks_update`]; a report is one task
+    /// highway call under the caller's key and attempt, its surface questions
+    /// asked through the decision path a host bound, and its answer returned
+    /// unchanged. A `resultRef` names a code run's result, which only that
+    /// run resolves, so a host door refuses it.
     pub fn tasks_update_request(
         &self,
         input: &super::sdk::TaskUpdateRequest,
@@ -187,7 +191,35 @@ impl Memory<'_> {
         if input.result_ref.is_some() {
             return Err(MemoryError::bad_request("task_update_result_needs_run"));
         }
-        self.tasks_update(EntityId::from_hex(&input.task_ref)?)
+        let task_ref = EntityId::from_hex(&input.task_ref)?;
+        let Some(body) = input.report.clone() else {
+            if input.report_key.is_some() || input.attempt.is_some() {
+                return Err(MemoryError::bad_request("task_update_report_required"));
+            }
+            return self.tasks_update(task_ref);
+        };
+        let report_key = input
+            .report_key
+            .clone()
+            .ok_or_else(|| MemoryError::bad_request("task_update_report_key_required"))?;
+        let via = match self.task_host() {
+            Some(binding) => super::TaskVia::Host(binding.clone()),
+            None => super::TaskVia::Wire,
+        };
+        let report = self.tasks_highway(
+            via,
+            super::TaskCall::Report(super::TaskReport {
+                task_ref,
+                attempt: input.attempt,
+                report_key,
+                body,
+            }),
+        )?;
+        Ok(TaskUpdateReceipt {
+            task_ref,
+            acked: task_is_acked(self.vault(), task_ref)?,
+            report: Some(report),
+        })
     }
 
     /// The free render-tier acknowledgement bit of a failed task, as the
@@ -222,6 +254,7 @@ impl Memory<'_> {
             return Ok(TaskUpdateReceipt {
                 task_ref,
                 acked: intent.acked,
+                report: None,
             });
         }
         // The acknowledgement is a FACT about a real failed row, stamped with
@@ -243,6 +276,7 @@ impl Memory<'_> {
         Ok(TaskUpdateReceipt {
             task_ref,
             acked: task_is_acked(self.vault(), task_ref)?,
+            report: None,
         })
     }
 
