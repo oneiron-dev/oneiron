@@ -22,7 +22,6 @@ use oneiron::task_verb::sdk::{
     AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, HookReplayRow,
     HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
-use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId, FatalLlmError, LlmError,
     ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
@@ -36,9 +35,10 @@ use oneiron::task_verb::sdk::{
     PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
-use crate::api::ai::{VoiceRefusal, bind_voice};
+use crate::api::ai::{VoiceRefusal, bind_voice, caller_options};
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
+use crate::models::RungVoices;
 use crate::server::SyncServer;
 
 // The shared-vault doors live beside these; the generated callers name them here.
@@ -85,6 +85,8 @@ pub(crate) use super::reaction_doors::*;
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
 pub(crate) use super::critic_review_doors::*;
+// The owner's project-card tap door (OF-501), likewise.
+pub(crate) use super::project_card_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -178,8 +180,9 @@ pub(crate) async fn vault_connectors_subscriptions_revoke(
 
 /// `vault.artifacts.review_slides`: reviews an artifact's head through the
 /// host's decide() ladder as the bound actor, from the host's starting dial
-/// and bands, and holds the proposal for Keep or Discard. The ladder runs on
-/// a blocking thread, one call per unit.
+/// and bands, and holds the proposal for Keep or Discard. A unit with no
+/// image is rendered by the host's LibreOffice renderer when it has one. The
+/// ladder and the render run on a blocking thread, one call per unit.
 pub(crate) async fn vault_artifacts_review_slides(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -201,6 +204,9 @@ pub(crate) async fn vault_artifacts_review_slides(
             ),
             host.dial(oneiron::llm::decision::DecisionRung::Big),
             &host.bands(),
+            crate::slide_render::host_renderer().map(|renderer| {
+                renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+            }),
         )
     })
     .await
@@ -332,11 +338,12 @@ pub(crate) async fn vault_mesh_path_receipts(
     .map_err(|_| internal("vault.mesh.path_receipts"))?
 }
 
-/// `ai.options`: the rows a call could use, where each runs, what it takes,
-/// the rates its native counts settle at, and what the media meter has left.
+/// `ai.options`: the rows the credential could call now, where each runs,
+/// what it takes, its price, the rates its native counts settle at, and
+/// what its meter has left (FIX 2942).
 pub(crate) async fn ai_options(
     server: &Arc<SyncServer>,
-    _auth: &CoreAuth,
+    auth: &CoreAuth,
     input: AiOptionsRequest,
 ) -> MemoryResult<AiOptions> {
     let operation = input
@@ -359,43 +366,50 @@ pub(crate) async fn ai_options(
             })?;
         inputs.insert(modality);
     }
-    let runtime = server.ai.model_runtime();
-    let options = runtime
-        .ai_options(operation, &inputs)
+    let listed = caller_options(server, auth.is_owner_grade(), operation, &inputs);
+    let options = listed
+        .options
         .into_iter()
         .map(serde_json::to_value)
         .collect::<Result<_, _>>()
         .map_err(|_| internal("ai.options"))?;
     Ok(AiOptions {
         options,
-        media_units_left: runtime.media().units_left(),
+        media_units_left: listed.media_units_left,
     })
 }
 
 /// One media call's answer, from its seat's ladder. A banked voice
-/// withdrawn or re-recorded while it rendered is not handed back.
+/// withdrawn or re-recorded while it rendered, on the rung that answered, is
+/// not handed back; nor is a call that found the voice withdrawn everywhere
+/// while it waited (FIX 1746).
 async fn answered(
     server: &SyncServer,
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
-    let (request, binding) = admit(server, auth, operation, input)?;
-    let response = server
-        .ai
-        .model_runtime()
-        .media()
-        .run(request)
-        .await
-        .map_err(|error| failure(operation, &error))?;
-    if binding.is_some_and(|binding| !binding.is_current(&server.vault)) {
-        return Err(MemoryError::new(
+    let (request, voices) = admit(server, auth, operation, input)?;
+    let media = server.ai.model_runtime().media();
+    let answer = match &voices {
+        Some(voices) => media.run_voiced(request, voices).await,
+        None => media.run(request).await,
+    };
+    let withdrawn = || {
+        MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             "the voice was withdrawn or its clone replaced while it rendered",
             &["Provision the voice again, then repeat the call."],
-        ));
+        )
+    };
+    match answer {
+        Ok(_) if voices.as_ref().is_some_and(|voices| !voices.answered_current()) => {
+            Err(withdrawn())
+        }
+        Err(_) if voices.as_ref().is_some_and(RungVoices::withdrawn) => Err(withdrawn()),
+        Ok(response) => Ok(response.into()),
+        Err(error) => Err(failure(operation, &error)),
     }
-    Ok(response.into())
 }
 
 /// `ai.image`: one image out; reference images make it an edit.
@@ -760,7 +774,7 @@ fn admit(
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
-) -> MemoryResult<(MediaRequest, Option<BankVoiceBinding>)> {
+) -> MemoryResult<(MediaRequest, Option<RungVoices>)> {
     owner_grade(auth, MEDIA_OWNERS)?;
     let media = server.ai.model_runtime().media();
     let Some((seat, _)) = media.seat(operation) else {
@@ -785,7 +799,7 @@ fn admit(
     if media.locality(operation, &model).is_none() {
         return Err(unserved(&model));
     }
-    let (voice, binding) =
+    let (voice, voices) =
         bind_voice(server, operation, &mut model, input.voice).map_err(voice_refused)?;
     let Some(locality) = media.locality(operation, &model) else {
         return Err(unserved(&model));
@@ -852,7 +866,7 @@ fn admit(
     // The world a caller names does not vouch for what it sends: a
     // fallback judges the call as naming none, as a raw text call is.
     request.envelope.scope.world = None;
-    Ok((request, binding))
+    Ok((request, voices))
 }
 
 /// A refused voice, under the facade's codes: a banked voice no rung holds

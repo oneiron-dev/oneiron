@@ -440,6 +440,9 @@ struct Whoami {
     /// The authority vault id its slips carry; `null` until the vault is
     /// rooted (its first `serve` or `token bootstrap` with an issuer key).
     vault_id: Option<String>,
+    /// This install's sync node id: what another machine's
+    /// `[device_sync] home_node_id` names when this one is its home.
+    sync_node_id: u64,
 }
 
 /// Prints who owns the stopped vault: the principal facade credentials name
@@ -462,10 +465,14 @@ pub fn whoami(args: WhoamiArgs) -> anyhow::Result<()> {
         .authority_fold()?
         .vault_id
         .map(|id| id.iter().map(|byte| format!("{byte:02x}")).collect());
+    let sync_node_id = oneiron::DreamerRunnerStore::new(&vault)
+        .local_home_node_candidate(true, true, false)?
+        .node_id;
     emit(&Whoami {
         owner_principal: owner.to_hex(),
         actor_class: "human",
         vault_id,
+        sync_node_id,
     })
 }
 
@@ -560,15 +567,15 @@ pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
 const SECRET_VALUE_LIMIT: usize = 1 << 20;
 
 pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
-    let value = read_secret_value(raw_stdin()?)?;
+    // Only a door that takes a value reads stdin; revoke and reveal read
+    // nothing.
+    let value = || -> anyhow::Result<_> { read_secret_value(raw_stdin()?) };
     match command {
-        SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
-        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
-        // `run_cli` sends revoke and reveal straight to their doors, before
-        // the read.
+        SecretsCommand::Register(args) => emit(&register_secret(*args, &value()?)?),
+        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value()?)?),
         SecretsCommand::Revoke(args) => revoke_secret(*args),
         SecretsCommand::Reveal(args) => reveal_secret(*args),
-        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value)?),
+        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value()?)?),
     }
 }
 

@@ -1,5 +1,6 @@
 //! Exact, inert PACK.md source catalogs. A source blob is never an install grant.
 mod advisories;
+mod agent_admission;
 mod agent_facets;
 mod builtin;
 pub use builtin::CheckedBuiltinConnection;
