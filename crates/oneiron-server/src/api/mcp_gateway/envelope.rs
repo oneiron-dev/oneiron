@@ -421,7 +421,10 @@ fn mcp_call_receipt(
             oneiron::receipt::CallOutcome::Refused {
                 code: error.kind.to_owned(),
             },
-            None,
+            Some(oneiron::receipt::call_refusal_digest(
+                error.kind,
+                &error.message,
+            )),
         ),
     };
     let stamp = crate::api::call_receipt::record(

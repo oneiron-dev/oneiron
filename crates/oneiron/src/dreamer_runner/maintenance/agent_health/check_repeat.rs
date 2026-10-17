@@ -1,10 +1,12 @@
 //! `failed_check_repeat` (agent-mind §3.4): the same tool run fails the same
 //! way again. A run's bridge call is one tool run with its canonical request,
 //! and a call receipt one call with its request digest, so an equal action
-//! on equal arguments is the same run, and an equal refusal the same failure.
-//! Other calls may come between, unlike `loop`; a success of that run, or a
-//! different failure, starts the count again. Content a tool reads is not
-//! bound: a file edited between two runs still reads as the same inputs.
+//! on equal arguments is the same run. The same way is the failure's content,
+//! not only its kind: a bridge call's whole stored outcome, and a receipt's
+//! refusal code with its content digest (`call_refusal_digest`). A file
+//! edited between two runs that changes what the check says is a new
+//! failure. Other calls may come between, unlike `loop`; a success of that
+//! run, or a different failure, starts the count again.
 
 use std::collections::BTreeMap;
 
@@ -19,8 +21,8 @@ use crate::self_heal::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 
 /// One run's current streak of equal failures.
-struct Streak<'a, T> {
-    failure: &'a T,
+struct Streak<T> {
+    failure: T,
     from: u64,
     to: u64,
     count: u64,
@@ -53,7 +55,7 @@ pub(super) fn check_repeat_findings(
             continue;
         };
         let fails = book.of(Some(dispatch)).check_fails;
-        let mut streaks: BTreeMap<Vec<u8>, Streak<'_, Value>> = BTreeMap::new();
+        let mut streaks: BTreeMap<Vec<u8>, Streak<&Value>> = BTreeMap::new();
         let mut done = Vec::new();
         for call in &run.bridge_calls {
             let mut key = format!("{:?}\0", call.effect).into_bytes();
@@ -65,7 +67,7 @@ pub(super) fn check_repeat_findings(
             let again = failed
                 && streaks
                     .get(&key)
-                    .is_some_and(|streak| *streak.failure == call.outcome);
+                    .is_some_and(|streak| streak.failure == &call.outcome);
             if again {
                 if let Some(streak) = streaks.get_mut(&key) {
                     streak.to = to;
@@ -103,18 +105,20 @@ pub(super) fn check_repeat_findings(
     for (actor, rows) in calls {
         let attempt = live_attempt(*actor, dispatched, attempts);
         let fails = book.for_attempt(dispatched, attempt).check_fails;
-        let mut streaks: BTreeMap<(&str, &str), Streak<'_, String>> = BTreeMap::new();
+        let mut streaks: BTreeMap<(&str, &str), Streak<(&String, &Option<String>)>> =
+            BTreeMap::new();
         let mut done = Vec::new();
         for (id, row) in rows {
             let key = (row.verb.as_str(), row.request_digest.as_str());
-            let code = match &row.outcome {
-                CallOutcome::Refused { code } => Some(code),
+            // The refusal's kind and its content; `None` once it answered.
+            let failure = match &row.outcome {
+                CallOutcome::Refused { code } => Some((code, &row.result_digest)),
                 CallOutcome::Ok => None,
             };
-            let again = code.is_some_and(|code| {
+            let again = failure.is_some_and(|failure| {
                 streaks
                     .get(&key)
-                    .is_some_and(|streak| streak.failure == code)
+                    .is_some_and(|streak| streak.failure == failure)
             });
             if again {
                 if let Some(streak) = streaks.get_mut(&key) {
@@ -125,11 +129,11 @@ pub(super) fn check_repeat_findings(
                 continue;
             }
             done.extend(streaks.remove(&key));
-            if let Some(code) = code {
+            if let Some(failure) = failure {
                 streaks.insert(
                     key,
                     Streak {
-                        failure: code,
+                        failure,
                         from: row.at,
                         to: row.at,
                         count: 1,

@@ -106,8 +106,8 @@ pub const HEALTH_SILENT_MINUTES: SettingSpec = SettingSpec {
     seed: 30.0,
 };
 
-/// `misalignment`: widen proposals one attempt raised that the board has not
-/// approved.
+/// `misalignment`: widen proposals one attempt raised in the review window
+/// that the board has not approved, pending or declined.
 pub const HEALTH_WIDEN_DENIALS: SettingSpec = SettingSpec {
     key: "health.widen.denials",
     min: 1.0,
@@ -141,6 +141,24 @@ pub const HEALTH_CARD_FLOOR: SettingSpec = SettingSpec {
     max: 200.0,
     seed: 0.0,
 };
+
+/// `duplicate_work`: the least spend, in policy-budget units (tokens), that a
+/// duplicate must cost to make a finding, so a cheap repeat is ignored. 0
+/// keeps every duplicate.
+pub const HEALTH_DUP_MIN_COST: SettingSpec = SettingSpec {
+    key: "health.dup.min_cost",
+    min: 0.0,
+    max: 10_000_000.0,
+    seed: 2_000.0,
+};
+
+/// The unit `health.dup.min_cost` is read in: the policy budget's, which
+/// every model-call receipt settles in and an ordinary launch scope meters.
+/// A duplicate whose scope meters another unit, or none, is never held
+/// cheap.
+fn dup_cost_unit() -> LeaseUnit {
+    LeaseUnit::tokens()
+}
 
 /// How far back one review reads receipts and settled attempts.
 const LOOKBACK_SECS: u64 = 24 * 60 * 60;
@@ -380,6 +398,7 @@ struct Dials {
     cost_spike: f64,
     ttl_secs: u64,
     card_floor: f64,
+    dup_min_cost: u64,
 }
 
 /// The dials for each project and task type the review meets (agent-mind
@@ -457,6 +476,7 @@ fn read_dials(
         cost_spike: value(&HEALTH_COST_SPIKE)?,
         ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
         card_floor: value(&HEALTH_CARD_FLOOR)?,
+        dup_min_cost: value(&HEALTH_DUP_MIN_COST)?.round() as u64,
     })
 }
 
@@ -524,6 +544,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         vault,
         &dispatched,
         &attempts,
+        &book,
         since,
         now,
     )?);
@@ -1123,14 +1144,17 @@ const fn unix_secs(at: u64) -> u64 {
 }
 
 /// `duplicate_work`: the run's audit-labelled duplicates. The card goes on the
-/// agent that did the second piece of work.
+/// agent that did the second piece of work, unless that work cost less than
+/// its `health.dup.min_cost` (its launch scope's spend, children included).
 fn duplicate_findings(
     vault: &Vault,
     dispatched: &Dispatches,
     attempts: &Attempts,
+    book: &DialBook,
     since: u64,
     now: u64,
 ) -> Result<Vec<Finding>> {
+    let dispatcher = AgentDispatcher::new(vault);
     let runs: BTreeSet<&str> = dispatched
         .keys()
         .filter_map(|id| attempts.get(id))
@@ -1157,6 +1181,15 @@ fn duplicate_findings(
             let Some((record, dispatch)) = does(&label.second) else {
                 continue;
             };
+            let floor = book.of(Some(dispatch)).dup_min_cost;
+            if floor > 0
+                && let Some(scope_id) = dispatcher.spend_scope_for_attempt(record.id)?
+                && let Some(scope) = dispatcher.read_spend_scope(&scope_id)?
+                && scope.unit == dup_cost_unit()
+                && scope.spent_units < floor
+            {
+                continue;
+            }
             let mut evidence: Vec<EntityId> =
                 [Some(record), does(&label.first).map(|(first, _)| first)]
                     .into_iter()
@@ -1251,8 +1284,9 @@ fn misalignment_findings(
     Ok(out)
 }
 
-/// `misalignment`: one attempt raised at least the dial's widen proposals
-/// that the board has not approved, pending or refused alike.
+/// `misalignment`: one attempt raised at least the dial's widen proposals in
+/// the review window that the board has not approved, pending or declined
+/// alike. A declined proposal stays the board's refusal on record.
 fn widen_denial_findings(
     vault: &Vault,
     dispatched: &Dispatches,
@@ -1261,7 +1295,7 @@ fn widen_denial_findings(
     since: u64,
 ) -> Result<Vec<Finding>> {
     let mut out = Vec::new();
-    for (id, denials) in crate::agent_dispatch::unlanded_widens_by_parent(vault)? {
+    for (id, denials) in crate::agent_dispatch::unlanded_widens_by_parent_since(vault, since)? {
         let (Some(dispatch), Some(record)) = (dispatched.get(&id), attempts.get(&id)) else {
             continue;
         };

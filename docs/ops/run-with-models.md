@@ -101,7 +101,10 @@ the `local_reasoner` model in decision-read mode (section 9).
 Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
 saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
 `dreamer_target`, `extraction_encoder` (a tagger, `kind = "oneironer"`), and the
-rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
+rest of the manifest list. `coach` is the Coach's own seat (agent-health asks,
+code-fix drafts, session-end distill); HIGH and MID leave it unset, and with no
+`[models.roles.coach]` the Coach rides `generative_reasoner`. The retrieval
+embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
