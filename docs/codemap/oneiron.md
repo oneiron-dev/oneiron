@@ -675,9 +675,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/enrollment/audience.rs` | src | s | 1 struct · 2 fn | AudienceWakeReport | The saved-query sweep's enrollment leg (ARCH-0059, decide-host 1193): a query campaign programs name as… |
 | `src/campaign/enrollment/detection.rs` | src | m | 2 struct · 1 enum · 4 fn · 2 crate-vis | CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection | Persisted membership-transition events, detection pass, cause routing, and per-query baseline |
 | `src/campaign/enrollment/home_node.rs` | src | m | 2 struct · 2 enum · 9 fn · 2 crate-vis | CampaignHomeNodeAdmission, CampaignHomeNodeCandidate, CampaignHomeNodeClass, CampaignHomeNodeDesignation | Campaign-local MACRO home-node election, designation persistence, and admission checks |
-| `src/campaign/enrollment/mod.rs` | src | s | 7 re-export | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
+| `src/campaign/enrollment/mod.rs` | src | s | 8 re-export | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
 | `src/campaign/enrollment/outbound_leg.rs` | src | s | 2 crate-vis | — | Outward leg bridging persisted refs to the outbound chokepoint and the ledger |
-| `src/campaign/enrollment/program.rs` | src | m | 4 struct · 6 fn | CampaignProgram, CampaignProgramAudience, CampaignProgramOutbound, CampaignProgramStep | Persisted campaign program and step state authorizing both halves of the consequence |
+| `src/campaign/enrollment/program.rs` | src | L | 8 struct · 10 fn · 5 const · 1 crate-vis | AuthoredCampaignProgram, CampaignProgram, CampaignProgramAudience, CampaignProgramDefinition, CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft | Persisted campaign program and step state authorizing both halves of the consequence |
 | `src/campaign/enrollment/runner.rs` | src | m | 2 struct · 2 enum · 8 fn · 3 crate-vis | CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution | Refs-only attempt payload, advisory dedupe key, leader-gated claim, and membership-leg execution |
 | `src/campaign/enrollment/storage.rs` | src | s | 2 const · 7 crate-vis | — | Shared campaign-enrollment storage primitives: schema version and hex/JSON row helpers |
 | `src/campaign/enrollment/tests.rs` | test | m | — | — | — |
@@ -695,13 +695,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/stage/projector.rs` | src | m | 1 struct · 2 enum · 7 crate-vis | StageProjectResult, StageProjectorInput, StageRoute | The single `crm.stage` writer plus shared claim-scan and error helpers |
 | `src/campaign/stage/reentry.rs` | src | s | 3 struct · 2 enum · 2 fn · 3 crate-vis | LaneClockPolicy, MembershipProvenance, OutreachLane, ReentryPlan, WakeCondition | Membership-side writes: lane selection, snooze-with-wake pause, and the shared member-replacement helper |
 | `src/campaign/stage/reply.rs` | src | s | 1 struct · 1 fn | CodedCommReply | Coded-reply ingress: ladder routing-table dispatch to promote, snooze, refer, exit, or suppress |
-| `src/campaign/surface/campaign.rs` | src | m | 4 struct · 1 enum · 6 fn · 2 const | CampaignDefinition, CampaignLifecycle, CampaignRecord, CreateCampaignRequest, UpdateCampaignRequest | Campaign record types, lifecycle operations, and vault storage |
+| `src/campaign/surface/campaign.rs` | src | m | 4 struct · 1 enum · 6 fn · 2 const · 3 crate-vis | CampaignDefinition, CampaignLifecycle, CampaignRecord, CreateCampaignRequest, UpdateCampaignRequest | Campaign record types, lifecycle operations, and vault storage |
 | `src/campaign/surface/codec_json.rs` | src | s | 2 fn · 1 crate-vis | — | Wire encoders (domain types with EntityIds hand-rendered to hex JSON) |
 | `src/campaign/surface/membership.rs` | src | s | 3 struct · 2 fn · 2 const | MembershipPage, MembershipReadRequest, MembershipRow | Read-only membership projection over CA-01 heads and CA-02 event history |
-| `src/campaign/surface/mod.rs` | src | s | 4 re-export | — | CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack |
+| `src/campaign/surface/mod.rs` | src | s | 5 re-export · 2 crate-vis | — | CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack |
 | `src/campaign/surface/parse.rs` | src | s | 9 crate-vis | — | Request-body decoders and field-error helpers for the dispatch door |
+| `src/campaign/surface/program.rs` | src | m | 10 struct · 1 enum · 4 crate-vis | ArchiveCampaignProgramRequest, CampaignProgramAudienceSpec, CampaignProgramDefinitionView, CampaignProgramLifecycle, CampaignProgramOutboundSpec, CampaignProgramReadRequest, CampaignProgramReadResult, CampaignProgramRecord +3 | Wire shapes of the four campaign program verbs (`vault.campaign.program.*`) |
 | `src/campaign/surface/tests.rs` | test | s | — | — | Oracle-style membership and scoping tests |
-| `src/campaign/surface/verbs.rs` | src | s | 2 struct · 1 enum · 4 fn · 12 const | CampaignSurfaceVerb, SurfaceCall, SurfaceReply | Closed verb vocabulary and the single shared dispatch door |
+| `src/campaign/surface/verbs.rs` | src | m | 2 struct · 1 enum · 4 fn · 18 const | CampaignSurfaceVerb, SurfaceCall, SurfaceReply | Closed verb vocabulary and the single shared dispatch door |
 | `src/campaign/tests.rs` | test | s | — | — | — |
 | `src/channel_identity/actors.rs` | src | s | 2 struct · 2 fn | ChannelActorRegistration, RegisteredChannelActor | Channels are credential-bearing scoped actors, not identities borrowed from an agent |
 | `src/channel_identity/address.rs` | src | m | 4 struct · 16 fn | AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr | Identity-bearing address VALUES, and the canonical assignment key |
@@ -2270,7 +2271,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/birth_position.rs` | src | s | 1 fn · 1 crate-vis | — | Where a host binds a writer's TASKs to be born |
 | `src/memory/booking.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | EmergencyInstructionInput | Owner-authenticated booking operations on the existing Memory surface |
 | `src/memory/booking_publication.rs` | src | s | 1 fn · 5 crate-vis | — | Owner checks for the ordinary booking publication claim write/read seam |
-| `src/memory/campaign.rs` | src | s | 10 fn | — | Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`… |
+| `src/memory/campaign.rs` | src | s | 14 fn | — | Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`… |
 | `src/memory/caps.rs` | src | m | 14 fn · 13 const · 1 crate-vis | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
 | `src/memory/caps/tests.rs` | test | s | — | — | — |
 | `src/memory/chat.rs` | src | m | 3 struct · 3 enum · 1 trait · 3 fn · 1 type | ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatOptions, ChatResponse, ChatScope, ComposedChatAnswer | The `.chat` answer verb (OF-228/OF-096): depth-as-cost tiers over [`Memory::recall`], answering only with… |
@@ -3023,7 +3024,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/saved_query/evaluator.rs` | src | L | 3 struct · 2 fn · 2 const · 8 crate-vis | EvaluationRequest, SavedQueryEvaluator, SavedQueryJudgeBinding | — |
 | `src/saved_query/evidence.rs` | src | s | 7 struct · 1 enum · 5 fn · 1 const | EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence, SavedQueryDerivationEnvelope, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport | — |
 | `src/saved_query/filter.rs` | src | m | 1 struct · 3 enum · 5 fn · 3 crate-vis | ClaimComparison, EvidenceDependencies, FilterAst, MatcherSpec | — |
-| `src/saved_query/lifecycle.rs` | src | s | 4 fn · 4 crate-vis | — | — |
+| `src/saved_query/lifecycle.rs` | src | s | 4 fn · 5 crate-vis | — | — |
 | `src/saved_query/membership.rs` | src | m | 2 struct · 3 enum · 8 fn · 1 const · 1 crate-vis | MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition, MembershipWritePlan | — |
 | `src/saved_query/memory_watch.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | MemoryWatch | Owner-bound per-claim watches stored as SAVED_QUERY definitions |
 | `src/saved_query/mod.rs` | src | s | 10 re-export · 3 crate-vis | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
@@ -3706,7 +3707,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_disclosure.rs` | src | s | 2 struct · 1 fn | DisclosureOfferRequest, DisclosureOffered | `vault.disclosure.offer`: an agent OFFERS the owner a contact clearance (OF-365, the ILDF2 consent channel) |
 | `src/task_verb/sdk_embedding_space.rs` | src | m | 12 struct · 1 enum · 13 fn | EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest, EmbeddingSpaceMoveChecked, EmbeddingSpaceMoveOutcome, EmbeddingSpaceMoveRequest, EmbeddingSpaceProbe, EmbeddingSpaceProbeDeleteRequest +5 | The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host… |
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 5 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 309 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 313 fn · 2 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 20 struct · 5 enum · 16 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +17 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_legal_hold.rs` | src | s | 5 struct · 1 enum · 5 fn | LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest | The inputs and answers of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`… |

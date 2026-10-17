@@ -89,7 +89,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking_anti_abuse/tests_quarantine.rs` | src | s | 1 crate-vis | — | Quarantine-behavior tests for booking anti-abuse enforcement |
 | `src/api/booking_anti_abuse/tests_support.rs` | src | s | 15 crate-vis | — | Shared test fixtures for booking anti-abuse guard tests |
 | `src/api/call_receipt.rs` | src | s | 14 crate-vis | — | OF-538: the lasting receipt every wire reply carries, reads included |
-| `src/api/campaign.rs` | src | s | 12 crate-vis | — | CA-07 campaign HTTP routes |
+| `src/api/campaign.rs` | src | m | 16 crate-vis | — | CA-07 campaign HTTP routes |
 | `src/api/client_metadata.rs` | src | s | 2 crate-vis | — | Public CIMD documents derived only from the configured OAuth resource origin |
 | `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
 | `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
