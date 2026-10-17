@@ -85,6 +85,8 @@ pub(crate) use super::reaction_doors::*;
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
 pub(crate) use super::critic_review_doors::*;
+// The owner's project-card tap door (OF-501), likewise.
+pub(crate) use super::project_card_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -178,8 +180,9 @@ pub(crate) async fn vault_connectors_subscriptions_revoke(
 
 /// `vault.artifacts.review_slides`: reviews an artifact's head through the
 /// host's decide() ladder as the bound actor, from the host's starting dial
-/// and bands, and holds the proposal for Keep or Discard. The ladder runs on
-/// a blocking thread, one call per unit.
+/// and bands, and holds the proposal for Keep or Discard. A unit with no
+/// image is rendered by the host's LibreOffice renderer when it has one. The
+/// ladder and the render run on a blocking thread, one call per unit.
 pub(crate) async fn vault_artifacts_review_slides(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -201,6 +204,9 @@ pub(crate) async fn vault_artifacts_review_slides(
             ),
             host.dial(oneiron::llm::decision::DecisionRung::Big),
             &host.bands(),
+            crate::slide_render::host_renderer().map(|renderer| {
+                renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+            }),
         )
     })
     .await

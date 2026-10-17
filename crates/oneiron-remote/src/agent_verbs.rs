@@ -141,6 +141,9 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "tasks.accept" => remote_agent_verb_output::<oneiron::task_verb::TaskCallReceipt>(
+                    client, verb, &input,
+                ),
                 "vault.witness" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
                     client, verb, &input,
                 ),
@@ -340,6 +343,51 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.records.erase_confirm" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RecordEraseOutcome,
+                >(client, verb, &input),
+                "vault.research.bind" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ResearchBinding,
+                >(client, verb, &input),
+                "vault.research.fork" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ExperimentNode,
+                >(client, verb, &input),
+                "vault.research.weave" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ExperimentNode,
+                >(client, verb, &input),
+                "vault.research.measure_search" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ExperimentNode,
+                >(client, verb, &input),
+                "vault.research.measure_held_out" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ExperimentNode,
+                >(client, verb, &input),
+                "vault.research.mark_invalid" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ExperimentNode,
+                >(client, verb, &input),
+                "vault.research.prune" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ExperimentNode,
+                >(client, verb, &input),
+                "vault.research.select" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::SelectionReceipt,
+                >(client, verb, &input),
+                "vault.research.promotion_basis" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::PromotionBasis,
+                >(client, verb, &input),
+                "vault.research.reserve_confirmation" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::EvalRelease,
+                >(client, verb, &input),
+                "vault.research.promote" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::CampaignPromotionReceipt,
+                >(client, verb, &input),
+                "vault.research.reserve_work" => {
+                    remote_agent_verb_output::<oneiron::entity_id::EntityId>(client, verb, &input)
+                }
+                "vault.research.settle_work" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ResearchReservation,
+                >(client, verb, &input),
+                "vault.research.refund_work" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::ResearchReservation,
+                >(client, verb, &input),
+                "vault.research.record_benchmark" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::research::SelectionBenchmark,
                 >(client, verb, &input),
                 "vault.authority.handoff_alarms" => remote_agent_verb_output::<
                     Vec<oneiron::authority::AuthorityHandoffAlarm>,
@@ -1345,6 +1393,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("tasks.update", value)
     }
+    pub fn tasks_accept(
+        &self,
+        input: &oneiron::task_verb::TaskAccept,
+    ) -> Result<oneiron::task_verb::TaskCallReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.accept", value)
+    }
     /// Witnesses one conversational turn.
     ///
     /// `turn.occurred_at` is already stamped by the caller through
@@ -2186,6 +2246,186 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.records.erase_confirm", value)
+    }
+    pub fn vault_research_bind(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchBindWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ResearchBinding, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.bind", value)
+    }
+    pub fn vault_research_fork(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchForkWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ExperimentNode, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.fork", value)
+    }
+    pub fn vault_research_weave(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchWeaveWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ExperimentNode, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.weave", value)
+    }
+    pub fn vault_research_measure_search(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchSearchWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ExperimentNode, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.measure_search", value)
+    }
+    pub fn vault_research_measure_held_out(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchHeldOutWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ExperimentNode, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.measure_held_out", value)
+    }
+    pub fn vault_research_mark_invalid(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchInvalidWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ExperimentNode, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.mark_invalid", value)
+    }
+    pub fn vault_research_prune(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchPruneWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ExperimentNode, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.prune", value)
+    }
+    pub fn vault_research_select(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchSelectWire,
+    ) -> Result<oneiron::autoreason_campaign::research::SelectionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.select", value)
+    }
+    pub fn vault_research_promotion_basis(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchBasisWire,
+    ) -> Result<oneiron::autoreason_campaign::research::PromotionBasis, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.promotion_basis", value)
+    }
+    pub fn vault_research_reserve_confirmation(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchCandidateWire,
+    ) -> Result<oneiron::skill_optimize::EvalRelease, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.reserve_confirmation", value)
+    }
+    pub fn vault_research_promote(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchPromoteWire,
+    ) -> Result<oneiron::autoreason_campaign::research::CampaignPromotionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.promote", value)
+    }
+    pub fn vault_research_reserve_work(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchWorkWire,
+    ) -> Result<oneiron::entity_id::EntityId, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.reserve_work", value)
+    }
+    pub fn vault_research_settle_work(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchSettleWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ResearchReservation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.settle_work", value)
+    }
+    pub fn vault_research_refund_work(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchRefundWire,
+    ) -> Result<oneiron::autoreason_campaign::research::ResearchReservation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.refund_work", value)
+    }
+    pub fn vault_research_record_benchmark(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchBenchmarkWire,
+    ) -> Result<oneiron::autoreason_campaign::research::SelectionBenchmark, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.record_benchmark", value)
     }
     pub fn vault_authority_handoff_alarms(
         &self,
