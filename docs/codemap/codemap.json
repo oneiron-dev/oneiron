@@ -4624,8 +4624,48 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container.rs",
+     "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/archive.rs",
+     "purpose": "A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/gzip.rs",
+     "purpose": "A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/pdf.rs",
+     "purpose": "A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -5144,6 +5184,7 @@
      "path": "src/blob_artifact/esign/render.rs",
      "purpose": "Lossless bounded PDF preparation and shared field presentation",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -17113,13 +17154,13 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConsolidationDecisions"
@@ -17127,7 +17168,7 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -17139,7 +17180,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -17149,7 +17190,7 @@
      "path": "src/dreamer_consolidation/executor/merge_resolution.rs",
      "purpose": "A conflict set's resolution: the typed pack (how it resolves, and which candidate's identity a merge keeps)…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -17305,13 +17346,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConsolidationEvidenceEnvelope",
       "ConsolidationProvenanceHop",
       "ConsolidationProvenanceHopKind",
       "ConsolidationSink",
+      "KeptAsk",
+      "KeptDecision",
       "PeerAnswerLineage",
       "PeerTrustDigestLine",
       "PeerTrustDigestSink",
@@ -17320,10 +17363,10 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 7,
-      "struct": 5,
+      "fn": 10,
+      "struct": 7,
       "trait": 2
      }
     },
@@ -17360,7 +17403,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "re-export": 1
      }
     },
@@ -17918,7 +17961,7 @@
      "path": "src/dreamer_promotion.rs",
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 1,
       "fn": 4,
       "re-export": 4,
@@ -20677,10 +20720,10 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 8,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 4,
       "trait": 2
      }
@@ -20773,8 +20816,8 @@
      "path": "src/embed/space.rs",
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
-      "const": 3,
-      "crate-vis": 22,
+      "const": 4,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 16,
       "struct": 3
@@ -27177,7 +27220,7 @@
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
       "crate-vis": 2,
-      "fn": 20,
+      "fn": 21,
       "struct": 4
      }
     },
@@ -36439,7 +36482,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -37860,7 +37903,7 @@
      "path": "src/secret_custody/masked_files.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 3
      }
@@ -50519,7 +50562,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 108,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51947,9 +51990,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 147,
+   "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3140,
+   "source_files": 3144,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54815,7 +54858,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 42,
+      "const": 43,
       "crate-vis": 1
      }
     },
@@ -55190,7 +55233,7 @@
      "path": "src/registry/mod.rs",
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
      "surface": {
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -55231,7 +55274,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 49
+      "const": 50
      }
     },
     {
@@ -68290,7 +68333,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 10,
-      "fn": 15,
+      "fn": 16,
       "struct": 3
      }
     },
@@ -68301,7 +68344,7 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
