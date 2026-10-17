@@ -13,13 +13,13 @@ use crate::llm::decision::catalogue::SAVED_QUERY_MATCH;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung,
     GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep, HeldLadder, ProviderPin,
-    Reversibility,
+    Reversibility, cut_text, fit_state,
 };
 use crate::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat};
 use crate::retrieval_depth::RetrievalDeadline;
 
-use super::evaluator::{SavedQueryJudgeBinding, judge_failure};
-use super::evidence::{MatchDecision, MatchVerdict};
+use super::evaluator::{SavedQueryJudgeBinding, evidence_to_json, judge_failure};
+use super::evidence::{MatchDecision, MatchVerdict, RelevantEvidence};
 use super::support::{MAX_TEXT_BYTES, canonical_json_bytes, invalid};
 
 /// The time one shipped judgment may take.
@@ -69,17 +69,21 @@ struct Wording {
     why: String,
 }
 
-/// `candidate`'s verdict under `rubric` through the binding's ladder for the query's
+/// The candidate's verdict under `rubric` through the binding's ladder for the query's
 /// `owner`, the judge's `shell` (the rubric and evidence as its messages) the first read,
-/// and the `why` the verdict keeps.
+/// and the `why` the verdict keeps. A stronger rung reads the same rubric and evidence in
+/// the call's state, cut to the decision state's bound, with the query and the candidate as
+/// its evidence refs.
 pub(super) async fn judge(
     binding: &SavedQueryJudgeBinding<'_>,
     owner: EntityId,
+    query_ref: EntityId,
     shell: LlmRequest,
     rubric: &Value,
     rubric_version: &str,
-    candidate: EntityId,
+    evidence: &RelevantEvidence,
 ) -> Result<MatchDecision> {
+    let candidate = evidence.entity_ref;
     let decisions = binding.decisions;
     let rubric_hash = blake3::hash(&canonical_json_bytes(rubric)?);
     let question = SAVED_QUERY_MATCH.question(
@@ -101,7 +105,27 @@ pub(super) async fn judge(
         request: shell.clone(),
         seal: &seal,
     };
-    let state = json!({"entity": candidate.to_hex(), "rubric_version": rubric_version});
+    let seen = evidence_to_json(evidence);
+    let rubric_text = String::from_utf8(canonical_json_bytes(rubric)?)
+        .map_err(|_| invalid("saved query rubric is not UTF-8"))?;
+    let seen_text = String::from_utf8(canonical_json_bytes(&seen)?)
+        .map_err(|_| invalid("saved query evidence is not UTF-8"))?;
+    // Whole, the rubric and the evidence ride as JSON; past the bound, each as its
+    // canonical text cut to fit.
+    let state = fit_state(rubric_text.len().max(seen_text.len()), |cut| {
+        let part = |whole: &Value, text: &str| match cut {
+            None => whole.clone(),
+            Some(_) => Value::String(cut_text(text, cut).to_owned()),
+        };
+        json!({
+            "query": query_ref.to_hex(),
+            "entity": candidate.to_hex(),
+            "rubric_version": rubric_version,
+            "rubric": part(rubric, &rubric_text),
+            "evidence": part(&seen, &seen_text),
+            "cut_at_bytes": cut,
+        })
+    });
     let decided = decisions
         .ladder
         .ladder()
@@ -109,7 +133,7 @@ pub(super) async fn judge(
             &rung,
             &[&question],
             owner,
-            &[candidate],
+            &[query_ref, candidate],
             &state,
             decisions.dial,
             &decisions.bands,
