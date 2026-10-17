@@ -553,6 +553,86 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     })
 }
 
+/// What one MCP row's credential surface is built from beside its call
+/// context: where its TASKs are born, the invocation its hooks cross under,
+/// and a code-mode call's host origin.
+struct McpRowSurface {
+    position: oneiron::federation::record_scope::BirthPosition,
+    invocation: oneiron::runtime_hooks::InvocationId,
+    origin: Option<oneiron::memory::HostWriteOrigin>,
+}
+
+impl McpRowSurface {
+    /// The caller's surface for one row: its credential at its locality,
+    /// born at this position, under this invocation and host origin, in the
+    /// off-record session the request named, its reads listed in `producers`.
+    fn memory<'a>(
+        &self,
+        server: &'a SyncServer,
+        actor: &McpCallContext,
+        producers: &'a oneiron::memory::ProducerRows,
+    ) -> oneiron::Memory<'a> {
+        let memory = crate::api::credential_memory(
+            &server.vault,
+            actor.auth.as_ref(),
+            actor.actor_ref,
+            actor.actor_class,
+        )
+        .at(actor.locality())
+        .with_birth_position(self.position)
+        .listing_producers(producers)
+        .with_invocation(self.invocation);
+        let memory = match self.origin.clone() {
+            Some(origin) => memory.with_host_origin(origin),
+            None => memory,
+        };
+        // OF-063: the off-record session the request named; inside an anonymous
+        // one a reference refusal writes no receipt (Engine ruling 10-17).
+        match actor.off_record_session.as_deref() {
+            Some(session) => memory.in_off_record_session(session),
+            None => memory,
+        }
+    }
+}
+
+/// Runs task row `tool` by `row` on a blocking thread, on the caller's
+/// surface built there with the host's task decisions bound (OF-533): a
+/// post's take question and a report's done and ask-up questions go through
+/// the host's ladder, whose model rung may block on the server's runtime.
+/// The row's hooks stay with its caller. The rows its reads listed come back
+/// beside its result, a refusal's too. A ladder the host cannot build
+/// refuses the row: it never runs unbound.
+async fn mcp_task_row<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    actor: &McpCallContext,
+    surface: McpRowSurface,
+    row: impl FnOnce(&oneiron::Memory<'_>) -> oneiron::memory::MemoryResult<T> + Send + 'static,
+) -> Result<(oneiron::memory::MemoryResult<T>, Vec<oneiron::EntityId>), McpGatewayError> {
+    let (server, actor) = (Arc::clone(server), actor.clone());
+    tokio::task::spawn_blocking(move || {
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = server
+            .decision_host()
+            .task_decisions()
+            .map_err(oneiron::memory::MemoryError::from)
+            .and_then(|decisions| {
+                row(&surface
+                    .memory(&server, &actor, &producers)
+                    .with_task_decisions(decisions))
+            });
+        (output, producers.take())
+    })
+    .await
+    .map_err(|_| {
+        McpGatewayError::new(
+            -32603,
+            "engine_error",
+            format!("{tool} worker ended without a result"),
+        )
+    })
+}
+
 // BEGIN GENERATED MCP DISPATCH
 /// A `tools/call` of one generated verb: its arguments assemble the verb's typed
 /// input, which then takes the one dispatcher every MCP door shares.
@@ -1995,26 +2075,12 @@ async fn execute_agent_verb_listing(
     let invocation = actor
         .invocation
         .unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
-    let memory = crate::api::credential_memory(
-        &server.vault,
-        actor.auth.as_ref(),
-        actor.actor_ref,
-        actor.actor_class,
-    )
-    .at(actor.locality())
-    .with_birth_position(position)
-    .listing_producers(producers)
-    .with_invocation(invocation);
-    let memory = match origin {
-        Some(origin) => memory.with_host_origin(origin),
-        None => memory,
+    let surface = McpRowSurface {
+        position,
+        invocation,
+        origin,
     };
-    // OF-063: the off-record session the request named; inside an anonymous
-    // one a reference refusal writes no receipt (Engine ruling 10-17).
-    let memory = match actor.off_record_session.as_deref() {
-        Some(session) => memory.in_off_record_session(session),
-        None => memory,
-    };
+    let memory = surface.memory(server, actor, producers);
     // Rule 5: a task-work row takes its one turn here, for MCP and code mode
     // alike, and holds it through its hooks and its row.
     let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
@@ -2031,6 +2097,7 @@ async fn execute_agent_verb_listing(
         hooks.args.clone(),
         actor,
         memory,
+        surface,
         served,
         board_hooks,
     )
@@ -2041,13 +2108,16 @@ async fn execute_agent_verb_listing(
     Ok((output, source, carrier, epoch))
 }
 
-/// One row of [`execute_agent_verb_listing`], on the args its pre chain left.
+/// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
+/// on `memory`, the caller's surface `surface` built. A task row that may ask
+/// the host's decision ladder builds its own from `surface`, off the runtime.
 async fn execute_agent_verb_row(
     server: &Arc<SyncServer>,
     tool: &str,
     input: Value,
     actor: &McpCallContext,
     memory: oneiron::Memory<'_>,
+    surface: McpRowSurface,
     served: &mut Vec<oneiron::EntityId>,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<
@@ -2354,8 +2424,13 @@ async fn execute_agent_verb_row(
         "tasks.create" => {
             let input: oneiron::task_verb::sdk::TaskCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::tasks_create(&memory, input).map_err(mcp_facade_error)?;
+            let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| {
+                oneiron::task_verb::sdk::tasks_create(memory, input)
+            })
+            .await?;
+            // Derived from the rows its reads listed, on a refusal too.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -2407,8 +2482,13 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::TaskUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
-            let output =
-                oneiron::task_verb::sdk::tasks_update(&memory, input).map_err(mcp_facade_error)?;
+            let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| {
+                oneiron::task_verb::sdk::tasks_update(memory, input)
+            })
+            .await?;
+            // Derived from the rows its reads listed, on a refusal too.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
