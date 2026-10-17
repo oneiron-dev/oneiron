@@ -132,6 +132,7 @@ pub fn file_workflow(
         vault,
         None,
         &PlacementRequest::new(Some(program.subgoal.clone()), Some(site.to_owned())),
+        None,
     )?;
     let record = match filed {
         Some(record) => WorkflowRecord {
