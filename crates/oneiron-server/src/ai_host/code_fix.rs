@@ -3,7 +3,8 @@
 //! seat drafts the invented example and the candidate fix, and replays the
 //! failing agent with no tools, under the Coach's fix and under each of the
 //! publisher's pinned candidates. The engine asks every judgment on the
-//! decision ladder and decides what may leave. The Coach pays for the calls,
+//! Coach's own seat (else the host's decision ladder) and decides what may
+//! leave. The Coach pays for the calls,
 //! on one budget per case.
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use oneiron::dreamer_runner::maintenance::code_fix::{
     CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, PublisherCandidate,
 };
 use oneiron::failure_signals::{InventedMessage, InventedRole};
-use oneiron::llm::decision::DecisionRung;
+use oneiron::llm::decision::HeldLadder;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
@@ -24,6 +25,7 @@ use oneiron::{
 use serde::Deserialize;
 
 use super::CHAT_ROLE;
+use super::coach_heal::{coach_dial, coach_ladder};
 use super::coach_health::coach_role;
 use crate::models::ModelRuntime;
 use crate::server::SyncServer;
@@ -61,10 +63,13 @@ pub(super) fn run(
 ) -> oneiron::Result<()> {
     let vault = server.vault();
     let host = server.decision_host();
+    let coach = coach_ladder(server);
     let decisions = CodeFixDecisions {
-        ladder: host.ladder().ladder(),
+        ladder: coach
+            .as_ref()
+            .map_or_else(|| host.ladder().ladder(), HeldLadder::ladder),
         principal,
-        dial: host.dial(DecisionRung::Big),
+        dial: coach_dial(server, coach.as_ref()),
         bands: host.bands(),
         budget: DECIDE_BUDGET,
     };

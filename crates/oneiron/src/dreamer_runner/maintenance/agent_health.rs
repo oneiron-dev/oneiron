@@ -403,8 +403,9 @@ struct Dials {
 
 /// The dials for each project and task type the review meets (agent-mind
 /// §3.7): the narrowest owner pin (project, then type, then vault), else the
-/// vault fit, else the narrowest seed, else the catalog seed. A finding with
-/// no dispatch behind it reads the vault's.
+/// narrowest scoped seed (project, then type), else the vault fit, else the
+/// vault seed, else the catalog seed. A finding with no dispatch behind it
+/// reads the vault's.
 struct DialBook {
     vault: Dials,
     scoped: BTreeMap<Option<EntityId>, BTreeMap<String, Dials>>,

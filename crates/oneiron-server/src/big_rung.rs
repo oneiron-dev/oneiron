@@ -126,6 +126,30 @@ impl BigModel {
         })
     }
 
+    /// This rung asked of `role`'s seat (OF-568): framed, worded and
+    /// metered as this rung is, routed against the vault's live model policy
+    /// as the configured seat is, its pin naming that seat's model.
+    pub(crate) fn for_role(&self, role: ModelRole) -> anyhow::Result<Self> {
+        let seat = self
+            .models
+            .seat(role)
+            .ok_or_else(|| anyhow::anyhow!("no [models] rung serves the {role:?} seat"))?;
+        Ok(Self {
+            models: Arc::clone(&self.models),
+            vault: Arc::clone(&self.vault),
+            answerer: Answerer::Seat(role),
+            wording: self.wording.clone(),
+            reply: self.reply,
+            meter: self.meter.clone(),
+            runtime: self.runtime.clone(),
+            pin: ProviderPin {
+                rung: DecisionRung::Big,
+                model: seat.model.to_string(),
+                version: self.pin.version.clone(),
+            },
+        })
+    }
+
     pub(crate) fn pin(&self) -> ProviderPin {
         self.pin.clone()
     }
