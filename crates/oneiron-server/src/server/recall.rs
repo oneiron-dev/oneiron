@@ -99,13 +99,22 @@ impl SyncServer {
     }
 
     /// The query's vector in declared space `space`, through the text tower
-    /// of the `ai.embed` rung its id names, driven on the runtime this
-    /// blocking thread belongs to; `None` when it does not embed, so recall
-    /// runs sparse.
+    /// of the `ai.embed` rung its id names, driven on the multi-thread
+    /// runtime this blocking thread belongs to, else on the server's own
+    /// call runtime (a current-thread host, or no runtime at all); `None`
+    /// when it does not embed, so recall runs sparse.
     fn recall_slot_vector(&self, space: &str, query: &str) -> Option<Vec<f32>> {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            tracing::debug!(%space, "recall runs sparse: no runtime drives the text slot's embedder");
-            return None;
+        let runtime = match tokio::runtime::Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                handle
+            }
+            _ => match self.rerank_runtime.handle() {
+                Ok(handle) => handle,
+                Err(error) => {
+                    tracing::debug!(%space, %error, "recall runs sparse: no runtime drives the text slot's embedder");
+                    return None;
+                }
+            },
         };
         let embedded = self.media_embedder(space).and_then(|embedder| {
             runtime.block_on(embedder.embed_query(
