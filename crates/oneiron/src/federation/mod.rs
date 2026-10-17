@@ -84,11 +84,13 @@ pub use self::relationships::{
     bind_member_person, default_retrieval_bands, default_trust_tier, put_member_relationship_label,
     relationship_trust_class, resolve_member_relationship,
 };
+#[allow(unused_imports)] // The sync lane's materialization calls it (FIX 321).
+pub(crate) use self::stale::register_foreign_world_for_pact_in;
 pub use self::stale::{
     FEDERATION_STALE_KEY_PREFIX, FEDERATION_WORLD_KEY_PREFIX, FederationStaleReason,
     WORLD_STALE_STAMP_LEN, WorldStaleStamp, apply_federation_stale_stamps,
     decode_world_stale_stamp, encode_world_stale_stamp, foreign_world_stale_stamp,
-    world_stale_marker,
+    registered_foreign_worlds_for_pact, world_stale_marker,
 };
 pub(crate) use self::stale::{StaleSweepWatch, note_authority_row};
 
