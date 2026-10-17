@@ -8,13 +8,15 @@
 //!
 //! A path is an actor, a sending identity it holds, and the verdict the send
 //! door would reach: the same requirement the gate composes for an outbound
-//! send, matched against the standing grants by the same containment. One
-//! fact per path, never a cross product of independent lists. A data class
-//! joins a path only through a standing disclosure grant naming who may hear
-//! it, and only on a path that runs without asking.
+//! send, matched against the standing grants by the same containment. A
+//! connector key's outward tool is a path too, under the setting its slate
+//! gives the tool. One fact per path, never a cross product of independent
+//! lists. A data class joins a path only through a standing disclosure grant
+//! naming who may hear it, and only on a path that runs without asking.
 use super::plan::{ShapeChange, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget};
 use crate::EntityId;
+use crate::connector_key::SlateDisposition;
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundSubject, GrantBound,
 };
@@ -25,6 +27,10 @@ use serde::{Deserialize, Serialize};
 /// The verb class an outbound send is consented under, as the send door
 /// composes it (`gate::effect::external_effect_action_requirement`).
 const SEND_VERB: &str = "send";
+
+/// The channel a connector tool's path names: the credential it rides is the
+/// connector key.
+const CONNECTOR_CHANNEL: &str = "connector";
 
 /// Most changes one reach line names before it counts the rest.
 pub const REACH_LINE_MAX_CHANGES: usize = 3;
@@ -57,14 +63,14 @@ pub struct ShapeReachFact {
     /// The actor's roster name (its agent id), when it is on the roster.
     #[serde(default)]
     pub actor_name: Option<String>,
-    /// The verb class the path carries.
+    /// The verb class the path carries: `send`, or a connector's tool.
     pub verb: String,
-    /// The channel class, e.g. `email`.
+    /// The channel class, e.g. `email`, or `connector`.
     pub channel: String,
-    /// The sending identity's address or handle: the credential the path
-    /// rides.
+    /// The sending identity's address or handle, or the connector's name:
+    /// the credential the path rides.
     pub sender: String,
-    /// The sending identity, by entity id hex.
+    /// The sending identity or the connector key, by entity id hex.
     pub identity: String,
     /// A data class a standing disclosure grant lets reach `audience`, e.g.
     /// `health`; none on the path's own fact.
@@ -300,14 +306,33 @@ pub(super) struct ReachSender {
     pub(super) may_send: bool,
 }
 
+/// One outward tool of an active connector key, as the reach reads it.
+#[derive(Debug, Clone)]
+pub(super) struct ReachConnector {
+    pub(super) key: EntityId,
+    pub(super) connector: String,
+    /// The actor the key is bound to; none is any actor on the connector.
+    pub(super) actor: Option<EntityId>,
+    /// For a key bound to no actor: the actors a key of their own on the
+    /// same connector governs instead.
+    pub(super) except: Vec<EntityId>,
+    pub(super) tool: String,
+    /// What a call on the tool meets under the key's slate.
+    pub(super) setting: SlateDisposition,
+    /// The key's manifest holds the tool for confirmation: every call asks.
+    pub(super) held: bool,
+}
+
 /// The typed rows the reach joins, read on one snapshot. No secret value is
-/// ever among them.
+/// ever among them; a connector key names its custody record, never reads
+/// it.
 #[derive(Debug, Clone, Default)]
 pub(super) struct ReachRows {
     pub(super) actors: Vec<ReachActor>,
     /// Every active standing grant's bound.
     pub(super) grants: Vec<GrantBound>,
     pub(super) senders: Vec<ReachSender>,
+    pub(super) connectors: Vec<ReachConnector>,
 }
 
 impl ReachRows {
@@ -333,6 +358,24 @@ impl ReachRows {
                 hasher.update(text.as_bytes());
             }
             hasher.update(&[u8::from(sender.may_send)]);
+        }
+        hasher.update(b"\0");
+        for tool in &self.connectors {
+            hasher.update(tool.key.as_bytes());
+            hasher.update(&[u8::from(tool.actor.is_some())]);
+            if let Some(actor) = tool.actor {
+                hasher.update(actor.as_bytes());
+            }
+            hasher.update(&(tool.except.len() as u64).to_be_bytes());
+            for actor in &tool.except {
+                hasher.update(actor.as_bytes());
+            }
+            for text in [&tool.connector, &tool.tool] {
+                hasher.update(&(text.len() as u64).to_be_bytes());
+                hasher.update(text.as_bytes());
+            }
+            hasher.update(tool.setting.as_str().as_bytes());
+            hasher.update(&[u8::from(tool.held)]);
         }
     }
 
@@ -406,24 +449,50 @@ impl ReachRows {
     }
 }
 
-/// The action requirement an outbound send by `actor_ref` on `channel` must
-/// be covered by, composed as the send door composes it for a send that
-/// names no brief: actor × `send` × `[verb:send]` pinned to the channel.
-fn send_requirement(actor_ref: &str, channel: &str) -> Option<GrantBound> {
-    let envelope = ActionEnvelope::new([format!("verb:{SEND_VERB}")])
+/// The action requirement an effect by `actor_ref` of `verb` on `channel`
+/// must be covered by, composed as the gate composes it for an effect that
+/// names no brief: actor × verb × `[verb:<verb>]` pinned to the channel. An
+/// outbound send is `send` on its channel; a connector call is its tool on
+/// its connector.
+fn action_requirement(actor_ref: &str, verb: &str, channel: &str) -> Option<GrantBound> {
+    let envelope = ActionEnvelope::new([format!("verb:{verb}")])
         .ok()?
         .with_target(channel.trim())
         .ok()?;
     GrantBound::action(
         ActorBound::new(actor_ref).ok()?,
-        ActionClass::new(SEND_VERB).ok()?,
+        ActionClass::new(verb).ok()?,
         envelope,
     )
     .ok()
 }
 
+/// `path`, and when it runs without asking, the data classes standing
+/// disclosure grants let reach their audiences along it.
+fn push_path(
+    facts: &mut Vec<ShapeReachFact>,
+    disclosures: &[(&str, &[String])],
+    path: ShapeReachFact,
+) {
+    if path.verdict == ShapeReachVerdict::Can {
+        for (class, members) in disclosures {
+            facts.push(ShapeReachFact {
+                class: Some((*class).to_owned()),
+                audience: members.to_vec(),
+                ..path.clone()
+            });
+        }
+    }
+    facts.push(path);
+}
+
 /// Every path `rows` hold. A disabled actor is not dispatched, so it holds
-/// none; a send the requirement cannot be composed for asks.
+/// none; a send the requirement cannot be composed for asks. A connector
+/// tool the slate never allows is no path; one it always asks for, or one
+/// the key's manifest holds, asks; one it always allows runs without asking
+/// (a covering grant); and on `auto` the standing grants decide, as they do
+/// for a send. A key bound to no actor serves every roster actor that holds
+/// no key of its own on the connector.
 pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
     let disclosures: Vec<(&str, &[String])> = rows
         .grants
@@ -445,7 +514,7 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
             continue;
         }
         let actor_ref = sender.actor.to_hex();
-        let covered = send_requirement(&actor_ref, &sender.channel)
+        let covered = action_requirement(&actor_ref, SEND_VERB, &sender.channel)
             .is_some_and(|required| rows.grants.iter().any(|grant| grant.contains(&required)));
         let path = ShapeReachFact {
             actor: actor_ref,
@@ -462,16 +531,57 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
                 ShapeReachVerdict::Asks
             },
         };
-        if covered {
-            for (class, members) in &disclosures {
-                facts.push(ShapeReachFact {
-                    class: Some((*class).to_owned()),
-                    audience: members.to_vec(),
-                    ..path.clone()
-                });
+        push_path(&mut facts, &disclosures, path);
+    }
+    for tool in rows
+        .connectors
+        .iter()
+        .filter(|tool| tool.setting != SlateDisposition::NeverAllow)
+    {
+        let holders: Vec<(EntityId, Option<&ReachActor>)> = match tool.actor {
+            Some(bound) => {
+                let actor = rows.actors.iter().find(|actor| actor.entity == bound);
+                if actor.is_some_and(|actor| !actor.enabled) {
+                    continue;
+                }
+                vec![(bound, actor)]
             }
+            None => rows
+                .actors
+                .iter()
+                .filter(|actor| actor.enabled && !tool.except.contains(&actor.entity))
+                .map(|actor| (actor.entity, Some(actor)))
+                .collect(),
+        };
+        for (holder, actor) in holders {
+            let actor_ref = holder.to_hex();
+            let covered = !tool.held
+                && match tool.setting {
+                    SlateDisposition::AlwaysAllow => true,
+                    SlateDisposition::Auto => {
+                        action_requirement(&actor_ref, &tool.tool, &tool.connector).is_some_and(
+                            |required| rows.grants.iter().any(|grant| grant.contains(&required)),
+                        )
+                    }
+                    SlateDisposition::AlwaysAsk | SlateDisposition::NeverAllow => false,
+                };
+            let path = ShapeReachFact {
+                actor: actor_ref,
+                actor_name: actor.map(|actor| actor.agent_id.clone()),
+                verb: tool.tool.clone(),
+                channel: CONNECTOR_CHANNEL.to_owned(),
+                sender: tool.connector.clone(),
+                identity: tool.key.to_hex(),
+                class: None,
+                audience: Vec::new(),
+                verdict: if covered {
+                    ShapeReachVerdict::Can
+                } else {
+                    ShapeReachVerdict::Asks
+                },
+            };
+            push_path(&mut facts, &disclosures, path);
         }
-        facts.push(path);
     }
     facts.sort();
     facts.dedup();

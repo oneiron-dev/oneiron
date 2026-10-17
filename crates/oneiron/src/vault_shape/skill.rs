@@ -6,6 +6,7 @@ use super::invalid;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::skill::SkillLifecycle;
+use crate::skill_hub::HubSyncDisposition;
 use crate::skill_hub::pack_catalog::hub_pin;
 use crate::{EntityId, TimeRange, Vault};
 use schemars::JsonSchema;
@@ -92,6 +93,42 @@ impl Vault {
             return Err(invalid(
                 "the vault holds this skill retired; the import does not revive it",
             ));
+        }
+        Ok(entity.to_hex())
+    }
+
+    /// Moves an imported skill to the version the row pins, as `owner`:
+    /// the owner's hub sync refetches what the skill's tracked ref names
+    /// and applies it through the policy check. The item lands only when
+    /// that applied the pinned version. A widening revision waits as the
+    /// sync's own proposal, and a local skill's version moves only with its
+    /// content, so both refuse the item with the reason.
+    pub(super) fn update_shape_skill(
+        &self,
+        owner: &AuthenticatedOwner,
+        entity: EntityId,
+        version: &str,
+    ) -> Result<String> {
+        match self.sync_skill_from_hub_ref(owner, &entity)? {
+            HubSyncDisposition::Applied => {}
+            HubSyncDisposition::Proposed { proposal_id, .. } => {
+                return Err(invalid(format!(
+                    "the hub's revision widens the skill; it waits as proposal {}",
+                    proposal_id.to_hex()
+                )));
+            }
+            HubSyncDisposition::RefusedByPolicy => {
+                return Err(invalid("the skill's hub sync policy refused the revision"));
+            }
+        }
+        let record = self
+            .get_skill_record(&entity)?
+            .ok_or_else(|| invalid("the sync left no skill record"))?;
+        if record.version != version {
+            return Err(invalid(format!(
+                "the hub's revision carries version {}, not the row's {version}",
+                record.version
+            )));
         }
         Ok(entity.to_hex())
     }

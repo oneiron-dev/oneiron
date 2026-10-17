@@ -116,7 +116,9 @@ pub use slate_draft::{
     ConnectorSlateDelta, ConnectorSlateDrafter, ConnectorSlateRedraft, SlatePastRulings,
     SlateTrait, draft_connector_slate, rule_draft_row,
 };
-pub(crate) use slate_setting::{connector_tool_setting_in_txn, effect_slate_always_allows};
+pub(crate) use slate_setting::{
+    connector_tool_setting_in_txn, effect_slate_always_allows, governing_slate_in_txn,
+};
 
 pub use manifest_drift::{
     ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,

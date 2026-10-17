@@ -4,7 +4,7 @@
 //! stays on the per-call verdict. No setting widens scope or passes the
 //! catastrophe floor: `always allow` is only a covering grant.
 use super::record::{ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance};
-use super::slate::{SlateDisposition, read_slate_in_store_txn};
+use super::slate::{ConnectorGrantSlate, SlateDisposition, read_slate_in_store_txn};
 use super::txn::{governing_connector_key, read_connector_key_in_txn};
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -27,6 +27,27 @@ pub(crate) fn connector_tool_setting_in_txn(
     let slate = read_slate_in_store_txn(store, txn, slate_id)?
         .ok_or_else(|| super::record::invalid_body("connector slate missing"))?;
     Ok(slate.tool_setting(tool))
+}
+
+/// The slate calls under `key` meet, by id, resolved as
+/// [`connector_tool_setting_in_txn`] resolves it: the key's own, else the
+/// catalog slate a per-grant key derives from. None for a key with no slate
+/// either way.
+pub(crate) fn governing_slate_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+) -> Result<Option<(EntityId, ConnectorGrantSlate)>> {
+    let slate_ref = match key.slate_ref {
+        Some(slate_id) => Some(slate_id),
+        None => super::lifecycle::derived_key_catalog_slate_in_txn(store, txn, key)?,
+    };
+    let Some(slate_id) = slate_ref else {
+        return Ok(None);
+    };
+    let slate = read_slate_in_store_txn(store, txn, slate_id)?
+        .ok_or_else(|| super::record::invalid_body("connector slate missing"))?;
+    Ok(Some((slate_id, slate)))
 }
 
 /// Whether the effect's governing key gives its tool `always allow`. The Gate

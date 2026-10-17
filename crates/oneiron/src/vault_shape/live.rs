@@ -277,6 +277,7 @@ impl Vault {
                     None,
                 ));
             }
+            reach.connectors = self.reach_connectors_in_txn(&txn, None)?;
             policy_frontier
         };
         // The pack catalog checks each install against its live source in a
