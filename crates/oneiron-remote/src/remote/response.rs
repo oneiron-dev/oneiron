@@ -56,6 +56,19 @@ pub(super) fn serialize_request<Q: Serialize>(request: &Q) -> Result<Vec<u8>, Me
     Ok(body)
 }
 
+/// The bytes a serialized request crosses as (ARCH-0081 §8): zstd at 16 KiB or
+/// more when that is smaller, naming its `Content-Encoding` in `headers`. It
+/// runs after [`serialize_request`], whose ceiling is on the raw bytes.
+pub(super) fn encode_request(body: Vec<u8>, headers: &mut HeaderMap) -> Vec<u8> {
+    match oneiron::sync::transport::encode_http_body(&body) {
+        Some(encoded) => {
+            headers.insert(CONTENT_ENCODING, HeaderValue::from_static("zstd"));
+            encoded
+        }
+        None => body,
+    }
+}
+
 /// Why a read stopped short.
 pub(super) enum ReadFailure {
     /// The body was still going at the ceiling.
