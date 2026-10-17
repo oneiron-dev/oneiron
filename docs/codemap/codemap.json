@@ -9634,7 +9634,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -37064,7 +37064,7 @@
      "path": "src/runtime_hooks/verb/ask.rs",
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 19
      }
     },
     {
@@ -37140,7 +37140,7 @@
      "path": "src/runtime_hooks/verb/state.rs",
      "purpose": "What a vault holds in memory for verb hooks: the process switch, the cached binding list, the sandbox, the…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 5,
       "struct": 3
