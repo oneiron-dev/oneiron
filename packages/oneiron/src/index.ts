@@ -325,8 +325,8 @@ export class Oneiron {
       history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
-      /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
-      seed: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitReceipt[]),
+      /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
+      seed: (input: Facade.CommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitOutcome[]),
     },
     /**
    * Recalls a memory pack.
@@ -438,7 +438,7 @@ export class Oneiron {
       },
     },
     authority: {
-      /** One page of the dated authority log audit: grants, revokes and confirms, for the owner. */
+      /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
       audit: (input: Facade.AuthorityAuditQuery): Facade.AuthorityAuditPage => this.#call(() => this.#client.vaultAuthorityAudit(input) as Facade.AuthorityAuditPage),
       /** Every saved authority handoff fork alarm, for the owner. */
       handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}): Facade.AuthorityHandoffAlarm[] => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as Facade.AuthorityHandoffAlarm[]), {
@@ -893,8 +893,8 @@ export class Oneiron {
         climb: (input: Facade.DecisionAskClimbRequest): Facade.ResolvedRole | null => this.#call(() => this.#client.vaultDecisionsAsksClimb(input) as Facade.ResolvedRole | null),
       },
     },
-    /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
-    commit: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitReceipt[]),
+    /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
+    commit: (input: Facade.CommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitOutcome[]),
     /** Commits one claim through the gate, the same as vault.claims.upsert. */
     remember: (input: Facade.ClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultRemember(input) as Facade.CommitReceipt),
     /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
@@ -928,6 +928,10 @@ export class Oneiron {
     habits: {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
+    },
+    esign: {
+      /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
+      create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
     },
     /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
     batch: (input: Facade.CoreBatchWriteInput): Facade.CoreBatchWriteReceipt => this.#call(() => this.#client.vaultBatch(input) as Facade.CoreBatchWriteReceipt),

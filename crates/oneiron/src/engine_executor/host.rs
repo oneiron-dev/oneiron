@@ -1,5 +1,6 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
+use super::cancel::StepCancellation;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
@@ -30,7 +31,7 @@ use crate::code_sandbox::{
 use crate::compaction::output::OutputRef;
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
 use crate::entity_id::EntityId;
-use crate::error::GateError;
+use crate::error::{CodeError, GateError};
 use crate::store::BodySink;
 use crate::{Error, Result};
 use serde_json::json;
@@ -222,6 +223,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// calls are gated and recorded as the run's, at the positions after this
     /// one's. A skill that fails answers a typed failure the program reads;
     /// a halt or a declined TASK among its calls is this call's answer too.
+    /// The skill runs under a child of `parent`, the caller's step token: a
+    /// stop of the caller stops it, and its owner's suspension stops it alone
+    /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
+    /// caller's step goes on.
     fn call_skill(
         &mut self,
         seq: u64,
@@ -229,6 +234,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         call: &SelfCall,
         skill: SelfSkillCall,
         runtime: &mut dyn JsCodeModeRuntime,
+        parent: &StepCancellation,
     ) -> Result<SelfDispatchOutcome> {
         let failed = |error: String| {
             SelfDispatchOutcome::Failed(SelfFailedResult {
@@ -268,7 +274,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
         let (run_id, determinism) = (self.run_id, self.determinism);
-        let ran = crate::skill::execute_callable_skill(
+        let ran = crate::skill::execute_callable_skill_cancellable(
             &lease.vault,
             &lease.leased,
             &skill.skill,
@@ -280,6 +286,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             seq,
             determinism,
             started_at_ms / 1000,
+            parent,
         );
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(failed("host_bridge_halted".to_owned()));
@@ -297,6 +304,11 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 skill: skill.skill,
                 output,
             }),
+            // A cancelled skill is a failed call under its stable code, read
+            // from the typed error the runtime raised, never from guest text.
+            Err(Error::Code(CodeError::CodeStepCancelled)) => {
+                failed(CodeError::CodeStepCancelled.to_string())
+            }
             Err(error) => failed(error.to_string()),
         };
         // The post chain reads the answer as the guest gets it: a large one
@@ -307,11 +319,12 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// One `self.*` call over the bridge. `runtime` is the sibling a call
     /// that runs a step of its own runs it on, when the caller's runtime
-    /// lent one ([`JsCodeModeHost::dispatch_self_nested`]).
+    /// lent one ([`JsCodeModeHost::dispatch_self_nested`]), with the
+    /// caller's step token that step's own descends from.
     fn dispatch_call(
         &mut self,
         call: SelfCall,
-        runtime: Option<&mut dyn JsCodeModeRuntime>,
+        runtime: Option<(&mut dyn JsCodeModeRuntime, &StepCancellation)>,
     ) -> Result<SelfDispatchResponse> {
         let seq = self.next_seq;
         self.next_seq += 1;
@@ -382,9 +395,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         // take the positions after it, and their rows land first.
         let place = self.bridge_calls.len();
         let dispatched = match (&call, runtime) {
-            (SelfCall::SkillsCall(skill), Some(runtime)) => {
+            (SelfCall::SkillsCall(skill), Some((runtime, parent))) => {
                 let skill = skill.clone();
-                self.call_skill(seq, started_at_ms, &call, skill, runtime)
+                self.call_skill(seq, started_at_ms, &call, skill, runtime, parent)
             }
             (SelfCall::ReaderSpawn(spawn), _) => {
                 let spawn = (**spawn).clone();
@@ -1399,7 +1412,16 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         call: SelfCall,
         runtime: &mut dyn JsCodeModeRuntime,
     ) -> Result<SelfDispatchResponse> {
-        self.dispatch_call(call, Some(runtime))
+        self.dispatch_call(call, Some((runtime, &StepCancellation::never())))
+    }
+
+    fn dispatch_self_nested_cancellable(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        cancel: &StepCancellation,
+    ) -> Result<SelfDispatchResponse> {
+        self.dispatch_call(call, Some((runtime, cancel)))
     }
 }
 

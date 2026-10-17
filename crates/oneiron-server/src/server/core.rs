@@ -101,7 +101,7 @@ pub struct SyncServer {
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
-    pub(crate) lens_frames: crate::lens_frames::LensFrameStore,
+    pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -374,8 +374,15 @@ impl SyncServer {
             config.feedback_inbox.notes_per_hour,
             std::time::Instant::now(),
         );
+        let lens_frames = Arc::new(crate::lens_frames::LensFrameStore::new(
+            &retained,
+            &wire_telemetry,
+        ));
+        // OF-181: a live run that ends closes the lens cards it created.
+        let live_runs: Arc<super::LiveRuns> = Arc::default();
+        live_runs.close_cards_with(Arc::clone(&lens_frames));
         Ok(Self {
-            lens_frames: crate::lens_frames::LensFrameStore::new(&retained, &wire_telemetry),
+            lens_frames,
             retained,
             presence,
             usage_ledger: UsageLedger::new(vault.clone()),
@@ -408,7 +415,7 @@ impl SyncServer {
             mcp_registry,
             mcp_code_host: None,
             reader_runner,
-            live_runs: Arc::default(),
+            live_runs,
             browser_guest: None,
             desktop_guest: None,
             desktop_seats: Arc::default(),
