@@ -69,6 +69,7 @@ mod owner;
 pub mod projection;
 mod protocol;
 pub mod replay_judge;
+mod residence_machines;
 pub mod runtime;
 mod saved_query_sweep;
 pub mod server;

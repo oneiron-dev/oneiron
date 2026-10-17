@@ -515,6 +515,9 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
+        def residence(self) -> "Oneiron._VaultResidenceVerbs":
+            return Oneiron._VaultResidenceVerbs(self._client)
+        @property
         def records(self) -> "Oneiron._VaultRecordsVerbs":
             return Oneiron._VaultRecordsVerbs(self._client)
         @property
@@ -963,6 +966,21 @@ class Oneiron:
         def mint_slip(self, spec):
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
             return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
+    class _VaultResidenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mode(self, spec):
+            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
+            return json.loads(_translate(lambda: self._client.vault_residence_mode(json.dumps(spec))))
+        def open(self, spec):
+            """Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."""
+            return json.loads(_translate(lambda: self._client.vault_residence_open(json.dumps(spec))))
+        def index(self, spec):
+            """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
+            return json.loads(_translate(lambda: self._client.vault_residence_index(json.dumps(spec))))
+        def prune(self, spec):
+            """Drops the opened-item caches one of the owner's machines last touched before a time."""
+            return json.loads(_translate(lambda: self._client.vault_residence_prune(json.dumps(spec))))
     class _VaultRecordsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

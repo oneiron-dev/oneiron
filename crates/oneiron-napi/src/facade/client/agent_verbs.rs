@@ -877,6 +877,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_residence_mode(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.residence.mode", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_residence_open(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.residence.open", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_residence_index(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.residence.index", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_residence_prune(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.residence.prune", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_records_erase_preview(
         &self,
         input: serde_json::Value,

@@ -502,6 +502,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.residence.mode",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceModeRequest,
+                >(),
+            ),
+            (
+                "vault.residence.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceOpenRequest,
+                >(),
+            ),
+            (
+                "vault.residence.index",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceMachineRequest,
+                >(),
+            ),
+            (
+                "vault.residence.prune",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidencePruneRequest,
+                >(),
+            ),
+            (
                 "vault.records.erase_preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RecordEraseRequest,
@@ -2549,6 +2573,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.residence.mode" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.residence.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.residence.index" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.residence.prune" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.records.erase_preview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4314,6 +4366,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.guests.mint_slip" => {
             let _input: crate::task_verb::sdk::GuestSlipMintRequest = decode(value.clone())?;
         }
+        "vault.residence.mode" => {
+            let _input: crate::task_verb::sdk::ResidenceModeRequest = decode(value.clone())?;
+        }
+        "vault.residence.open" => {
+            let _input: crate::task_verb::sdk::ResidenceOpenRequest = decode(value.clone())?;
+        }
+        "vault.residence.index" => {
+            let _input: crate::task_verb::sdk::ResidenceMachineRequest = decode(value.clone())?;
+        }
+        "vault.residence.prune" => {
+            let _input: crate::task_verb::sdk::ResidencePruneRequest = decode(value.clone())?;
+        }
         "vault.records.erase_preview" => {
             let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
         }
@@ -5246,6 +5310,10 @@ pub fn invoke(
         }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
+        "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
+        "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
+        "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
+        "vault.residence.prune" => encode(vault_residence_prune(memory, decode(value)?)?),
         "vault.records.erase_preview" => {
             encode(vault_records_erase_preview(memory, decode(value)?)?)
         }
@@ -6576,6 +6644,30 @@ pub fn vault_guests_mint_slip(
     input: crate::task_verb::sdk::GuestSlipMintRequest,
 ) -> MemoryResult<crate::task_verb::sdk::GuestSlipMinted> {
     crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)
+}
+pub fn vault_residence_mode(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceModeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ResidenceModeChanged> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.mode")
+}
+pub fn vault_residence_open(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceOpenRequest,
+) -> MemoryResult<crate::task_verb::sdk::ResidenceOpened> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.open")
+}
+pub fn vault_residence_index(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceMachineRequest,
+) -> MemoryResult<crate::task_verb::sdk::ResidenceIndex> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.index")
+}
+pub fn vault_residence_prune(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidencePruneRequest,
+) -> MemoryResult<crate::task_verb::sdk::ResidencePruned> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune")
 }
 pub fn vault_records_erase_preview(
     memory: &Memory<'_>,

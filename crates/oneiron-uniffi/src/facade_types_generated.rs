@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 303 facade rows, 1083 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 271.
+// UniFFI census: 307 facade rows, 1094 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 275.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
@@ -6738,6 +6738,115 @@ pub struct GuestSlipMinted {
     pub slip: String,
     #[serde(rename = "expires_at")]
     pub expires_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceModeName`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ResidenceModeName {
+    #[serde(rename = "opened")]
+    Opened,
+    #[serde(rename = "all")]
+    All,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceModeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResidenceModeRequest {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "mode")]
+    pub mode: ResidenceModeName,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceModeChanged`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidenceModeChanged {
+    #[serde(rename = "mode")]
+    pub mode: ResidenceModeName,
+    #[serde(rename = "retained")]
+    pub retained: Vec<String>,
+    #[serde(rename = "unsynced")]
+    pub unsynced: Vec<String>,
+    #[serde(rename = "pruned_items")]
+    pub pruned_items: u64,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceOpenRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResidenceOpenRequest {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "window")]
+    pub window: String,
+    #[serde(rename = "item")]
+    pub item: String,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceOpened`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidenceOpened {
+    #[serde(rename = "item")]
+    pub item: String,
+    #[serde(rename = "window")]
+    pub window: String,
+    #[serde(rename = "residence")]
+    pub residence: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceMachineRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResidenceMachineRequest {
+    #[serde(rename = "machine")]
+    pub machine: String,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceIndexEntry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidenceIndexEntry {
+    #[serde(rename = "entity_id")]
+    pub entity_id: String,
+    #[serde(rename = "title", default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(rename = "learned_at")]
+    pub learned_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceIndexWindowView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidenceIndexWindowView {
+    #[serde(rename = "window")]
+    pub window: String,
+    #[serde(rename = "items")]
+    pub items: Vec<ResidenceIndexEntry>,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceIndex`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidenceIndex {
+    #[serde(rename = "windows")]
+    pub windows: Vec<ResidenceIndexWindowView>,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidencePruneRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResidencePruneRequest {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "before")]
+    pub before: u64,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidencePruned`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidencePruned {
+    #[serde(rename = "dropped")]
+    pub dropped: u64,
 }
 
 /// `oneiron::task_verb::sdk_record_erase::RecordEraseRequest`.

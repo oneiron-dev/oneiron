@@ -1556,3 +1556,55 @@ fn operation(route: &OwnerRoute, path: &str) -> Value {
     );
     Value::Object(operation)
 }
+
+/// A removed device's own routes (OF-150, OF-158, FIX 1300): no bearer, as
+/// its slips are revoked; the revoked slip rides `x-oneiron-left-slip`, with
+/// its holder proof in `x-oneiron-binding`, and each call spends its nonce.
+const LEFT_SLIP_ROUTES: &[(&str, &str)] = &[
+    (
+        "/v1/shared/left-notices",
+        "The removed person's own loss-of-access notices, each signed by this host's root key.",
+    ),
+    (
+        "/v1/shared/removal-export",
+        "Every archive export-first removals delivered to the removed person, still within its term.",
+    ),
+    (
+        "/v1/shared/removal-export/{receipt_id}",
+        "The one archive the removal receipt receipt_id delivered to the removed person, while within its term; not found after it.",
+    ),
+];
+
+/// Adds the removed device's routes to `spec`'s paths.
+pub(crate) fn merge_left_slip_paths(spec: &mut Value) {
+    let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (path, summary) in LEFT_SLIP_ROUTES {
+        let mut parameters = vec![
+            json!({"name": "x-oneiron-left-slip", "in": "header", "required": true, "schema": {"type": "string"}, "description": "The revoked slip this vault minted for the person."}),
+            json!({"name": "x-oneiron-binding", "in": "header", "required": true, "schema": {"type": "string"}, "description": "The slip holder's proof over the request's timestamp and nonce."}),
+        ];
+        if path.ends_with("{receipt_id}") {
+            parameters.push(json!({"name": "receipt_id", "in": "path", "required": true, "schema": {"type": "string"}, "description": "The removal receipt's id, 32 hex."}));
+        }
+        let operation = json!({
+            "tags": ["shared"],
+            "summary": summary,
+            "operationId": format!("left_slip_{}", path.trim_start_matches("/v1/shared/").replace(['/', '-', '{', '}'], "_")),
+            "parameters": parameters,
+            "responses": {
+                "200": {"description": "The removed person's answer.", "content": {"application/json": {"schema": {"type": "object"}}}},
+                "401": {"description": "The slip or its proof does not verify, or the nonce was spent.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiError"}}}},
+                "404": {"description": "No archive this receipt delivered to the person is within its term.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiError"}}}}
+            }
+        });
+        if let Some(item) = paths
+            .entry((*path).to_owned())
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+        {
+            item.insert("post".to_owned(), operation);
+        }
+    }
+}

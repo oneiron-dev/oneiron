@@ -476,6 +476,26 @@ export_facade! {
     let output = client.vault_guests_mint_slip(&input)?;
     crate::codec::lift_record("vault.guests.mint_slip", &output)
 };
+"vault.residence.mode" => fn vault_residence_mode(&self, input: ResidenceModeRequest) -> ResidenceModeChanged = |client| {
+    let input: oneiron::task_verb::sdk::ResidenceModeRequest = crate::codec::lower_record("vault.residence.mode", input)?;
+    let output = client.vault_residence_mode(&input)?;
+    crate::codec::lift_record("vault.residence.mode", &output)
+};
+"vault.residence.open" => fn vault_residence_open(&self, input: ResidenceOpenRequest) -> ResidenceOpened = |client| {
+    let input: oneiron::task_verb::sdk::ResidenceOpenRequest = crate::codec::lower_record("vault.residence.open", input)?;
+    let output = client.vault_residence_open(&input)?;
+    crate::codec::lift_record("vault.residence.open", &output)
+};
+"vault.residence.index" => fn vault_residence_index(&self, input: ResidenceMachineRequest) -> ResidenceIndex = |client| {
+    let input: oneiron::task_verb::sdk::ResidenceMachineRequest = crate::codec::lower_record("vault.residence.index", input)?;
+    let output = client.vault_residence_index(&input)?;
+    crate::codec::lift_record("vault.residence.index", &output)
+};
+"vault.residence.prune" => fn vault_residence_prune(&self, input: ResidencePruneRequest) -> ResidencePruned = |client| {
+    let input: oneiron::task_verb::sdk::ResidencePruneRequest = crate::codec::lower_record("vault.residence.prune", input)?;
+    let output = client.vault_residence_prune(&input)?;
+    crate::codec::lift_record("vault.residence.prune", &output)
+};
 "vault.records.erase_preview" => fn vault_records_erase_preview(&self, input: RecordEraseRequest) -> RecordErasePreview = |client| {
     let input: oneiron::task_verb::sdk::RecordEraseRequest = crate::codec::lower_record("vault.records.erase_preview", input)?;
     let output = client.vault_records_erase_preview(&input)?;

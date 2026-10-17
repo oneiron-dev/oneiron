@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 303 facade rows, 1169 declarations.
-Inputs: 260 of 303 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 260 of 303 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 307 facade rows, 1180 declarations.
+Inputs: 264 of 307 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 264 of 307 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -2492,6 +2492,40 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+ResidenceModeName = Literal["opened", "all"]
+class ResidenceModeRequest(TypedDict):
+    machine: EntityId
+    mode: ResidenceModeName
+class ResidenceModeChanged(TypedDict):
+    mode: ResidenceModeName
+    retained: list[str]
+    unsynced: list[str]
+    pruned_items: int
+class ResidenceOpenRequest(TypedDict):
+    machine: EntityId
+    window: str
+    item: EntityId
+class ResidenceOpened(TypedDict):
+    item: EntityId
+    window: str
+    residence: str
+    bytes: int
+class ResidenceMachineRequest(TypedDict):
+    machine: EntityId
+class ResidenceIndexEntry(TypedDict):
+    entity_id: str
+    title: NotRequired[str | None]
+    learned_at: int
+class ResidenceIndexWindowView(TypedDict):
+    window: str
+    items: list[ResidenceIndexEntry]
+class ResidenceIndex(TypedDict):
+    windows: list[ResidenceIndexWindowView]
+class ResidencePruneRequest(TypedDict):
+    machine: EntityId
+    before: int
+class ResidencePruned(TypedDict):
+    dropped: int
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):

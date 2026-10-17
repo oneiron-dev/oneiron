@@ -1055,6 +1055,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_residence_mode(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.mode")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.mode", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_residence_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_residence_index(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.index")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.index", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_residence_prune(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.prune")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.prune", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_records_erase_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.records.erase_preview")?;
         let output = py
