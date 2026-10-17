@@ -69,6 +69,7 @@ mod env;
 pub mod iteration_method;
 mod iterator;
 mod mdb;
+mod page_seal;
 mod reserved_space;
 mod txn;
 
