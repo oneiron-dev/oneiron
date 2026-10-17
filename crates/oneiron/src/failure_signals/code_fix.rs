@@ -15,6 +15,10 @@
 //! The replay runner and the scrubber are the host's: the Coach's model turn
 //! and a candidate's build run there, inside the vault's boundary. Neither
 //! has a default, and a missing or undecided one withholds the record.
+//!
+//! The vault reads the real failure itself, never from the caller: the
+//! failing agent's instructions, the briefing its dispatch carried and the
+//! task it ran ([`FailureSource`]), and every world those touched.
 
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
@@ -25,7 +29,6 @@ use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_i
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::batch::secret_scan::scan_joined_text;
-use crate::dreamer_consolidation::whole_turn_text_as_in;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::failure_ladder::{HealerCase, healer_case_in_txn};
@@ -77,6 +80,29 @@ pub struct CandidateFix {
     /// The invented example this result goes beside, when one left.
     pub example_id: Option<String>,
     pub failure_class: FailureClassV1,
+}
+
+/// The real failure as the vault holds it: the failing agent's
+/// instructions, the briefing its dispatch carried and the task it ran. No
+/// model request is kept, so a replay rebuilds the failing call from these.
+/// None of it leaves the vault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailureSource {
+    pub instructions: String,
+    pub briefing: Option<String>,
+    pub task: Option<String>,
+}
+
+impl FailureSource {
+    /// Every text of it that is not blank, for the verbatim guard.
+    fn texts(&self) -> Vec<String> {
+        std::iter::once(self.instructions.as_str())
+            .chain(self.briefing.as_deref())
+            .chain(self.task.as_deref())
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,8 +186,8 @@ pub enum CodeFixWithheld {
     /// The failure touched a private world, or one whose privacy is unknown:
     /// its tier-1 counts are all that leaves.
     PrivateWorld,
-    /// No source turn was named, or one is gone, has no text, or the Coach
-    /// may not read all of it.
+    /// The vault holds no text of the failure: no instructions, briefing
+    /// or task.
     SourceUnavailable,
     /// The draft or candidate is out of shape.
     Malformed,
@@ -175,6 +201,8 @@ pub enum CodeFixWithheld {
     NotReproduced,
     /// The host has no replay for this case.
     ReplayUnavailable,
+    /// The Coach drafted no example for it.
+    NotDrafted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,13 +230,12 @@ fn withheld(reason: CodeFixWithheld) -> Result<CodeFixVerdict> {
 
 impl Vault {
     /// Seals the Coach's invented example of the failure `case_ref` for
-    /// export. `source_turns` are the real turns the failure ran on; the
-    /// example may copy no span of them. Every check runs before the record
-    /// is queued, and the first that fails withholds it.
+    /// export. The vault reads the real failure itself; the example may copy
+    /// no span of it. Every check runs before the record is queued, and the
+    /// first that fails withholds it.
     pub fn prepare_invented_example(
         &self,
         case_ref: &str,
-        source_turns: &[EntityId],
         draft: InventedExampleDraft,
         replay: &dyn CodeFixReplay,
         scrubber: &dyn ExportScrubber,
@@ -220,30 +247,23 @@ impl Vault {
         if !draft_in_shape(&draft) {
             return withheld(W::Malformed);
         }
-        if source_turns.is_empty() {
-            return withheld(W::SourceUnavailable);
-        }
-        let coach = self.coach_authority()?;
         self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         let Some((case, attempt)) = failed_case_in(self, &txn, case_ref)? else {
             return withheld(W::UnknownCase);
         };
-        let Some(worlds) = touched_worlds_in(self, &txn, &attempt, source_turns)? else {
+        let Some((source, worlds)) = failure_source_in(self, &txn, &case, &attempt)? else {
             return withheld(W::PrivateWorld);
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if !all_public(&fold, &worlds) {
             return withheld(W::PrivateWorld);
         }
-        let mut sources = Vec::with_capacity(source_turns.len());
-        for turn in source_turns {
-            match whole_turn_text_as_in(self, &txn, coach, turn)? {
-                Some(text) => sources.push(text),
-                None => return withheld(W::SourceUnavailable),
-            }
-        }
         drop(txn);
+        let sources = source.texts();
+        if sources.is_empty() {
+            return withheld(W::SourceUnavailable);
+        }
 
         let joined = std::iter::once(draft.note.as_str())
             .chain(draft.conversation.iter().map(|m| m.text.as_str()))
@@ -304,7 +324,7 @@ impl Vault {
         let Some((case, attempt)) = failed_case_in(self, &txn, case_ref)? else {
             return withheld(W::UnknownCase);
         };
-        let Some(worlds) = touched_worlds_in(self, &txn, &attempt, &[])? else {
+        let Some((_, worlds)) = failure_source_in(self, &txn, &case, &attempt)? else {
             return withheld(W::PrivateWorld);
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -384,7 +404,7 @@ impl Vault {
 }
 
 /// The durable case and its attempt, while that attempt stands failed.
-fn failed_case_in(
+pub(crate) fn failed_case_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     case_ref: &str,
@@ -401,51 +421,60 @@ fn failed_case_in(
     Ok(Some((case, attempt)))
 }
 
-/// Every world the failure touched: the failing dispatch's scope, and each
-/// source row's world (base reality for a row in none). `None` when one of
-/// them cannot be proved. A source row that is gone is left to the text read.
-fn touched_worlds_in(
+/// The real failure, and every world it touched: the failing dispatch's
+/// scope and the task row's world (base reality for a row in none). `None`
+/// when the attempt is no agent dispatch this can read, or a world cannot be
+/// proved. A task row that is gone leaves nothing to read.
+pub(crate) fn failure_source_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    case: &HealerCase,
     attempt: &AttemptRecord,
-    sources: &[EntityId],
-) -> Result<Option<Vec<EntityId>>> {
+) -> Result<Option<(FailureSource, Vec<EntityId>)>> {
     use crate::ports::EntityStore;
     let base = crate::claim::base_world_id();
-    let Some(dispatch) = dispatch_world(attempt) else {
+    let Some(input) = dispatch_input(attempt) else {
         return Ok(None);
     };
-    let mut worlds = vec![dispatch.unwrap_or(base)];
-    for id in sources {
-        let Some(row) = vault.port_entity_get(txn, id)? else {
-            continue;
-        };
-        let Some(world) = crate::federation::record_scope::record_world_in(
-            &vault.store,
-            txn,
-            *id,
-            row.entity_type,
-            &row.body,
-        )?
-        else {
+    let mut worlds = vec![input.scope.and_then(|scope| scope.world).unwrap_or(base)];
+    let mut task = None;
+    if let Some(raw) = case.task_ref.as_deref() {
+        let Ok(task_ref) = EntityId::from_hex(raw) else {
             return Ok(None);
         };
-        worlds.push(world.unwrap_or(base));
+        if let Some(row) = vault.port_entity_get(txn, &task_ref)? {
+            let Some(world) = crate::federation::record_scope::record_world_in(
+                &vault.store,
+                txn,
+                task_ref,
+                row.entity_type,
+                &row.body,
+            )?
+            else {
+                return Ok(None);
+            };
+            worlds.push(world.unwrap_or(base));
+            task = crate::task_verb::task_text_in(vault, txn, task_ref)?;
+        }
     }
     worlds.sort_unstable();
     worlds.dedup();
-    Ok(Some(worlds))
+    let source = FailureSource {
+        instructions: input.definition.instructions.unwrap_or_default(),
+        briefing: input.context_spec.and_then(|spec| spec.briefing),
+        task,
+    };
+    Ok(Some((source, worlds)))
 }
 
-/// The failing dispatch's world (`Some(None)` when it named none); `None`
-/// when the attempt is no agent dispatch this can read.
-fn dispatch_world(attempt: &AttemptRecord) -> Option<Option<EntityId>> {
+/// The failing agent dispatch's input; `None` when the attempt is no agent
+/// dispatch this can read.
+fn dispatch_input(attempt: &AttemptRecord) -> Option<crate::agent_dispatch::AgentDispatchInput> {
     let payload = decode_dreamer_attempt_payload(&attempt.payload).ok()?;
     if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
         return None;
     }
-    let input = decode_agent_dispatch_input(&payload.input).ok()?;
-    Some(input.scope.and_then(|scope| scope.world))
+    decode_agent_dispatch_input(&payload.input).ok()
 }
 
 /// Readable everywhere: any narrower, conflicted or unknowable setting is

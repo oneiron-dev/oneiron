@@ -17,10 +17,11 @@ mod witness;
 pub use code_fix::{
     CODE_FIX_MAX_CANDIDATE_ID_BYTES, CODE_FIX_MAX_MESSAGE_BYTES, CODE_FIX_MAX_MESSAGES,
     CODE_FIX_MAX_NOTE_BYTES, CODE_FIX_RECORD_VERSION, CandidateFix, CandidateFixResult,
-    CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FixOutcome,
-    InventedExampleDraft, InventedFailureExample, InventedMessage, InventedRole, ReplayRun,
-    ScrubRun, ShadowRun,
+    CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FailureSource,
+    FixOutcome, InventedExampleDraft, InventedFailureExample, InventedMessage, InventedRole,
+    ReplayRun, ScrubRun, ShadowRun,
 };
+pub(crate) use code_fix::{failed_case_in, failure_source_in};
 pub use verbatim::{CODE_FIX_LINE_WORDS, CODE_FIX_SPAN_WORDS};
 pub use witness::Tier1Observation;
 

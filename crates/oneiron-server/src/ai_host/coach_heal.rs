@@ -2,11 +2,12 @@
 //! queue, where each failure-ladder case the escalation hands to the Coach
 //! and each Issues wake a blocked report raises wait, and runs the engine's
 //! propose-only door for each on the host's decision ladder. What lands is a
-//! proposed heal in the owner's run tray; nothing is repaired here.
+//! proposed heal in the owner's run tray; nothing is repaired here. The
+//! code-fix run a filed heal wakes (OF-380) rides the same queue.
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::dreamer_runner::maintenance::coach::COACH_ISSUES_FACET;
+use oneiron::dreamer_runner::maintenance::coach::{COACH_CODE_FIX_FACET, COACH_ISSUES_FACET};
 use oneiron::dreamer_runner::maintenance::coach_heal::HealDecisions;
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, CompleteDreamerAttempt,
@@ -89,6 +90,9 @@ fn run_one(
     let principal = vault
         .ensure_embedded_owner_actor()
         .map_err(|error| oneiron::Error::InvalidConfig(format!("no owner principal: {error}")))?;
+    if admitted.status.payload.attempt_type == COACH_CODE_FIX_FACET {
+        return super::code_fix::run(server, admitted, principal, now);
+    }
     let host = server.decision_host();
     let decisions = HealDecisions {
         ladder: host.ladder().ladder(),

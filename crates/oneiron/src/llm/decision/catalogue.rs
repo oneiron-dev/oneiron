@@ -322,6 +322,15 @@ pub const COACH_HEAL_ROUTE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// The Coach's code-fix checks (DEC-0005 FIX6, OF-380): which failure class a case is, whether
+/// a replay fails the way the case did, whether a candidate fix's shadow replay no longer fails,
+/// and whether an invented example is safe to leave the vault. Keyed by the check.
+pub const CODE_FIX_JUDGMENT: QuestionFamily = QuestionFamily {
+    name: "coach.code_fix_check",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -357,4 +366,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     TASK_SURFACE,
     IDENTITY_SETTLE,
     COACH_HEAL_ROUTE,
+    CODE_FIX_JUDGMENT,
 ];
