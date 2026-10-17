@@ -385,6 +385,9 @@ impl SyncClient {
                 self.import_accepted_window_update(window_key, &window, admitted.bytes())
             })
         })?;
+        admitted
+            .keep_born_with(&self.vault)
+            .map_err(map_federated_admission_err)?;
         let released = admitted
             .release(&self.vault, key, &born)
             .map_err(map_federated_admission_err)?;

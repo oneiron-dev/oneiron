@@ -133,6 +133,7 @@ pub(crate) struct AdmittedUpdate {
     rows: u64,
     early: EarlyStamps,
     births: Vec<(EntityId, Vec<u8>)>,
+    born_with: Vec<super::born_with::CarriedText>,
     lane: Option<String>,
 }
 
@@ -188,6 +189,12 @@ impl AdmittedUpdate {
     /// with the bytes it brings.
     pub(crate) fn births(&self) -> &[(EntityId, Vec<u8>)] {
         &self.births
+    }
+
+    /// After the update's import, keeps the born-with text the sender let
+    /// travel beside each row that landed (OF-491).
+    pub(crate) fn keep_born_with(&self, vault: &Vault) -> Result<()> {
+        super::born_with::keep_carried(vault, &self.born_with)
     }
 
     /// After the update's import, the stamps on the rows that import birthed
@@ -311,6 +318,9 @@ fn admit_window_update(
         &admitted,
         crate::sync::row_birth::BirthReach::OtherVault(&withheld),
     )?;
+    // Its born-with text never enters the admitted bytes: the import keeps
+    // it beside the rows that land.
+    let born_with = super::born_with::admitted_born_with(&remote, &admitted);
     let births = match &lane {
         Some(lane) => pending_births(
             vault,
@@ -330,6 +340,7 @@ fn admit_window_update(
         rows: rows as u64,
         early,
         births,
+        born_with,
         lane,
     })
 }
