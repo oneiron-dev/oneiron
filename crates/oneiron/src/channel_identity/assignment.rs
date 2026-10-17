@@ -288,6 +288,33 @@ pub(crate) fn clear_assignment_for_delete(
     Ok(())
 }
 
+/// Closes a deleted ChannelIdentity's own `channel_identity.*` heads, the
+/// claim half of [`clear_assignment_for_delete`] (OF-272). The caller stages
+/// it in the SAME write transaction as the deletion, with the type it read
+/// while the row was still readable, and BEFORE the deletion tears the
+/// `claim_of` edges the heads are found by: each live head is closed
+/// `retracted` at `now` on the family's engine-owned setting, so a deleted
+/// identity has no live facts and its heads leave the live postings. Other
+/// kinds are left alone.
+pub(crate) fn close_claim_heads_for_delete_in_txn(
+    writer: &crate::counterparty_contact::ClaimHeadWriter<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    now: u64,
+) -> Result<()> {
+    if entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+        return Ok(());
+    }
+    writer.retract_subject_heads_in_txn(
+        txn,
+        id,
+        super::codec::is_channel_identity_claim_predicate,
+        now,
+    )?;
+    Ok(())
+}
+
 /// Explicit CID-7 recovery. Only this door scans stored rows; normal routing
 /// and write admission use the index. Pre-release vaults have no ABI migration.
 pub(super) fn rebuild(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
