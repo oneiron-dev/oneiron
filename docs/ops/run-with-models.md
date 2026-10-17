@@ -127,8 +127,8 @@ never read off the provider's name), `model_families` (one wire model's own
 family in place of `family`: `model_families = { "claude-opus-5-5" = "claude",
 "gpt-6.1" = "gpt" }`; a judge's tie-breaker is asked only of a model whose
 family neither judge has),
-`locality` (`own_server` or `third_party`), `revision` (`live`) and
-`responses_socket` (below). Plain
+`locality` (`own_server` or `third_party`), `revision` (`live`),
+`responses_socket` and `request_compression` (both below). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
 
@@ -213,6 +213,16 @@ call whose socket will not open, or that carries audio, goes out over
 route say, holds a socket when its entry sets `responses_socket = true` (a
 59-minute limit) or `responses_socket = { max_age_secs = 3600 }`. A
 `key_secret` provider stays on HTTP: the credential broker runs no socket yet.
+
+An `anthropic-compat` provider at `https://api.anthropic.com` sends a
+`/v1/messages` request body of 16 KiB or more gzip-encoded (level 1), when that
+makes it smaller. Replies do not change. Any other provider sends plain bodies
+unless its entry names the codec its route decodes: `request_compression =
+"zstd"` (level 3) for our CPA agents route, say, or `"gzip"`. Set
+`request_compression = false` to send plain. If a compressed body is answered
+400 or 415, it is sent once more, plain; when that answer differs, the
+provider sends plain until restart. A `key_secret` provider sends plain: the
+credential broker compresses nothing yet.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under

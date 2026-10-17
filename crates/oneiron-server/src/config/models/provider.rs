@@ -186,6 +186,46 @@ const RESPONSES_SOCKET_ORIGINS: [(&str, u64); 2] =
 /// in [`RESPONSES_SOCKET_ORIGINS`]: the shorter of the two known limits.
 const DEFAULT_RESPONSES_SOCKET_AGE_SECS: u64 = 3540;
 
+/// A provider's request compression as written: `false`, or the codec its
+/// route decodes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub(super) enum RequestCompressionFile {
+    Switch(bool),
+    Codec(RequestCodec),
+}
+
+/// The codec a provider's JSON request bodies go in (ARCH-0081 §6). Replies
+/// do not change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestCodec {
+    /// gzip at level 1.
+    Gzip,
+    /// zstd at level 3.
+    Zstd,
+}
+
+/// Request compression for one provider: bodies of 16 KiB or more posted to
+/// `route` (every route when `None`) go in `codec`, when that is smaller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RequestCompression {
+    pub codec: RequestCodec,
+    pub route: Option<&'static str>,
+}
+
+/// The routes known to decode a compressed request (ARCH-0081 §6's
+/// allowlist): an Anthropic-compatible provider at the origin compresses
+/// there unless its entry says `request_compression = false`. Any other
+/// route (our CPA agents route, say) compresses only when its entry names a
+/// codec, and then on every route it posts to.
+const REQUEST_COMPRESSION_ROUTES: [(ProviderKind, &str, &str, RequestCodec); 1] = [(
+    ProviderKind::AnthropicCompat,
+    "https://api.anthropic.com",
+    "/v1/messages",
+    RequestCodec::Gzip,
+)];
+
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_CONTEXT_TOKENS: u64 = 128_000;
 /// Headers that carry credentials. Keys arrive through `key_env` or
@@ -225,6 +265,7 @@ pub(super) struct ProviderFile {
     #[serde(default)]
     rates: Vec<UnitRate>,
     responses_socket: Option<ResponsesSocketFile>,
+    request_compression: Option<RequestCompressionFile>,
 }
 
 /// A validated provider entry.
@@ -275,6 +316,10 @@ pub struct ProviderConfig {
     /// `None` for the chat HTTP path alone. A broker-held key always takes
     /// HTTP: the broker runs no socket yet.
     pub responses_socket: Option<ResponsesSocket>,
+    /// How this provider's JSON request bodies are compressed, or `None` to
+    /// send them plain. A broker-held key always sends plain: the broker
+    /// compresses nothing yet.
+    pub request_compression: Option<RequestCompression>,
 }
 
 impl ProviderFile {
@@ -378,6 +423,13 @@ impl ProviderFile {
             self.key_secret.is_some(),
             self.responses_socket,
         )?;
+        let request_compression = request_compression(
+            name,
+            kind,
+            &base_url,
+            self.key_secret.is_some(),
+            self.request_compression,
+        )?;
         let payer = self.payer.unwrap_or_else(|| {
             if self.key_env.is_some() || self.key_secret.is_some() {
                 Payer::CustomerKey
@@ -411,8 +463,54 @@ impl ProviderFile {
             payer,
             rates: self.rates,
             responses_socket,
+            request_compression,
         })
     }
+}
+
+/// The request compression an entry has: what it wrote, else its route's in
+/// [`REQUEST_COMPRESSION_ROUTES`]. A broker-held key has none.
+fn request_compression(
+    name: &str,
+    kind: ProviderKind,
+    base_url: &str,
+    brokered: bool,
+    file: Option<RequestCompressionFile>,
+) -> anyhow::Result<Option<RequestCompression>> {
+    let known = REQUEST_COMPRESSION_ROUTES
+        .iter()
+        .find(|(known_kind, origin, _, _)| {
+            *known_kind == kind
+                && base_url
+                    .strip_prefix(origin)
+                    .is_some_and(|rest| rest.is_empty() || rest == "/v1")
+        })
+        .map(|&(_, _, route, codec)| RequestCompression {
+            codec,
+            route: Some(route),
+        });
+    let compression = match file {
+        None => known,
+        Some(RequestCompressionFile::Switch(false)) => None,
+        Some(RequestCompressionFile::Switch(true)) => Some(known.ok_or_else(|| {
+            anyhow::anyhow!(
+                "models.providers.{name}.request_compression = true needs a known route; name the codec (\"gzip\" or \"zstd\") this route decodes"
+            )
+        })?),
+        Some(RequestCompressionFile::Codec(codec)) => Some(RequestCompression {
+            codec,
+            route: known.and_then(|known| known.route),
+        }),
+    };
+    if compression.is_some() && (brokered || !kind.generates()) {
+        if file.is_some() {
+            anyhow::bail!(
+                "models.providers.{name}.request_compression applies to a generating provider whose key is not key_secret"
+            );
+        }
+        return Ok(None);
+    }
+    Ok(compression)
 }
 
 /// The Responses socket an entry holds: what it wrote, else the default its
