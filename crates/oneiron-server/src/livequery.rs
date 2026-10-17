@@ -83,6 +83,8 @@ fn rpc_error(
 pub(crate) struct RpcCall {
     method: String,
     request_digest: String,
+    /// The input versions the call reads (OF-568); `None` when uncaptured.
+    inputs: Option<oneiron::receipt::ActionInputs>,
 }
 
 impl RpcCall {
@@ -90,6 +92,16 @@ impl RpcCall {
         Self {
             method: request.method.clone(),
             request_digest: oneiron::receipt::call_json_digest(&request.params),
+            inputs: None,
+        }
+    }
+
+    /// [`Self::of`], with the input versions the call reads captured before
+    /// it runs (OF-568).
+    pub(crate) fn captured(server: &crate::server::SyncServer, request: &RpcRequest) -> Self {
+        Self {
+            inputs: call_receipt::action_inputs(server, &request.method, Some(&request.params)),
+            ..Self::of(request)
         }
     }
 }
@@ -165,6 +177,7 @@ impl RpcReply {
                 outcome,
                 request_digest: call.request_digest,
                 result_digest,
+                inputs: call.inputs,
                 served,
             },
         );
@@ -291,7 +304,7 @@ pub(crate) async fn rpc_reply(
     auth: &CoreAuth,
     request: RpcRequest,
 ) -> Result<RpcReply, ProtocolError> {
-    let call = RpcCall::of(&request);
+    let call = RpcCall::captured(server, &request);
     let result = rpc::run(server, auth, &request.method, request.params).await;
     RpcReply::answer(server, auth, call, request.request_id, result)
 }
