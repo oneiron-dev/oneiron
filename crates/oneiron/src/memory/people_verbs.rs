@@ -59,6 +59,10 @@ pub struct PersonRequest {
 pub struct MessagePersonRequest {
     pub pr: String,
     pub text: String,
+    /// The saved mention `pr` came from, when the agent named the person
+    /// (OF-123): the message refuses while that mention is unsettled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention: Option<crate::outbound::MentionProvenance>,
 }
 
 /// The Direct room the message landed in, and its witness receipt.
@@ -175,6 +179,27 @@ impl Memory<'_> {
         let text = input.text.trim();
         if text.is_empty() {
             return Err(MemoryError::bad_request("message text is empty"));
+        }
+        // OF-123 act-now guard: a person taken from a saved mention waits
+        // until that mention is settled.
+        if let Some(mention) = input.mention.as_ref() {
+            let unsettled = {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::error::Error::from)?;
+                crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+                    self.vault, &txn, mention,
+                )?
+            };
+            if let Some(name) = unsettled {
+                return Err(crate::error::Error::Record(
+                    crate::error::RecordError::IdentityUnsettled { name },
+                )
+                .into());
+            }
         }
         let people = self.people_roster()?;
         let target = Self::person_by_handle(&people, &input.pr)?.person;

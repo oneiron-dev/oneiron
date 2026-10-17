@@ -67,7 +67,7 @@ declare namespace self {
       review(input: { request: string; approve: boolean }): Promise<unknown>;
     };
   };
-  const message: (input: { pr: string; text: string }) => Promise<unknown>;
+  const message: (input: { mention?: { end: number; message: string; start: number; turn: string } | null; pr: string; text: string }) => Promise<unknown>;
   const skills: {
     call(input: { args: unknown; skill: string }): Promise<unknown>;
     callables(input: object): Promise<unknown>;
