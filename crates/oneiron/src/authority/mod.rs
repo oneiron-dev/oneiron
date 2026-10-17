@@ -56,6 +56,7 @@ mod host_re_root;
 mod import_order;
 mod ingest_observation;
 mod install_fold;
+mod invocation_slip;
 mod left_notices;
 mod log_budget;
 mod log_structure;
@@ -145,6 +146,7 @@ pub use history_coverage::{AuthorityHistoryCoverage, AuthorityHistoryRequest};
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
+pub use invocation_slip::InvocationSlipBinding;
 pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
