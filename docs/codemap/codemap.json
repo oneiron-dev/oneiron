@@ -4655,7 +4655,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -10960,7 +10960,7 @@
      "purpose": "—",
      "surface": {
       "const": 8,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 23,
       "struct": 12
@@ -35499,7 +35499,7 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 93,
+      "crate-vis": 94,
       "enum": 1,
       "fn": 12,
       "struct": 6
@@ -35539,7 +35539,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 17
      }
     },
@@ -35631,7 +35631,7 @@
      "path": "src/receipt/send_receipt_txn.rs",
      "purpose": "Send receipt persistence inside a caller-owned transaction",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
