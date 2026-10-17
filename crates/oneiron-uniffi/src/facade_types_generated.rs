@@ -12915,6 +12915,12 @@ pub struct DagRecordAppendInput {
     pub session: Option<String>,
     #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
     pub quote: Option<CoreDagQuoteInput>,
+    #[serde(
+        rename = "thread_audience",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thread_audience: Option<Vec<String>>,
 }
 
 /// `oneiron::core_write::dag::DagRecordAppendReceipt`.

@@ -62,6 +62,7 @@ impl Seed {
             conversation_ref: self.conversation.to_hex(),
             turn_ref: Some(self.turn.to_hex()),
             quote: None,
+            thread_audience: None,
             messages: vec![self.message(content)],
             occurred_at: self.occurred_at,
         }

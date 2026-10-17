@@ -4,7 +4,9 @@ use crate::conversation_dag::edge_ids;
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::{
     EdgeKind,
-    registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP},
+    registry::{
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_TURN,
+    },
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -115,6 +117,12 @@ impl AudienceCache {
         } else {
             vec![Some(raw), None]
         };
+        // Each audience member must also stand in each private thread the
+        // row sits in (FIX 2951); a summary's or claim's covers are walked
+        // there, so it runs once per row.
+        if depth == 0 && !private_threads_readable_raw_in(vault, txn, id, raw, audience)? {
+            return Ok(false);
+        }
         let mut rooms = BTreeSet::new();
         for revision in revisions {
             match room_for_revision_in(vault, txn, id, revision) {
@@ -290,6 +298,99 @@ pub(crate) fn conversation_summary_covers(
         })
         .collect::<Result<Vec<_>>>()
         .map(Some)
+}
+
+/// Whether every one of `viewers` reads each private thread (FIX 2951) the
+/// revision `raw` of `id`, or its current row, sits in: the root each TURN
+/// up its MESSAGE, reply, quote and spawn edges or a claim's subject names,
+/// and those of every record a summary, merge or reaction draws its words
+/// from. A TURN's `Parent` stays in its own thread or on the trunk, which
+/// names none, so it is not walked. A declared root that is gone or does
+/// not resolve denies, and with no viewers so does any private thread. No
+/// read is exempt: an owner's, a host's and an unbound one meet it too.
+pub(crate) fn private_threads_readable_raw_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    viewers: &[EntityId],
+) -> Result<bool> {
+    let mut pending = vec![(id, Some(raw.to_vec()))];
+    if let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+        && live.as_slice() != raw
+    {
+        pending.push((id, Some(live)));
+    }
+    let mut seen = BTreeSet::from([id]);
+    let mut roots = BTreeSet::new();
+    while let Some((id, revision)) = pending.pop() {
+        let bytes = match revision {
+            Some(bytes) => bytes,
+            None if !seen.insert(id) => continue,
+            None => match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? {
+                Some(bytes) => bytes,
+                None => continue,
+            },
+        };
+        if seen.len() > MAX_ANCESTOR_DEPTH {
+            return Err(state("private thread ancestry bound"));
+        }
+        let h = EntityMetadataHeader::parse(&bytes)
+            .ok_or(Error::CorruptedIndex("thread ancestor header"))?;
+        if h.entity_type == ENTITY_TYPE_CONVERSATION {
+            continue;
+        }
+        let body = bytes.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        let kinds: &[EdgeKind] = if h.entity_type == ENTITY_TYPE_TURN {
+            if let Some(binding) = crate::workspace_roster::thread_binding(body)? {
+                roots.insert(binding.root);
+            }
+            &[EdgeKind::RepliesTo, EdgeKind::SpawnedBy]
+        } else {
+            &[
+                EdgeKind::ChildOf,
+                EdgeKind::PartOf,
+                EdgeKind::Parent,
+                EdgeKind::RepliesTo,
+                EdgeKind::SpawnedBy,
+                EdgeKind::BelongsTo,
+            ]
+        };
+        for kind in kinds {
+            let next = edge_ids(&vault.store, txn, &id, *kind, false, MAX_ANCESTOR_DEPTH)?;
+            pending.extend(next.into_iter().map(|id| (id, None)));
+        }
+        let mut covers = vec![crate::scope_summary::body_covers_in_txn(
+            vault,
+            txn,
+            &id,
+            h.entity_type,
+            body,
+        )];
+        if h.entity_type == ENTITY_TYPE_CLAIM
+            && let Ok(claim) = crate::claim::decode_claim_body(body, true)
+        {
+            if let crate::claim::ClaimSubject::Entity(subject) = &claim.subject {
+                pending.push((*subject, None));
+            }
+            covers.extend([
+                crate::scope_summary::merge_word_sources_in_txn(vault, txn, &claim),
+                conversation_summary_covers(&claim),
+                reaction_covers(&claim),
+            ]);
+        }
+        // A cover that does not resolve names no root here; the audience
+        // and room reads that resolve covers deny it themselves.
+        for covered in covers.into_iter().flat_map(|covers| covers.ok().flatten()) {
+            pending.extend(covered.into_iter().map(|id| (id, None)));
+        }
+    }
+    for root in roots {
+        if !crate::workspace_roster::thread_root_readable_in(vault, txn, root, viewers)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 pub(crate) fn room_for_record_in(

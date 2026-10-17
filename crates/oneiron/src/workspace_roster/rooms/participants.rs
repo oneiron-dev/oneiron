@@ -78,7 +78,9 @@ fn parse_cursor(value: &str) -> Option<JoinSubject> {
 
 /// The reader's entry: a person reads from its room audience seat (itself
 /// or the pen it acts through), an agent from its seat or a Ready receipt for
-/// the requested thread or the room.
+/// the requested thread or the room. A private thread's participants are
+/// read by its audience alone (FIX 2951), and a thread hidden from the
+/// reader refuses as an unknown one does.
 fn require_reader_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -86,6 +88,7 @@ fn require_reader_in_txn(
     branch: Option<EntityId>,
     actor: EntityId,
 ) -> Result<()> {
+    super::participation::require_thread_audience_in(vault, txn, room, branch, actor)?;
     let now = vault.store.clock.now_recorded_at();
     let reads = match participant_in_txn(vault, txn, actor, now)? {
         Some(JoinSubject::Agent(agent)) => {

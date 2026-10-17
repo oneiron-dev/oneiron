@@ -53,6 +53,9 @@ pub struct NapiWitnessTurn {
     pub messages: Vec<NapiWitnessMessage>,
     /// Unix seconds (occurred + learned_at).
     pub occurred_at: i64,
+    /// A new project room thread root's audience (32-hex PERSON and
+    /// AGENT_DEF ids), fixed once set; omitted ⇒ it reads as its room does.
+    pub thread_audience: Option<Vec<String>>,
 }
 
 /// Receipt for one witnessed turn.

@@ -49,6 +49,10 @@ struct WitnessTurnInput {
     turn_ref: Option<String>,
     messages: Vec<WitnessMessageInput>,
     occurred_at: Option<f64>,
+    /// A new project room thread root's audience; omitted ⇒ it reads as its
+    /// room does.
+    #[serde(default)]
+    thread_audience: Option<std::collections::BTreeSet<oneiron::EntityId>>,
 }
 
 impl WitnessTurnInput {
@@ -77,6 +81,7 @@ impl WitnessTurnInput {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
             quote: None,
+            thread_audience: self.thread_audience,
             messages,
             occurred_at,
         })

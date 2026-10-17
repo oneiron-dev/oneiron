@@ -1189,6 +1189,7 @@ class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
     quote: NotRequired[QuoteSpan | None]
+    thread_audience: NotRequired[list[EntityId] | None]
     messages: list[WitnessMessage]
     occurred_at: int
 class ClaimInput(TypedDict):
@@ -4804,6 +4805,7 @@ class DagRecordAppendInput(TypedDict):
     learned_at: NotRequired[int | None]
     session: NotRequired[str | None]
     quote: NotRequired[CoreDagQuoteInput | None]
+    thread_audience: NotRequired[list[str] | None]
 class DagRecordAppendReceipt(TypedDict):
     id: str
     head: NotRequired[str | None]

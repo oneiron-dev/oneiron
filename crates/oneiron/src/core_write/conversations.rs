@@ -157,6 +157,16 @@ impl Vault {
             }
             None => return Err(MemoryError::not_found("conversation not found")),
         }
+        // A thread binding is its room door's to stamp (FIX 2951).
+        if input
+            .body
+            .get(crate::workspace_roster::ROOM_THREAD_KEY)
+            .is_some()
+        {
+            return Err(MemoryError::bad_request(
+                "a TURN's room_thread is stamped by its room's thread door",
+            ));
+        }
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
         stage_core_put(

@@ -370,6 +370,47 @@ impl Memory<'_> {
                     .filter_map(|(id, row)| row.map(|_| *id)),
             );
         }
+        // A trunk's every thread reads each private thread's (FIX 2951)
+        // replies under that thread's own reader, for a reader in its
+        // audience: the room's lane withholds them from everyone.
+        if selection == Some(None) {
+            let mut private = std::collections::BTreeMap::<EntityId, Vec<EntityId>>::new();
+            {
+                let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+                for fact in facts.iter().filter(|fact| !admitted.contains(&fact.reply)) {
+                    if let crate::workspace_roster::ThreadPlace::Private(root) =
+                        self.thread_place_in(&txn, room, fact.reply)?
+                    {
+                        let ids = private.entry(root).or_default();
+                        ids.push(fact.reply);
+                        ids.extend(fact.reply_message);
+                        if fact.target_live {
+                            ids.extend([fact.turn, fact.anchor.message()]);
+                        }
+                    }
+                }
+            }
+            for (root, ids) in private {
+                let reader = self.room_selection_reader(room, Some(root))?;
+                let lane = reader
+                    .memory()
+                    .read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+                for chunk in ids.chunks(128) {
+                    let reads: Vec<_> = chunk
+                        .iter()
+                        .copied()
+                        .map(crate::claim::PointRead::id)
+                        .collect();
+                    let rows = lane.read(&reads, None)?.value;
+                    admitted.extend(
+                        chunk
+                            .iter()
+                            .zip(rows)
+                            .filter_map(|(id, row)| row.map(|_| *id)),
+                    );
+                }
+            }
+        }
         if !admitted.contains(&trunk) {
             return Err(MemoryError::bad_request_with(
                 "thread is outside the reader's scope",

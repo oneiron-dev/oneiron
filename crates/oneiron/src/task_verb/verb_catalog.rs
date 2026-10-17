@@ -3350,7 +3350,7 @@ impl AgentVerb {
                 "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."
             }
             Self::VaultRoomsSpeak => {
-                "Speaks one turn into the current room turn's room, through the normal witness gate."
+                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."
             }
             Self::VaultProjectsPropose => {
                 "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."

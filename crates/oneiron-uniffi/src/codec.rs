@@ -300,10 +300,26 @@ impl Lower<engine::WitnessMessage> for WitnessMessage {
 
 impl Lower<engine::WitnessTurn> for WitnessTurn {
     fn lower(self) -> Result<engine::WitnessTurn, OneironError> {
+        let thread_audience = self
+            .thread_audience
+            .map(|ids| {
+                ids.iter()
+                    .map(|id| {
+                        oneiron::EntityId::from_hex(id).map_err(|_| {
+                            bad_request(
+                                "thread_audience must hold 32-hex ids".to_owned(),
+                                "Name each audience member by its 32-hex id.",
+                            )
+                        })
+                    })
+                    .collect::<Result<std::collections::BTreeSet<_>, OneironError>>()
+            })
+            .transpose()?;
         Ok(engine::WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
             quote: self.quote.lower()?,
+            thread_audience,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
         })

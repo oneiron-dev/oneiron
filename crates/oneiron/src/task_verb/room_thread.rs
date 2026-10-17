@@ -120,11 +120,6 @@ pub(crate) fn thread_tasks(
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<crate::Result<Vec<_>>>()?;
-    // The caller's own read lane, proof and access grants included, narrowed
-    // to the room's audience.
-    let scoped = memory
-        .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
-        .for_audience(&audience);
     vault.backfill_tasks_by_owner()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     // Off this device a TASK a device-local world keeps is no match
@@ -149,6 +144,9 @@ pub(crate) fn thread_tasks(
             member,
         )?);
     }
+    // Each thread's members: the room's, or a private thread's (FIX 2951)
+    // audience among them, which its tasks read under.
+    let mut audiences = BTreeMap::<EntityId, Vec<EntityId>>::new();
     let mut candidates = Vec::new();
     for id in owned {
         count.row();
@@ -170,6 +168,24 @@ pub(crate) fn thread_tasks(
         };
         if authority.owner_ref.to_hex() != body.owner_ref || !members.contains(&body.owner_ref) {
             continue;
+        }
+        if !audiences.contains_key(&thread) {
+            let narrowed =
+                match crate::conversation_dag::conversation_of(&vault.store, &txn, &thread)
+                    .and_then(|room| {
+                        crate::workspace_roster::thread_members_in(
+                            vault, &txn, room, thread, &audience,
+                        )
+                    }) {
+                    Ok(narrowed) => narrowed,
+                    // A thread whose root is gone names no audience of its own.
+                    Err(
+                        Error::EntityNotFound
+                        | Error::Record(crate::error::RecordError::InvalidConversationDag(_)),
+                    ) => audience.clone(),
+                    Err(error) => return Err(error.into()),
+                };
+            audiences.insert(thread, narrowed);
         }
         // Exhaust the members' tasks for an exact room-local census.
         // Ask-group ladders live on the existing group row. A peer consult
@@ -229,11 +245,22 @@ pub(crate) fn thread_tasks(
     }
     drop(txn);
     count.finish(vault);
+    let mut lanes = BTreeMap::new();
     let mut result = Vec::new();
     for (id, thread, body, cancelled, ask_due, group_settled, class_tasks, withheld) in candidates {
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
-        // Room membership alone never grants TASK visibility.
+        // Room membership alone never grants TASK visibility: the caller's
+        // own read lane, proof and access grants included, narrowed to its
+        // thread's members.
+        let scoped = match lanes.entry(thread) {
+            std::collections::btree_map::Entry::Occupied(lane) => lane.into_mut(),
+            std::collections::btree_map::Entry::Vacant(slot) => slot.insert(
+                memory
+                    .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
+                    .for_audience(audiences.get(&thread).map_or(&audience[..], Vec::as_slice)),
+            ),
+        };
         if !scoped.is_entity_readable(&id)? {
             continue;
         }

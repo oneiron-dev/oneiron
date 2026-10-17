@@ -160,6 +160,24 @@ pub(crate) fn guard_record_put(
     {
         return Err(invalid("room TURN author is immutable"));
     }
+    // A TURN's thread binding is a birth fact too (FIX 2951): a raw local or
+    // replicated re-put keeps the one it was born with, and only a thread's
+    // root names an audience.
+    if kind == ENTITY_TYPE_TURN {
+        let binding = crate::workspace_roster::thread_binding(body)?;
+        if binding
+            .as_ref()
+            .is_some_and(|binding| binding.audience.is_some() && binding.root != *id)
+        {
+            return Err(invalid("a thread audience rides its root"));
+        }
+        if let Some(previous) = prior.as_ref()
+            && !previous.body.is_empty()
+            && crate::workspace_roster::thread_binding(&previous.body)? != binding
+        {
+            return Err(invalid("a TURN's thread binding is immutable"));
+        }
+    }
     let stored_pin = BODY_PINS.get(store, txn, id)?;
     let inferred_pin = if stored_pin.is_none() {
         if let Some(row) = prior.as_ref() {

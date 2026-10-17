@@ -75,6 +75,11 @@ pub(crate) struct DagAppendRequest {
     /// Quotes a span of one MESSAGE; the record then replies to its TURN.
     #[serde(default)]
     pub quote: Option<DagQuoteSpan>,
+    /// A new thread root's audience (FIX 2951): room PERSON and AGENT_DEF
+    /// ids, the writer among them, fixed once set. Only the reply that opens
+    /// a thread takes it; the trunk append refuses it.
+    #[serde(default)]
+    pub thread_audience: Option<Vec<String>>,
 }
 
 /// Half-open Unicode scalar indices (not UTF-8 bytes or UTF-16 units) into

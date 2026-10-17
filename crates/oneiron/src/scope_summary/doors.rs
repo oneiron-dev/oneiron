@@ -531,6 +531,7 @@ pub(super) fn land_in_txn(
             text: vec![("txt".to_owned(), body.text)],
             session: None,
             actor,
+            thread_audience: None,
         };
         // The reply is the requester's append: every ref it names reads for
         // them in this writer, as the public append doors check.

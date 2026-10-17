@@ -123,6 +123,11 @@ pub(crate) fn authorize_message_continuation_in_txn(
     entity: &EntityId,
     actor: WriteActor,
 ) -> Result<()> {
+    // A private thread's message is continued by its audience alone (FIX
+    // 2951); a thread hidden from the writer reads as a missing message.
+    if !crate::workspace_roster::record_thread_admits_in(vault, txn, *entity, actor.entity_ref())? {
+        return Err(Error::EntityNotFound);
+    }
     // Same author is already proven by the stream path's immutable edge check.
     // Human owner rights still require the live owner binding; agents need the
     // same entity-bound grant used by ordinary editable-text verbs.
