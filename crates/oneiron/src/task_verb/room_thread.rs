@@ -5,17 +5,41 @@ use crate::workspace_roster::RoomThreadTask;
 use crate::{EntityId, Error};
 use std::collections::{BTreeMap, BTreeSet};
 
-fn thread_for_body(
-    body: &super::consult_result::TaskVerbBody,
-    roots: &BTreeMap<EntityId, EntityId>,
-) -> Option<EntityId> {
-    let from_spec = body.spec.as_map().and_then(|fields| {
+/// The turn a TASK spec's `thread_ref` names, when it names one.
+fn spec_thread_ref(body: &super::consult_result::TaskVerbBody) -> Option<EntityId> {
+    body.spec.as_map().and_then(|fields| {
         fields
             .iter()
             .find(|(key, _)| key.as_str() == Some("thread_ref"))
             .and_then(|(_, value)| value.as_str())
             .and_then(|value| EntityId::from_hex(value).ok())
-    });
+    })
+}
+
+/// Every turn or claim a TASK body names as its place: its spec's
+/// `thread_ref` and each typed consult ref, not only the first that lands
+/// in a known thread (FIX 3124). The private-thread read walks them all.
+/// An undecodable body names none.
+pub(crate) fn context_refs(bytes: &[u8]) -> Vec<EntityId> {
+    let Ok(body) = super::wire_decode::decode_task_verb_body(bytes) else {
+        return Vec::new();
+    };
+    let mut refs: Vec<EntityId> = spec_thread_ref(&body).into_iter().collect();
+    if let Some(consult) = &body.consult {
+        refs.extend(
+            std::iter::once(consult.question_ref)
+                .chain(consult.context_refs.iter().copied())
+                .map(super::ConsultPayloadRef::entity_ref),
+        );
+    }
+    refs
+}
+
+fn thread_for_body(
+    body: &super::consult_result::TaskVerbBody,
+    roots: &BTreeMap<EntityId, EntityId>,
+) -> Option<EntityId> {
+    let from_spec = spec_thread_ref(body);
     let from_consult = body.consult.as_ref().and_then(|consult| {
         std::iter::once(consult.question_ref)
             .chain(consult.context_refs.iter().copied())

@@ -158,6 +158,7 @@ impl AgentDispatcher<'_> {
             spawn.spend.as_ref(),
             spawn.budget,
             &input.target,
+            spawn.plan.as_ref().map(|plan| &plan.plan.model),
             input.now,
         )?;
         let leaf_spawn = AgentSpawnContext {
@@ -315,7 +316,8 @@ impl AgentDispatcher<'_> {
             .steps
             .get(ordinal)
             .ok_or_else(|| invalid("workflow step is missing"))?;
-        let launch = self.admit_leaf_in_txn(txn, record.root, requested, ordinal, now)?;
+        let model = frozen.plan.as_ref().map(|plan| &plan.plan.model);
+        let launch = self.admit_leaf_in_txn(txn, record.root, requested, ordinal, model, now)?;
         frozen.launch = Some(launch.statement.clone());
         // OF-531: a room-bound leaf re-proves its join at every release.
         frozen.join = self.require_room_join_in_txn(

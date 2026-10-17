@@ -281,6 +281,7 @@ impl AgentDispatcher<'_> {
                     None,
                     budget_ask,
                     &AgentDispatchTarget::Custom(seat.agent_def),
+                    Some(&seat.model),
                     at,
                 )?;
                 budget = PlanBudget::from_launch(&launch.plan);

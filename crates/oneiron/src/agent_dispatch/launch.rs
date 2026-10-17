@@ -179,13 +179,19 @@ impl AgentDispatcher<'_> {
                 spawn.spend.as_ref(),
                 spawn.budget,
                 &input.target,
+                spawn.plan.as_ref().map(|plan| &plan.plan.model),
                 input.now,
             )?
             .plan)
     }
 
     /// The plan [`Self::plan_launch`] states, computed inside a launch's
-    /// transaction.
+    /// transaction. `model` is the plan's resolved model, which prices the
+    /// dollar figure when given (FIX 3043).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a launch states its parent, spend, budget, target, model and time"
+    )]
     pub(super) fn admit_launch_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -193,13 +199,14 @@ impl AgentDispatcher<'_> {
         spend: Option<&SpawnSpend>,
         budget: Option<u64>,
         target: &AgentDispatchTarget,
+        model: Option<&crate::llm::ModelId>,
         now: u64,
     ) -> Result<LaunchAdmission> {
         let tree = self.caller_tree_in_txn(txn, parent, spend)?;
         let unit = tree
             .as_ref()
             .map_or_else(LeaseUnit::tokens, |scope| scope.unit.clone());
-        let nodes = self.launch_nodes_in_txn(txn, target, &unit)?;
+        let nodes = self.launch_nodes_in_txn(txn, target, &unit, model)?;
         self.admit_nodes_in_txn(txn, tree, budget, nodes, unit, now)
     }
 
@@ -245,13 +252,15 @@ impl AgentDispatcher<'_> {
         })
     }
 
-    /// One workflow leaf's launch under its wrapper's scope, at its release.
+    /// One workflow leaf's launch under its wrapper's scope, at its release,
+    /// priced at the frozen plan's `model` when it has one.
     pub(super) fn admit_leaf_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         wrapper: AttemptId,
         definition_ref: EntityId,
         ordinal: usize,
+        model: Option<&crate::llm::ModelId>,
         now: u64,
     ) -> Result<LaunchAdmission> {
         // An unmetered workflow has no wrapper scope; its leaves are unmetered.
@@ -267,7 +276,12 @@ impl AgentDispatcher<'_> {
         let node = LaunchNode {
             definition_ref,
             role: LaunchRole::WorkflowLeaf { ordinal },
-            expected: self.expected_agent_spend_in_txn(txn, definition_ref, &unit)?,
+            expected: self.expected_agent_spend_for_model_in_txn(
+                txn,
+                definition_ref,
+                &unit,
+                model,
+            )?,
         };
         self.admit_nodes_in_txn(txn, tree, None, vec![node], unit, now)
     }
@@ -277,6 +291,7 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         target: &AgentDispatchTarget,
         unit: &LeaseUnit,
+        model: Option<&crate::llm::ModelId>,
     ) -> Result<Vec<LaunchNode>> {
         match target {
             AgentDispatchTarget::Custom(id) => {
@@ -284,7 +299,7 @@ impl AgentDispatcher<'_> {
                 Ok(vec![LaunchNode {
                     definition_ref: *id,
                     role: LaunchRole::Agent,
-                    expected: self.expected_agent_spend_in_txn(txn, *id, unit)?,
+                    expected: self.expected_agent_spend_for_model_in_txn(txn, *id, unit, model)?,
                 }])
             }
             AgentDispatchTarget::Workflow(id) => {
@@ -295,7 +310,8 @@ impl AgentDispatcher<'_> {
                     nodes.push(LaunchNode {
                         definition_ref: *step,
                         role: LaunchRole::WorkflowLeaf { ordinal },
-                        expected: self.expected_agent_spend_in_txn(txn, *step, unit)?,
+                        expected: self
+                            .expected_agent_spend_for_model_in_txn(txn, *step, unit, model)?,
                     });
                 }
                 Ok(nodes)

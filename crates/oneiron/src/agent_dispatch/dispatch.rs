@@ -248,6 +248,7 @@ impl<'a> AgentDispatcher<'a> {
             spend.as_ref(),
             budget,
             &input.target,
+            dispatch_input.plan.as_ref().map(|plan| &plan.plan.model),
             input.now,
         )?;
         dispatch_input.launch = Some(launch.statement.clone());

@@ -5,7 +5,8 @@ use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::{
     EdgeKind,
     registry::{
-        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_TURN,
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_TASK,
+        ENTITY_TYPE_TURN,
     },
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -305,9 +306,11 @@ pub(crate) fn conversation_summary_covers(
 /// up its MESSAGE, reply, quote and spawn edges or a claim's subject names,
 /// and those of every record a summary, merge or reaction draws its words
 /// from. A TURN's `Parent` stays in its own thread or on the trunk, which
-/// names none, so it is not walked. A declared root that is gone or does
-/// not resolve denies, and with no viewers so does any private thread. No
-/// read is exempt: an owner's, a host's and an unbound one meet it too.
+/// names none, so it is not walked. A TASK also reaches the thread turns
+/// that bind it and the turns its thread and consult refs name (FIX 3124).
+/// A declared root that is gone or does not resolve denies, and with no
+/// viewers so does any private thread. No read is exempt: an owner's, a
+/// host's and an unbound one meet it too.
 pub(crate) fn private_threads_readable_raw_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -341,6 +344,27 @@ pub(crate) fn private_threads_readable_raw_in(
             continue;
         }
         let body = bytes.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        // FIX 3124: a TASK sits in every thread a room turn binds it into
+        // and every thread its own typed refs name. A binding whose turn is
+        // gone denies; it never leaves the TASK public.
+        if h.entity_type == ENTITY_TYPE_TASK {
+            let bound = match crate::workspace_roster::task_binding_turns_in(vault, txn, id) {
+                Ok(turns) => turns,
+                Err(Error::EntityNotFound) => return Ok(false),
+                Err(e) => return Err(e),
+            };
+            for turn in bound {
+                if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &turn)?.is_live() {
+                    return Ok(false);
+                }
+                pending.push((turn, None));
+            }
+            pending.extend(
+                crate::task_verb::room_thread_context_refs(body)
+                    .into_iter()
+                    .map(|id| (id, None)),
+            );
+        }
         let kinds: &[EdgeKind] = if h.entity_type == ENTITY_TYPE_TURN {
             if let Some(binding) = crate::workspace_roster::thread_binding(body)? {
                 roots.insert(binding.root);

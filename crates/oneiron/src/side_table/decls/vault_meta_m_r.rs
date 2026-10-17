@@ -558,6 +558,9 @@ side_tables! {
     /// Single-response-per-claim guard: which turn already answered one claimed parent turn. Key:
     /// id16 (parent turn id).
     ROOMS_RESPONSE: VaultMeta b"rooms.response.v1/" Raw;
+    /// Inverse of a room turn's TASK bindings, read to place one TASK in its private threads. Key:
+    /// id16 (task) + id16 (binding turn).
+    ROOMS_TASK_TURN: VaultMeta b"rooms.task_turn.v1/" Raw;
     /// Parent-to-child index of a room's thread replies, scanned for one message's threads. Key:
     /// id16 (room) + id16 (parent turn) + id16 (child turn).
     ROOMS_THREAD_CHILDREN: VaultMeta b"rooms.thread_children.v1/" Raw;
