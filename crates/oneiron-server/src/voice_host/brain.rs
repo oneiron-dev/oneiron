@@ -11,7 +11,9 @@
 //! said stays in the history, marked interrupted. Each safeguard notice said
 //! to the person enters the history too, and the next turn hears it. A turn
 //! assembled for a new audience revision, as after an attendee entered the
-//! call's room, starts from that audience's own history (OF-365 P5).
+//! call's room, starts from that audience's own history (OF-365 P5). What
+//! a turn's memories read found, heard and withheld goes to the owner's
+//! client with the turn's first event, its narrowing receipts whole.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -20,7 +22,7 @@ use futures_util::StreamExt;
 use oneiron::context_board::{BoardBlockHeader, BoardBudgetRequest};
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, FinishReason};
 use oneiron::store::GateSystemNoticeRecord;
-use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, GenerationEpoch};
+use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, GenerationEpoch, TurnMemories};
 use oneiron::{
     BudgetExhaustionPolicy, DisclosureContext, EntityId, LlmMessage, LlmMessageRole, LlmStream,
     LlmStreamEvent, MemoriesSection, Vault, WriteActor,
@@ -134,9 +136,13 @@ impl ChatBrain {
         Ok(())
     }
 
-    /// The turn's admitted stream, opened before anything is spoken, and
-    /// whether the turn heard context from outside it.
-    fn open(&self, request: &BrainRequest) -> oneiron::Result<(LlmStream<'static>, bool)> {
+    /// The turn's admitted stream, opened before anything is spoken, whether
+    /// the turn heard context from outside it, and what its memories read
+    /// found and withheld.
+    fn open(
+        &self,
+        request: &BrainRequest,
+    ) -> oneiron::Result<(LlmStream<'static>, bool, Option<TurnMemories>)> {
         let ChatBrainBindings {
             ai,
             vault,
@@ -145,7 +151,7 @@ impl ChatBrain {
             ..
         } = &self.bindings;
         let settings = ai.chat_settings();
-        let memories = self.memories(request)?;
+        let (memories, heard) = self.memories(request)?;
         let mut messages: Vec<LlmMessage> = instructions
             .iter()
             .map(|text| text_message(LlmMessageRole::System, text.clone()))
@@ -187,7 +193,7 @@ impl ChatBrain {
             .stream(&run, admitted.request, None)
             .map_err(|error| refused(format!("{error:?}")))?;
         let Some(memories) = memories else {
-            return Ok((stream, false));
+            return Ok((stream, false, heard));
         };
         // The rows are going out: a contact who heard one under standing
         // clearance gets its quiet receipt. The owner alone gets none.
@@ -199,17 +205,21 @@ impl ChatBrain {
                 &request.session_ref,
             )]),
         )?;
-        Ok((stream, MEMORIES_TAINT_TURN))
+        Ok((stream, MEMORIES_TAINT_TURN, heard))
     }
 
     /// The rows the turn's retrieval found, read under the call's credential,
     /// narrowed to its audience and clamped to what that audience may hear.
     /// Only a row with text to say is kept: the brain has no tools to open a
-    /// bare reference. `None` when none is left.
-    fn memories(&self, request: &BrainRequest) -> oneiron::Result<Option<Memories>> {
+    /// bare reference. `None` when none is left. Beside it, what the read
+    /// found, heard and withheld, whenever the retrieval found a row.
+    fn memories(
+        &self,
+        request: &BrainRequest,
+    ) -> oneiron::Result<(Option<Memories>, Option<TurnMemories>)> {
         let refs = &request.retrieval.result_refs;
         if refs.is_empty() {
-            return Ok(None);
+            return Ok((None, None));
         }
         let ChatBrainBindings { vault, auth, .. } = &self.bindings;
         let ids = refs
@@ -227,18 +237,13 @@ impl ChatBrain {
         let receipts =
             section.include_pinned_ids_with_disclosure(&read, &ids, Some(&disclosure))?;
         section.rows.retain(|row| row.snippet.is_some());
-        let withheld: usize = receipts
-            .iter()
-            .map(|receipt| receipt.suppressed_count)
-            .sum();
-        tracing::debug!(
-            found = ids.len(),
-            heard = section.rows.len(),
-            withheld,
-            "voice: the turn's memories"
-        );
+        let heard = TurnMemories {
+            found: ids.len(),
+            heard: section.rows.len(),
+            receipts,
+        };
         if section.rows.is_empty() {
-            return Ok(None);
+            return Ok((None, Some(heard)));
         }
         let ids = section
             .rows
@@ -258,10 +263,13 @@ impl ChatBrain {
                 },
             )
             .map_err(refused)?;
-        Ok(Some(Memories {
-            board: render.text,
-            ids,
-        }))
+        Ok((
+            Some(Memories {
+                board: render.text,
+                ids,
+            }),
+            Some(heard),
+        ))
     }
 
     /// Stops the turn answering. What it had handed the speech host enters
@@ -287,7 +295,7 @@ impl Brain for ChatBrain {
     fn start(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
         self.rebuild_history(request.audience_revision)?;
-        let (stream, tainted) = self.open(request)?;
+        let (stream, tainted, memories) = self.open(request)?;
         let generation = request.generation;
         self.history
             .lock()
@@ -300,6 +308,7 @@ impl Brain for ChatBrain {
         let turn = Turn {
             generation,
             tainted,
+            memories,
             out: self.bindings.out.clone(),
             history: Arc::clone(&self.history),
             said: Arc::clone(&said),
@@ -362,6 +371,8 @@ struct Turn {
     /// The turn heard context from outside it: every event says so, from
     /// the first delta, so its first sentence already passes the safeguard.
     tainted: bool,
+    /// What its memories read found and withheld, sent with its first event.
+    memories: Option<TurnMemories>,
     out: mpsc::Sender<VoiceBrainOut>,
     history: Arc<Mutex<Vec<LlmMessage>>>,
     /// What the turn has handed the speech host, shared with its cancel.
@@ -369,7 +380,7 @@ struct Turn {
 }
 
 impl Turn {
-    async fn run(self, mut stream: LlmStream<'static>) {
+    async fn run(mut self, mut stream: LlmStream<'static>) {
         let event = loop {
             match stream.next().await {
                 Some(Ok(LlmStreamEvent::TextDelta { text, .. })) => {
@@ -404,12 +415,13 @@ impl Turn {
     }
 
     /// `false` once the host stopped listening.
-    async fn send(&self, event: BrainEvent) -> bool {
+    async fn send(&mut self, event: BrainEvent) -> bool {
         self.out
             .send(VoiceBrainOut {
                 generation: self.generation,
                 event,
                 externally_tainted: self.tainted,
+                memories: self.memories.take(),
             })
             .await
             .is_ok()

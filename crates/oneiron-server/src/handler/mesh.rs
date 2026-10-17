@@ -195,6 +195,7 @@ mod host {
                 )))),
             )
             .tick(organ_redrive(router, Arc::clone(vault)))
+            .tick(server.pack_organ_tick())
     }
 
     /// Runs every held organ call a node can take now, on a blocking thread.
