@@ -6,7 +6,9 @@
 //! own RECEIPT_RECORD. So does each explicit fetch of the full pixels through
 //! the image's view handle (view, crop, zoom, or a small vision model's
 //! `ask_image`), so the Coach reads which rung each image got and whether the
-//! agent then pulled the pixels. The record names the asset, the rung and the
+//! agent then pulled the pixels. An audio clip a model hears for a graph
+//! question is a pull too (`form=audio`, `pull=ask_audio`). The record names
+//! the asset, the rung and the
 //! ASSET_TEXT served; never a body, never bytes, never a question. Who read
 //! it comes from the read's own lane, never from the door that reports what
 //! it served.
@@ -29,6 +31,9 @@ const FORM_IMAGE: &str = "image";
 const FORM_THUMBNAIL: &str = "thumbnail";
 const FORM_TEXT: &str = "text";
 const FORM_ASK: &str = "ask";
+const FORM_AUDIO: &str = "audio";
+/// The pull of an audio clip heard by a model answering a question about it.
+const PULL_ASK_AUDIO: &str = "ask_audio";
 const PICK_FULL: &str = "full";
 const PICK_DECLINED: &str = "declined";
 /// Every field a served-form receipt may hold.
@@ -103,6 +108,9 @@ pub struct ServedForm {
     /// What the host's per-image pick answered, when one ran: `true` asked
     /// for the full image (or was unsure), `false` declined it.
     pick: Option<bool>,
+    /// An audio clip's bytes, pulled for a model answering a question about
+    /// them in place of the asking agent: no image rung, pull or pick.
+    audio: bool,
 }
 
 impl ServedForm {
@@ -113,6 +121,7 @@ impl ServedForm {
             asset_text,
             pull: None,
             pick: None,
+            audio: false,
         }
     }
 
@@ -149,13 +158,28 @@ impl ServedForm {
             asset_text: None,
             pull: Some(pull),
             pick: None,
+            audio: false,
+        }
+    }
+
+    /// One pull of `asset`'s audio clip, heard by a model answering a
+    /// question about it.
+    #[must_use]
+    pub const fn pulled_audio(asset: EntityId) -> Self {
+        Self {
+            asset,
+            rung: ServedRung::Full,
+            asset_text: None,
+            pull: None,
+            pick: None,
+            audio: true,
         }
     }
 
     /// This serving, after the host's pick answered `full`.
     #[must_use]
     pub const fn picked(mut self, full: bool) -> Self {
-        if self.pull.is_none() {
+        if self.pull.is_none() && !self.audio {
             self.pick = Some(full);
         }
         self
@@ -184,6 +208,7 @@ pub(super) fn served_form_receipt(
     let mut fields = BTreeMap::new();
     fields.insert(FIELD_ASSET_REF.to_owned(), served.asset.to_hex());
     let form = match served.rung {
+        ServedRung::Full if served.audio => FORM_AUDIO,
         ServedRung::Full => FORM_IMAGE,
         ServedRung::Thumbnail => FORM_THUMBNAIL,
         ServedRung::Description => FORM_TEXT,
@@ -195,6 +220,9 @@ pub(super) fn served_form_receipt(
     }
     if let Some(pull) = served.pull {
         fields.insert(FIELD_PULL.to_owned(), pull.as_str().to_owned());
+    }
+    if served.audio {
+        fields.insert(FIELD_PULL.to_owned(), PULL_ASK_AUDIO.to_owned());
     }
     if let Some(full) = served.pick {
         let pick = if full { PICK_FULL } else { PICK_DECLINED };
@@ -209,7 +237,7 @@ pub(super) fn served_form_receipt(
         occurred_at: at,
         actor: Some(holder.actor_ref().to_owned()),
         on_behalf_of: None,
-        outcome: if served.pull.is_some() {
+        outcome: if served.pull.is_some() || served.audio {
             OUTCOME_PULLED
         } else {
             OUTCOME_SERVED
@@ -238,6 +266,11 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
         && receipt.receipt_id == receipt_id(id)
         && match pull {
             None => receipt.outcome == OUTCOME_SERVED,
+            Some(PULL_ASK_AUDIO) => {
+                receipt.outcome == OUTCOME_PULLED
+                    && field(FIELD_FORM) == Some(FORM_AUDIO)
+                    && pick.is_none()
+            }
             Some(pull) => {
                 receipt.outcome == OUTCOME_PULLED
                     && PixelPull::parse(pull).is_some()
@@ -256,6 +289,7 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
         && entity_ref(field(FIELD_ASSET_REF))
         && match field(FIELD_FORM) {
             Some(FORM_IMAGE | FORM_ASK) => text.is_none(),
+            Some(FORM_AUDIO) => text.is_none() && pull == Some(PULL_ASK_AUDIO),
             Some(FORM_THUMBNAIL) => text.is_none_or(|_| entity_ref(text)),
             Some(FORM_TEXT) => entity_ref(text),
             _ => false,

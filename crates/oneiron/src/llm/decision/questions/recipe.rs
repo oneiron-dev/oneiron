@@ -104,13 +104,13 @@ pub(crate) fn run_graph_question_with_proposals(
                 Err(error) => return Err(error),
             };
             let question = &record.definition.question;
-            let images = if answerer.reads_images() {
+            let images = if answerer.reads_images() && record.definition.media.images {
                 let lane = vault.scoped_read(super::graph_ask::asker_reader(vault, principal)?);
                 super::graph_ask::unit_images(&lane, &context)?
             } else {
                 Vec::new()
             };
-            let audio = if answerer.reads_audio() {
+            let audio = if answerer.reads_audio() && record.definition.media.audio {
                 let lane = vault.scoped_read(super::graph_ask::asker_reader(vault, principal)?);
                 super::graph_ask::unit_audio(&lane, &context)?
             } else {

@@ -788,7 +788,7 @@ pub(super) fn unit_images(
 /// a call's count and byte bounds, each named `audio_<n>` and pinned at its
 /// encoded bytes' hash. The clip goes to the model as audio, never as a
 /// transcript. An asset the lane withholds, or one past a bound, is read as
-/// text alone.
+/// text alone. Each clip handed on is receipted as pulled, as an image is.
 pub(super) fn unit_audio(
     lane: &ScopedRead<'_>,
     context: &GraphUnitContext,
@@ -825,6 +825,13 @@ pub(super) fn unit_audio(
         }
         total += size;
         audio.push(clip);
+    }
+    if !audio.is_empty() {
+        let pulls: Vec<_> = audio
+            .iter()
+            .map(|clip| ServedForm::pulled_audio(clip.evidence.id))
+            .collect();
+        lane.commit_served_forms(&pulls)?;
     }
     Ok(audio)
 }

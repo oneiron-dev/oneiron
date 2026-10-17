@@ -8612,8 +8612,10 @@ pub enum HostingPrivacyPosture {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionMedia {
-    #[serde(rename = "images")]
-    pub images: bool,
+    #[serde(rename = "images", default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<bool>,
+    #[serde(rename = "audio", default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<bool>,
 }
 
 /// `oneiron::llm::decision::questions::records::QuestionDefinition`.

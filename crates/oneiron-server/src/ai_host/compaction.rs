@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
     CompactionGatePolicy, CompactionOff, CompactionProduct, CompactionRefusal, CompactionRequest,
@@ -63,6 +64,9 @@ pub(super) enum CodeModeCompaction {
 pub(super) struct LiveCompaction {
     vault: Arc<Vault>,
     registry: CompactionBackendRegistry,
+    /// The backends `registry` serves, the default first: a run that spends
+    /// under a scope compacts on copies of them metered on that scope.
+    served: Vec<Arc<ServedCompactionBackend>>,
     /// The host's profile: a run whose agent carries none compacts by it.
     profile: MemoryProfile,
     policy: CompactionGatePolicy,
@@ -140,7 +144,7 @@ impl CodeModeCompaction {
                 key,
                 vault: Arc::clone(vault),
                 models: Arc::clone(runtime),
-                guard: guard.clone(),
+                meter: CompactionMeter::CodeMode(guard.clone()),
                 role,
                 model: seat.model.clone(),
                 locality: seat.locality,
@@ -151,27 +155,32 @@ impl CodeModeCompaction {
             })
         };
         let mut registry = CompactionBackendRegistry::new();
-        if let Err(error) = registry.register(served(BACKEND_KEY.to_owned(), role, seat)) {
+        let default = served(BACKEND_KEY.to_owned(), role, seat);
+        if let Err(error) = registry.register(Arc::clone(&default) as Arc<dyn CompactionBackend>) {
             tracing::error!(kind = ?error.kind(), "the compaction backend did not register");
             return Self::Off(CompactionOff::BackendFailed);
         }
+        let mut backends = vec![default];
         // A profile may name another reasoning seat, by its role's key. A
         // window longer than that seat takes compacts in prefixes.
         for other in PROFILE_ROLES {
             let Some(seat) = runtime.seat(other) else {
                 continue;
             };
-            if let Err(error) = registry.register(served(role_key(other), other, seat)) {
-                tracing::warn!(
+            let backend = served(role_key(other), other, seat);
+            match registry.register(Arc::clone(&backend) as Arc<dyn CompactionBackend>) {
+                Ok(()) => backends.push(backend),
+                Err(error) => tracing::warn!(
                     kind = ?error.kind(),
                     role = %role_key(other),
                     "a profile's compaction seat did not register"
-                );
+                ),
             }
         }
         Self::Live(Arc::new(LiveCompaction {
             vault: Arc::clone(vault),
             registry,
+            served: backends,
             profile: MemoryProfile::new(
                 window_tokens,
                 ModelTierRef(BACKEND_KEY.to_owned()),
@@ -214,15 +223,23 @@ impl CodeModeCompaction {
         status: &StatusCell,
     ) -> McpQuickJsProvider {
         status.update(|status| status.compaction = self.status());
-        provider.with_compaction(Arc::new(move |byline, credential: &str| {
-            self.for_run(byline, credential)
-        }))
+        provider.with_compaction(Arc::new(
+            move |byline, credential: &str, spend: Option<&SpendScopeId>| {
+                self.for_run(byline, credential, spend)
+            },
+        ))
     }
 
     /// A fresh seat for one run, its summaries bylined `byline`, its passes
     /// queued in `credential`'s turn, on the memory profile of the agent
-    /// `byline` names.
-    pub(super) fn for_run(&self, byline: WriteActor, credential: &str) -> RunCompaction {
+    /// `byline` names. A run that spends under `spend` compacts on that
+    /// scope's meter (OF-533); any other on code mode's.
+    pub(super) fn for_run(
+        &self,
+        byline: WriteActor,
+        credential: &str,
+        spend: Option<&SpendScopeId>,
+    ) -> RunCompaction {
         let live = match self {
             Self::Off(why) => return RunCompaction::off(*why),
             Self::Live(live) => live,
@@ -230,7 +247,21 @@ impl CodeModeCompaction {
         let profile = live.run_profile(byline);
         // Docs Q13: the agent's own hot window, when its profile names one.
         let hot_steps = profile.hot_steps.unwrap_or(live.hot_steps);
-        match CompactionDriver::for_profile(&profile, &live.registry) {
+        let scoped;
+        let registry = match spend {
+            None => &live.registry,
+            Some(scope) => match live.scoped_registry(scope) {
+                Ok(registry) => {
+                    scoped = registry;
+                    &scoped
+                }
+                Err(error) => {
+                    tracing::error!(kind = ?error.kind(), "a run's scoped compaction backends did not register");
+                    return RunCompaction::off(CompactionOff::BackendFailed);
+                }
+            },
+        };
+        match CompactionDriver::for_profile(&profile, registry) {
             Ok(Some(driver)) => RunCompaction::live(
                 driver,
                 live.policy,
@@ -252,6 +283,19 @@ impl CodeModeCompaction {
 }
 
 impl LiveCompaction {
+    /// The registry a run that spends under `scope` compacts on: each served
+    /// backend, its calls metered on `scope` in place of code mode's.
+    fn scoped_registry(&self, scope: &SpendScopeId) -> oneiron::Result<CompactionBackendRegistry> {
+        let mut registry = CompactionBackendRegistry::new();
+        for backend in &self.served {
+            registry.register(Arc::new(ServedCompactionBackend {
+                meter: CompactionMeter::Scope(scope.clone()),
+                ..ServedCompactionBackend::clone(backend)
+            }))?;
+        }
+        Ok(registry)
+    }
+
     /// The run's memory profile (agent-runtime-v1 §d7): the profile on the
     /// agent definition its byline names, when it is one and carries one,
     /// else the host's. The profile's window, owner and summary split apply;
@@ -382,17 +426,29 @@ impl CompactionSpawn for ThreadSpawn {
     }
 }
 
+/// What a pass's model calls spend on.
+#[derive(Clone)]
+enum CompactionMeter {
+    /// Code mode's own budget, for a run that spends under no scope.
+    CodeMode(BudgetGuard),
+    /// A run's spend scope: each call takes a fresh guard on the scope and
+    /// books what it used once it returns, paid or failed, so a pass that
+    /// outlives its run still books.
+    Scope(SpendScopeId),
+}
+
 /// A pass's model call: admitted on the configured role against the vault's
-/// live model policy, then sent as a run on code mode's budget: each provider
+/// live model policy, then sent as a run on its meter's budget: each provider
 /// call takes its own permit, goes through the run's gate and settles itself
 /// (its usage, or its reservation when it reports none or fails after it went
 /// out).
+#[derive(Clone)]
 struct ServedCompactionBackend {
     /// The registry key a profile names this seat by.
     key: String,
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
-    guard: BudgetGuard,
+    meter: CompactionMeter,
     role: ModelRole,
     /// The role's seat at bind; its admission names the call's model and
     /// route.
@@ -532,12 +588,27 @@ impl CompactionBackend for ServedCompactionBackend {
         {
             call.request.envelope.response_format = ResponseFormat::Text;
         }
-        let run = self
-            .models
-            .undeclared_run(COMPACTION_RUN, self.guard.clone());
+        let guard = match &self.meter {
+            CompactionMeter::CodeMode(guard) => guard.clone(),
+            CompactionMeter::Scope(scope) => AgentDispatcher::new(&self.vault)
+                .guard_for_scope(scope)
+                .map_err(|error| {
+                    refused(
+                        CompactionSuppression::TurnScoped { check: None },
+                        error.to_string(),
+                    )
+                })?,
+        };
+        let run = self.models.undeclared_run(COMPACTION_RUN, guard.clone());
         let reply = self
             .handle
             .block_on(call.ladder.generate(&run, call.request, None));
+        if let CompactionMeter::Scope(scope) = &self.meter
+            && let Err(error) =
+                AgentDispatcher::new(&self.vault).record_guard_spend(scope, guard.read().used_units)
+        {
+            tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
+        }
         match reply {
             Ok(response) => {
                 let summary_text = response

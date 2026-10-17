@@ -192,6 +192,28 @@ pub fn bind_wait_trap(vault: &Vault, key: &WaitKey, trap: &TrapRef, now_ms: u64)
     })
 }
 
+/// Parks a canonical run's attempt under its C9 trap and binds the trap to
+/// the run's parked wait, in one commit (OF-533): [`bind_wait_trap`] with the
+/// park beside it, so no crash can leave a park that no delivery wakes. A
+/// reply already delivered wakes the trap here; `true` when it woke.
+pub fn park_and_bind_wait_trap(
+    vault: &Vault,
+    park: crate::dreamer_runner::ParkDreamerAttempt,
+    key: &WaitKey,
+    trap: &TrapRef,
+    now_ms: u64,
+) -> Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::DreamerRunnerStore::new(vault).park_attempt_in_txn(txn, park)?;
+        TRAPS.put(&vault.store, txn, &key.row(), trap)?;
+        if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
+            return Ok(false);
+        }
+        crate::llm::wake_trap_in_txn(vault, txn, trap, now_ms)?;
+        Ok(true)
+    })
+}
+
 /// Puts `value` at `key` along the run's route unless the composed view
 /// holds a row there; `true` when this call wrote it. The comparison runs in
 /// the transaction that writes.
