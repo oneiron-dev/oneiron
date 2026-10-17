@@ -17,6 +17,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"dreamer:parked:",
                 b"dreamer:peer_wait",
                 b"dreamer:trap_binding:",
+                // A parked code run's trap binding, node-local as the
+                // step's own.
+                b"code_run:wait_trap:",
                 b"retr_run",
                 b"retr_out",
                 b"retr_trace",

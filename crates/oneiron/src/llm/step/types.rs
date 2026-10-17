@@ -341,7 +341,7 @@ impl DreamerTrapKind {
         }
     }
 
-    pub(super) fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "budget" => Some(Self::Budget),
             "consent" => Some(Self::Consent),

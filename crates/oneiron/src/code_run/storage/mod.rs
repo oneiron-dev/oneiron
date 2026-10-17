@@ -5,6 +5,7 @@ mod folds;
 mod records;
 mod routing;
 mod speech_identity;
+mod wait_delivery;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
@@ -21,3 +22,5 @@ pub(crate) use self::speech_identity::{
     executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
 };
+pub(crate) use self::wait_delivery::deliver_wait_in_txn;
+pub use self::wait_delivery::{WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap};

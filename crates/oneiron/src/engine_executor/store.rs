@@ -18,6 +18,9 @@ pub(super) const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 
 const TERMINAL_OUTPUT_SUFFIX: &str = ".terminal.json";
 
+/// Between a resumed reply's step and the wait it names.
+const RESUMED_OUTPUT_INFIX: &str = ".resumed.";
+
 /// ONE-1686: the trailing-plaintext fallback's durable emission marker. A
 /// SIBLING suffix of the terminal marker, never the same one:
 /// `is_terminal_output_path` must not read it as a terminal status.
@@ -449,7 +452,8 @@ pub(super) fn store_result_output_path(digest: &[u8; 32]) -> String {
 }
 
 /// Whether `path` names a result of the run the guest may read back: a
-/// stored bridge result or a stored value.
+/// stored bridge result, a stored value, or the reply a parked call resumed
+/// with.
 pub(crate) fn is_result_output_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
         return false;
@@ -459,6 +463,33 @@ pub(crate) fn is_result_output_path(path: &str) -> bool {
         || rest
             .strip_prefix("/store/")
             .is_some_and(|rest| rest.ends_with(".result"))
+        || resumed_output_wait(path).is_some()
+}
+
+/// The reply the wait step `seq` parked on was answered with, published when
+/// the run resumed from it: the result of the step's parked call. The path
+/// names the wait, so the record alone counts the run's resumes from one.
+pub(super) fn resumed_output_path(seq: u64, wait_id: EntityId) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/{seq:06}{RESUMED_OUTPUT_INFIX}{}.json",
+        wait_id.to_hex()
+    )
+}
+
+/// The step and the wait (lower-case hex) a resumed reply's path names.
+pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
+    let rest = path.strip_prefix(SCRIPT_OUTPUT_DIR)?.strip_prefix('/')?;
+    let (seq, rest) = rest.split_once(RESUMED_OUTPUT_INFIX)?;
+    let wait = rest.strip_suffix(".json")?;
+    let digits = !seq.is_empty() && seq.bytes().all(|byte| byte.is_ascii_digit());
+    let hex = wait.len() == 32
+        && wait
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !(digits && hex) {
+        return None;
+    }
+    Some((seq.parse().ok()?, wait))
 }
 
 pub(super) fn script_output_path(seq: u64) -> String {
@@ -483,16 +514,19 @@ pub(super) fn terminal_output_path(seq: u64) -> String {
 }
 
 pub(super) fn is_terminal_output_path(path: &str) -> bool {
-    let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
-        return false;
-    };
-    let Some(rest) = rest.strip_prefix('/') else {
-        return false;
-    };
-    let Some(seq) = rest.strip_suffix(TERMINAL_OUTPUT_SUFFIX) else {
-        return false;
-    };
-    !seq.is_empty() && seq.bytes().all(|byte| byte.is_ascii_digit())
+    terminal_output_seq(path).is_some()
+}
+
+/// The step a terminal marker's path names.
+pub(super) fn terminal_output_seq(path: &str) -> Option<u64> {
+    let seq = path
+        .strip_prefix(SCRIPT_OUTPUT_DIR)?
+        .strip_prefix('/')?
+        .strip_suffix(TERMINAL_OUTPUT_SUFFIX)?;
+    if seq.is_empty() || !seq.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    seq.parse().ok()
 }
 
 fn runtime_output_path(seq: u64, index: usize, path: &str) -> String {

@@ -2,12 +2,12 @@
 
 use super::store::{
     CONFIG_OUTPUT_PATH, is_terminal_output_path, load_utf8_output, record_text_output,
-    terminal_output_path,
+    resumed_output_path, resumed_output_wait, terminal_output_path, terminal_output_seq,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus};
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect, encode_code_run_replay_value,
+    SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey, encode_code_run_replay_value,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::session_overlay::RouteTarget;
@@ -18,6 +18,9 @@ pub(super) struct LoadedReplayRecord {
     pub(super) record: CodeRunReplayRecord,
     pub(super) generation: Option<CodeRunReplayGeneration>,
     pub(super) terminal_status: Option<EngineExecutorStatus>,
+    /// Whether the resolved prompt drifted from the one the record was made
+    /// under; a terminal record passes with it, a resume does not.
+    pub(super) prompt: PromptBinding,
 }
 
 /// The replay record's own binding evidence.
@@ -285,6 +288,9 @@ pub(super) fn record_terminal_output(
     record_text_output(storage, record, terminal_output_path(seq), &text)
 }
 
+/// The run's latest terminal status. A Waiting marker the run resumed from
+/// is behind it: the reply its step's call came back with is in the record,
+/// and the run goes on from the next step.
 pub(super) fn load_terminal_status(
     storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
@@ -297,13 +303,69 @@ pub(super) fn load_terminal_status(
     else {
         return Ok(None);
     };
-    let text = load_utf8_output(storage, record, &output.path)?;
+    let status = load_terminal_marker(storage, record, &output.path)?.into_executor_status()?;
+    if let EngineExecutorStatus::Waiting(wait) = &status
+        && let Some(seq) = terminal_output_seq(&output.path)
+        && has_output(record, &resumed_output_path(seq, wait.wait_id))
+    {
+        return Ok(None);
+    }
+    Ok(Some(status))
+}
+
+fn load_terminal_marker(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    path: &str,
+) -> EngineExecutorResult<StoredTerminalStatus> {
+    let text = load_utf8_output(storage, record, path)?;
     let marker: ExecutorTerminalMarker = serde_json::from_str(&text)
         .map_err(|_| Error::CorruptedIndex("executor replay terminal marker"))?;
     if marker.schema_version != REPLAY_METADATA_SCHEMA_VERSION {
         return Err(Error::CorruptedIndex("executor replay terminal marker schema").into());
     }
-    marker.status.into_executor_status().map(Some)
+    Ok(marker.status)
+}
+
+fn has_output(record: &CodeRunReplayRecord, path: &str) -> bool {
+    record.outputs.iter().any(|output| output.path == path)
+}
+
+/// The wait step `seq` parked on, from its Waiting marker; `None` when the
+/// step left none.
+pub(super) fn parked_wait_at(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    seq: u64,
+) -> EngineExecutorResult<Option<SelfDurableWait>> {
+    let path = terminal_output_path(seq);
+    if !has_output(record, &path) {
+        return Ok(None);
+    }
+    match load_terminal_marker(storage, record, &path)? {
+        StoredTerminalStatus::Waiting { wait } => wait.into_wait().map(Some),
+        StoredTerminalStatus::Complete => Ok(None),
+    }
+}
+
+/// How many times the run already resumed from `wait_id`: the resumed
+/// replies in its record that name the wait.
+pub(super) fn wait_generation(record: &CodeRunReplayRecord, wait_id: EntityId) -> u64 {
+    let wait = wait_id.to_hex();
+    record
+        .outputs
+        .iter()
+        .filter(|output| resumed_output_wait(&output.path).is_some_and(|(_, named)| named == wait))
+        .count() as u64
+}
+
+/// The key a run parked on `wait` is delivered under.
+pub(super) fn wait_key(record: &CodeRunReplayRecord, wait: &SelfDurableWait) -> WaitKey {
+    WaitKey {
+        run: record.run_id,
+        wait_id: wait.wait_id,
+        generation: wait_generation(record, wait.wait_id),
+    }
 }
 
 pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffect> {

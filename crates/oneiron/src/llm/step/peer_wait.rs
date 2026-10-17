@@ -338,12 +338,21 @@ fn peer_wait_bindings_at(vault: &Vault, key_prefix: &[u8]) -> Result<Vec<PeerRes
 }
 
 /// Reads the trap→task reverse pointer, if this trap came from a delegation.
+#[cfg(test)]
 pub(super) fn peer_wait_task_for_trap(
     vault: &Vault,
     trap_claim_id: &EntityId,
 ) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    PEER_WAIT_TRAP.get(&vault.store, &rtxn, trap_claim_id)
+    peer_wait_task_for_trap_in_txn(vault, &rtxn, trap_claim_id)
+}
+
+pub(super) fn peer_wait_task_for_trap_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    trap_claim_id: &EntityId,
+) -> Result<Option<EntityId>> {
+    PEER_WAIT_TRAP.get(&vault.store, rtxn, trap_claim_id)
 }
 
 pub(super) fn peer_wait_binding_delete_in_txn(
