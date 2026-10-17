@@ -309,6 +309,7 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
         world: item.world,
         facet: item.facet,
         salience: item.salience.map(f64::from),
+        reactions: item.reactions,
         cited_messages: item
             .cited_messages
             .into_iter()
@@ -337,6 +338,7 @@ pub(super) fn memory_pack_from_engine(
             .collect(),
         scope_honesty: NapiScopeHonesty {
             out_of_scope_worlds: pack.scope_honesty.out_of_scope_worlds,
+            census_capped: pack.scope_honesty.census_capped,
         },
         retrieval_meta: NapiRetrievalMeta {
             quality: match pack.retrieval_meta.quality {

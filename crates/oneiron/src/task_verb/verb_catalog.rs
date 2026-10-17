@@ -1547,4 +1547,455 @@ impl AgentVerb {
             Self::VaultNotesEdit => &["spec"],
         }
     }
+    /// The row's one-line description, as the verb table states it.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Report => {
+                "Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."
+            }
+            Self::SelfFocusRefresh => {
+                "Re-renders the run's context board as one frame, at the frame epoch the caller last saw."
+            }
+            Self::SelfFocusSubscribe => "Subscribes the run's board stream to the named scopes.",
+            Self::SelfFocusUnsubscribe => {
+                "Unsubscribes the run's board stream from the named scopes."
+            }
+            Self::SelfMemoryDiary => {
+                "Writes one private entry in the bound actor's own diary, as an actor-private NOTE."
+            }
+            Self::SelfMemoryDiaryReads => {
+                "This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds."
+            }
+            Self::SelfMemoryDiaryReview => {
+                "This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."
+            }
+            Self::SelfIdentityAnswer => {
+                "A vault owner's tap on an identity choice card: who a person named in their conversations is."
+            }
+            Self::SelfIdentitySettle => {
+                "Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."
+            }
+            Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
+            Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
+            Self::SelfMessage => {
+                "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
+            }
+            Self::SelfGrantsAsk => {
+                "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."
+            }
+            Self::SelfMemoryDiaryQuery => {
+                "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."
+            }
+            Self::Cancel => {
+                "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work."
+            }
+            Self::Steer => {
+                "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt."
+            }
+            Self::Describe => {
+                "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named."
+            }
+            Self::TasksCreate => {
+                "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."
+            }
+            Self::TasksUpdate => {
+                "Records the owner's acknowledgement of a failed TASK; any other task stays as it was."
+            }
+            Self::VaultWitness => {
+                "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."
+            }
+            Self::VaultClaimsUpsert => {
+                "Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate."
+            }
+            Self::VaultRecall => {
+                "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
+            }
+            Self::VaultExport => {
+                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+            }
+            Self::VaultReceipts => {
+                "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds."
+            }
+            Self::VaultImagesView => {
+                "The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull."
+            }
+            Self::VaultReceiptsGet => {
+                "One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."
+            }
+            Self::VaultKvGet => {
+                "Exact key lookup in the bound actor's worldless key-value namespace; never recall."
+            }
+            Self::VaultKvPut => {
+                "Synchronous gated write of one key; a write that needs review fails without changing the key."
+            }
+            Self::VaultKvDelete => {
+                "Withdraws only the caller's current key; absent is a no-op and claim history stays."
+            }
+            Self::VaultKvSearch => {
+                "Exact prefix and equality search over the caller's keys, ordered by namespace then key."
+            }
+            Self::VaultKvNamespaces => {
+                "The caller's distinct live namespaces, with exact segment prefix and suffix matching."
+            }
+            Self::VaultWeaveReport => {
+                "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."
+            }
+            Self::VaultWeaveDigest => {
+                "One of the bound actor's saved weave digests, or the newest, under the current read policy."
+            }
+            Self::VaultWeaveLinkWrong => {
+                "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."
+            }
+            Self::VaultPacksPut => {
+                "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
+            }
+            Self::VaultPacksSetupPrepare => {
+                "The owner opens, or resumes, a pack's guided setup; opening grants nothing."
+            }
+            Self::VaultPacksSetupGet => "A pack's guided setup as it stands, for the owner.",
+            Self::VaultPacksSetupAnswer => {
+                "The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."
+            }
+            Self::VaultPacksSetupVerify => {
+                "Checks one pack connection with the engine's fixed read-only provider call for its declared check."
+            }
+            Self::VaultAuthorityAudit => {
+                "One page of the dated authority log audit: grants, revokes and confirms, for the owner."
+            }
+            Self::VaultInspectionResolve => {
+                "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."
+            }
+            Self::VaultSharedProposeDelete => {
+                "Starts a shared vault's delete_vault act, returned as a typed pending act."
+            }
+            Self::VaultSharedProposeTransfer => {
+                "Starts a shared vault's transfer_ownership act: a live Owner hands the vault to another person."
+            }
+            Self::VaultSharedProposeRemoveOwner => {
+                "Starts a shared vault's remove_owner act, with its export-first answer."
+            }
+            Self::VaultSharedExecute => {
+                "A live Owner runs a matured shared-vault act and gets its receipt."
+            }
+            Self::VaultSharedReceipt => {
+                "One shared-act or membership receipt its reader was told about, by id."
+            }
+            Self::VaultSharedOutcomes => "The reader's own outcome notices for a shared vault.",
+            Self::VaultSharedDeletion => "The executed delete-the-vault act, if any.",
+            Self::VaultMembersAdd => {
+                "An Admin adds a live person to a shared vault at a non-root role."
+            }
+            Self::VaultMembersChange => {
+                "An Admin assigns another non-root role to a member who is not an Owner."
+            }
+            Self::VaultMembersRemove => "An Admin removes one member from a shared vault.",
+            Self::VaultMembersLeave => {
+                "A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead."
+            }
+            Self::VaultAuthorityHandoffAlarms => {
+                "Every saved authority handoff fork alarm, for the owner."
+            }
+            Self::VaultAuthorityHandoffAlarmsAcknowledge => {
+                "The owner acknowledges one saved handoff fork alarm."
+            }
+            Self::VaultLegalHoldsPlace => {
+                "The owner places a customer legal hold on the named records or gate partitions."
+            }
+            Self::VaultLegalHoldsWiden => {
+                "Adds targets to one of the owner's standing customer legal holds."
+            }
+            Self::VaultLegalHoldsList => "Every legal hold the owner may see.",
+            Self::VaultLegalHoldsLog => "The owner-visible legal hold log, oldest first.",
+            Self::VaultLegalHoldsLiftAndErase => {
+                "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."
+            }
+            Self::VaultLensesPropose => {
+                "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."
+            }
+            Self::VaultLensesActivate => {
+                "The owner selects a proposed lens revision for its pack slot."
+            }
+            Self::VaultLensesDeactivate => {
+                "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."
+            }
+            Self::VaultLensesList => {
+                "One page of the vault's lens proposals, each with its slot state from the owner's current selection."
+            }
+            Self::VaultLensesDefault => {
+                "Composes the default vault lens from the named sources, read under the caller's own scope."
+            }
+            Self::VaultDisclosureOffer => {
+                "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."
+            }
+            Self::VaultSharesCreate => {
+                "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."
+            }
+            Self::VaultHooksReplay => {
+                "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."
+            }
+            Self::VaultArtifactsView => {
+                "One artifact: its kind, name, type, head and every version with its made_by and born-from."
+            }
+            Self::VaultArtifactsExport => {
+                "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
+            }
+            Self::VaultArtifactsBornFrom => {
+                "What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made."
+            }
+            Self::VaultArtifactsProposals => "The proposals waiting beside one artifact.",
+            Self::VaultArtifactsWaits => {
+                "The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits."
+            }
+            Self::VaultArtifactsReleaseWait => {
+                "Lets one held organ call go, by its run ref, under the consent a Discard needs."
+            }
+            Self::VaultArtifactsReviewSlides => {
+                "Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard."
+            }
+            Self::VaultArtifactsProposeDeck => {
+                "Runs one native deck transaction over an artifact's head and holds the proposal for Keep."
+            }
+            Self::VaultArtifactsProposeOutput => {
+                "Offers one native organ result to an artifact as its next version, held for Keep."
+            }
+            Self::VaultArtifactsKeep => "Settles one waiting artifact proposal into a version.",
+            Self::VaultArtifactsDiscard => "Drops one waiting artifact proposal, once.",
+            Self::VaultArtifactsUndo => "Undoes one Keep by appending a new version.",
+            Self::Can => {
+                "Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything."
+            }
+            Self::Peek => {
+                "An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask."
+            }
+            Self::Ask => {
+                "Asks people or an authority a typed question and returns at admission with the ask's handle."
+            }
+            Self::Wait => {
+                "Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."
+            }
+            Self::TasksAnswer => {
+                "Admits one person's word on an ask; the word is evidence, never approval."
+            }
+            Self::TasksOutcomes => {
+                "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."
+            }
+            Self::VaultRoomsList => {
+                "The caller's rooms its own grants admit; inside a room turn, only that room."
+            }
+            Self::VaultRoomsMessages => "One page of the turns in a room this reader may read.",
+            Self::VaultRoomsParticipants => {
+                "One page of who took part in a room or one of its threads, each with its causes and whether it may take part now."
+            }
+            Self::VaultRoomsRender => "The standalone rendered view of a room's threads.",
+            Self::VaultRoomsFind => "One page of a room's threads.",
+            Self::VaultRoomsGet => {
+                "One thread of a room by its turn, even when every list omits it."
+            }
+            Self::VaultRoomsTrunk => {
+                "One trunk turn of a room, with the completed TASK result headers that hang under it."
+            }
+            Self::VaultRoomsReplyStrips => {
+                "One page of a thread's quote replies, grouped by the message they quote, in reply order."
+            }
+            Self::VaultRoomsClaim => {
+                "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."
+            }
+            Self::VaultRoomsSpeak => {
+                "Speaks one turn into the current room turn's room, through the normal witness gate."
+            }
+            Self::VaultProjectsPropose => {
+                "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."
+            }
+            Self::VaultProjectsProposals => {
+                "The project cards shown in a conversation, each with its state."
+            }
+            Self::VaultProjectsDismissCard => {
+                "The card's person dismisses a project card so it never mints; false when it was dismissed already."
+            }
+            Self::VaultProjectsConfirm => {
+                "The owner's tap that confirms a host-held project card; only the host's own door can complete it."
+            }
+            Self::VaultProjectsGoalIntake => {
+                "What a project's goal-intake interview starts from, for a member of its home room."
+            }
+            Self::VaultRoomsJoin => {
+                "Files and decides a request to take part in a room or one of its threads."
+            }
+            Self::VaultRoomsConsent => {
+                "One party's answer to a join that waits on it, after which the join is decided again."
+            }
+            Self::VaultRoomsOffer => {
+                "Publishes an agent's offer card to join a room or one of its threads."
+            }
+            Self::VaultRoomsOfferAnswer => {
+                "The room's host answers an offer card: join, or not now."
+            }
+            Self::VaultRoomsOffers => {
+                "One page of the current offer cards in a room or one of its threads."
+            }
+            Self::VaultProjectsGoalRevisions => {
+                "The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first."
+            }
+            Self::VaultProjectsGoalDismiss => {
+                "The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry."
+            }
+            Self::VaultProjectsRouteTradeoff => {
+                "Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room."
+            }
+            Self::VaultConversationsTurnContinue => {
+                "Queues generation that resumes an incomplete assistant reply from exactly its saved text."
+            }
+            Self::VaultConversationsTurnRetry => {
+                "Queues a new answer to the user turn an assistant turn answered; the old reply stays."
+            }
+            Self::VaultRoomsHost => {
+                "Who hosts a room now, and the caller's own speaking role there."
+            }
+            Self::VaultRoomsHostPin => {
+                "Pins an agent as a room's host, or clears the stored host, pin or handoff."
+            }
+            Self::VaultRoomsHostHand => {
+                "The room's current host hands the hosting duty to another agent that may host."
+            }
+            Self::VaultRoomsSharing => {
+                "A room's effective sharing scope and why it is clamped, for a member of the room."
+            }
+            Self::VaultCompanionsSharingGet => {
+                "One contact's clearance in a companion's source vault, for the principal who controls that vault."
+            }
+            Self::VaultCompanionsSharingSet => {
+                "The owner's standing yes to one frozen clearance offer for a companion's contact."
+            }
+            Self::VaultWorkspaceWorkCompanionGet => {
+                "A workspace's work_companion policy, readable by every member it governs."
+            }
+            Self::VaultWorkspaceWorkCompanionSet => {
+                "The owner sets a workspace's work_companion policy in person."
+            }
+            Self::SelfSkillsSave => {
+                "An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it."
+            }
+            Self::SelfSkillsFork => {
+                "An agent forks a stored skill under its own identity, keeping its import ancestry."
+            }
+            Self::SelfSkillsCallables => {
+                "Every loadable callable helper skill and its call contract: what it takes and returns."
+            }
+            Self::AiOptions => {
+                "The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."
+            }
+            Self::AiImage => {
+                "One image out of the host's image model; reference images make it an edit."
+            }
+            Self::AiSpeech => "Speech audio out of text, from the host's speech model.",
+            Self::AiTranscribe => "Text out of speech audio, from the host's transcription model.",
+            Self::AiEmbed => {
+                "One embedding vector per input text, from the host's embedding model."
+            }
+            Self::AiVideo => "Starts a video render as a provider job and answers with its ticket.",
+            Self::AiVideoPoll => {
+                "Where a video job stands; a finished one answers with its clip, once."
+            }
+            Self::AiVideoCancel => "Stops a video job at its provider.",
+            Self::AiVerdict => {
+                "The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt."
+            }
+            Self::ConnectorList => {
+                "Every live catalogued connector whose name or summary matches the query."
+            }
+            Self::ConnectorStatus => "One catalogued connector by name, removed ones included.",
+            Self::SelfBrowserOpen => {
+                "Opens a URL in the run's own browser session and observes the page."
+            }
+            Self::SelfBrowserObserve => "Observes the current page of the run's browser session.",
+            Self::SelfBrowserFind => "Finds the page rows whose role and name match.",
+            Self::SelfBrowserClick => "Clicks one page target and observes the result.",
+            Self::SelfBrowserClickAt => {
+                "Clicks a point of a held screenshot, mapped onto the viewport."
+            }
+            Self::SelfBrowserType => "Types text into one page target and observes the result.",
+            Self::SelfBrowserSelect => {
+                "Picks the option of a select element by its label, text or value."
+            }
+            Self::SelfBrowserWaitFor => "Waits until some page row matches a role and name.",
+            Self::SelfBrowserExpect => {
+                "Checks that a page row is present or absent, and holds a given value."
+            }
+            Self::SelfBrowserScreenshot => {
+                "Takes a screenshot the session holds, by image ref and never captioned."
+            }
+            Self::SelfBrowserView => "Reads back a held image by its ref.",
+            Self::SelfBrowserCrop => "Crops a held image to a rectangle.",
+            Self::SelfBrowserZoom => "Zooms into a rectangle of a held image.",
+            Self::SelfBrowserBatch => {
+                "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails."
+            }
+            Self::VaultCommit => {
+                "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."
+            }
+            Self::VaultRemember => {
+                "Commits one claim through the gate, the same as vault.claims.upsert."
+            }
+            Self::VaultClaimsRetract => {
+                "Retracts one active claim: a deliberate withdrawal that preserves the record."
+            }
+            Self::VaultForget => {
+                "Retracts claims by exact claim or by subject and predicate; never a hard delete."
+            }
+            Self::VaultClaimsList => {
+                "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."
+            }
+            Self::VaultClaimsHistory => {
+                "The supersession timeline of one claim, oldest first, with the read's narrowing receipt."
+            }
+            Self::VaultDelete => {
+                "Deletes one entity under a named reason; an owner verb that only a verified human may call."
+            }
+            Self::VaultWritesPending => "Gated writes parked for consent, newest first.",
+            Self::VaultHydrate => {
+                "Hydrates short refs or hex ids to full entity views, with the read's receipt."
+            }
+            Self::VaultGet => {
+                "Reads one entity as a typed view, or none when absent or withheld; the receipt says which."
+            }
+            Self::VaultRefsResolve => {
+                "The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same."
+            }
+            Self::VaultRefsLinks => {
+                "A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."
+            }
+            Self::VaultSearchBm25 => {
+                "BM25 text search over the engine index; surfaceable claims only."
+            }
+            Self::VaultNeighbors => {
+                "The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."
+            }
+            Self::VaultStructuralPut => {
+                "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."
+            }
+            Self::VaultHabitsCheckin => "Appends one immutable check-in under a Habit TASK.",
+            Self::VaultClaimsAdmit => {
+                "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
+            }
+            Self::VaultArtifactsPut => {
+                "Registers one blob artifact; its bytes ride vault.artifacts.append."
+            }
+            Self::VaultArtifactsAppend => {
+                "Appends one version of bytes to a blob artifact's append-only chain."
+            }
+            Self::VaultArtifactsRead => "Reads one version of a blob artifact's bytes.",
+            Self::ConnectorOutboundSchedule => {
+                "Schedules one send through a granted outbound connector, gated and held for delivery."
+            }
+            Self::VaultNotesCreate => {
+                "Creates a NOTE of a registered kind, its first authored text as its birth."
+            }
+            Self::VaultNotesFromEntity => {
+                "Creates a NOTE of a registered kind from an existing entity."
+            }
+            Self::VaultNotesEdit => {
+                "Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."
+            }
+        }
+    }
 }
