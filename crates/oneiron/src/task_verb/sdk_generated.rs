@@ -1362,6 +1362,33 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.body.deck.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyForkRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.deck.merge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::DeckForkMergeRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.deck.export",
+                crate::code_run::vault_read::request_schema::<crate::office_body::DeckExportRequest>(
+                ),
+            ),
+            (
+                "vault.artifacts.body.deck.gate",
+                crate::code_run::vault_read::request_schema::<crate::office_body::DeckGateRequest>(
+                ),
+            ),
+            (
+                "vault.artifacts.body.deck.oracle",
+                crate::code_run::vault_read::request_schema::<crate::office_body::DeckOracleRequest>(
+                ),
+            ),
+            (
                 "vault.artifacts.append",
                 crate::code_run::vault_read::request_schema::<AppendBlobVersionRequest>(),
             ),
@@ -3174,6 +3201,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.body.deck.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.deck.merge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.deck.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.deck.gate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.deck.oracle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.append" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4143,6 +4205,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.body.preview" => {
             let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
         }
+        "vault.artifacts.body.deck.review" => {
+            let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.deck.merge" => {
+            let _input: crate::office_body::DeckForkMergeRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.deck.export" => {
+            let _input: crate::office_body::DeckExportRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.deck.gate" => {
+            let _input: crate::office_body::DeckGateRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.deck.oracle" => {
+            let _input: crate::office_body::DeckOracleRequest = decode(value.clone())?;
+        }
         "vault.artifacts.append" => {
             let input: AppendBlobVersionRequest = decode(value.clone())?;
             if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
@@ -4558,6 +4635,21 @@ pub fn invoke(
         }
         "vault.artifacts.body.preview" => {
             encode(vault_artifacts_body_preview(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.deck.review" => {
+            encode(vault_artifacts_body_deck_review(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.deck.merge" => {
+            encode(vault_artifacts_body_deck_merge(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.deck.export" => {
+            encode(vault_artifacts_body_deck_export(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.deck.gate" => {
+            encode(vault_artifacts_body_deck_gate(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.deck.oracle" => {
+            encode(vault_artifacts_body_deck_oracle(memory, decode(value)?)?)
         }
         "vault.artifacts.append" => encode(vault_artifacts_append(memory, decode(value)?)?),
         "vault.artifacts.read" => encode(vault_artifacts_read(memory, decode(value)?)?),
@@ -6972,6 +7064,54 @@ pub fn vault_artifacts_body_preview(
         &["/artifact_ref"],
     )?;
     memory.artifacts_body_preview(&input)
+}
+pub fn vault_artifacts_body_deck_review(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyForkRequest,
+) -> MemoryResult<crate::office_body::DeckReviewView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.deck.review",
+        &input,
+        &["/artifact_ref", "/fork_ref"],
+    )?;
+    memory.artifacts_body_deck_review(&input)
+}
+pub fn vault_artifacts_body_deck_merge(
+    memory: &Memory<'_>,
+    input: crate::office_body::DeckForkMergeRequest,
+) -> MemoryResult<oneiron_docedit::live::LandingReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.deck.merge",
+        &input,
+        &["/artifact_ref", "/fork_ref"],
+    )?;
+    memory.artifacts_body_deck_merge(&input)
+}
+pub fn vault_artifacts_body_deck_export(
+    memory: &Memory<'_>,
+    input: crate::office_body::DeckExportRequest,
+) -> MemoryResult<crate::office_body::DeckExportView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.deck.export",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_body_deck_export(&input)
+}
+pub fn vault_artifacts_body_deck_gate(
+    memory: &Memory<'_>,
+    input: crate::office_body::DeckGateRequest,
+) -> MemoryResult<crate::office_body::DeckGateView> {
+    memory.artifacts_body_deck_gate(&input)
+}
+pub fn vault_artifacts_body_deck_oracle(
+    memory: &Memory<'_>,
+    input: crate::office_body::DeckOracleRequest,
+) -> MemoryResult<crate::office_body::DeckGateView> {
+    memory.artifacts_body_deck_oracle(&input)
 }
 pub fn vault_artifacts_append(
     memory: &Memory<'_>,

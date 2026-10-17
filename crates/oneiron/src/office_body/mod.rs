@@ -33,7 +33,11 @@ pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub use oneiron_docedit::xlsx_body::{XlsxArea, XlsxBook, XlsxLock, XlsxStyle, XlsxValue};
 pub(crate) use pptx::live_refused;
-pub use pptx::{PptxBody, PptxExport, PptxReview};
+pub use pptx::{
+    DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,
+    DeckGateView, DeckNodeView, DeckOracleRequest, DeckReviewView, PptxBody, PptxExport,
+    PptxReview,
+};
 pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest,
     OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
@@ -680,7 +684,7 @@ impl Vault {
     ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>)>> {
         if head.kind == OfficeBodyKind::Pptx {
             return Err(invalid(
-                "a deck export is a proposal until its export gate opens: use export_pptx_body",
+                "a deck exports through vault.artifacts.body.deck.export, which lands only once its export gate opens",
             ));
         }
         let (live, base) = {
@@ -807,7 +811,7 @@ fn source(store: &Store, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<OfficeB
 fn loro_kind(store: &Store, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<OfficeBodyKind> {
     match source(store, txn, artifact)?.kind {
         OfficeBodyKind::Pptx => Err(invalid(
-            "a deck fork is reviewed and landed through its own doors",
+            "a deck fork reviews and lands through vault.artifacts.body.deck.review and .deck.merge",
         )),
         kind => Ok(kind),
     }
@@ -916,7 +920,7 @@ fn three_way(
         ),
         OfficeBodyKind::Pptx => {
             return Err(invalid(
-                "a deck fork is reviewed and landed through its own doors",
+                "a deck fork reviews and lands through vault.artifacts.body.deck.review and .deck.merge",
             ));
         }
     })

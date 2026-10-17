@@ -767,6 +767,21 @@ impl OneironClient {
                 "vault.artifacts.body.preview" => remote_agent_verb_output::<
                     oneiron::office_body::XlsxPreview,
                 >(client, verb, &input),
+                "vault.artifacts.body.deck.review" => remote_agent_verb_output::<
+                    oneiron::office_body::DeckReviewView,
+                >(client, verb, &input),
+                "vault.artifacts.body.deck.merge" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::oneiron_docedit::live::LandingReceipt,
+                >(client, verb, &input),
+                "vault.artifacts.body.deck.export" => remote_agent_verb_output::<
+                    oneiron::office_body::DeckExportView,
+                >(client, verb, &input),
+                "vault.artifacts.body.deck.gate" => remote_agent_verb_output::<
+                    oneiron::office_body::DeckGateView,
+                >(client, verb, &input),
+                "vault.artifacts.body.deck.oracle" => remote_agent_verb_output::<
+                    oneiron::office_body::DeckGateView,
+                >(client, verb, &input),
                 "vault.artifacts.append" => remote_agent_verb_output::<
                     oneiron::memory::BlobVersionView,
                 >(client, verb, &input),
@@ -3802,6 +3817,71 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.body.preview", value)
+    }
+    /// A deck fork's merge preflight against the live head.
+    pub fn vault_artifacts_body_deck_review(
+        &self,
+        input: &oneiron::office_body::OfficeBodyForkRequest,
+    ) -> Result<oneiron::office_body::DeckReviewView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.deck.review", value)
+    }
+    /// A person lands a reviewed deck fork.
+    pub fn vault_artifacts_body_deck_merge(
+        &self,
+        input: &oneiron::office_body::DeckForkMergeRequest,
+    ) -> Result<oneiron_docedit::live::LandingReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.deck.merge", value)
+    }
+    /// Projects a deck, landing it as the next version when its export gate is open.
+    pub fn vault_artifacts_body_deck_export(
+        &self,
+        input: &oneiron::office_body::DeckExportRequest,
+    ) -> Result<oneiron::office_body::DeckExportView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.deck.export", value)
+    }
+    /// The deck export gate for a profile.
+    pub fn vault_artifacts_body_deck_gate(
+        &self,
+        input: &oneiron::office_body::DeckGateRequest,
+    ) -> Result<oneiron::office_body::DeckGateView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.deck.gate", value)
+    }
+    /// Records the deck oracle's receipt for its export profile.
+    pub fn vault_artifacts_body_deck_oracle(
+        &self,
+        input: &oneiron::office_body::DeckOracleRequest,
+    ) -> Result<oneiron::office_body::DeckGateView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.deck.oracle", value)
     }
     pub fn vault_artifacts_append(
         &self,
