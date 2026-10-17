@@ -11,15 +11,75 @@
 //! house then joins the root's home room through the three consents
 //! (OF-531), as an agent on its institutional standing and its roster seat,
 //! with the owner as filer.
+//!
+//! Two doors reach it (FIX 700/911): the owner's finish of a stored
+//! workspace, and the host's start, which binds the one stored workspace's
+//! house only while the root still follows its seeded leader, so a leader
+//! the board chose is never replaced.
 use super::fold::ProjectDisposition;
 use super::owner_signer::{OwnerProjectSigner, owner_signed_at};
 use super::read::stored;
 use super::*;
+use crate::authority::HostSlipIssuer;
 use crate::consent::AuthenticatedOwner;
 use crate::workspace_roster::WorkspaceRosterPreset;
 use crate::{EdgeActorClass, WriteActor};
 
 impl Vault {
+    /// Makes the house mind `workspace_ref`'s stored preset names the root
+    /// project's leader: [`Self::bind_house_leader`] over that preset, the
+    /// owner's finish of the workspace. No stored preset is `EntityNotFound`.
+    pub fn bind_workspace_house_leader(
+        &self,
+        workspace_ref: &str,
+        owner: &AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
+    ) -> Result<()> {
+        let preset = crate::workspace_roster::read_preset(self, workspace_ref)?
+            .ok_or(Error::EntityNotFound)?;
+        self.bind_house_leader(&preset, owner, signer)
+    }
+
+    /// The house a host binds at start: when exactly one workspace preset is
+    /// stored and the root still follows its seeded leader, that preset's
+    /// house takes the lead as [`Self::bind_house_leader`] makes it, signed
+    /// with `issuer`'s owner-project slip. `Ok(false)` when no preset or
+    /// several are stored, or the root follows any other leader; the lead is
+    /// re-read in the writing transaction, so a leader the board chose is
+    /// never replaced.
+    pub fn bind_default_house_leader(
+        &self,
+        owner: &AuthenticatedOwner,
+        issuer: &HostSlipIssuer,
+    ) -> Result<bool> {
+        let Some(seeded) = crate::agent_def::legacy_logical_id_row(ROOT_SEED_LEADER)? else {
+            return Ok(false);
+        };
+        let seeded = seeded.to_hex();
+        let preset = {
+            let txn = self.store.env.read_txn()?;
+            let presets = crate::workspace_roster::PRESET
+                .iter_from(&self.store, &txn, &[])?
+                .take(2)
+                .collect::<Result<Vec<_>>>()?;
+            let [(_, row)] = presets.as_slice() else {
+                return Ok(false);
+            };
+            let Some(root) = root_project_in(&self.store, &txn)? else {
+                return Ok(false);
+            };
+            if self
+                .effective_project_in_txn(&txn, root)?
+                .is_none_or(|(_, effective)| effective.leader != seeded)
+            {
+                return Ok(false);
+            }
+            row.preset.clone()
+        };
+        let signer = self.owner_project_signer(issuer)?;
+        self.lead_root(&preset, owner, &signer, Some(seeded.as_str()))
+    }
+
     /// Makes `preset`'s house mind the root project's leader.
     ///
     /// `preset` must be the workspace's stored preset, so the house is the
@@ -37,6 +97,22 @@ impl Vault {
         owner: &AuthenticatedOwner,
         signer: &OwnerProjectSigner<'_>,
     ) -> Result<()> {
+        self.lead_root(preset, owner, signer, None)?;
+        Ok(())
+    }
+
+    /// [`Self::bind_house_leader`], leaving the root as it is and answering
+    /// `false` when `only_from` names a leader other than the one the root
+    /// follows now. The house's anchor to the workspace's ORG is filled in
+    /// the same transaction when the preset was stored without one; a house
+    /// anchored to another subject is refused, never re-anchored.
+    fn lead_root(
+        &self,
+        preset: &WorkspaceRosterPreset,
+        owner: &AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
+        only_from: Option<&str>,
+    ) -> Result<bool> {
         let kind = self.project_type_byte()?;
         let house = preset.house_actor_ref.to_hex();
         self.with_write_txn(|txn| {
@@ -73,8 +149,22 @@ impl Vault {
                 frontier.witness.ok_or_else(invalid)?
             };
             let authority = witness.anchor.authority.clone();
+            if only_from.is_some_and(|leader| authority.leader != leader) {
+                return Ok(false);
+            }
+            let filer = WriteActor::new(owner.revalidate_in_txn(self, txn)?, EdgeActorClass::Human);
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            crate::subject_model::ensure_actor_subject_in_txn(
+                self,
+                txn,
+                preset.house_actor_ref,
+                preset.org_ref,
+                filer,
+                now,
+            )?;
             if authority.leader == house {
-                return self.house_joins_root_in_txn(txn, owner, root, preset.house_actor_ref);
+                self.house_joins_root_in_txn(txn, owner, root, preset.house_actor_ref)?;
+                return Ok(true);
             }
             let mut next = stored(&self.store, txn, root, kind)?.ok_or(Error::EntityNotFound)?;
             // The head's seats: its signed roster, else the leader and board
@@ -136,7 +226,8 @@ impl Vault {
                 )
                 .apply(txn)?;
             self.require_owner_head_in_txn(txn, root, &next)?;
-            self.house_joins_root_in_txn(txn, owner, root, preset.house_actor_ref)
+            self.house_joins_root_in_txn(txn, owner, root, preset.house_actor_ref)?;
+            Ok(true)
         })
     }
 

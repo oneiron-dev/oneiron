@@ -128,6 +128,8 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"budget:",
                 // A provider's offer cooldowns belong to this deployment.
                 b"models:offer-cooldown:",
+                // So do the Responses chains its providers keep (OF-602).
+                b"models:responses-chain:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

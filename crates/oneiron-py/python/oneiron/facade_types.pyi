@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 278 facade rows, 1065 declarations.
-Inputs: 232 of 278 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 226 of 278 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Census: 282 facade rows, 1074 declarations.
+Inputs: 236 of 282 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 230 of 282 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
 """
 
@@ -717,10 +717,13 @@ class PeerCount(TypedDict):
     peer: EntityId
     count: int
 SpendBasis = Literal["calibrated", "prior"]
+DollarBasis = Literal["unknown_price", "upper_bound_rate", "sum", "incomplete_or_overflow"]
 class ExpectedSpend(TypedDict):
     units: int
     samples: int
     basis: SpendBasis
+    expected_usd_micros: NotRequired[int | None]
+    dollar_basis: DollarBasis
 LeaseUnit = str
 SpendScopeId = str
 class SpendCapView(TypedDict):
@@ -2535,6 +2538,50 @@ class LegalHoldErasedRecord(TypedDict):
 class LegalHoldLiftAndErased(TypedDict):
     holds: list[EntityId]
     records: list[LegalHoldErasedRecord]
+class CourtesyDeleteSendRequest(TypedDict):
+    pact: str
+    worlds: NotRequired[list[str]]
+    epoch_cutoff: NotRequired[int | None]
+    peer: str
+    signed: NotRequired[str | None]
+class CourtesyDeleteSent(TypedDict):
+    request: str
+    pact: str
+    recipient: str
+    status: str
+    created: str
+    updated: str
+class CourtesyDeleteAskedWorld(TypedDict):
+    world: str
+    stale: NotRequired[str | None]
+    stale_epoch: NotRequired[int | None]
+CooperativeDeletionDispositionKind = Literal["delete", "redact", "restrict_pending_review", "retain_under_basis", "legal_hold", "decline"]
+class CourtesyDeleteChoice(TypedDict):
+    choice: CooperativeDeletionDispositionKind
+    reason_code: NotRequired[str | None]
+    review: NotRequired[str | None]
+    deleted: list[str]
+    recorded: str
+class CourtesyDeleteIncoming(TypedDict):
+    request: str
+    pact: str
+    pact_status: NotRequired[str | None]
+    requester: str
+    worlds: list[CourtesyDeleteAskedWorld]
+    epoch_cutoff: int
+    requested: str
+    received: str
+    answer: NotRequired[CourtesyDeleteChoice | None]
+    reply_status: NotRequired[str | None]
+class CourtesyDeleteAnswerRequest(TypedDict):
+    pact: str
+    request: str
+    choice: CooperativeDeletionDispositionKind
+    reason_code: NotRequired[str | None]
+    review_at: NotRequired[int | None]
+    delete: NotRequired[list[str]]
+    hold: NotRequired[list[str]]
+    reply_to: NotRequired[str | None]
 InputKind = Literal["text", "image", "audio"]
 class EmbeddingSpace(TypedDict):
     id: str
@@ -5289,10 +5336,15 @@ class ProposalSettlement(TypedDict):
     verdict: BundleVerdict
     at: int
     reason: NotRequired[str | None]
+class ProposalAsk(TypedDict):
+    ask: EntityId
+    forks: list[EntityId]
+    at: int
 class OfficeBodyProposal(TypedDict):
     header: ProposalHeader
     members: list[ProposalMember]
     settlement: NotRequired[ProposalSettlement | None]
+    asks: NotRequired[list[ProposalAsk]]
 SettleVerdict = Literal["accept", "reject"]
 class ApproveScopeThisActor(TypedDict):
     this_actor: str
