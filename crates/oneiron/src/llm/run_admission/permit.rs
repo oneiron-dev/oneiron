@@ -11,7 +11,7 @@ use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
     AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, Unpriced, convert,
 };
-use super::receipt::PermitFacts;
+use super::receipt::{PermitFacts, RunStreamUsage};
 use super::settle::CallOutcome;
 
 /// A one-use admission for one call: the lease to send with it and every fact
@@ -79,7 +79,19 @@ impl RunPermit {
     pub fn settle(mut self, outcome: CallOutcome<'_>) -> Result<BudgetSettlement, RunDenied> {
         self.settled = true;
         let run = Arc::clone(&self.run);
-        run.settle(&self, outcome)
+        run.settle(&self, outcome, None)
+    }
+
+    /// Settles a metered stream, as [`Self::settle`] settles `Used(units)`,
+    /// with the stream's admitted audio and bound on its receipt.
+    pub(super) fn settle_stream(
+        mut self,
+        units: u64,
+        stream: RunStreamUsage,
+    ) -> Result<BudgetSettlement, RunDenied> {
+        self.settled = true;
+        let run = Arc::clone(&self.run);
+        run.settle(&self, CallOutcome::Used(units), Some(stream))
     }
 }
 
@@ -89,7 +101,7 @@ impl Drop for RunPermit {
             self.settled = true;
             let run = Arc::clone(&self.run);
             // The refusal, if any, is on the Settled receipt.
-            run.settle(self, CallOutcome::Failed).ok();
+            run.settle(self, CallOutcome::Failed, None).ok();
         }
     }
 }

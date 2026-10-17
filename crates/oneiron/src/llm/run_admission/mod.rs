@@ -39,7 +39,7 @@ pub use media::{MediaGate, MediaStreamLease};
 pub use permit::RunPermit;
 pub use receipt::{
     CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
-    RunTokenUsage, TeacherReport,
+    RunStreamUsage, RunTokenUsage, TeacherReport,
 };
 pub use settle::CallOutcome;
 
