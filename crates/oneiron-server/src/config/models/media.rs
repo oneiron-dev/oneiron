@@ -46,7 +46,7 @@ use super::provider::{ProviderConfig, ProviderKind};
 const DEFAULT_MEDIA_BUDGET_UNITS: u64 = 10_000_000;
 /// The languages a live soniox rung listens for when its `rung_options`
 /// name none (CALLS.md: Soniox language hints).
-pub const DEFAULT_LIVE_ASR_LANGUAGE_HINTS: [&str; 2] = ["ja", "en"];
+const DEFAULT_LIVE_ASR_LANGUAGE_HINTS: [&str; 2] = ["ja", "en"];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -8,7 +8,7 @@
 //! else: not the opening config, not the media door, not a receipt.
 //!
 //! One socket carries one segment of the call, on a stream lease of its own
-//! of at most [`MAX_STREAM_AUDIO_MS`], admitted before the socket opens. At
+//! of at most [`oneiron::voice_cascade::media::MAX_STREAM_AUDIO_MS`], admitted before the socket opens. At
 //! that bound the segment ends (an empty binary frame) and drains until
 //! `finished`, and the next opens on a fresh lease. The words the old one
 //! made final carry over to the utterance still open, never as an owner's
@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use futures_util::{Sink, Stream};
 use oneiron::llm::media::{AiOperation, MediaBackend, MediaFuture, MediaRequest, MediaResponse};
-use oneiron::voice_cascade::media::{LeasedAsrStream, MAX_STREAM_AUDIO_MS, MediaVoiceRoute};
+use oneiron::voice_cascade::media::{LeasedAsrStream, MediaVoiceRoute};
 use oneiron::voice_cascade::soniox::{SonioxAsrClient, SonioxTransport, SonioxUpdate};
 use oneiron::voice_cascade::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
 use oneiron::{BudgetLease, FatalLlmError};
@@ -484,7 +484,7 @@ impl SonioxLive {
                     .reset(tokio::time::Instant::now() + KEEPALIVE_AFTER);
                 continue;
             }
-            let frame = match Pin::new(&mut segment.socket).poll_next(cx) {
+            let frame: serde_json::Value = match Pin::new(&mut segment.socket).poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(None) => return Poll::Ready(Err(invalid("the socket closed early"))),
                 Poll::Ready(Some(Err(error))) => return Poll::Ready(Err(socket_error(&error))),
