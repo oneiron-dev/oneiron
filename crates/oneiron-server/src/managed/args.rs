@@ -4,9 +4,13 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use anyhow::Context as _;
+use serde::Deserialize;
+
 use oneiron::federation::derivation::DerivationOwner;
 use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
 
+use crate::config::models::{ModelsConfig, ModelsFile};
 use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
 
 use super::listener::HYPNOS_LISTEN_FD;
@@ -159,6 +163,15 @@ pub struct ManagedArgs {
     /// The domains the artifact origin answers under, as the cloud named
     /// them: `<vault>.<domain>` and `<app>--<vault>.<domain>`.
     pub artifact_domains: Vec<String>,
+    /// The supervisor's `[models]` file (`--models-file`).
+    pub models_file: Option<PathBuf>,
+}
+
+/// A `--models-file`: the `[models]` table alone, as a config file writes it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManagedModelsFile {
+    models: ModelsFile,
 }
 
 impl ManagedArgs {
@@ -259,6 +272,7 @@ impl ManagedArgs {
                 })
                 .filter(|domain| !domain.is_empty())
                 .collect(),
+            models_file: args.models_file.clone(),
         };
         if managed
             .artifact_socket
@@ -281,6 +295,7 @@ impl ManagedArgs {
             ("escrow-recipient-file", &managed.escrow_recipient),
             ("break-glass-recipient-file", &managed.break_glass_recipient),
             ("escrow-outbox-dir", &managed.escrow_outbox),
+            ("models-file", &managed.models_file),
         ] {
             if path.as_deref().is_some_and(std::path::Path::is_relative) {
                 return Err(ManagedError::RelativeRecipientFile { flag });
@@ -334,6 +349,43 @@ impl ManagedArgs {
     /// socket inside an owner-only directory. Consulting
     /// `ONEIRON_AUTH_SECRET` here would give the child a second, weaker
     /// opinion about who may talk to it.
+    /// The models table `--models-file` holds, resolved; `None` without one.
+    /// Managed mode reads no environment, so a provider that names its key by
+    /// `key_env`, or a System One seat (whose bearer is an environment
+    /// variable), is refused: a key reaches a managed vault only as a vault
+    /// secret its provider's `key_secret` names, which the credential broker
+    /// sends.
+    pub fn models(&self) -> anyhow::Result<Option<ModelsConfig>> {
+        let Some(path) = &self.models_file else {
+            return Ok(None);
+        };
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("read models file {}", path.display()))?;
+        let file: ManagedModelsFile = toml::from_str(&raw)
+            .with_context(|| format!("parse models file {}", path.display()))?;
+        let models = file
+            .models
+            .resolve(path.parent())
+            .with_context(|| format!("models file {}", path.display()))?;
+        if let Some(name) = models
+            .providers
+            .iter()
+            .find_map(|(name, provider)| provider.key_env.is_some().then_some(name))
+        {
+            anyhow::bail!(
+                "models file {}: provider {name:?} names its key with key_env, but managed mode reads no environment; hold the key in the vault and name it with key_secret",
+                path.display()
+            );
+        }
+        if models.decisions.system_one.is_some() {
+            anyhow::bail!(
+                "models file {}: [models.decisions.system_one] reads its bearer from the environment, which managed mode never reads",
+                path.display()
+            );
+        }
+        Ok(Some(models))
+    }
+
     pub fn serve_config(&self, args: &ServeArgs) -> ServeConfig {
         let defaults = ServeConfig::default();
         let mut config = ServeConfig {
@@ -528,6 +580,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "escrow-outbox-dir",
         |args| args.escrow_outbox_dir.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "models-file",
+        |args| args.models_file.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.

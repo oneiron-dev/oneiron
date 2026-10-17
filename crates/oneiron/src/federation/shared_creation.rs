@@ -149,8 +149,7 @@ impl Vault {
         };
         let mut ops = Vec::new();
         for (member, role) in rows {
-            if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &member)?.is_none()
-            {
+            if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &member)? {
                 return Err(Error::EntityNotFound);
             }
             let role = if role == Role::Auditor {
@@ -229,8 +228,7 @@ impl Vault {
             // Invitations run on the store clock, as acceptance does.
             let invited_at = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
             for (member, role) in invites {
-                if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &member)?
-                    .is_none()
+                if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &member)?
                 {
                     return Err(Error::EntityNotFound);
                 }
