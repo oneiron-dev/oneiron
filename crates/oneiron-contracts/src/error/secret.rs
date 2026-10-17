@@ -57,6 +57,11 @@ pub enum SecretError {
         floor_max: crate::secret_custody::CustodyTier,
         binding_ceiling: crate::secret_custody::CustodyTier,
     },
+    /// A file the write door could not read whole (an encrypted, malformed or
+    /// over-bound container) is stored as it is and served to the vault
+    /// owner only; this reader gets no copy of it (owner ruling C2).
+    #[error("a sealed file is withheld: only the vault owner reads it")]
+    SealedFileWithheld,
     /// The credential-door dial no longer admits this door-bound T0/T1
     /// materialization. The reason never contains secret or manifest bytes.
     #[error("secret materialization refused by credential-door policy: {reason}")]
@@ -170,6 +175,7 @@ impl SecretError {
             Self::SecretBindingDenied { .. } => ErrorKind::SecretBindingDenied,
             Self::ManifestWidensFloor { .. } => ErrorKind::ManifestWidensFloor,
             Self::SecretTierDenied { .. } => ErrorKind::SecretTierDenied,
+            Self::SealedFileWithheld => ErrorKind::SealedFileWithheld,
             Self::SecretDoorPolicyRefused { .. } => ErrorKind::SecretDoorPolicyRefused,
             Self::SecretRefNotFound { .. } => ErrorKind::SecretRefNotFound,
             Self::SecretWiderThanManifest { .. } => ErrorKind::SecretWiderThanManifest,
