@@ -21560,7 +21560,25 @@
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 5
+      "fn": 5,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SharedInvitation",
+      "SharedInvitationState"
+     ],
+     "path": "src/federation/shared_act/membership/invitation.rs",
+     "purpose": "Invitee acceptance (CROSS-ARCH-0024: \"Only an accepted, vault-specific invitation\" grants membership)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -21585,6 +21603,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 9,
+      "re-export": 1,
       "struct": 8
      }
     },
@@ -44667,7 +44686,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 11,
+      "re-export": 12,
       "struct": 33
      }
     },
@@ -44726,7 +44745,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 211
+      "fn": 215
      }
     },
     {
@@ -44881,6 +44900,20 @@
      "surface": {
       "fn": 13,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SharedInvitationRequest",
+      "SharedInvitationWithdrawRequest"
+     ],
+     "path": "src/task_verb/sdk_shared_members.rs",
+     "purpose": "The invitation rows of a shared vault (OF-531 / OF-158): `vault.members.add` invites, and the invitee lists…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -46658,7 +46691,7 @@
      "path": "src/voice_cascade/uds/socket.rs",
      "purpose": "—",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -49778,7 +49811,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50492,7 +50525,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 110,
+     "files": 111,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50648,7 +50681,7 @@
    },
    "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3058,
+   "source_files": 3060,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58515,7 +58548,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 166
+      "fn": 170
      }
     },
     {
@@ -59529,7 +59562,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 167
+      "fn": 171
      }
     },
     {
@@ -62068,7 +62101,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -62109,6 +62142,16 @@
      "purpose": "The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/shared_member_doors.rs",
+     "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -62558,7 +62601,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -64612,7 +64655,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 2,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 7
      }
     },
@@ -64641,6 +64684,19 @@
      "path": "src/config/models/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceSettings"
+     ],
+     "path": "src/config/models/voice.rs",
+     "purpose": "`[models.voice]`: the server's own voice loop (OF-410)",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -67626,6 +67682,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/voice_host/backend.rs",
+     "purpose": "The voice call's backend for the host's own model calls (OF-410): partial enrichment and the sentence…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_host/boot.rs",
+     "purpose": "The server's own voice loop at serve start (OF-410)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ChatBrain",
       "ChatBrainBindings"
@@ -67686,6 +67762,7 @@
      "path": "src/voice_host/mod.rs",
      "purpose": "Private voice request adapter, not an audio/provider scheduler",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "re-export": 5,
@@ -67702,6 +67779,7 @@
      "path": "src/voice_host/serve_bindings.rs",
      "purpose": "One-shot bindings supplied by the existing private-connection owner",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 2
      }
@@ -68176,7 +68254,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 261,
+     "files": 262,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68232,7 +68310,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68456,7 +68534,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 12,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68493,7 +68571,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 506,
+   "source_files": 510,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -134,11 +134,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/agent_verbs.rs` | src | XL | 1 crate-vis | — | — |
 | `src/api/facade/graph_ask_doors.rs` | src | s | 6 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | m | 28 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 29 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 5 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/share_doors.rs` | src | s | 2 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 15 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
+| `src/api/facade/shared_member_doors.rs` | src | s | 4 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
 | `src/api/facade/weave_doors.rs` | src | s | 2 crate-vis | — | The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link in their own report… |
@@ -184,7 +185,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/deep_admission.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
-| `src/api/mod.rs` | src | m | 37 crate-vis | — | HTTP query routes for web dashboard access |
+| `src/api/mod.rs` | src | m | 38 crate-vis | — | HTTP query routes for web dashboard access |
 | `src/api/off_record_rooms.rs` | src | m | 1 crate-vis | — | Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
 | `src/api/openai_proxy/mod.rs` | src | m | 1 crate-vis | — | OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps… |
 | `src/api/openai_proxy/wire.rs` | src | s | 11 crate-vis | — | The OpenAI chat-completions wire the proxy speaks (OF-445): a closed request body, and the reply built from… |
@@ -379,9 +380,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/decisions.rs` | src | s | 4 struct · 1 enum · 2 crate-vis | BigReply, BigSettings, DecisionsSettings, SeatPickSettings, SystemOneSettings | `[models.decisions]`: the host's own typed questions and the System One seat on its decision ladder |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 7 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
 | `src/config/models/media.rs` | src | s | 2 struct · 2 crate-vis | MediaSeatConfig, MediaSettings | `[models.media]`: the media seats (ODM-004: image, video and the rest are seats outside the tiers) |
-| `src/config/models/mod.rs` | src | m | 7 struct · 1 enum · 2 fn · 6 re-export · 2 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
+| `src/config/models/mod.rs` | src | m | 7 struct · 1 enum · 2 fn · 7 re-export · 2 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
 | `src/config/models/provider.rs` | src | m | 1 struct · 3 enum · 6 fn · 3 crate-vis | OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire | One provider entry: how to reach a model server, as data |
 | `src/config/models/tests.rs` | test | s | — | — | — |
+| `src/config/models/voice.rs` | src | s | 1 struct · 2 crate-vis | VoiceSettings | `[models.voice]`: the server's own voice loop (OF-410) |
 | `src/config/oneironer.rs` | src | m | 4 struct · 4 enum · 10 fn · 2 crate-vis | OneironerArgs, OneironerBackbone, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider, OneironerRuntime, OneironerTier | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table |
 | `src/config/privacy_tests.rs` | test | s | — | — | — |
 | `src/config/process_env_tests.rs` | test | s | — | — | — |
@@ -645,12 +647,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/usage/model.rs` | src | m | 10 struct · 2 enum · 6 fn · 3 crate-vis | Money, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent, UsageEventType, UsageMode +4 | Provider-list money facts and per-vault usage counters |
 | `src/usage/tests.rs` | test | s | — | — | — |
 | `src/voice_host/attachment.rs` | src | s | 1 fn | — | The voice host as a wake-pass attachment: it serves the owner's admitted stream beside one pass and spends… |
+| `src/voice_host/backend.rs` | src | s | 2 crate-vis | — | The voice call's backend for the host's own model calls (OF-410): partial enrichment and the sentence… |
+| `src/voice_host/boot.rs` | src | m | 3 crate-vis | — | The server's own voice loop at serve start (OF-410) |
 | `src/voice_host/brain.rs` | src | s | 2 struct · 1 fn | ChatBrain, ChatBrainBindings | The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it |
 | `src/voice_host/connection.rs` | src | m | 4 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
 | `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | — |
 | `src/voice_host/media_bridge.rs` | src | m | 1 struct · 1 enum · 13 crate-vis | VoiceMediaBindings, VoiceMediaIn | The host's own speech and hearing on the media seats (OF-410) |
-| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 7 fn · 5 re-export | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
-| `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 5 fn | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
+| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 7 fn · 5 re-export · 1 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
+| `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
 | `src/voice_host/speech.rs` | src | m | 2 struct · 1 enum · 3 fn · 13 crate-vis | PlayoutFrame, VoiceBrainOut, VoicePlayout | The brain's reply in the host's own voice (OF-410) |
 | `src/voice_host/tests.rs` | test | m | — | — | Source-only proofs with a manually released backend |
 | `src/voice_host/tests/pass_attachment.rs` | test | m | — | — | The voice host attached to a real wake supervisor through the driver's generic pass-attachment seam (moved… |
