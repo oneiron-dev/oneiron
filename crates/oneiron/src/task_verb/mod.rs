@@ -246,6 +246,7 @@ mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_mesh;
 mod sdk_record_erase;
+mod sdk_research;
 mod sdk_scratchpad;
 mod sdk_secret;
 mod sdk_secret_use;
