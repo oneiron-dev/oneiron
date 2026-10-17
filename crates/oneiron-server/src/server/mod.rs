@@ -11,6 +11,8 @@ mod lifecycle;
 mod live_runs;
 mod media_embedding;
 mod message_stream;
+#[cfg(unix)]
+mod organs;
 mod oversight;
 mod presence;
 mod read_shape;
@@ -32,6 +34,8 @@ pub(crate) use self::live_runs::{
     HeldLiveRun, LiveRunCaller, LiveRunRefusal, LiveRuns, ResolvedLiveRun,
 };
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
+#[cfg(unix)]
+pub(crate) use self::organs::organ_dir;
 pub use self::oversight::OversightStartError;
 pub(crate) use self::oversight::{HEALER_OVERSIGHT_EVERY, HealerOversight};
 pub use self::read_shape::RetrievalQueryCheck;

@@ -13,7 +13,7 @@
 //! for this platform, written under `ONEIRON_ORGAN_DIR`, or the program
 //! `ONEIRON_SEAL_ORGAN` names.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,7 +23,7 @@ use oneiron_organ_host::seal::{
     FileSealKeys, HostedSealer, SEAL_ORGAN, SealKeys, SealSettings, SealTsa, pem_certificates,
     seal_spec, seal_spec_from_pack,
 };
-use oneiron_organ_host::{FetchGrant, FetchOrigin, HostConfig, OrganHost, OrganSpec};
+use oneiron_organ_host::{FetchGrant, FetchOrigin, OrganSpec};
 
 use crate::builtin_host::public_origin;
 use crate::server::SyncServer;
@@ -34,7 +34,6 @@ const TRUST_ENV: &str = "ONEIRON_SEAL_TRUST";
 const TSA_ENV: &str = "ONEIRON_SEAL_TSA";
 const URL_ENV: &str = "ONEIRON_SEAL_URL";
 const ORGAN_ENV: &str = "ONEIRON_SEAL_ORGAN";
-const ORGAN_DIR_ENV: &str = "ONEIRON_ORGAN_DIR";
 
 /// The public sign page under the host's origin (the `/sign` route).
 const SIGN_PAGE_PATH: &str = "/sign";
@@ -46,18 +45,17 @@ const PER_TICK: usize = 8;
 /// The most bytes one CRL or timestamp fetch brings back.
 const FETCH_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Starts the seal worker on the server's runtime.
+/// Starts the seal worker on the server's runtime. It seals on the
+/// server's organ host, the one the mesh listener offers.
 pub(crate) fn spawn(server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let host = Arc::new(OrganHost::new(HostConfig::default()));
         let mut every = tokio::time::interval(TICK);
         every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut said: Option<String> = None;
         loop {
             every.tick().await;
             let server = Arc::clone(&server);
-            let host = Arc::clone(&host);
-            let Ok(ticked) = tokio::task::spawn_blocking(move || tick(&server, &host)).await else {
+            let Ok(ticked) = tokio::task::spawn_blocking(move || tick(&server)).await else {
                 continue;
             };
             match ticked {
@@ -88,7 +86,8 @@ fn env_path(name: &str) -> Option<PathBuf> {
 }
 
 /// One tick. `Err` says why seals wait.
-fn tick(server: &SyncServer, host: &OrganHost) -> Result<Vec<EsignSealRun>, String> {
+fn tick(server: &SyncServer) -> Result<Vec<EsignSealRun>, String> {
+    let host = &*server.organs;
     let (Some(key), Some(chain)) = (env_path(KEY_ENV), env_path(CHAIN_ENV)) else {
         return Err(format!(
             "no seal certificate configured: set {KEY_ENV} and {CHAIN_ENV}"
@@ -171,9 +170,7 @@ fn install(server: &SyncServer, fetch: FetchGrant) -> Result<OrganSpec, String> 
         .vault
         .pack_organ_build(&entry.pack_name, SEAL_ORGAN, &platform)
         .map_err(|err| format!("the seal organ build: {err}"))?;
-    let dir =
-        env_path(ORGAN_DIR_ENV).unwrap_or_else(|| std::env::temp_dir().join("oneiron-organs"));
-    seal_spec_from_pack(&binary, Path::new(&dir), fetch)
+    seal_spec_from_pack(&binary, &crate::server::organ_dir(), fetch)
         .map_err(|err| format!("the seal organ build: {err}"))
 }
 
