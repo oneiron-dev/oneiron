@@ -901,6 +901,26 @@ ladder asks you. Sending the same answer again changes nothing. A different
 answer to an answered ask is refused, and so is any answer to a withdrawn
 ask.
 
+Add a `reason` to say why (at most 1,024 bytes; a blank one counts as none):
+
+```json
+{"seq": 3, "answer": {"kind": "noul", "value": true}, "reason": "Invoices from this vendor are always fine"}
+```
+
+A reason becomes a rule row. The next time the ladder asks that same
+question about the same evidence, the rule rung answers it from your row,
+and that decision's receipt names the row as `rule: {id, revision}`. A
+rule row is advice only: it answers the question and grants nothing. The
+ask's answer carries `reason` and `rule`, so your app can show a notice with
+an undo. A new reason on the same question and evidence is the row's next
+revision. A box or point answer (found in an image) keeps its reason but
+writes no row, and neither does a call that reads images or audio.
+
+`GET /v1/owner/decisions/rules` lists every row at its latest revision,
+revoked ones included. `POST /v1/owner/decisions/rules/revoke` with
+`{"id": "<32 hex>"}` revokes one (the undo). After that the row answers
+nothing, and the question goes up the ladder again.
+
 ## The vault key on a new host
 
 A vault's data key unlocks from any of its wraps: this device's keystore, the vault password, a
