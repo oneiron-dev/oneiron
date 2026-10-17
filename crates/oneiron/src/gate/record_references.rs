@@ -22,21 +22,26 @@
 //! Only typed slots carry authority. Prose links (OF-063 prose links:
 //! Engine ruling 10-17) are the one exception this file reads in text, and
 //! only for display: [`parse_record_links`] finds Markdown links
-//! `[label](oneiron://<ref>)` outside code spans, fences, indented code and
-//! raw HTML, bounded in count and length. A reader's link resolves under the
+//! `[label](oneiron://<ref>)`, reference-style links `[label][id]` with an
+//! `[id]: oneiron://<ref>` definition, and autolinks `<oneiron://<ref>>`
+//! (Engine ruling 10-18), outside code spans, fences, indented code and raw
+//! HTML, bounded in count and length. A reader's link resolves under the
 //! reader's own read (`vault.refs.links`, through the `vault.refs.resolve`
 //! door); an AI-written link that does not resolve for its writer never
 //! refuses or rewrites the text, it leaves the same reference-refusal receipt
-//! with the outcome `unlinked` ([`admit_prose_links`]), written before the
-//! engine call, so it records the attempt even when that call then fails.
-//! The witness program reads every AI-written message it lands this way,
-//! whatever door it came through ([`admit_witness_prose`]), and a streamed
-//! continuation its appended text ([`admit_prose_text`]). No grant, scope or
-//! authority path reads a prose link.
+//! with the outcome `unlinked` ([`unlinked_prose_links`]). The receipt
+//! means landed speech only (Engine ruling 10-18): the links are read before
+//! the engine call, and the receipt is written only once that call has
+//! landed the text ([`receipt_landed_prose`]), so an attempt that never
+//! lands leaves none. The witness program reads every AI-written message it
+//! lands this way, whatever door it came through ([`witness_prose_unlinked`]),
+//! and a streamed continuation its appended text ([`prose_text_unlinked`]).
+//! No grant, scope or authority path reads a prose link.
 
 mod blocks;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use serde_json::Value;
 
@@ -227,13 +232,36 @@ pub(crate) struct ProseLink {
 /// and only one four columns past its content is code. A code span closes
 /// within its paragraph: it never crosses a blank line or a line that opens
 /// another block, and an unclosed backtick run is plain text.
-/// Reference-style links and autolinks are not links here. A label holds no
-/// bracket or line break; a ref is 1 to 256 printable ASCII bytes with no
-/// parenthesis, angle bracket, quote or backslash. The parse is display data
-/// only: nothing it finds is ever authority.
+/// Reference-style links are links too (Engine ruling 10-18): a full
+/// `[label][id]`, a collapsed `[id][]` and a shortcut `[id]` (not followed by
+/// `(`), each naming a definition `[id]: oneiron://<ref>` (or
+/// `[id]: <oneiron://<ref>>`, with an optional title) on one line at the
+/// start of a paragraph or after another definition. Ids match as CommonMark
+/// matches them (trimmed, inner blanks collapsed, case folded); the first
+/// definition of an id wins, and an id with no `oneiron://` definition links
+/// nothing. So is an autolink `<oneiron://<ref>>`, whose label is its URI as
+/// written. A label holds no bracket or line break; a ref is 1 to 256
+/// printable ASCII bytes with no parenthesis, angle bracket, bracket, quote
+/// or backslash. The parse is display data only: nothing it finds is ever
+/// authority.
 pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
+    parse_prose_links(text).links
+}
+
+/// One text's record links and its `oneiron://` link reference definitions.
+pub(crate) struct ProseLinks {
+    /// The links, as [`parse_record_links`] gives them.
+    pub(crate) links: Vec<ProseLink>,
+    /// Each definition's byte range, from its `[` to its line's end, in
+    /// order. A definition is shown to no reader: it is never text.
+    pub(crate) definitions: Vec<Range<usize>>,
+}
+
+/// [`parse_record_links`], with the definitions the text holds.
+pub(crate) fn parse_prose_links(text: &str) -> ProseLinks {
     let bytes = text.as_bytes();
     let scan_end = bytes.len().min(MAX_PROSE_SCAN_BYTES);
+    let defined = definitions(text, scan_end);
     let mut links = Vec::new();
     let mut blocks = blocks::Blocks::default();
     // Where the current paragraph ends, found at its first backtick run, and
@@ -260,6 +288,10 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
                     if starts_paragraph {
                         paragraph_end = heading.then_some(line_end);
                         unclosed.clear();
+                    }
+                    if defined.lines.contains_key(&at) {
+                        at = line_end;
+                        continue;
                     }
                     at += from;
                     continue;
@@ -303,11 +335,27 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
                     open_end
                 };
             }
-            b'!' if bytes.get(at + 1) == Some(&b'[') => at += 2,
-            b'<' => {
-                at += inline_html(&bytes[at..line_end_at(bytes, at, scan_end)]).unwrap_or(1);
+            b'!' if bytes.get(at + 1) == Some(&b'[') => {
+                // A reference image's id is no shortcut link either.
+                at = match label_close(&bytes[..scan_end], at + 1) {
+                    Some(close) if bytes.get(close + 1) == Some(&b'[') => {
+                        label_close(&bytes[..scan_end], close + 1).map_or(close + 1, |end| end + 1)
+                    }
+                    _ => at + 2,
+                };
             }
-            b'[' => match link_at(text, at, scan_end) {
+            b'<' => match autolink_at(text, at, scan_end) {
+                Some(link) => {
+                    at = link.end;
+                    links.push(link);
+                }
+                None => {
+                    at += inline_html(&bytes[at..line_end_at(bytes, at, scan_end)]).unwrap_or(1);
+                }
+            },
+            b'[' => match link_at(text, at, scan_end)
+                .or_else(|| reference_link_at(text, at, scan_end, &defined.labels))
+            {
                 Some(link) => {
                     at = link.end;
                     links.push(link);
@@ -317,7 +365,212 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
             _ => at += 1,
         }
     }
-    links
+    ProseLinks {
+        links,
+        definitions: defined.lines.into_values().collect(),
+    }
+}
+
+/// A text's `oneiron://` link reference definitions.
+#[derive(Default)]
+struct Definitions {
+    /// Each matched id's ref; the first definition of an id wins.
+    labels: BTreeMap<String, String>,
+    /// Each definition's range, keyed by the byte its line starts at.
+    lines: BTreeMap<usize, Range<usize>>,
+}
+
+/// The definitions in `text`'s first `scan_end` bytes, read line by line
+/// through the same block structure the link scan reads: a definition sits
+/// on one inline line that opens a paragraph, or follows another
+/// definition, since a definition never interrupts a paragraph.
+fn definitions(text: &str, scan_end: usize) -> Definitions {
+    let bytes = text.as_bytes();
+    let mut found = Definitions::default();
+    let mut blocks = blocks::Blocks::default();
+    let mut after_definition = false;
+    let mut at = 0;
+    while at < scan_end {
+        let line_end = line_end_at(bytes, at, scan_end);
+        let mut definition = false;
+        if let blocks::Line::Inline {
+            from,
+            starts_paragraph,
+            heading,
+        } = blocks.line(&bytes[at..line_end])
+            && (starts_paragraph || after_definition)
+            && !heading
+            && let Some((label, reference)) = definition_at(&text[at + from..line_end])
+        {
+            definition = true;
+            found.labels.entry(label).or_insert(reference);
+            found.lines.insert(at, at + from..line_end);
+        }
+        after_definition = definition;
+        at = line_end + 1;
+    }
+    found
+}
+
+/// The definition `line` (from its first content byte) is, when it names an
+/// `oneiron://` ref: its matched id and its ref.
+fn definition_at(line: &str) -> Option<(String, String)> {
+    let bytes = line.as_bytes();
+    if bytes.first() != Some(&b'[') {
+        return None;
+    }
+    let close = label_close(bytes, 0)?;
+    let label = matched_label(&line[1..close])?;
+    let after = bytes.get(close + 1..)?.strip_prefix(b":")?;
+    let after = &after[after
+        .iter()
+        .take_while(|&&byte| byte == b' ' || byte == b'\t')
+        .count()..];
+    let (reference, rest) = match after.strip_prefix(b"<") {
+        Some(inner) => {
+            let inner = inner.strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
+            let length = inner.iter().position(|&byte| byte == b'>')?;
+            (&inner[..length], &inner[length + 1..])
+        }
+        None => {
+            let inner = after.strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
+            let length = inner
+                .iter()
+                .position(u8::is_ascii_whitespace)
+                .unwrap_or(inner.len());
+            (&inner[..length], &inner[length..])
+        }
+    };
+    if !record_ref_ok(reference) {
+        return None;
+    }
+    let title = rest.trim_ascii();
+    if !title.is_empty() && (!rest[0].is_ascii_whitespace() || !link_title(title)) {
+        return None;
+    }
+    Some((label, std::str::from_utf8(reference).ok()?.to_owned()))
+}
+
+/// Whether `title` is one link title: `"…"`, `'…'` or `(…)`, its closing
+/// mark escaped wherever it appears before its end.
+fn link_title(title: &[u8]) -> bool {
+    let close = match title.first() {
+        Some(b'"') => b'"',
+        Some(b'\'') => b'\'',
+        Some(b'(') => b')',
+        _ => return false,
+    };
+    if title.len() < 2 || title[title.len() - 1] != close {
+        return false;
+    }
+    let mut at = 1;
+    while at < title.len() - 1 {
+        match title[at] {
+            b'\\' => at += 2,
+            byte if byte == close => return false,
+            _ => at += 1,
+        }
+    }
+    at == title.len() - 1
+}
+
+/// An id as CommonMark matches it: trimmed, each run of blanks one space,
+/// case folded; `None` when nothing is left.
+fn matched_label(label: &str) -> Option<String> {
+    let matched = label.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!matched.is_empty()).then(|| matched.to_lowercase())
+}
+
+/// Whether `reference` is a ref a link may name: 1 to
+/// [`crate::lens::RECORD_REF_MAX_BYTES`] printable ASCII bytes with no
+/// parenthesis, angle bracket, bracket, quote or backslash.
+fn record_ref_ok(reference: &[u8]) -> bool {
+    !reference.is_empty()
+        && reference.len() <= crate::lens::RECORD_REF_MAX_BYTES
+        && reference.iter().all(|&byte| {
+            byte.is_ascii_graphic()
+                && !matches!(
+                    byte,
+                    b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'"' | b'\\'
+                )
+        })
+}
+
+/// The `]` that closes the label opening at the `[` at `start`: a label
+/// holds no other bracket or line break and is at most
+/// [`MAX_PROSE_LINK_LABEL_BYTES`] long.
+fn label_close(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut close = start + 1;
+    while close < bytes.len() {
+        match bytes[close] {
+            b'\\' => close += 2,
+            b']' => return Some(close),
+            b'[' | b'\n' => return None,
+            _ => close += 1,
+        }
+        if close - start > MAX_PROSE_LINK_LABEL_BYTES + 1 {
+            return None;
+        }
+    }
+    None
+}
+
+/// The reference-style record link that opens at the `[` at `start`, if one
+/// does: `[label][id]`, `[id][]` or `[id]`, its id defined as an
+/// `oneiron://` ref. A label followed by `(` is an inline link's, never a
+/// shortcut, and one followed by an id that is not defined links nothing.
+fn reference_link_at(
+    text: &str,
+    start: usize,
+    scan_end: usize,
+    labels: &BTreeMap<String, String>,
+) -> Option<ProseLink> {
+    if labels.is_empty() {
+        return None;
+    }
+    let bytes = &text.as_bytes()[..scan_end];
+    let close = label_close(bytes, start)?;
+    let label = &text[start + 1..close];
+    let (id, end) = match bytes.get(close + 1) {
+        Some(b'[') => {
+            let id_close = label_close(bytes, close + 1)?;
+            let id = &text[close + 2..id_close];
+            (if id.is_empty() { label } else { id }, id_close + 1)
+        }
+        Some(b'(') => return None,
+        _ => (label, close + 1),
+    };
+    let reference = labels.get(&matched_label(id)?)?;
+    Some(ProseLink {
+        start,
+        end,
+        label: label.to_owned(),
+        reference: reference.clone(),
+    })
+}
+
+/// The record autolink `<oneiron://<ref>>` that opens at the `<` at `start`,
+/// if one does; its label is its URI as written.
+fn autolink_at(text: &str, start: usize, scan_end: usize) -> Option<ProseLink> {
+    let bytes = &text.as_bytes()[..scan_end];
+    let target = bytes
+        .get(start + 1..)?
+        .strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
+    let length = target
+        .iter()
+        .take(crate::lens::RECORD_REF_MAX_BYTES + 1)
+        .position(|&byte| byte == b'>')?;
+    if !record_ref_ok(&target[..length]) {
+        return None;
+    }
+    let reference_start = start + 1 + PROSE_LINK_SCHEME.len();
+    let end = reference_start + length + 1;
+    Some(ProseLink {
+        start,
+        end,
+        label: text[start + 1..end - 1].to_owned(),
+        reference: text[reference_start..end - 1].to_owned(),
+    })
 }
 
 /// The end of the line `at` sits in: its `\n`, or `scan_end`.
@@ -526,21 +779,7 @@ fn closing_backticks(bytes: &[u8], from: usize, run: usize) -> Option<usize> {
 /// The record link that opens at the `[` at `start`, if one does.
 fn link_at(text: &str, start: usize, scan_end: usize) -> Option<ProseLink> {
     let bytes = &text.as_bytes()[..scan_end];
-    let mut close = start + 1;
-    while close < bytes.len() {
-        match bytes[close] {
-            b'\\' => close += 2,
-            b']' => break,
-            b'[' | b'\n' => return None,
-            _ => close += 1,
-        }
-        if close - start > MAX_PROSE_LINK_LABEL_BYTES + 1 {
-            return None;
-        }
-    }
-    if close >= bytes.len() {
-        return None;
-    }
+    let close = label_close(bytes, start)?;
     let target = bytes[close + 1..]
         .strip_prefix(b"(")?
         .strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
@@ -548,13 +787,7 @@ fn link_at(text: &str, start: usize, scan_end: usize) -> Option<ProseLink> {
         .iter()
         .take(crate::lens::RECORD_REF_MAX_BYTES + 1)
         .position(|&byte| byte == b')')?;
-    let reference = &target[..length];
-    if reference.is_empty()
-        || !reference.iter().all(|&byte| {
-            byte.is_ascii_graphic()
-                && !matches!(byte, b'(' | b'<' | b'>' | b'[' | b']' | b'"' | b'\\')
-        })
-    {
+    if !record_ref_ok(&target[..length]) {
         return None;
     }
     let reference_start = close + 2 + PROSE_LINK_SCHEME.len();
@@ -660,29 +893,30 @@ fn texts_in<'v>(
     }
 }
 
-/// The generated prose-link check a row with `prose_links` runs before its
+/// The generated prose-link read a row with `prose_links` runs before its
 /// engine call (OF-063 prose links: Engine ruling 10-17).
 ///
 /// Each AI-written text slot (its writer is an agent or a system actor, or
 /// its item declares it AI-written through a `*[key=value]` filter) is read
 /// for `oneiron://` links, and each link must resolve under the writer's own
-/// scoped read. A slot with a link that does not is receipted once, on its
-/// own grouped write, as a reference refusal with the outcome `unlinked`:
-/// the actor, `row`, the slot's pointer and the time, never the ref. The
-/// text is neither refused nor rewritten, and the write goes on; a reader
-/// sees such a link as its plain label. The receipt is written before the
-/// engine call, so it records the attempt and stands even when that call
-/// then fails. Inside an anonymous off-record session nothing is written. If
-/// the receipts cannot be written the store's error is returned.
-pub(crate) fn admit_prose_links<T: serde::Serialize>(
+/// scoped read. A slot with a link that does not earns one reference
+/// refusal with the outcome `unlinked`: the actor, `row`, the slot's pointer
+/// and the time, never the ref. The text is neither refused nor rewritten,
+/// and the write goes on; a reader sees such a link as its plain label.
+/// Nothing is written here: the generated fn hands these facts to
+/// [`receipt_landed_prose`] once its engine call has landed the write
+/// (Engine ruling 10-18: the receipt means landed speech only), so a write
+/// that fails, is refused or never runs leaves none. A read that fails
+/// returns its error.
+pub(crate) fn unlinked_prose_links<T: serde::Serialize>(
     memory: &Memory<'_>,
     row: &'static str,
     input: &T,
     pointers: &[&str],
-) -> MemoryResult<()> {
+) -> MemoryResult<Vec<ReferenceRefusalFacts>> {
     let writer_is_ai = memory.actor_class() != crate::EdgeActorClass::Human;
     if !writer_is_ai && !pointers.iter().any(|pointer| pointer.contains("*[")) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let value = serde_json::to_value(input).map_err(|_| {
         MemoryError::bad_request("the verb input could not be read for the records its text links")
@@ -698,8 +932,20 @@ pub(crate) fn admit_prose_links<T: serde::Serialize>(
             unlinked.push(facts);
         }
     }
-    receipt_reference_refusals(memory, &unlinked)?;
-    Ok(())
+    Ok(unlinked)
+}
+
+/// Receipts the `unlinked` facts of text that has now landed, each on its
+/// own grouped write (Engine ruling 10-18: the durable unlinked-prose
+/// receipt means landed speech only). Called only after the write that
+/// carried the text returned success. Inside an anonymous off-record
+/// session nothing is written. Best effort, as every receipt of a landed
+/// effect: a receipt that cannot be written is logged and the landed write's
+/// answer stands.
+pub(crate) fn receipt_landed_prose(memory: &Memory<'_>, unlinked: &[ReferenceRefusalFacts]) {
+    if let Err(error) = receipt_reference_refusals(memory, unlinked) {
+        tracing::warn!(%error, "landed AI text's unresolved links went unreceipted");
+    }
 }
 
 /// The `unlinked` facts one AI-written `text` at `pointer` earns for its
@@ -738,33 +984,62 @@ pub(crate) const WITNESS_PROSE_ROW: &str = "vault.witness";
 /// The AI-written text of a witnessed turn: each companion message's content.
 const WITNESS_PROSE_SLOT: &str = "/messages/*[author=companion]/content";
 
-/// The witness program's prose-link check (OF-063 prose links: Engine
+/// The witness program's prose-link read (OF-063 prose links: Engine
 /// ruling 10-17), run once for every turn it lands, at base or in a
 /// non-anonymous off-record session's overlay, whatever door the turn came
 /// through: the verb table's `vault.witness` and `vault.rooms.speak`,
 /// first-party speech, a streamed message's final witness, the AI chat
 /// reply. An imported turn is not read. Each companion message is read as
-/// [`admit_prose_links`] reads a declared slot. Receipt-only: it never
-/// refuses or rewrites the message, and a read or receipt that fails is
-/// logged and the witness goes on.
-pub(crate) fn admit_witness_prose(memory: &Memory<'_>, turn: &crate::memory::WitnessTurn) {
+/// [`unlinked_prose_links`] reads a declared slot, before the writer opens;
+/// the program hands the facts to [`receipt_landed_prose`] once the turn has
+/// landed. It never refuses or rewrites the message, and a read that fails
+/// is logged and reads as no link.
+pub(crate) fn witness_prose_unlinked(
+    memory: &Memory<'_>,
+    turn: &crate::memory::WitnessTurn,
+) -> Vec<ReferenceRefusalFacts> {
     // Most turns name no link: they are not read at all.
     if !turn.messages.iter().any(|message| {
         message.author == crate::memory::WitnessAuthor::Companion
             && message.content.contains(PROSE_LINK_SCHEME)
     }) {
-        return;
+        return Vec::new();
     }
-    if let Err(error) = admit_prose_links(memory, WITNESS_PROSE_ROW, turn, &[WITNESS_PROSE_SLOT]) {
-        tracing::warn!(%error, "witnessed AI text's unresolved links went unreceipted");
+    unlinked_prose_links(memory, WITNESS_PROSE_ROW, turn, &[WITNESS_PROSE_SLOT]).unwrap_or_else(
+        |error| {
+            tracing::warn!(%error, "witnessed AI text's links could not be read");
+            Vec::new()
+        },
+    )
+}
+
+/// The prose-link read of text appended to an AI-written message (a
+/// streamed continuation's finalize), before its writer opens: `text` is
+/// the message's whole text, whose first `from` bytes were read when they
+/// landed, so only links that end past them are read. The finalize hands
+/// the facts to [`receipt_landed_prose`] once it has landed; a read that
+/// fails is logged and reads as no link.
+pub(crate) fn prose_text_unlinked(
+    memory: &Memory<'_>,
+    row: &'static str,
+    field: &str,
+    text: &str,
+    from: usize,
+) -> Vec<ReferenceRefusalFacts> {
+    match unlinked_text(memory, row, field.to_owned(), text, from) {
+        Ok(facts) => facts.into_iter().collect(),
+        Err(error) => {
+            tracing::warn!(%error, "appended AI text's links could not be read");
+            Vec::new()
+        }
     }
 }
 
-/// The prose-link check of text appended to an AI-written message (a
-/// streamed continuation's finalize): `text` is the message's whole text,
-/// whose first `from` bytes were read when they landed, so only links that
-/// end past them are read. Receipted under `row` at `field`, receipt-only:
-/// a read or receipt that fails is logged and the finalize goes on.
+/// The prose-link check of AI-written text that has already landed (a DAG
+/// append's or a summary reply's TURN prose, read once its writer closed):
+/// links that end past byte `from` of `text` are read and receipted under
+/// `row` at `field`, receipt-only: a read or receipt that fails is logged
+/// and the landed write's answer stands.
 pub(crate) fn admit_prose_text(
     memory: &Memory<'_>,
     row: &'static str,

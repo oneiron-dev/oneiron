@@ -51,6 +51,7 @@ mod provenance;
 pub(crate) mod redirty;
 mod resident_dream;
 pub(crate) mod resources;
+mod revert;
 pub(crate) mod reviewed;
 mod roles;
 pub mod routing;
@@ -77,8 +78,10 @@ pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub(crate) use persistence::conflict_close_candidate;
-pub(crate) use person_about::enqueue_person_about_on_wake;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
+pub(crate) use person_about::{
+    enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_moved_in_txn,
+};
 pub use provenance::*;
 pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
@@ -90,6 +93,10 @@ pub use resident_dream::{
 };
 pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resources::ScopedConsolidationWrite;
+pub use revert::{
+    DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
+};
+pub(crate) use revert::{dreamer_changes_in_txn, revert_dreamer_change_in_txn};
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,

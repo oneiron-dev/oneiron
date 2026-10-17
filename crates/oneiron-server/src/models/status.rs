@@ -230,6 +230,20 @@ pub struct RungHealth {
     pub limit: Option<LimitHold>,
 }
 
+impl RungHealth {
+    /// Whether a call may go out on the rung now (FIX 2942): its offer is in
+    /// rotation, or on probation with its one probation request free, and
+    /// no limit holds it.
+    pub(super) fn live_now(&self) -> bool {
+        self.limit.is_none()
+            && match self.state {
+                HealthState::Healthy => true,
+                HealthState::Recovering => !self.probing,
+                HealthState::Down => false,
+            }
+    }
+}
+
 /// A limit refusal's rest on an offer: when it ends, what set that end, and
 /// what was spent, if a window or credit was. Spent credit's end is
 /// `u64::MAX`, for the owner to clear.
