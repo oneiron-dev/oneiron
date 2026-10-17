@@ -67302,7 +67302,7 @@
      "path": "src/voice_host/connection.rs",
      "purpose": "One private, pre-admitted UDS connection on the existing Tokio runtime",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -67346,7 +67346,7 @@
      "surface": {
       "enum": 1,
       "fn": 7,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -67360,7 +67360,7 @@
      "path": "src/voice_host/serve_bindings.rs",
      "purpose": "One-shot bindings supplied by the existing private-connection owner",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -67404,6 +67404,19 @@
      "path": "src/voice_host/tests/wire.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceWireBindings"
+     ],
+     "path": "src/voice_host/wire.rs",
+     "purpose": "The voice wire's media ops (OF-410)",
+     "surface": {
+      "crate-vis": 11,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -68101,7 +68114,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68138,7 +68151,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 497,
+   "source_files": 498,
    "test_files": 182
   },
   "oneiron-spawn": {
