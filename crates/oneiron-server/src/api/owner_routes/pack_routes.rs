@@ -345,9 +345,7 @@ async fn qualify_hooks(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let Some(runtime) = server.hook_runtime.get().cloned() else {
-        return Err(OwnerError::Refused(
-            "no hook sandbox runs on this server".to_owned(),
-        ));
+        return Err(OwnerError::Refused("no hook sandbox runs on this server".to_owned()).into());
     };
     let qualified = blocking(move || {
         let source = EntityId::from_hex(&request.source)
