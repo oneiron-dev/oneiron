@@ -14648,7 +14648,7 @@
      "path": "src/context_board/tasks/render.rs",
      "purpose": "Pure TASKS row rendering: intent rows, folded jobs, cause tokens, expansion detail",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
