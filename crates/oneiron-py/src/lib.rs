@@ -1058,6 +1058,138 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_research_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.bind")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.bind", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_fork(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.fork")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.fork", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_weave(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.weave")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.weave", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_measure_search(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.measure_search")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.research.measure_search", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_measure_held_out(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.measure_held_out")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.research.measure_held_out", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_mark_invalid(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.mark_invalid")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.mark_invalid", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_prune(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.prune")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.prune", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_select(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.select")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.select", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_promotion_basis(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.promotion_basis")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.research.promotion_basis", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_reserve_confirmation(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.reserve_confirmation")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.research.reserve_confirmation", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_promote(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.promote")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.promote", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_reserve_work(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.reserve_work")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.reserve_work", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_settle_work(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.settle_work")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.settle_work", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_refund_work(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.refund_work")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.research.refund_work", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_research_record_benchmark(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.record_benchmark")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.research.record_benchmark", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_authority_handoff_alarms(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.authority.handoff_alarms")?;
         let output = py

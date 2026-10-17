@@ -518,6 +518,9 @@ class Oneiron:
         def records(self) -> "Oneiron._VaultRecordsVerbs":
             return Oneiron._VaultRecordsVerbs(self._client)
         @property
+        def research(self) -> "Oneiron._VaultResearchVerbs":
+            return Oneiron._VaultResearchVerbs(self._client)
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
@@ -969,6 +972,54 @@ class Oneiron:
         def erase_confirm(self, spec):
             """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
             return json.loads(_translate(lambda: self._client.vault_records_erase_confirm(json.dumps(spec))))
+    class _VaultResearchVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
+            return json.loads(_translate(lambda: self._client.vault_research_bind(json.dumps(spec))))
+        def fork(self, spec):
+            """Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent."""
+            return json.loads(_translate(lambda: self._client.vault_research_fork(json.dumps(spec))))
+        def weave(self, spec):
+            """Records a crossover child of several parents whose candidate landed as a claim through the gate, once a held-out win turned merge crossover on."""
+            return json.loads(_translate(lambda: self._client.vault_research_weave(json.dumps(spec))))
+        def measure_search(self, spec):
+            """Records a node's search-split evidence, its selection signal, once."""
+            return json.loads(_translate(lambda: self._client.vault_research_measure_search(json.dumps(spec))))
+        def measure_held_out(self, spec):
+            """Records a node's held-out evidence, once; only the promotion basis reads it."""
+            return json.loads(_translate(lambda: self._client.vault_research_measure_held_out(json.dumps(spec))))
+        def mark_invalid(self, spec):
+            """Marks a node buggy: it stays as evidence and takes debug children."""
+            return json.loads(_translate(lambda: self._client.vault_research_mark_invalid(json.dumps(spec))))
+        def prune(self, spec):
+            """Stops exploring a branch for a stated cause; its attempts, claims and outputs stay. A stop names the caller."""
+            return json.loads(_translate(lambda: self._client.vault_research_prune(json.dumps(spec))))
+        def select(self, spec):
+            """Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met."""
+            return json.loads(_translate(lambda: self._client.vault_research_select(json.dumps(spec))))
+        def promotion_basis(self, spec):
+            """Decides a candidate's held-out promotion basis against the incumbent, once."""
+            return json.loads(_translate(lambda: self._client.vault_research_promotion_basis(json.dumps(spec))))
+        def reserve_confirmation(self, spec):
+            """Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving."""
+            return json.loads(_translate(lambda: self._client.vault_research_reserve_confirmation(json.dumps(spec))))
+        def promote(self, spec):
+            """Settles a candidate on the sealed referee's scores of it and the incumbent: a strict win, a not-worse sufficiency card and, for a skill, the gate's accepted verdict make it the incumbent."""
+            return json.loads(_translate(lambda: self._client.vault_research_promote(json.dumps(spec))))
+        def reserve_work(self, spec):
+            """Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id."""
+            return json.loads(_translate(lambda: self._client.vault_research_reserve_work(json.dumps(spec))))
+        def settle_work(self, spec):
+            """Settles a work reservation at its actual spend."""
+            return json.loads(_translate(lambda: self._client.vault_research_settle_work(json.dumps(spec))))
+        def refund_work(self, spec):
+            """Refunds a work reservation nothing was spent on."""
+            return json.loads(_translate(lambda: self._client.vault_research_refund_work(json.dumps(spec))))
+        def record_benchmark(self, spec):
+            """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
+            return json.loads(_translate(lambda: self._client.vault_research_record_benchmark(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

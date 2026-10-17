@@ -481,6 +481,81 @@ export_facade! {
     let output = client.vault_records_erase_confirm(&input)?;
     crate::codec::lift_record("vault.records.erase_confirm", &output)
 };
+"vault.research.bind" => fn vault_research_bind(&self, input: ResearchBindWire) -> ResearchBinding = |client| {
+    let input: oneiron::task_verb::sdk::ResearchBindWire = crate::codec::lower_record("vault.research.bind", input)?;
+    let output = client.vault_research_bind(&input)?;
+    crate::codec::lift_record("vault.research.bind", &output)
+};
+"vault.research.fork" => fn vault_research_fork(&self, input: ResearchForkWire) -> ExperimentNode = |client| {
+    let input: oneiron::task_verb::sdk::ResearchForkWire = crate::codec::lower_record("vault.research.fork", input)?;
+    let output = client.vault_research_fork(&input)?;
+    crate::codec::lift_record("vault.research.fork", &output)
+};
+"vault.research.weave" => fn vault_research_weave(&self, input: ResearchWeaveWire) -> ExperimentNode = |client| {
+    let input: oneiron::task_verb::sdk::ResearchWeaveWire = crate::codec::lower_record("vault.research.weave", input)?;
+    let output = client.vault_research_weave(&input)?;
+    crate::codec::lift_record("vault.research.weave", &output)
+};
+"vault.research.measure_search" => fn vault_research_measure_search(&self, input: ResearchSearchWire) -> ExperimentNode = |client| {
+    let input: oneiron::task_verb::sdk::ResearchSearchWire = crate::codec::lower_record("vault.research.measure_search", input)?;
+    let output = client.vault_research_measure_search(&input)?;
+    crate::codec::lift_record("vault.research.measure_search", &output)
+};
+"vault.research.measure_held_out" => fn vault_research_measure_held_out(&self, input: ResearchHeldOutWire) -> ExperimentNode = |client| {
+    let input: oneiron::task_verb::sdk::ResearchHeldOutWire = crate::codec::lower_record("vault.research.measure_held_out", input)?;
+    let output = client.vault_research_measure_held_out(&input)?;
+    crate::codec::lift_record("vault.research.measure_held_out", &output)
+};
+"vault.research.mark_invalid" => fn vault_research_mark_invalid(&self, input: ResearchInvalidWire) -> ExperimentNode = |client| {
+    let input: oneiron::task_verb::sdk::ResearchInvalidWire = crate::codec::lower_record("vault.research.mark_invalid", input)?;
+    let output = client.vault_research_mark_invalid(&input)?;
+    crate::codec::lift_record("vault.research.mark_invalid", &output)
+};
+"vault.research.prune" => fn vault_research_prune(&self, input: ResearchPruneWire) -> ExperimentNode = |client| {
+    let input: oneiron::task_verb::sdk::ResearchPruneWire = crate::codec::lower_record("vault.research.prune", input)?;
+    let output = client.vault_research_prune(&input)?;
+    crate::codec::lift_record("vault.research.prune", &output)
+};
+"vault.research.select" => fn vault_research_select(&self, input: ResearchSelectWire) -> SelectionReceipt = |client| {
+    let input: oneiron::task_verb::sdk::ResearchSelectWire = crate::codec::lower_record("vault.research.select", input)?;
+    let output = client.vault_research_select(&input)?;
+    crate::codec::lift_record("vault.research.select", &output)
+};
+"vault.research.promotion_basis" => fn vault_research_promotion_basis(&self, input: ResearchBasisWire) -> PromotionBasis = |client| {
+    let input: oneiron::task_verb::sdk::ResearchBasisWire = crate::codec::lower_record("vault.research.promotion_basis", input)?;
+    let output = client.vault_research_promotion_basis(&input)?;
+    crate::codec::lift_record("vault.research.promotion_basis", &output)
+};
+"vault.research.reserve_confirmation" => fn vault_research_reserve_confirmation(&self, input: ResearchCandidateWire) -> EvalRelease = |client| {
+    let input: oneiron::task_verb::sdk::ResearchCandidateWire = crate::codec::lower_record("vault.research.reserve_confirmation", input)?;
+    let output = client.vault_research_reserve_confirmation(&input)?;
+    crate::codec::lift_record("vault.research.reserve_confirmation", &output)
+};
+"vault.research.promote" => fn vault_research_promote(&self, input: ResearchPromoteWire) -> CampaignPromotionReceipt = |client| {
+    let input: oneiron::task_verb::sdk::ResearchPromoteWire = crate::codec::lower_record("vault.research.promote", input)?;
+    let output = client.vault_research_promote(&input)?;
+    crate::codec::lift_record("vault.research.promote", &output)
+};
+"vault.research.reserve_work" => fn vault_research_reserve_work(&self, input: ResearchWorkWire) -> String = |client| {
+    let input: oneiron::task_verb::sdk::ResearchWorkWire = crate::codec::lower_record("vault.research.reserve_work", input)?;
+    let output = client.vault_research_reserve_work(&input)?;
+    crate::codec::lift_record("vault.research.reserve_work", &output)
+};
+"vault.research.settle_work" => fn vault_research_settle_work(&self, input: ResearchSettleWire) -> ResearchReservation = |client| {
+    let input: oneiron::task_verb::sdk::ResearchSettleWire = crate::codec::lower_record("vault.research.settle_work", input)?;
+    let output = client.vault_research_settle_work(&input)?;
+    crate::codec::lift_record("vault.research.settle_work", &output)
+};
+"vault.research.refund_work" => fn vault_research_refund_work(&self, input: ResearchRefundWire) -> ResearchReservation = |client| {
+    let input: oneiron::task_verb::sdk::ResearchRefundWire = crate::codec::lower_record("vault.research.refund_work", input)?;
+    let output = client.vault_research_refund_work(&input)?;
+    crate::codec::lift_record("vault.research.refund_work", &output)
+};
+"vault.research.record_benchmark" => fn vault_research_record_benchmark(&self, input: ResearchBenchmarkWire) -> SelectionBenchmark = |client| {
+    let input: oneiron::task_verb::sdk::ResearchBenchmarkWire = crate::codec::lower_record("vault.research.record_benchmark", input)?;
+    let output = client.vault_research_record_benchmark(&input)?;
+    crate::codec::lift_record("vault.research.record_benchmark", &output)
+};
 "vault.authority.handoff_alarms" => fn vault_authority_handoff_alarms(&self) -> Vec<AuthorityHandoffAlarm> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.authority.handoff_alarms")?;
     let output = client.vault_authority_handoff_alarms(&input)?;
