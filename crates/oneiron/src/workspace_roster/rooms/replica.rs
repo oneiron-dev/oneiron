@@ -2,7 +2,12 @@
 //! with its thread-task bindings and conversion mark, rides the window its
 //! TURN rides (`crate::sync::rooms`). A machine that takes one merges it here
 //! as the witness door's append does, and indexes the room's history from it.
+use std::collections::BTreeMap;
+
+use super::super::join_receipt::{JOINS, READY, intent_digest, is_join_ref, join_ref, ready_key};
+use super::offers::{OFFER_CURRENT, OFFERS, OfferState, StoredOffer, current_key, is_offer_id};
 use super::*;
+use crate::workspace_roster::{JoinDecision, JoinReceipt, JoinSubject};
 
 /// The turn row this vault holds for `id`, if any.
 pub(crate) fn replicated_turn_in(
@@ -26,6 +31,9 @@ pub(crate) enum TurnMergeRefusal {
     RoomMissing,
     /// This vault erased the thread a fact names; no thread erase is undone.
     ThreadDeleted,
+    /// Two copies of one join or offer card settle otherwise: two settled
+    /// decisions, or two answers. Neither is chosen silently.
+    DecisionConflict,
 }
 
 /// What merging a carried turn row did.
@@ -141,11 +149,16 @@ pub(crate) enum RoomSideRow {
         join_ref: Option<String>,
         cause: JoinCause,
     },
+    /// A join intent's receipt. A room-wide join rides the window its room
+    /// rides, and a thread's join the window of the turn that roots it.
+    Join { receipt: JoinReceipt },
+    /// An offer card as stored, riding as its join does.
+    Offer { offer: StoredOffer },
 }
 
 impl RoomSideRow {
-    /// The room the row belongs to, and the thread root a fact names; `None`
-    /// when the row names an id that does not parse.
+    /// The room the row belongs to, and the thread root a fact, join or
+    /// card names; `None` when the row names an id that does not parse.
     pub(crate) fn place(&self) -> Option<(EntityId, Option<EntityId>)> {
         match self {
             Self::HostPin { room, .. }
@@ -153,11 +166,14 @@ impl RoomSideRow {
             | Self::Response { room, .. } => Some((*room, None)),
             Self::Claim { claim } => named(&claim.room_id).map(|room| (room, None)),
             Self::Participation { room, branch, .. } => Some((*room, *branch)),
+            Self::Join { receipt } => Some((receipt.request.room, receipt.request.branch)),
+            Self::Offer { offer } => Some((offer.card.room, offer.card.branch)),
         }
     }
 
-    /// Whether the row keeps its table's shape: ids that parse, and a handle
-    /// the bind door would take.
+    /// Whether the row keeps its table's shape: ids that parse, a handle
+    /// the bind door would take, and a join filed under the ref and digest
+    /// its request makes.
     pub(crate) fn well_formed(&self) -> bool {
         match self {
             Self::Handle { handle, .. } => {
@@ -168,7 +184,33 @@ impl RoomSideRow {
                     && named(&claim.turn_id).is_some()
                     && named(&claim.actor).is_some()
             }
+            Self::Join { receipt } => {
+                join_ref(&receipt.request).is_ok_and(|filed| filed == receipt.join_ref)
+                    && intent_digest(&receipt.request)
+                        .is_ok_and(|filed| filed == receipt.intent_digest)
+            }
+            Self::Offer { offer } => {
+                is_offer_id(&offer.card.offer_id) && is_join_ref(&offer.card.join_ref)
+            }
             _ => true,
+        }
+    }
+
+    /// The entity whose window carries a join or an offer card, its thread
+    /// root or else its room, and the join's ref or the card's id: a window
+    /// holds one copy of each, merged on both sides. `None` for the other
+    /// tables.
+    pub(crate) fn merged_place(&self) -> Option<(EntityId, &str)> {
+        match self {
+            Self::Join { receipt } => Some((
+                receipt.request.branch.unwrap_or(receipt.request.room),
+                &receipt.join_ref,
+            )),
+            Self::Offer { offer } => Some((
+                offer.card.branch.unwrap_or(offer.card.room),
+                &offer.card.offer_id,
+            )),
+            _ => None,
         }
     }
 }
@@ -180,7 +222,8 @@ fn named(hex: &str) -> Option<EntityId> {
 
 /// The side rows this vault holds that ride entity `id` of type
 /// `entity_type` (FIX 1794): a room's host pin, handles and room-wide facts,
-/// or a room turn's claim and response and the facts of the thread it roots.
+/// or a room turn's claim and response and the facts of the thread it roots,
+/// with the Ready joins and current offer cards of the room or that thread.
 /// A row that does not decode is left out.
 pub(crate) fn replicated_side_rows_in(
     vault: &Vault,
@@ -190,7 +233,7 @@ pub(crate) fn replicated_side_rows_in(
 ) -> Result<Vec<RoomSideRow>> {
     let store = &vault.store;
     let mut rows = Vec::new();
-    let (room, branch) = match entity_type {
+    let (room, branch, roots) = match entity_type {
         crate::registry::ENTITY_TYPE_CONVERSATION => {
             if let Some(pin) = super::hosting::HOST_PINS.get_lenient(store, txn, &id)? {
                 rows.push(RoomSideRow::HostPin { room: id, pin });
@@ -202,7 +245,7 @@ pub(crate) fn replicated_side_rows_in(
                     actor,
                 });
             }
-            (id, None)
+            (id, None, true)
         }
         crate::registry::ENTITY_TYPE_TURN => {
             let Some(turn) = TURNS.get_lenient(store, txn, &id)? else {
@@ -226,15 +269,19 @@ pub(crate) fn replicated_side_rows_in(
                     at: spoken.at,
                 });
             }
-            (room, Some(id))
+            (room, Some(id), super::liveness::is_thread_root(&turn))
         }
         _ => return Ok(rows),
     };
     let prefix = participation::place_prefix(room, branch);
+    let mut subjects = Vec::new();
     for (key, fact) in participation::FACTS
         .iter_from(store, txn, &prefix)?
         .flatten()
     {
+        if !subjects.contains(&key.subject) {
+            subjects.push(key.subject);
+        }
         rows.push(RoomSideRow::Participation {
             room,
             branch,
@@ -243,6 +290,88 @@ pub(crate) fn replicated_side_rows_in(
             join_ref: fact.join_ref,
             cause: fact.cause,
         });
+    }
+    // Joins and cards name a thread by its root.
+    if roots {
+        shared_rows_in(vault, txn, room, branch, &subjects, &mut rows)?;
+    }
+    Ok(rows)
+}
+
+/// The Ready joins and current offer cards of `room` itself, or of its
+/// thread `branch`, with the join each card filed (FIX 1794). A thread's
+/// Ready joins are looked up for the `subjects` its facts name, so a room of
+/// many threads is not read whole for each. A held or refused join, and a
+/// replaced card, ride when the door that wrote them mirrors them.
+fn shared_rows_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    branch: Option<EntityId>,
+    subjects: &[JoinSubject],
+    rows: &mut Vec<RoomSideRow>,
+) -> Result<()> {
+    let store = &vault.store;
+    let mut joins = BTreeSet::new();
+    match branch {
+        None => {
+            for (key, join_ref) in READY
+                .iter_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?
+                .flatten()
+            {
+                if key.ends_with("/-") {
+                    joins.insert(join_ref);
+                }
+            }
+        }
+        Some(branch) => {
+            for subject in subjects {
+                joins.extend(READY.get_lenient(
+                    store,
+                    txn,
+                    &ready_key(room, subject, Some(branch)),
+                )?);
+            }
+        }
+    }
+    let place = branch.map_or_else(|| "-".to_owned(), |branch| branch.to_hex());
+    for (_, offer_id) in OFFER_CURRENT
+        .iter_from(store, txn, format!("{}/{place}/", room.to_hex()).as_bytes())?
+        .flatten()
+    {
+        if let Some(offer) = OFFERS.get_lenient(store, txn, &offer_id)? {
+            joins.insert(offer.card.join_ref.clone());
+            rows.push(RoomSideRow::Offer { offer });
+        }
+    }
+    for join_ref in joins {
+        if let Some(receipt) = JOINS.get_lenient(store, txn, &join_ref)? {
+            rows.push(RoomSideRow::Join { receipt });
+        }
+    }
+    Ok(())
+}
+
+/// This vault's join receipt under `reference`, or with `offer` its offer
+/// card under that id and the join the card filed, as side rows (FIX 1794).
+/// Empty when it holds none.
+pub(crate) fn replicated_shared_rows_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    offer: bool,
+    reference: &str,
+) -> Result<Vec<RoomSideRow>> {
+    let store = &vault.store;
+    let mut rows = Vec::new();
+    let mut join = (!offer).then(|| reference.to_owned());
+    if offer && let Some(stored) = OFFERS.get_lenient(store, txn, &reference.to_owned())? {
+        join = Some(stored.card.join_ref.clone());
+        rows.push(RoomSideRow::Offer { offer: stored });
+    }
+    if let Some(join) = join
+        && let Some(receipt) = JOINS.get_lenient(store, txn, &join)?
+    {
+        rows.push(RoomSideRow::Join { receipt });
     }
     Ok(rows)
 }
@@ -289,7 +418,8 @@ fn side_refusal_in(
 /// written once: the lowest `(at, receipt_ref)` stands. A participation fact
 /// is appended once under its key: a divergent payload keeps the earlier
 /// `(at, cause)`. A response is settled with its rivals by
-/// [`merge_replicated_responses_in_txn`]. A row of a room this vault
+/// [`merge_replicated_responses_in_txn`], and a join or offer card merged by
+/// [`merge_replicated_shared_row_in_txn`]. A row of a room this vault
 /// deleted, or holds no record of, or a fact of a thread it erased, is
 /// refused before anything is written.
 pub(crate) fn merge_replicated_side_row_in_txn(
@@ -382,8 +512,288 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                 std::slice::from_ref(row),
             );
         }
+        RoomSideRow::Join { .. } | RoomSideRow::Offer { .. } => {
+            return Ok(merge_shared_in_txn(vault, txn, row)?.0);
+        }
     }
     Ok(SideMerge::Written)
+}
+
+/// Merges a join receipt or an offer card another machine of this vault
+/// carried (FIX 1794), as room turn rows merge: one this vault lacks is
+/// written as carried, and one it holds takes the carried copy by
+/// [`merged_join`] or [`merged_offer`], or quarantines, logged and left
+/// out. Where one voter's two ballots differ the carried one stands: it is
+/// the window's latest carrier write by Loro order. The Ready and
+/// current-card indexes are rebuilt from what merged; nothing is decided
+/// again, and no seat, companion, participation, acceptance or diary effect
+/// runs. Returns what the merge did, and whether the carried copy now holds
+/// everything this vault's does.
+pub(crate) fn merge_replicated_shared_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &RoomSideRow,
+) -> Result<(SideMerge, bool)> {
+    let Some((room, branch)) = row.place().filter(|_| row.well_formed()) else {
+        return Ok((SideMerge::Refused(TurnMergeRefusal::InvalidIds), true));
+    };
+    if let Some(refusal) = side_refusal_in(vault, txn, room, branch)? {
+        return Ok((SideMerge::Refused(refusal), true));
+    }
+    merge_shared_in_txn(vault, txn, row)
+}
+
+/// [`merge_replicated_shared_row_in_txn`] once the row's place is admitted.
+fn merge_shared_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &RoomSideRow,
+) -> Result<(SideMerge, bool)> {
+    let store = &vault.store;
+    let held = match row {
+        RoomSideRow::Join { receipt } => JOINS
+            .get_lenient(store, txn, &receipt.join_ref)?
+            .map(|receipt| RoomSideRow::Join { receipt }),
+        RoomSideRow::Offer { offer } => OFFERS
+            .get_lenient(store, txn, &offer.card.offer_id)?
+            .map(|offer| RoomSideRow::Offer { offer }),
+        _ => return Ok((SideMerge::Refused(TurnMergeRefusal::InvalidIds), true)),
+    };
+    let merged = match held {
+        None => row.clone(),
+        Some(held) => match merged_shared_row(row, &held, false) {
+            Ok(merged) if merged == held => return Ok((SideMerge::Held, merged == *row)),
+            Ok(merged) => merged,
+            Err(refusal) => return Ok((SideMerge::Refused(refusal), true)),
+        },
+    };
+    match &merged {
+        RoomSideRow::Join { receipt } => {
+            JOINS.put(store, txn, &receipt.join_ref, receipt)?;
+            index_ready_in_txn(vault, txn, receipt)?;
+        }
+        RoomSideRow::Offer { offer } => {
+            OFFERS.put(store, txn, &offer.card.offer_id, offer)?;
+            index_current_offer_in_txn(vault, txn, offer)?;
+        }
+        _ => {}
+    }
+    Ok((SideMerge::Written, merged == *row))
+}
+
+/// The window's copy `theirs` of a join or offer card merged with this
+/// vault's copy `ours` (FIX 1794), the same on every machine but for one
+/// voter's two ballots, which keep `ours` only when `ours_win`. The error
+/// names why the two quarantine.
+pub(crate) fn merged_shared_row(
+    theirs: &RoomSideRow,
+    ours: &RoomSideRow,
+    ours_win: bool,
+) -> std::result::Result<RoomSideRow, TurnMergeRefusal> {
+    match (theirs, ours) {
+        (RoomSideRow::Join { receipt: theirs }, RoomSideRow::Join { receipt: ours }) => {
+            merged_join(ours, theirs).map(|receipt| RoomSideRow::Join { receipt })
+        }
+        (RoomSideRow::Offer { offer: theirs }, RoomSideRow::Offer { offer: ours }) => {
+            merged_offer(ours, theirs, ours_win).map(|offer| RoomSideRow::Offer { offer })
+        }
+        _ => Err(TurnMergeRefusal::FixedFieldsConflict),
+    }
+}
+
+/// Two copies of one join receipt as one (FIX 1794), as L09 ruled. The
+/// filing (request, digest and history) must match, or the receipt
+/// quarantines. Answers union by their ref and keep the fold's order, by
+/// time and then ref; one ref with two answers quarantines. A settled copy
+/// wins over a held one, and two settled copies that decide otherwise
+/// quarantine. Of two settled copies the first to settle stands, and of two
+/// held ones the latest decision; their encoding breaks a tie.
+fn merged_join(
+    ours: &JoinReceipt,
+    theirs: &JoinReceipt,
+) -> std::result::Result<JoinReceipt, TurnMergeRefusal> {
+    if ours.join_ref != theirs.join_ref
+        || ours.intent_digest != theirs.intent_digest
+        || ours.request != theirs.request
+        || ours.history != theirs.history
+    {
+        return Err(TurnMergeRefusal::FixedFieldsConflict);
+    }
+    if ours.is_settled() && theirs.is_settled() && ours.decision != theirs.decision {
+        return Err(TurnMergeRefusal::DecisionConflict);
+    }
+    let mut answers = ours.answers.clone();
+    for answer in &theirs.answers {
+        match answers
+            .iter()
+            .find(|held| held.answer_ref == answer.answer_ref)
+        {
+            Some(held) if held != answer => return Err(TurnMergeRefusal::FixedFieldsConflict),
+            Some(_) => {}
+            None => answers.push(answer.clone()),
+        }
+    }
+    answers.sort_by(|a, b| (a.at, &a.answer_ref).cmp(&(b.at, &b.answer_ref)));
+    let order = |receipt: &JoinReceipt| {
+        let settled = receipt.is_settled();
+        let decided = if settled {
+            u64::MAX - receipt.decided_at
+        } else {
+            receipt.decided_at
+        };
+        let rest = JoinReceipt {
+            answers: Vec::new(),
+            ..receipt.clone()
+        };
+        (
+            settled,
+            decided,
+            serde_json::to_vec(&rest).unwrap_or_default(),
+        )
+    };
+    let mut merged = if order(ours) >= order(theirs) {
+        ours.clone()
+    } else {
+        theirs.clone()
+    };
+    merged.answers = answers;
+    Ok(merged)
+}
+
+/// Two copies of one offer card as one (FIX 1794), as L09 ruled. The card's
+/// birth must match, or it quarantines. An answered card, or one whose
+/// acceptance landed, wins over one without; two that differ quarantine.
+/// Otherwise the later reopening wins, and within one a settled card wins
+/// over an open one; their encoding breaks a tie. Ballots of the latest
+/// reopening union per voter, and a lower reopening's are dropped; one
+/// voter's two ballots keep `theirs`, the window's latest carrier write by
+/// Loro order, unless `ours_win`. The latest engagement stands.
+fn merged_offer(
+    ours: &StoredOffer,
+    theirs: &StoredOffer,
+    ours_win: bool,
+) -> std::result::Result<StoredOffer, TurnMergeRefusal> {
+    let (card, other) = (&ours.card, &theirs.card);
+    if card.offer_id != other.offer_id
+        || card.room != other.room
+        || card.branch != other.branch
+        || card.agent != other.agent
+        || card.what != other.what
+        || card.artifact_ref != other.artifact_ref
+        || card.lease_cap != other.lease_cap
+        || card.payer != other.payer
+        || card.spend_scope != other.spend_scope
+        || card.join_ref != other.join_ref
+        || card.created_at != other.created_at
+        || ours.draft_digest != theirs.draft_digest
+        || ours.minted_by != theirs.minted_by
+    {
+        return Err(TurnMergeRefusal::FixedFieldsConflict);
+    }
+    let landed = |offer: &StoredOffer| {
+        offer.answer.is_some()
+            || matches!(
+                offer.card.state,
+                OfferState::Joined { .. } | OfferState::NotNow { .. }
+            )
+    };
+    if landed(ours)
+        && landed(theirs)
+        && (ours.answer != theirs.answer || ours.card.state != theirs.card.state)
+    {
+        return Err(TurnMergeRefusal::DecisionConflict);
+    }
+    let order = |offer: &StoredOffer| {
+        (
+            landed(offer),
+            offer.reopen_epoch,
+            !matches!(offer.card.state, OfferState::Open { .. }),
+            serde_json::to_vec(&(&offer.card.state, offer.card.until, &offer.answer))
+                .unwrap_or_default(),
+        )
+    };
+    let mut merged = if order(ours) >= order(theirs) {
+        ours.clone()
+    } else {
+        theirs.clone()
+    };
+    merged.reopen_epoch = ours.reopen_epoch.max(theirs.reopen_epoch);
+    merged.card.last_engaged_at = ours.card.last_engaged_at.max(theirs.card.last_engaged_at);
+    let (first, last) = if ours_win {
+        (theirs, ours)
+    } else {
+        (ours, theirs)
+    };
+    merged.votes = BTreeMap::new();
+    for offer in [first, last] {
+        if offer.reopen_epoch == merged.reopen_epoch {
+            merged
+                .votes
+                .extend(offer.votes.iter().map(|(voter, vote)| (*voter, *vote)));
+        }
+    }
+    Ok(merged)
+}
+
+/// Points the Ready index at `receipt`, a merged copy, when it is the latest
+/// Ready receipt for its subject in its room or thread (FIX 1794): the
+/// latest decision stands, and the greater join ref breaks a tie. The index
+/// is never carried, and the proof still decides the receipt again against
+/// live facts.
+fn index_ready_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &JoinReceipt,
+) -> Result<()> {
+    if receipt.decision != JoinDecision::Ready {
+        return Ok(());
+    }
+    let store = &vault.store;
+    let request = &receipt.request;
+    let key = ready_key(request.room, &request.subject, request.branch);
+    if let Some(standing) = READY.get_lenient(store, txn, &key)? {
+        if standing == receipt.join_ref {
+            return Ok(());
+        }
+        if let Some(standing) = JOINS.get_lenient(store, txn, &standing)?
+            && standing.decision == JoinDecision::Ready
+            && (standing.decided_at, &standing.join_ref) > (receipt.decided_at, &receipt.join_ref)
+        {
+            return Ok(());
+        }
+    }
+    READY.put(store, txn, &key, &receipt.join_ref)
+}
+
+/// Points the current-card index at `offer`, a merged copy, when it is the
+/// latest open or current mint for its agent in its room or thread (FIX
+/// 1794): the latest `created_at` stands, and the greater offer id breaks a
+/// tie. A replaced card never becomes current, and the index is never
+/// carried.
+fn index_current_offer_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    offer: &StoredOffer,
+) -> Result<()> {
+    let card = &offer.card;
+    if matches!(card.state, OfferState::Superseded { .. }) {
+        return Ok(());
+    }
+    let store = &vault.store;
+    let key = current_key(card.room, card.branch, card.agent);
+    if let Some(standing) = OFFER_CURRENT.get_lenient(store, txn, &key)? {
+        if standing == card.offer_id {
+            return Ok(());
+        }
+        if let Some(standing) = OFFERS.get_lenient(store, txn, &standing)?
+            && !matches!(standing.card.state, OfferState::Superseded { .. })
+            && (standing.card.created_at, &standing.card.offer_id)
+                > (card.created_at, &card.offer_id)
+        {
+            return Ok(());
+        }
+    }
+    OFFER_CURRENT.put(store, txn, &key, &card.offer_id)
 }
 
 /// The order two payloads under one fact key settle by: the earlier
