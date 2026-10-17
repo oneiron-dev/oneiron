@@ -39,6 +39,9 @@ pub(super) struct PackCommit<'a> {
     pub(super) verdict: PackFitVerdict,
     pub(super) permissions: &'a PackPermissions,
     pub(super) qualification: Option<&'a PackQualification>,
+    /// The local world the owner picked for a travelling agent's World
+    /// scope; its name binds when unset.
+    pub(super) world: Option<EntityId>,
 }
 
 impl Vault {
@@ -165,6 +168,7 @@ impl Vault {
                     verdict: ask.verdict,
                     permissions: &ask.permissions,
                     qualification: ask.qualification.as_ref(),
+                    world: None,
                 },
             )
         })
@@ -204,6 +208,7 @@ impl Vault {
                         InstallHoldReason::QualificationRequired
                     }
                     PackCandidateReason::Advisories => InstallHoldReason::Advisories,
+                    PackCandidateReason::NeedsWorld => InstallHoldReason::LocalApproval,
                 }),
             );
             let result = self.execute_hub_install_plan_in_txn(
@@ -246,6 +251,7 @@ impl Vault {
             validate_qualification(source, qualification)?;
         }
         let at = crate::unix_seconds_now();
+        let travel = self.travel_agent_in_txn(&*txn, source, commit.world)?;
         let candidate_reason = if commit.verdict.rules_hit {
             Some(PackCandidateReason::RulesHit)
         } else if commit.foreign.is_some()
@@ -256,6 +262,11 @@ impl Vault {
             Some(PackCandidateReason::CodeAutoInstallOff)
         } else if source.manifest.kind == PackKind::Connector && commit.qualification.is_none() {
             Some(PackCandidateReason::QualificationRequired)
+        } else if travel
+            .as_ref()
+            .is_some_and(super::agent_admission::TravelAgent::needs_world)
+        {
+            Some(PackCandidateReason::NeedsWorld)
         } else {
             None
         };
@@ -315,12 +326,25 @@ impl Vault {
             predicates: source.manifest.predicates.iter().cloned().collect(),
             kinds: source.manifest.kinds.iter().cloned().collect(),
             skills: skills.into_iter().map(|id| id.to_hex()).collect(),
+            agent: None,
             installed_at: at,
         };
         if status == PackInstallStatus::Candidate {
             PACK_CANDIDATE.put(&self.store, txn, &candidate_key(&source), &receipt)?;
             return Ok(PackInstallDisposition::Candidate(Box::new(receipt)));
         }
+        // An active travelling AgentPack mints its inert agent here, after its
+        // skills went through the common door (FIX 2041, 3168).
+        let receipt = PackInstallReceipt {
+            agent: match travel {
+                Some(travel) => Some(
+                    self.admit_travel_agent_in_txn(txn, source, travel, at)?
+                        .to_hex(),
+                ),
+                None => None,
+            },
+            ..receipt
+        };
         let identities = source.kind_identities()?;
         self.install_pack_kinds_in_txn(txn, &identities)?;
         for predicate in &source.manifest.predicates {

@@ -589,6 +589,8 @@ change back:
   newest first, each with its id, its kind (`claim`, `settlement`, `evidence`, `summary` or
   `note`), the claim's predicate or the note's kind, and when it landed. The list reads the
   vault's newest 20,000 rows. `people_about` names each person whose newest `about` line the Dreamer wrote.
+  `maintenance` lists the maintenance the Dreamer applied that still stands (a curator rung, a
+  digest policy, a retune finding), each by its finding's id with its kind as the label.
 - `POST /v1/owner/dreamer/revert` with `{"change": "<32 hex>"}` reverts it, with one receipt:
   - a claim (a promotion, a merged replacement, a nightly same-as, conflict or arc output) is
     retracted, and each claim it superseded stands again, as in a settlement's revert. The
@@ -601,6 +603,9 @@ change back:
   - a scope summary is archived; the summary it replaced is current again, and the header that
     announced it on the asking turn is retracted.
   - a note the Dreamer wrote to answer a task is archived. The task stays done.
+  - an applied maintenance finding reverts through its own inverse, as
+    `/v1/owner/dreamer/maintenance/revert` does: its effect is undone where no later write changed
+    it, the finding is retracted, and the reply names the settings put back and what was left alone.
   - a person's id puts back the `about` lines the Dreamer's newest pass replaced. A line shows
     only while the facts it was written from still hold; the Dreamer writes again once they move.
     Erasing a fact about a person drops that person's `about` lines and the replaced ones too, so
@@ -608,6 +613,30 @@ change back:
 
   The reply lists what was retracted, reopened, restored, copied, left closed, archived and made
   current again. An archived summary or note comes back through `/v1/owner/cleanup/restore`.
+
+## Revert the Dreamer's maintenance
+
+The Dreamer's own maintenance applies at once too, with one receipt each, and you revert any of
+it here, effect and all (`/v1/owner/dreamer/revert` above only retracts its finding). Its curator
+moves one of the Dreamer's own consolidations one rung (decay, weaken, mark stale, retract) as the
+Dreamer; its harness audit files a retune finding, which deploys nothing; its action-mode refresh
+files an advisory mode, which grants nothing; and a Dreamer-born digest cadence and presentation
+request sets both rows. Each lands as an `auto` finding, and the inbox's finding notice tells you.
+The Coach's and the healer's findings still wait in the run tray. So does any Dreamer finding the
+Gate holds, and every curator rung on a critical claim: that waits for your approval in the run
+tray and applies on the next curator pass.
+
+- `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
+  reverted ones too, newest first, with its finding, kind (`finding`, `curator` or
+  `proactivity_policy`), facet, attempt, receipt and your revert once made.
+- `POST /v1/owner/dreamer/maintenance/revert` with `{"finding": "<32 hex>"}` undoes its effect,
+  retracts its finding as yours and leaves one receipt. A curator rung's claim comes back at its
+  prior confidence and rung: in place when a weakening closed a claim with no signed history,
+  else as the Dreamer's fresh copy born of it, since a signed claim's history never reopens (the
+  copy carries the default `ClaimOf` weight). A digest request puts back the rows it replaced, or
+  the defaults. Anything a later write changed is left as it is. The reply lists what stood
+  again, what was copied, what was closed, the settings put back and what was left alone. A
+  second revert returns the first one's reply, and the Dreamer never applies that finding again.
 
 ## Review cleanup
 
@@ -627,6 +656,23 @@ archived until you accept, and the engine refuses the automatic posture.
   attempt, which returns to the queue listing. An item that is not archived is a 409.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
+
+## Review NOTE tombstones
+
+Once a month the Dreamer's NOTE review proposes a tombstone for each archived note that has
+stayed archived past twice its kind's retention (a handoff's 60 days makes 120), that nothing
+links to (no edge into it, no note citing it, nothing derived from it), and that nobody has read
+since it was archived. A kind with no fixed retention is never proposed. Nothing is tombstoned
+until you accept, and a tombstone cannot be undone: the note's words are scrubbed and every
+device drops them.
+
+- `GET /v1/owner/notes/tombstones`: the open proposals, oldest first, each with its note id,
+  kind, retention days, and when it was archived and proposed.
+- `POST /v1/owner/notes/tombstones/accept` with `{"note": "<id>"}` tombstones the note. The
+  engine checks again that the note is still in the same archive and still qualifies. If it
+  does not, or the proposal is gone, the call is a 409.
+- `POST /v1/owner/notes/tombstones/decline` with `{"note": "<id>"}` leaves the note archived. It
+  is not proposed again unless it is restored and archived anew.
 
 ## Export a persona card
 
@@ -1172,9 +1218,11 @@ oneiron handoff-alarms list                     # every saved alarm, open or ack
 oneiron handoff-alarms acknowledge SUITE:HEX    # you have seen this key's alarm
 ```
 
-Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
+Routes: `GET /v1/owner/authority/handoff-alarms` and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
-signer is 404, and acknowledging an acknowledged alarm changes nothing.
+signer is 404, and acknowledging an acknowledged alarm changes nothing. The list, the CLI and the
+SDK's `vault.authority.handoff_alarms` answer one shape in one order: `raised_at` and an
+acknowledgement's `at` in unix seconds, oldest raised first, then by signer.
 
 ## Learned settings
 

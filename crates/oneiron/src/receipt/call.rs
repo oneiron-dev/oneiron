@@ -11,6 +11,18 @@
 //! off-record session (ARCH-0052): a call inside one writes no row, and its
 //! reply says so, rather than carrying a ref.
 //!
+//! A reply no credential attributed (a pre-auth refusal, a protocol-only
+//! reply) is recorded too, attributed to the connection it arrived on: its
+//! `actor_ref` is that connection's id and its class is
+//! [`CONNECTION_CALL_ACTOR_CLASS`], never a person (FIX 811).
+//!
+//! The rows live as every vault row does (FIX 812): a delete leaves them,
+//! and a backup restore returns them (`CALL_RECEIPT` is LIVE in the restore
+//! classes); erasing an actor is one-way and rewrites who called in each of
+//! its receipts to [`ERASED_CALL_IDENTITY`], keeping each receipt, its ref
+//! and its time (`Vault::erase_call_receipt_actor_in_txn`). No prune
+//! policy ages them out.
+//!
 //! The lookup ([`Memory::call_receipt`]) is scoped: the caller's bound actor
 //! must be the receipt's actor, or the vault's live owner. Any other caller
 //! reads `None`, exactly as for a ref that names nothing, so a guesser learns
@@ -44,6 +56,15 @@ pub const MAX_CALL_RECEIPT_SERVED: usize = 256;
 /// character boundary: these fields name things, and a caller-chosen path
 /// must not size a vault row.
 const MAX_CALL_RECEIPT_FIELD_BYTES: usize = 256;
+
+/// The actor class of a call no credential attributed (FIX 811): its
+/// `actor_ref` is the connection's id, and no person is named.
+pub const CONNECTION_CALL_ACTOR_CLASS: &str = "connection";
+
+/// What an erased actor's call receipts state in place of who called: the
+/// actor, its class and the credential it presented (FIX 812). Engine call
+/// 10-18, behind this one constant.
+pub const ERASED_CALL_IDENTITY: &str = "erased";
 
 /// The wire a call arrived on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -80,11 +101,14 @@ pub struct CallReceipt {
     /// The verb, tool or RPC method the call named, as the caller spelled it.
     pub verb: String,
     /// The caller's bound actor as 32 hex, or the credential's own principal
-    /// when it is bound to none.
+    /// when it is bound to none; for a call no credential attributed, its
+    /// connection's id. [`ERASED_CALL_IDENTITY`] once that actor is erased.
     pub actor_ref: String,
-    /// `human`, `agent` or `system`, or `unbound`.
+    /// `human`, `agent` or `system`, `unbound`, or
+    /// [`CONNECTION_CALL_ACTOR_CLASS`]; [`ERASED_CALL_IDENTITY`] once erased.
     pub actor_class: String,
-    /// The presented credential's revocable id (a slip's id), when it has one.
+    /// The presented credential's revocable id (a slip's id), when it has
+    /// one; [`ERASED_CALL_IDENTITY`] once its actor is erased.
     pub credential_ref: Option<String>,
     pub outcome: CallOutcome,
     /// BLAKE3 of the canonical input JSON, lowercase hex.
@@ -384,6 +408,48 @@ impl Vault {
         };
         CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
         Ok(receipt_ref)
+    }
+
+    /// Erasing `actor` (FIX 812, Engine ruling 10-18): each call receipt it
+    /// made keeps its existence, its ref, its time, its verb, its outcome and
+    /// its digests, and states [`ERASED_CALL_IDENTITY`] for who called: the
+    /// actor, its class and the credential it presented. One-way, in the
+    /// erase's own transaction. An id whose entity is no actor scans nothing;
+    /// a receipt row that cannot be read fails the erase rather than keep an
+    /// identity it cannot prove scrubbed.
+    pub(crate) fn erase_call_receipt_actor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        if let Some(raw) = self.get_raw_in(wtxn, actor)?
+            && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+            && !matches!(
+                header.entity_type,
+                crate::registry::ENTITY_TYPE_PERSON
+                    | crate::registry::ENTITY_TYPE_MACHINE
+                    | crate::registry::ENTITY_TYPE_AGENT_DEF
+            )
+        {
+            return Ok(());
+        }
+        let actor_ref = actor.to_hex();
+        let mut erased = Vec::new();
+        for row in CALL_RECEIPTS.iter_from(&self.store, wtxn, &[])? {
+            let (id, receipt) = row?;
+            if receipt.actor_ref == actor_ref {
+                erased.push((id, receipt));
+            }
+        }
+        for (id, mut receipt) in erased {
+            receipt.actor_ref = ERASED_CALL_IDENTITY.to_owned();
+            receipt.actor_class = ERASED_CALL_IDENTITY.to_owned();
+            if receipt.credential_ref.is_some() {
+                receipt.credential_ref = Some(ERASED_CALL_IDENTITY.to_owned());
+            }
+            CALL_RECEIPTS.put(self, wtxn, &id, &receipt)?;
+        }
+        Ok(())
     }
 }
 

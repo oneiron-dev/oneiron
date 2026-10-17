@@ -33,8 +33,8 @@ use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
 use crate::owner::{
-    OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, off_record,
-    pack_drift, persona, runs, secrets,
+    OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, note_tombstones,
+    off_record, pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
 mod budget_hold_routes;
@@ -49,6 +49,7 @@ mod decision_ask_routes;
 mod desktop_takeover_routes;
 mod diary_routes;
 mod disclosure_routes;
+mod dreamer_maintenance_routes;
 mod dreamer_routes;
 mod embedding_space_routes;
 mod federation_connect_routes;
@@ -71,6 +72,7 @@ mod secret_reveal_routes;
 mod secret_use_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
+mod steer_routes;
 mod vault_key_routes;
 mod weave_routes;
 mod widen_proposal_routes;
@@ -102,6 +104,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/cleanup/accept", post(accept_cleanup))
         .route("/cleanup/reject", post(reject_cleanup))
         .route("/cleanup/restore", post(restore_archived))
+        .route("/notes/tombstones", get(note_tombstone_review))
+        .route("/notes/tombstones/accept", post(accept_note_tombstone))
+        .route("/notes/tombstones/decline", post(decline_note_tombstone))
         .route("/persona", get(preview_persona))
         .route("/persona/export", post(export_persona))
         .route("/graph-fs", get(read_graph_fs))
@@ -119,6 +124,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(connector_subscription_routes::routes())
         .merge(diary_routes::routes())
         .merge(disclosure_routes::routes())
+        .merge(dreamer_maintenance_routes::routes())
         .merge(dreamer_routes::routes())
         .merge(embedding_space_routes::routes())
         .merge(history_routes::routes())
@@ -149,6 +155,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(secret_reveal_routes::routes())
         .merge(secret_found_routes::routes())
         .merge(secret_lift_routes::routes())
+        .merge(steer_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }
@@ -709,6 +716,39 @@ async fn reject_cleanup(
         cleanup::review(server.vault())
     })
     .await?;
+    Ok(Json(review))
+}
+
+async fn note_tombstone_review(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<note_tombstones::TombstoneReview> {
+    let owner = owner(&auth, &server)?;
+    let review = blocking(move || note_tombstones::review(server.vault(), &owner)).await?;
+    Ok(Json(review))
+}
+
+async fn accept_note_tombstone(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+) -> OwnerReply<note_tombstones::Tombstoned> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let tombstoned =
+        blocking(move || note_tombstones::accept(server.vault(), &owner, &request)).await?;
+    Ok(Json(tombstoned))
+}
+
+async fn decline_note_tombstone(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+) -> OwnerReply<note_tombstones::TombstoneReview> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let review =
+        blocking(move || note_tombstones::decline(server.vault(), &owner, &request)).await?;
     Ok(Json(review))
 }
 

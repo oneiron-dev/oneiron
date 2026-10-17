@@ -45,16 +45,14 @@ const ABOUT_MAX_CHARS: usize = 240;
 const FACTS_DIGEST_DOMAIN: &[u8] = b"oneiron:people-about-facts:v1";
 /// How long an attempt whose facts moved under the model waits to write again.
 const FACTS_DRIFT_RETRY_SECS: u64 = 60;
-/// What a CLAIM write about a person leaves in `asked`. No facts digest to
-/// it, so the board shows no line until a wake pass reads the facts again.
-const FACTS_MOVED: [u8; 32] = [0xff; 32];
 
 /// The engine's instruction for one `about` line.
 pub const PERSON_ABOUT_INSTRUCTION: &str = "You write the one-line `about` of a person on an \
 agent's roster of people. The facts below are everything you may use, one per line as \
 `predicate: value`. Write one plain sentence of at most 25 words that says who this person is. \
 Never add, guess or imply a fact that is not listed, and never say that facts are missing. \
-No markup and no quotes.";
+A fact marked (observed) was read from what the person did; where it disagrees with a fact \
+marked (stated), go by the stated one. No markup and no quotes.";
 
 /// One person's `about` lines and the facts they stand on. Key: id16 (PERSON).
 const PERSON_ABOUT: SideTable<EntityId, PersonAbout, Named> =
@@ -73,6 +71,9 @@ struct PersonAbout {
     /// The lines the Dreamer's newest landing replaced, kept so the owner
     /// can revert it (owner ruling 10-18: each Dreamer change revertible).
     previous: Option<PriorAbout>,
+    /// A CLAIM write about the person landed since a wake pass last read its
+    /// facts: the board shows no line until one reads them again.
+    moved: bool,
 }
 
 /// One landing's before-image: the lines and the facts they stood on.
@@ -98,6 +99,10 @@ struct Fact {
     /// Content hash of the CLAIM body read.
     version: [u8; 32],
     readable: ScopeResource,
+    source: Option<crate::claim::ClaimSource>,
+    /// The fact's question, so a held observed fact sits below and beside
+    /// the stated one of its question.
+    question: Option<[u8; 32]>,
 }
 
 /// The facts about `person` the Dreamer reads, band order: active, surfaced
@@ -137,10 +142,47 @@ fn person_facts(
             line: one_line(&format!("{}: {value}", decoded.predicate), usize::MAX),
             version: super::swarm_evidence_content_hash(&body),
             readable: document_version(claim, &body),
+            source: decoded.source,
+            question: crate::context_pack::source_ranking::question_key(&decoded),
         });
     }
     facts.sort_by_key(|fact| (fact.band, fact.claim));
+    // ARCH-0003: an observed fact never sits above a stated one of its
+    // question.
+    crate::context_pack::source_ranking::clamp_order_by(&mut facts, &Default::default(), |fact| {
+        Some((fact.source?, fact.question?))
+    })?;
     Ok(facts)
+}
+
+/// The admitted facts as the model reads them, one per line. Where they hold
+/// an observed and a stated fact on one question, both say which they are,
+/// so the model goes by the stated one; a fact above this band is never
+/// hinted at.
+fn prompt_lines(admitted: &[&Fact]) -> String {
+    use crate::claim::ClaimSource;
+    let held = |source: ClaimSource| -> BTreeSet<[u8; 32]> {
+        admitted
+            .iter()
+            .filter(|fact| fact.source == Some(source))
+            .filter_map(|fact| fact.question)
+            .collect()
+    };
+    let (stated, observed) = (held(ClaimSource::UserStated), held(ClaimSource::Observed));
+    admitted
+        .iter()
+        .map(|fact| {
+            let pair = fact
+                .question
+                .is_some_and(|question| stated.contains(&question) && observed.contains(&question));
+            match fact.source {
+                Some(ClaimSource::UserStated) if pair => format!("{} (stated)", fact.line),
+                Some(ClaimSource::Observed) if pair => format!("{} (observed)", fact.line),
+                _ => fact.line.clone(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Digest of the facts at or below `band`.
@@ -200,7 +242,7 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
             let digest = facts_digest(&facts, TOP_BAND);
             let row = PERSON_ABOUT.get(&vault.store, &txn, &person)?;
             match &row {
-                Some(row) if row.asked == digest => continue,
+                Some(row) if row.asked == digest && !row.moved => continue,
                 None if facts.is_empty() => continue,
                 _ => due.push((person, digest, facts.is_empty())),
             }
@@ -214,16 +256,19 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
             let mut row = PERSON_ABOUT
                 .get(&vault.store, txn, person)?
                 .unwrap_or_default();
-            // Facts back where the lines were written from (a CLAIM write
-            // that moved none) show those lines again, with no model call.
+            // A CLAIM write that moved no fact leaves the row as it stood,
+            // an owner's revert included. Facts back where the lines were
+            // written from show those lines again, with no model call.
+            let moved = row.asked != *digest;
             let current = row.written == *digest;
             row.asked = *digest;
-            if *empty {
+            row.moved = false;
+            if moved && *empty {
                 row.written = *digest;
                 row.lines.clear();
                 row.at = now;
                 row.previous = None;
-            } else if !current {
+            } else if moved && !current {
                 DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
                     txn,
                     DreamerConsolidationScope::Micro.attempt_kind(),
@@ -278,8 +323,8 @@ pub(crate) fn mark_person_about_moved_in_txn(
         let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
             continue;
         };
-        if row.asked != FACTS_MOVED {
-            row.asked = FACTS_MOVED;
+        if !row.moved {
+            row.moved = true;
             PERSON_ABOUT.put(store, txn, &person, &row)?;
         }
     }
@@ -319,7 +364,7 @@ pub(crate) fn erase_person_about_in_txn(
     let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
         return Ok(());
     };
-    row.asked = FACTS_MOVED;
+    row.moved = true;
     row.lines.clear();
     row.previous = None;
     PERSON_ABOUT.put(store, txn, &person, &row)
@@ -375,7 +420,7 @@ impl Vault {
         let Some(row) = PERSON_ABOUT.get(&self.store, &txn, &person)? else {
             return Ok(None);
         };
-        if row.asked != row.written {
+        if row.moved || row.asked != row.written {
             return Ok(None);
         }
         Ok(row
@@ -513,11 +558,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     LlmMessage {
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
-                            text: admitted
-                                .iter()
-                                .map(|fact| fact.line.as_str())
-                                .collect::<Vec<_>>()
-                                .join("\n"),
+                            text: prompt_lines(&admitted),
                         }],
                     },
                 ],
