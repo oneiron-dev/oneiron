@@ -1,0 +1,467 @@
+//! `/v1/owner/embedding-spaces`: the owner declares embedding spaces, binds
+//! kind slots and moves a slot to a new model version (OF-370; ARCH-0019
+//! `#kind-slots`, ARCH-0004 `#swap-check-ruling`). A move fills its candidate
+//! beside the serving space and swaps in only when the vault's own probes read
+//! it not worse (NOT-WORSE = A); the owner may say yes over an undecided check,
+//! undo a swap, or abandon a move. The media backfill fills and checks on its
+//! own; `check` runs the probes now.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use axum::Router;
+use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
+use axum::response::Json;
+use axum::routing::{get, post};
+use oneiron::embed::{
+    EmbeddingSpace, InputKind, SpaceMove, SpaceMoveOutcome, SpaceProbe, SpaceRef,
+};
+use serde::{Deserialize, Serialize};
+
+use super::{OwnerReply, blocking, owner};
+use crate::api::json_payload;
+use crate::auth::CoreAuth;
+use crate::owner::{OwnerError, OwnerResult, entity_id};
+use crate::server::SyncServer;
+
+pub(super) fn routes() -> Router<Arc<SyncServer>> {
+    Router::new()
+        .route("/embedding-spaces", get(list).put(declare))
+        .route("/embedding-spaces/bind", post(bind))
+        .route("/embedding-spaces/one-space", post(one_space))
+        .route("/embedding-spaces/retire", post(retire))
+        .route("/embedding-spaces/move", post(begin_move))
+        .route("/embedding-spaces/move/check", post(check_move))
+        .route("/embedding-spaces/move/approve", post(approve_move))
+        .route("/embedding-spaces/move/undo", post(undo_move))
+        .route("/embedding-spaces/move/abandon", post(abandon_move))
+        .route("/embedding-spaces/probes", get(probes).post(put_probe))
+        .route("/embedding-spaces/probes/delete", post(delete_probe))
+}
+
+/// Every declared space, where each kind slot reads, and every move.
+#[derive(Debug, Serialize)]
+struct Spaces {
+    spaces: Vec<EmbeddingSpace>,
+    /// The vault's own text vector index, which an unbound text slot reads.
+    text_index: EmbeddingSpace,
+    /// Kind to declared space id; an absent text kind reads the text index.
+    slots: BTreeMap<InputKind, String>,
+    moves: Vec<SpaceMove>,
+    /// Stored probes per kind.
+    probes: BTreeMap<InputKind, usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Bind {
+    kind: InputKind,
+    /// The declared space; absent returns the slot to its default.
+    space: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpaceId {
+    space: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BeginMove {
+    candidate: String,
+    /// A declared space id, or absent for the vault's text index.
+    incumbent: Option<String>,
+    /// A tolerance stricter than the measured retest noise.
+    margin: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Candidate {
+    candidate: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MoveChecked {
+    /// `filling`, `swapped_in`, `kept` or `undecided`.
+    outcome: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    check: Option<oneiron::embed::SpaceMoveCheck>,
+}
+
+#[derive(Debug, Serialize)]
+struct Probe {
+    /// 32 hex.
+    id: String,
+    #[serde(flatten)]
+    probe: SpaceProbe,
+}
+
+#[derive(Debug, Serialize)]
+struct Probes {
+    probes: Vec<Probe>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PutProbe {
+    kind: InputKind,
+    query: String,
+    /// The document the query was written from, as 32 hex.
+    family: String,
+    /// Every document that answers it, as 32 hex; the family's when absent.
+    #[serde(default)]
+    targets: Vec<String>,
+    /// Who wrote the query.
+    author: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProbeId {
+    id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Done {
+    ok: bool,
+}
+
+fn probe_hex(id: [u8; 16]) -> String {
+    id.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn probe_id(hex: &str) -> OwnerResult<[u8; 16]> {
+    let refused = || OwnerError::Invalid("id must be 32 hex".into());
+    if hex.len() != 32 || !hex.is_ascii() {
+        return Err(refused());
+    }
+    let mut id = [0_u8; 16];
+    for (byte, pair) in id.iter_mut().zip(hex.as_bytes().chunks(2)) {
+        let pair = std::str::from_utf8(pair).map_err(|_| refused())?;
+        *byte = u8::from_str_radix(pair, 16).map_err(|_| refused())?;
+    }
+    Ok(id)
+}
+
+fn invalid(error: impl std::fmt::Display) -> OwnerError {
+    OwnerError::Invalid(error.to_string())
+}
+
+fn spaces(vault: &oneiron::Vault) -> OwnerResult<Spaces> {
+    let bindings = vault.kind_slot_bindings()?;
+    let slots = InputKind::ALL
+        .into_iter()
+        .filter_map(|kind| Some((kind, bindings.space_for(kind)?.to_owned())))
+        .collect();
+    let mut probes = BTreeMap::new();
+    for (_, probe) in vault.space_probes()? {
+        *probes.entry(probe.kind).or_insert(0) += 1;
+    }
+    Ok(Spaces {
+        spaces: vault.embedding_spaces()?,
+        text_index: vault.text_index_space(),
+        slots,
+        moves: vault.space_moves()?,
+        probes,
+    })
+}
+
+/// `GET /v1/owner/embedding-spaces`.
+async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    Ok(Json(blocking(move || spaces(server.vault())).await?))
+}
+
+/// `PUT /v1/owner/embedding-spaces`: declares or widens one space; a new width
+/// is a new space.
+async fn declare(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<EmbeddingSpace>, JsonRejection>,
+) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    let space = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            server.vault().declare_embedding_space(space).map_err(invalid)?;
+            spaces(server.vault())
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/bind`: binds one kind slot, or returns it
+/// to its default.
+async fn bind(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Bind>, JsonRejection>,
+) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            let vault = server.vault();
+            match &request.space {
+                Some(space) => vault.bind_kind_slot(request.kind, space),
+                None => vault.unbind_kind_slot(request.kind),
+            }
+            .map_err(invalid)?;
+            spaces(vault)
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/one-space`: the one-space preset.
+async fn one_space(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SpaceId>, JsonRejection>,
+) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            server
+                .vault()
+                .bind_one_space_for_all(&request.space)
+                .map_err(invalid)?;
+            spaces(server.vault())
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/retire`: drops a space no slot binds and
+/// no open move names, with its rows.
+async fn retire(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SpaceId>, JsonRejection>,
+) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            server
+                .vault()
+                .retire_embedding_space(&request.space)
+                .map_err(invalid)?;
+            spaces(server.vault())
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/move`: starts moving every slot the
+/// incumbent serves to the candidate.
+async fn begin_move(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<BeginMove>, JsonRejection>,
+) -> OwnerReply<SpaceMove> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            let incumbent = request
+                .incumbent
+                .map_or(SpaceRef::TextIndex, SpaceRef::Declared);
+            server
+                .vault()
+                .begin_space_move(&request.candidate, incumbent, request.margin)
+                .map_err(invalid)
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/move/check`: runs the move's probes now,
+/// through both spaces' towers, and acts on the reading.
+async fn check_move(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Candidate>, JsonRejection>,
+) -> OwnerReply<MoveChecked> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let runtime = tokio::runtime::Handle::current();
+    Ok(Json(
+        blocking(move || {
+            let moving = server
+                .vault()
+                .space_moves()?
+                .into_iter()
+                .find(|moving| moving.candidate == request.candidate)
+                .ok_or_else(|| {
+                    OwnerError::NotFound("embedding space move", request.candidate.clone())
+                })?;
+            let outcome = server
+                .check_space_move(&runtime, &moving)
+                .map_err(invalid)?;
+            Ok(match outcome {
+                SpaceMoveOutcome::Filling => MoveChecked {
+                    outcome: "filling",
+                    check: None,
+                },
+                SpaceMoveOutcome::SwappedIn(check) => MoveChecked {
+                    outcome: "swapped_in",
+                    check: Some(check),
+                },
+                SpaceMoveOutcome::Kept(check) => MoveChecked {
+                    outcome: "kept",
+                    check: Some(check),
+                },
+                SpaceMoveOutcome::Undecided(check) => MoveChecked {
+                    outcome: "undecided",
+                    check: Some(check),
+                },
+            })
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/move/approve`: the owner's yes over a
+/// check that did not read not worse.
+async fn approve_move(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Candidate>, JsonRejection>,
+) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            server
+                .vault()
+                .approve_space_move(&request.candidate)
+                .map_err(invalid)?;
+            spaces(server.vault())
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/move/undo`: binds a swapped-in move's
+/// incumbent again.
+async fn undo_move(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Candidate>, JsonRejection>,
+) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            server
+                .vault()
+                .undo_space_move(&request.candidate)
+                .map_err(invalid)?;
+            spaces(server.vault())
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/move/abandon`: ends an open move with no
+/// swap.
+async fn abandon_move(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Candidate>, JsonRejection>,
+) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            server
+                .vault()
+                .abandon_space_move(&request.candidate)
+                .map_err(invalid)?;
+            spaces(server.vault())
+        })
+        .await?,
+    ))
+}
+
+/// `GET /v1/owner/embedding-spaces/probes`.
+async fn probes(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Probes> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || {
+            Ok(Probes {
+                probes: server
+                    .vault()
+                    .space_probes()?
+                    .into_iter()
+                    .map(|(id, probe)| Probe {
+                        id: probe_hex(id),
+                        probe,
+                    })
+                    .collect(),
+            })
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/probes`: stores one probe the owner, or
+/// another model, wrote.
+async fn put_probe(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PutProbe>, JsonRejection>,
+) -> OwnerReply<Probe> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            let family = entity_id("family", &request.family)?;
+            let mut targets = std::collections::BTreeSet::from([family]);
+            for target in &request.targets {
+                targets.insert(entity_id("targets", target)?);
+            }
+            let probe = SpaceProbe {
+                kind: request.kind,
+                query: request.query,
+                family,
+                targets,
+                author: request.author,
+                written_at: server.vault().now_recorded_at(),
+            };
+            let id = server
+                .vault()
+                .put_space_probe(probe.clone())
+                .map_err(invalid)?;
+            Ok(Probe {
+                id: probe_hex(id),
+                probe,
+            })
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/probes/delete`.
+async fn delete_probe(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ProbeId>, JsonRejection>,
+) -> OwnerReply<Done> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            let id = probe_id(&request.id)?;
+            Ok(Done {
+                ok: server.vault().delete_space_probe(&id)?,
+            })
+        })
+        .await?,
+    ))
+}
