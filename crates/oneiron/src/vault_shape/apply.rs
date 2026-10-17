@@ -326,7 +326,17 @@ impl Vault {
                 }
                 ShapeItemState::Proposed => {
                     match self.land_shape_item(owner, slips, &item, &live, now) {
-                        Ok(receipt) => ShapeItemState::Landed { at: now, receipt },
+                        Ok(receipt) => {
+                            // The skills a pack bundles, and the actors a
+                            // channel binds, read live for the items after.
+                            if matches!(
+                                item.target,
+                                ShapeTarget::Pack { .. } | ShapeTarget::Actor { .. }
+                            ) {
+                                live = self.live_by_target()?;
+                            }
+                            ShapeItemState::Landed { at: now, receipt }
+                        }
                         Err(error) => ShapeItemState::Refused {
                             reason: error.to_string(),
                         },
@@ -562,6 +572,15 @@ impl Vault {
                     PackInstallDisposition::Blocked { reason } => Err(invalid(reason)),
                 }
             }
+            (
+                ShapeChange::Create,
+                ShapeTarget::Skill { skill_id },
+                Some(ShapeRow::Skill {
+                    version,
+                    source: Some(source),
+                    ..
+                }),
+            ) => self.import_shape_skill(owner, skill_id, version.as_deref(), source, now),
             (ShapeChange::Retire, ShapeTarget::Skill { .. }, _) => {
                 // Retiring a skill quarantines it: out of every pack, its
                 // evidence kept, revivable. The owner's word is the consent
@@ -573,6 +592,22 @@ impl Vault {
                 owner.revalidate(self)?;
                 self.update_skill_record(&id, &record, occurred, now)?;
                 Ok(id.to_hex())
+            }
+            (
+                ShapeChange::Create,
+                ShapeTarget::Channel { channel, address },
+                Some(ShapeRow::Channel {
+                    provision: Some(provision),
+                    ..
+                }),
+            ) => {
+                let binding = provision.binding.resolve(|agent_id| {
+                    live.get(&ShapeTarget::Actor {
+                        agent_id: agent_id.to_owned(),
+                    })
+                    .and_then(|(_, entity)| *entity)
+                })?;
+                self.provision_shape_channel(owner, channel, address, provision, binding, now)
             }
             (ShapeChange::Retire, ShapeTarget::Channel { .. }, _) => {
                 // Retiring a channel identity releases it through its
