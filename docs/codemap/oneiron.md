@@ -412,6 +412,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/container/archive.rs` | src | s | 2 crate-vis | — | A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its… |
 | `src/batch/secret_scan/container/gzip.rs` | src | s | 2 crate-vis | — | A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and… |
 | `src/batch/secret_scan/container/pdf.rs` | src | s | 2 crate-vis | — | A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly… |
+| `src/batch/secret_scan/lift_history/authored.rs` | src | s | 1 crate-vis | — | The authored carriers whose writers already mask a new write: an owner-policy ruling or proposal, an eval… |
 | `src/batch/secret_scan/lift_history/carriers.rs` | src | s | 3 crate-vis | — | Carriers no door rewrites |
 | `src/batch/secret_scan/lift_history/mod.rs` | src | L | 6 struct · 3 enum · 4 fn · 3 crate-vis | LiftCause, LiftCounts, LiftFamily, LiftTrigger, SecretLiftHistoryProposal, SecretLiftProgress, SecretLiftReceipt, SecretLiftRequest +1 | The historical lift sweep (OF-067; ARCH-0069 #mask-on-write) |
 | `src/batch/secret_scan/lift_history/records.rs` | src | s | 3 crate-vis | — | The entity table |
@@ -2383,9 +2384,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/mod.rs` | src | s | 2 re-export · 8 crate-vis | — | Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record… |
 | `src/memory/witness/program.rs` | src | L | 11 crate-vis | — | The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract… |
 | `src/memory/witness/session.rs` | src | m | 3 fn · 9 crate-vis | — | Session overlay landing: journal staging from the door's authorized values, room-shell claim |
-| `src/memory/witness/stream/admission.rs` | src | m | 5 fn · 5 crate-vis | — | Begin, append and flush |
+| `src/memory/witness/stream/admission.rs` | src | m | 5 fn · 6 crate-vis | — | Begin, append and flush |
 | `src/memory/witness/stream/completion.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | MessageCompletion | Whether a MESSAGE's reply is complete, derived from its latest stream receipt |
 | `src/memory/witness/stream/lifecycle.rs` | src | m | 1 struct · 6 fn · 1 crate-vis | MessageStreamPump | Terminal transitions and the host-driven quiet-stream pump |
+| `src/memory/witness/stream/lift.rs` | src | s | 1 crate-vis | — | The lift sweep's door for a stream's seed (OF-067) |
 | `src/memory/witness/stream/mod.rs` | src | s | 2 fn · 3 re-export · 4 crate-vis | — | Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality |
 | `src/memory/witness/stream/policy.rs` | src | s | 2 fn · 3 crate-vis | — | Durable owner policy; no token or partial content is stored here |
 | `src/memory/witness/stream/presence.rs` | src | s | 1 fn · 6 crate-vis | — | Native EphemeralStore publication |
@@ -2703,7 +2705,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_model/notes.rs` | src | s | 1 crate-vis | — | The audit notes a `rationale_json` pass carries beside its decided verdict |
 | `src/policy_model/notice.rs` | src | m | 22 crate-vis | — | The one notice a policy verdict emits — and the one audit row it files |
 | `src/policy_model/owner_rows/authority.rs` | src | m | 2 fn · 5 crate-vis | — | Live policy-power holders from shared membership and owner-stamped action grants |
-| `src/policy_model/owner_rows/ledger.rs` | src | s | 3 struct · 1 enum · 3 fn · 4 crate-vis | PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt | Append-only row change history and proposal inbox |
+| `src/policy_model/owner_rows/ledger.rs` | src | m | 3 struct · 1 enum · 3 fn · 5 crate-vis | PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt | Append-only row change history and proposal inbox |
 | `src/policy_model/owner_rows/mod.rs` | src | s | 1 enum · 5 fn · 4 re-export · 2 crate-vis | PolicyRowSubmission | Holder-governed owner-policy row edits, proposals, events and change log |
 | `src/policy_model/owner_rows/notifications.rs` | src | m | 2 struct · 3 enum · 6 fn · 3 crate-vis | PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule, PolicyNotificationTarget, PolicyQueuedNotification | Manifest-authored notification rules and recipient-owned delivery preferences |
 | `src/policy_model/owner_rows/secret_scan_switch.rs` | src | s | 1 struct · 3 fn | SecretScanReceipt | The owner's `secrets: on \| off` switch for the write-door secret scan |
@@ -3302,7 +3304,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/brief.rs` | src | m | 2 struct · 2 enum · 1 trait · 3 fn · 3 const · 3 crate-vis | RejectedSkillEdit, RejectedSkillEditReason, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief | The author seam and the dev-partitioned evidence brief handed across it |
 | `src/skill_optimize/decisions.rs` | src | m | 2 struct · 4 fn · 8 crate-vis | SkillOptimizeDecisions, SkillReplayPair | Skill judgments on the shared typed-decision ladder |
 | `src/skill_optimize/dials.rs` | src | s | 2 fn · 2 const · 3 crate-vis | — | The N dial over vault_meta, and the two text helpers every child in this module uses |
-| `src/skill_optimize/eval_set.rs` | src | m | 4 struct · 4 enum · 7 fn · 2 re-export · 10 crate-vis | DerivationKind, EvalCase, EvalCaseDraft, EvalLabel, EvalLabelKind, EvalSeat, FamilyPurpose, SourceFamily | OF-578 (ARCH-0053 "Eval authoring", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the… |
+| `src/skill_optimize/eval_set.rs` | src | m | 4 struct · 4 enum · 7 fn · 2 re-export · 11 crate-vis | DerivationKind, EvalCase, EvalCaseDraft, EvalLabel, EvalLabelKind, EvalSeat, FamilyPurpose, SourceFamily | OF-578 (ARCH-0053 "Eval authoring", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the… |
 | `src/skill_optimize/eval_set/cohort.rs` | src | m | 4 struct · 1 enum · 5 fn · 3 crate-vis | EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease | Date-cut sealed cohorts and the exposure ledger (ARCH-0053: "The ledger counts what each sealed cohort has… |
 | `src/skill_optimize/eval_set/sufficiency.rs` | src | m | 4 struct · 2 enum · 5 fn · 1 crate-vis | EvalLabelAsk, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason, WaitingDecision | The sufficiency card and the sparse owner-label ask (ARCH-0053; NOT-WORSE = A, EVAL-COLDSTART = C) |
 | `src/skill_optimize/gate.rs` | src | m | 5 const · 11 re-export · 11 crate-vis | — | SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →… |
