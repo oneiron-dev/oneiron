@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 302 facade rows, 1167 declarations.
-Inputs: 259 of 302 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 260 of 302 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 303 facade rows, 1172 declarations.
+Inputs: 260 of 303 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 261 of 303 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -1941,7 +1941,7 @@ class PackAdapterScript(TypedDict):
     script: str
 PackAdapter = PackAdapterBuiltin | PackAdapterScript
 PackInstallStatus = Literal["active", "candidate"]
-PackCandidateReason = Literal["rules_hit", "code_auto_install_off", "qualification_required", "advisories"]
+PackCandidateReason = Literal["rules_hit", "code_auto_install_off", "qualification_required", "advisories", "needs_world"]
 class BundledSkillPermissions(TypedDict):
     skill_id: str
     bins: list[str]
@@ -3698,6 +3698,22 @@ class ArtifactExportFile(TypedDict):
     content_hash: str
     born_with: BornWith
     content_base64: str
+class AgentPackExportRequest(TypedDict):
+    agent_ref: str
+    travel: NotRequired[TravelChoice | None]
+class OmittedKnowledge(TypedDict):
+    claim: str
+    reason: str
+class AgentPackExportFile(TypedDict):
+    path: str
+    content_base64: str
+class AgentPackExport(TypedDict):
+    agent_ref: str
+    version: str
+    content_hash: str
+    born_with: BornWith
+    omitted: list[OmittedKnowledge]
+    files: list[AgentPackExportFile]
 class BornFromRequest(TypedDict):
     task_ref: NotRequired[str | None]
     ask_ref: NotRequired[str | None]
@@ -4576,6 +4592,9 @@ class OfferStateSuperseded(TypedDict):
 class OfferStateAgedOut(TypedDict):
     kind: Literal["aged_out"]
 OfferState = OfferStateOpen | OfferStateJoined | OfferStateNotNow | OfferStateSuperseded | OfferStateAgedOut
+class OfferVoteTally(TypedDict):
+    join: int
+    not_now: int
 class OfferCard(TypedDict):
     offer_id: str
     room: EntityId
@@ -4591,6 +4610,7 @@ class OfferCard(TypedDict):
     created_at: int
     until: NotRequired[int | None]
     last_engaged_at: int
+    vote_tally: OfferVoteTally
 OfferAnswer = Literal["join", "not_now"]
 class OfferAnswerRequest(TypedDict):
     offer_id: str

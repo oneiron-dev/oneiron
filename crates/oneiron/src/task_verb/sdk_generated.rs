@@ -898,6 +898,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.agents.export_pack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::share_travel::AgentPackExportRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.born_from",
                 crate::code_run::vault_read::request_schema::<crate::blob_artifact::BornFromRequest>(
                 ),
@@ -2992,6 +2998,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.agents.export_pack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.born_from" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4529,6 +4542,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
+        "vault.agents.export_pack" => {
+            let _input: crate::share_travel::AgentPackExportRequest = decode(value.clone())?;
+        }
         "vault.artifacts.born_from" => {
             let _input: crate::blob_artifact::BornFromRequest = decode(value.clone())?;
         }
@@ -5370,6 +5386,7 @@ pub fn invoke(
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
+        "vault.agents.export_pack" => encode(vault_agents_export_pack(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
         "vault.artifacts.waits" => encode(vault_artifacts_waits(memory, decode(value)?)?),
@@ -7100,6 +7117,12 @@ pub fn vault_artifacts_export(
     input: crate::blob_artifact::ArtifactExportRequest,
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExportFile>> {
     memory.artifacts_export(&input)
+}
+pub fn vault_agents_export_pack(
+    memory: &Memory<'_>,
+    input: crate::share_travel::AgentPackExportRequest,
+) -> MemoryResult<crate::share_travel::AgentPackExport> {
+    memory.export_agent_pack(&input)
 }
 pub fn vault_artifacts_born_from(
     memory: &Memory<'_>,
