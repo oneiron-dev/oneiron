@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 224 facade rows, 642 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 184.
+// UniFFI census: 228 facade rows, 654 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 188.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -10114,6 +10114,220 @@ pub struct ArtifactCreateRequest {
     pub run_ref: Option<String>,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<crate::WireJson>,
+}
+
+/// `oneiron::core_write::shape::CoreWriteTextField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreWriteTextField {
+    #[serde(rename = "field")]
+    pub field: String,
+    #[serde(rename = "value")]
+    pub value: String,
+}
+
+/// `oneiron::core_write::conversations::ConversationCreateInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConversationCreateInput {
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(
+        rename = "occurred_start",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_start: Option<u64>,
+    #[serde(
+        rename = "occurred_end",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_end: Option<u64>,
+    #[serde(
+        rename = "learned_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_at: Option<u64>,
+    #[serde(rename = "body")]
+    pub body: crate::WireJson,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<Vec<CoreWriteTextField>>,
+}
+
+/// `oneiron::core_write::conversations::CoreEntityWriteReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreEntityWriteReceipt {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "entity_type")]
+    pub entity_type: u8,
+    #[serde(rename = "learned_at")]
+    pub learned_at: u64,
+    #[serde(rename = "body")]
+    pub body: crate::WireJson,
+}
+
+/// `oneiron::core_write::conversations::ConversationTurnCreateInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConversationTurnCreateInput {
+    #[serde(rename = "conversation")]
+    pub conversation: String,
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(
+        rename = "occurred_start",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_start: Option<u64>,
+    #[serde(
+        rename = "occurred_end",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_end: Option<u64>,
+    #[serde(
+        rename = "learned_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_at: Option<u64>,
+    #[serde(rename = "body")]
+    pub body: crate::WireJson,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<Vec<CoreWriteTextField>>,
+}
+
+/// `oneiron::core_write::dag::CoreDagAddressMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CoreDagAddressMode {
+    #[serde(rename = "broadcast")]
+    Broadcast,
+    #[serde(rename = "direct")]
+    Direct,
+}
+
+/// `oneiron::core_write::dag::CoreDagQuoteInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreDagQuoteInput {
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "start")]
+    pub start: u32,
+    #[serde(rename = "end")]
+    pub end: u32,
+}
+
+/// `oneiron::core_write::dag::DagRecordAppendInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DagRecordAppendInput {
+    #[serde(rename = "conversation")]
+    pub conversation: String,
+    #[serde(rename = "parent", default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(rename = "reply_to", default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    #[serde(rename = "addr", default, skip_serializing_if = "Option::is_none")]
+    pub addr: Option<CoreDagAddressMode>,
+    #[serde(rename = "to", default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<Vec<String>>,
+    #[serde(rename = "advance")]
+    pub advance: bool,
+    #[serde(rename = "body")]
+    pub body: crate::WireJson,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<Vec<CoreWriteTextField>>,
+    #[serde(
+        rename = "occurred_start",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_start: Option<u64>,
+    #[serde(
+        rename = "occurred_end",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_end: Option<u64>,
+    #[serde(
+        rename = "learned_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_at: Option<u64>,
+    #[serde(rename = "session", default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<CoreDagQuoteInput>,
+}
+
+/// `oneiron::core_write::dag::DagRecordAppendReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DagRecordAppendReceipt {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "head", default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(rename = "parent", default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
+/// `oneiron::core_write::batch::CoreBatchEntityInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreBatchEntityInput {
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "entity_type")]
+    pub entity_type: u8,
+    #[serde(
+        rename = "occurred_start",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_start: Option<u64>,
+    #[serde(
+        rename = "occurred_end",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_end: Option<u64>,
+    #[serde(
+        rename = "learned_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_at: Option<u64>,
+    #[serde(rename = "body")]
+    pub body: crate::WireJson,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<Vec<CoreWriteTextField>>,
+}
+
+/// `oneiron::core_write::batch::CoreBatchWriteInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreBatchWriteInput {
+    #[serde(rename = "entities")]
+    pub entities: Vec<CoreBatchEntityInput>,
+}
+
+/// `oneiron::core_write::batch::CoreBatchEntityReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreBatchEntityReceipt {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "entity_type")]
+    pub entity_type: u8,
+}
+
+/// `oneiron::core_write::batch::CoreBatchWriteReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreBatchWriteReceipt {
+    #[serde(rename = "count")]
+    pub count: u64,
+    #[serde(rename = "entities")]
+    pub entities: Vec<CoreBatchEntityReceipt>,
 }
 
 /// `oneiron::task_verb::sdk_memory::CreateNoteRequest`.

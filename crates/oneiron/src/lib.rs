@@ -210,6 +210,7 @@ pub mod code_view;
 pub mod codebase;
 pub mod contract_oracle;
 pub mod conversation_dag;
+pub mod core_write;
 pub(crate) mod credential_door;
 pub mod edit_distance;
 pub mod edit_roundtrip;

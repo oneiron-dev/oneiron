@@ -1,28 +1,25 @@
 use super::CORE_MAX_LIST_LIMIT;
 use super::CoreCreateEntityRequest;
-use super::CoreEntityWriteInput;
 use super::CoreEntityWriteResponse;
 use super::CoreListQuery;
 use super::CoreTextField;
+use super::DagWriteError;
 use super::DagTurnQuery;
 use super::SearchResponse;
 use super::collect_live_entity_page;
-use super::core_body_for_write;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_list_limit;
+use super::core_write_text;
 use super::encode_core_body;
 use super::facade::ROOM_TURN_HEADER;
 use super::is_deleted_shell_for_core_list;
 use super::json_payload;
 use super::parse_entity_id_param;
-use super::parse_optional_entity_id;
 use super::project_core_entity;
 use super::project_entity_ids;
 use super::query_params;
 use super::require_entity_type;
-use super::stage_core_entity_put;
-use super::write_core_entity;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -40,16 +37,20 @@ use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use oneiron::EdgeKind;
 use oneiron::claim::ScopedReadReceipt;
+use oneiron::core_write::{
+    ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt,
+};
 use oneiron::memory::{
     ConversationListFilter, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError,
 };
 use oneiron::registry::ENTITY_TYPE_CONVERSATION;
 use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::task_verb::sdk::AgentVerb;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::Arc;
@@ -296,8 +297,10 @@ fn refusal(error: MemoryError) -> EnvelopedApiError {
 pub(crate) async fn create_core_conversation(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    extensions: Extensions,
     payload: Result<Json<CreateConversationRequest>, JsonRejection>,
-) -> Result<Json<CoreEntityWriteResponse>, EnvelopedApiError> {
+) -> Result<Json<CoreEntityWriteResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let request = json_payload(payload)?;
     let req = request.entity;
@@ -305,46 +308,65 @@ pub(crate) async fn create_core_conversation(
         .map_err(|_| {
             crate::error::ApiError::bad_request("invalid conversation body", Some("body"))
         })?;
-    if !body.member_ids.is_empty() {
-        let actor = super::conversation_members::actor(&auth, request.actor)?;
-        let id = parse_optional_entity_id(req.id.as_deref(), "id")?;
-        let timestamps =
-            core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
-        let fields = super::core_text_fields(req.text.as_deref(), &req.body);
-        let fields: Vec<(&str, &str)> = fields
-            .iter()
-            .map(|(field, value)| (field.as_str(), value.as_str()))
-            .collect();
-        server
-            .vault
-            .create_conversation_with_text(
-                id,
-                &body,
-                actor,
-                timestamps.occurred,
-                timestamps.learned_at,
-                &fields,
-            )
-            .map_err(|e| core_engine_error("conversation create failed", e))?;
-        let item = project_core_entity(&server.vault, &id, View::Full)?.0;
-        return Ok(Json(CoreEntityWriteResponse {
-            id: id.to_hex(),
-            entity_type: ENTITY_TYPE_CONVERSATION,
-            item,
-        }));
+    // The route's own refusals first; the row mints what the body omits.
+    if let Some(id) = &req.id {
+        parse_entity_id_param(id, "id")?;
     }
-    write_core_entity(
-        &server.vault,
-        CoreEntityWriteInput {
-            id: req.id.as_deref(),
-            entity_type: ENTITY_TYPE_CONVERSATION,
-            occurred_start: req.occurred_start,
-            occurred_end: req.occurred_end,
-            learned_at: req.learned_at,
-            body: &req.body,
-            text: req.text.as_deref(),
-        },
-    )
+    core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
+    // A memberful create is authored by the actor the request binds; a
+    // plain put names none.
+    let members = !body.member_ids.is_empty();
+    let actor = members
+        .then(|| super::conversation_members::actor(&auth, request.actor))
+        .transpose()?;
+    let input = ConversationCreateInput {
+        id: req.id,
+        occurred_start: req.occurred_start,
+        occurred_end: req.occurred_end,
+        learned_at: req.learned_at,
+        body: req.body,
+        text: core_write_text(req.text),
+    };
+    // OF-181: `vault.conversations.create`, as an action when the
+    // credential binds one that writes as this actor, else through the
+    // row's own Vault door as the actor the request bound.
+    let receipt = match super::facade::action_routes::rest_action_bound(
+        &server, &auth, &headers, &input,
+    )? {
+        Some(bound) if actor.is_none_or(|actor| actor == bound.writes_as()) => {
+            let row = AgentVerb::VaultConversationsCreate;
+            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+            let output = super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &input, key,
+            )
+            .await?;
+            entity_receipt(output)?
+        }
+        _ => server.vault.write_core_conversation(&input, actor)?,
+    };
+    let id = parse_entity_id_param(&receipt.id, "id")?;
+    let item = if members {
+        project_core_entity(&server.vault, &id, View::Full)?.0
+    } else {
+        projection::project_entity_parts(
+            &id,
+            ENTITY_TYPE_CONVERSATION,
+            receipt.learned_at,
+            &encode_core_body(&receipt.body)?,
+            View::Full,
+        )
+    };
+    Ok(Json(CoreEntityWriteResponse {
+        id: receipt.id,
+        entity_type: ENTITY_TYPE_CONVERSATION,
+        item,
+    }))
+}
+
+/// A core write row's action output, as its receipt.
+fn entity_receipt(output: Value) -> Result<CoreEntityWriteReceipt, ApiError> {
+    serde_json::from_value(output)
+        .map_err(|_| ApiError::internal_server_error("write result encoding failed"))
 }
 
 /// List turns attached to a conversation.
@@ -408,8 +430,10 @@ pub(crate) async fn create_core_conversation_turn(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(conversation_id): Path<String>,
+    headers: HeaderMap,
+    extensions: Extensions,
     payload: Result<Json<CoreCreateTurnRequest>, JsonRejection>,
-) -> Result<Json<CoreEntityWriteResponse>, EnvelopedApiError> {
+) -> Result<Json<CoreEntityWriteResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     require_entity_type(
@@ -419,37 +443,47 @@ pub(crate) async fn create_core_conversation_turn(
         "conversation",
     )?;
     let req = json_payload(payload)?;
-    let id = parse_optional_entity_id(req.id.as_deref(), "id")?;
-    let timestamps = core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
-    let mut batch = server.vault.batch();
-    batch = stage_core_entity_put(
-        batch,
-        &id,
-        ENTITY_TYPE_TURN,
-        timestamps,
-        &req.body,
-        req.text.as_deref(),
-    )?
-    .edge_checked(&id, &conversation, 1.0);
-    batch.commit().map_err(|error| {
-        tracing::error!(kind = ?error.kind(), "core turn create failed");
-        core_engine_error("core turn create failed", error)
-    })?;
-    server.ai.turn_landed(
-        server.vault(),
-        oneiron::dreamer_wake::WakeTurnSubject::Vault,
-    );
-
-    let body = core_body_for_write(ENTITY_TYPE_TURN, &req.body);
+    // The route's own refusals first; the row mints what the body omits.
+    if let Some(id) = &req.id {
+        parse_entity_id_param(id, "id")?;
+    }
+    core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
+    let input = ConversationTurnCreateInput {
+        conversation: conversation.to_hex(),
+        id: req.id,
+        occurred_start: req.occurred_start,
+        occurred_end: req.occurred_end,
+        learned_at: req.learned_at,
+        body: req.body,
+        text: core_write_text(req.text),
+    };
+    // OF-181: `vault.conversations.turns.create`, as an action when the
+    // credential binds one, else through the row's own door. Either lands
+    // the turn on the vault once.
+    let receipt = match super::facade::action_routes::rest_action_bound(
+        &server, &auth, &headers, &input,
+    )? {
+        Some(bound) => {
+            let row = AgentVerb::VaultConversationsTurnsCreate;
+            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+            let output = super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &input, key,
+            )
+            .await?;
+            entity_receipt(output)?
+        }
+        None => super::facade::host_doors::write_core_turn(&server, input).await?,
+    };
+    let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = projection::project_entity_parts(
         &id,
         ENTITY_TYPE_TURN,
-        timestamps.learned_at,
-        &encode_core_body(&body)?,
+        receipt.learned_at,
+        &encode_core_body(&receipt.body)?,
         View::Full,
     );
     Ok(Json(CoreEntityWriteResponse {
-        id: id.to_hex(),
+        id: receipt.id,
         entity_type: ENTITY_TYPE_TURN,
         item,
     }))
