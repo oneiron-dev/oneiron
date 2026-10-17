@@ -25,7 +25,8 @@ mod person_threshold;
 mod proposals;
 mod strength;
 pub use applied::{
-    AppliedMaintenance, MAINTENANCE_APPLY_KIND, MAINTENANCE_REVERT_KIND, MaintenanceRevert,
+    AppliedMaintenance, IDENTITY_PROVISIONAL_KIND, MAINTENANCE_APPLY_KIND, MAINTENANCE_REVERT_KIND,
+    MaintenanceRevert, MaintenanceTarget,
 };
 pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
