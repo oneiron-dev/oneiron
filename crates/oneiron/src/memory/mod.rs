@@ -54,6 +54,7 @@ mod key_value;
 mod lifted_view;
 mod locality;
 mod machine_write;
+mod note_tombstone;
 mod notes;
 mod outbound;
 mod owner_door;

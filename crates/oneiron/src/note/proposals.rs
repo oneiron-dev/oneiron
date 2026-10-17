@@ -205,10 +205,19 @@ impl Vault {
             .inspect(|bundle| self.notify_landed(bundle))
     }
     pub fn note_proposal(&self, id: EntityId) -> Result<NoteReviewBundle> {
-        let txn = self.store.env.read_txn()?;
-        NOTE_PROPOSAL_BUNDLE
-            .get(&self.store, &txn, &id)?
-            .ok_or_else(|| invalid("missing proposal record"))
+        let bundle = {
+            let txn = self.store.env.read_txn()?;
+            NOTE_PROPOSAL_BUNDLE
+                .get(&self.store, &txn, &id)?
+                .ok_or_else(|| invalid("missing proposal record"))?
+        };
+        // A waiting fork can hold an archived NOTE's words: serving them
+        // is a read since its archive (FIX 2419).
+        super::archive_read::witness_archived_reads(
+            self,
+            bundle.waiting.iter().map(|fork| fork.note),
+        )?;
+        Ok(bundle)
     }
     pub fn review_note_proposal(
         &self,

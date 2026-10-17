@@ -148,7 +148,7 @@ impl Vault {
         let data = encode_claim_body(body)?;
         // Full structural validation runs here and again at the BatchOp write
         // chokepoint with the exact same reserved-door setting.
-        validate_claim_body_bytes(&data, allow_reserved_predicate)?;
+        validate_claim_body_and_decode_in_txn(&self.store, wtxn, &data, allow_reserved_predicate)?;
 
         let mut ops = vec![BatchOp::Put {
             id: *id,

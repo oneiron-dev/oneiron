@@ -415,6 +415,21 @@ fn mark_one_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
     crate::provenance::refresh_stale_wrapper_in_txn(store, txn, id)
 }
 
+/// Whether any entity is derived from some version of `source`: the NOTE
+/// tombstone review counts such a source as linked (OF-073, FIX 2419).
+pub(crate) fn source_has_dependents_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    source: &EntityId,
+) -> Result<bool> {
+    let prefix = [DEP, source.as_bytes()].concat();
+    Ok(store
+        .vault_meta()
+        .prefix_iter(txn, &prefix)?
+        .next()
+        .transpose()?
+        .is_some())
+}
 /// The epoch summaries written from `id`.
 fn epoch_dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
     let prefix = [DEP, id.as_bytes()].concat();
