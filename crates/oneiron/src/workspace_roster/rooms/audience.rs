@@ -186,7 +186,10 @@ pub(crate) fn thread_audience_allows_in(
     Ok(match thread_audience_in(vault, txn, room, record)? {
         None => true,
         Some(ids) => {
-            ids.contains(&actor) && vault.room_audience_members_in_txn(txn, room)?.contains(&actor)
+            ids.contains(&actor)
+                && vault
+                    .room_audience_members_in_txn(txn, room)?
+                    .contains(&actor)
         }
     })
 }

@@ -170,22 +170,21 @@ pub(crate) fn thread_tasks(
             continue;
         }
         if !audiences.contains_key(&thread) {
-            let narrowed = match crate::conversation_dag::conversation_of(
-                &vault.store,
-                &txn,
-                &thread,
-            )
-            .and_then(|room| {
-                crate::workspace_roster::thread_members_in(vault, &txn, room, thread, &audience)
-            }) {
-                Ok(narrowed) => narrowed,
-                // A thread whose root is gone names no audience of its own.
-                Err(
-                    Error::EntityNotFound
-                    | Error::Record(crate::error::RecordError::InvalidConversationDag(_)),
-                ) => audience.clone(),
-                Err(error) => return Err(error.into()),
-            };
+            let narrowed =
+                match crate::conversation_dag::conversation_of(&vault.store, &txn, &thread)
+                    .and_then(|room| {
+                        crate::workspace_roster::thread_members_in(
+                            vault, &txn, room, thread, &audience,
+                        )
+                    }) {
+                    Ok(narrowed) => narrowed,
+                    // A thread whose root is gone names no audience of its own.
+                    Err(
+                        Error::EntityNotFound
+                        | Error::Record(crate::error::RecordError::InvalidConversationDag(_)),
+                    ) => audience.clone(),
+                    Err(error) => return Err(error.into()),
+                };
             audiences.insert(thread, narrowed);
         }
         // Exhaust the members' tasks for an exact room-local census.

@@ -450,7 +450,8 @@ impl Memory<'_> {
                     // A stored private thread's TURN takes words from its
                     // audience alone, as on base.
                     if let AdmittedTurn::Existing(record) = &admission.turn
-                        && let Some(binding) = crate::workspace_roster::thread_binding(&record.body)?
+                        && let Some(binding) =
+                            crate::workspace_roster::thread_binding(&record.body)?
                         && !crate::workspace_roster::thread_root_readable_in(
                             self.vault,
                             wtxn,

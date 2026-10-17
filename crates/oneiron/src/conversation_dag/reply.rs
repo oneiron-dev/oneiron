@@ -428,8 +428,9 @@ impl Vault {
             chain.extend(chain_in_txn(self, &txn, conversation, root, None)?);
             let mut timed = Vec::with_capacity(chain.len());
             for id in chain {
-                let row = crate::ports::EntityStoreRead::port_entity_record(&self.store, &txn, &id)?
-                    .ok_or(Error::EntityNotFound)?;
+                let row =
+                    crate::ports::EntityStoreRead::port_entity_record(&self.store, &txn, &id)?
+                        .ok_or(Error::EntityNotFound)?;
                 timed.push((id, row.occurred.start));
             }
             timed

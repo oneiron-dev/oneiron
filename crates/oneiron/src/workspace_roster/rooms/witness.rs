@@ -1,11 +1,11 @@
 //! Claim-before-speaking guard inside the existing witness transaction.
-use super::participation::{
-    addressable_agent_in_txn, admit_speech_in, agent_standing_in_txn, participant_in_txn,
-    record_addressed_in_txn, thread_root_in_txn,
-};
 use super::audience::{
     ThreadBinding, thread_audience_allows_in, thread_audience_in, thread_binding,
     thread_root_readable_in, validate_private_audience_in,
+};
+use super::participation::{
+    addressable_agent_in_txn, admit_speech_in, agent_standing_in_txn, participant_in_txn,
+    record_addressed_in_txn, thread_root_in_txn,
 };
 use super::*;
 use crate::conversation_dag::{ProvenRoomQuote, QuotedReply};

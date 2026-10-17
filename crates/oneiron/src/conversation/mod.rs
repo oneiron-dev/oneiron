@@ -29,8 +29,7 @@ pub use turn_actions::{
     TurnActionReceipt, TurnActionRequest,
 };
 pub(crate) use visibility::{
-    AudienceCache, conversation_summary_covers, private_threads_readable_raw_in,
-    room_for_record_in,
+    AudienceCache, conversation_summary_covers, private_threads_readable_raw_in, room_for_record_in,
 };
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};

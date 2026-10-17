@@ -327,7 +327,9 @@ pub(super) fn require_thread_audience_in(
     actor: EntityId,
 ) -> Result<()> {
     match branch {
-        Some(thread) => super::audience::require_thread_audience_in(vault, txn, room, thread, actor),
+        Some(thread) => {
+            super::audience::require_thread_audience_in(vault, txn, room, thread, actor)
+        }
         None => Ok(()),
     }
 }
