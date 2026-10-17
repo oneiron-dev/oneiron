@@ -43146,7 +43146,7 @@
      "path": "src/tagging/provisional.rs",
      "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 5,
       "struct": 1
      }
