@@ -295,10 +295,9 @@ pub(super) fn live_axes(
     }) else {
         // A floor that regressed offline on this basis opened no trial: the
         // failed preflight is the evidence, and the floor rejects.
-        return super::preflight::failed_preflight_axes(vault, proposal, basis, definition)?
-            .ok_or(retry(
-                "a project goal's primary axes need a live measurement of this proposal first",
-            ));
+        return super::preflight::failed_preflight_axes(vault, proposal, basis, definition)?.ok_or(
+            retry("a project goal's primary axes need a live measurement of this proposal first"),
+        );
     };
     let kind = |name: &str| {
         definition

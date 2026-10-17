@@ -22,12 +22,12 @@ pub use owner_args::{
     RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
     SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
+pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevokeArgs};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
     VaultKeyNamedArgs,
 };
-pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevokeArgs};
 pub use wake_args::{WakeArgs, WakeCommand};
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;

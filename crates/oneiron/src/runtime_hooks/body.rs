@@ -6,8 +6,7 @@ use std::time::Instant;
 use crate::{EdgeActorClass, EntityId, Result};
 
 /// Answers one `ai.verdict` call of a body; the refusal text otherwise.
-pub type HookVerdictCall<'a> =
-    &'a mut dyn FnMut(&str) -> std::result::Result<String, String>;
+pub type HookVerdictCall<'a> = &'a mut dyn FnMut(&str) -> std::result::Result<String, String>;
 
 /// Runs one hook body in a bounded sandbox.
 pub trait HookBodyRuntime: Send + Sync {

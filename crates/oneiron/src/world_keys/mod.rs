@@ -63,12 +63,12 @@ pub use self::vault_key::{
     NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind,
     escrow_recipient, passkey_prf_input,
 };
-pub use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;
 pub use oneiron_authority::authority::{
     FIRST_GENERATION, PolicyRevision, WORLD_KEY_EPOCH, WorldKeyId, WrapRecipient,
 };
+pub use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 
 use zeroize::Zeroizing;
 
