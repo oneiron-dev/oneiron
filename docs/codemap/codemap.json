@@ -4867,7 +4867,7 @@
      "path": "src/blob_artifact/born_from.rs",
      "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -27882,7 +27882,7 @@
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -67651,8 +67651,18 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 10,
-      "fn": 14,
+      "fn": 15,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/jobs.rs",
+     "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -69638,7 +69648,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69766,7 +69776,7 @@
    },
    "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 546,
+   "source_files": 547,
    "test_files": 182
   },
   "oneiron-spawn": {
