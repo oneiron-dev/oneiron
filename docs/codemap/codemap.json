@@ -469,7 +469,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 8
      }
@@ -14969,7 +14969,7 @@
      "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 15,
       "struct": 4
@@ -15677,7 +15677,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SourceRankingPolicy"
@@ -15685,7 +15685,7 @@
      "path": "src/context_pack/source_ranking.rs",
      "purpose": "PACK data for provenance-aware claim ordering",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -17834,7 +17834,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 3,
       "re-export": 18
      }
@@ -18858,7 +18858,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/duplicate.rs",
      "purpose": "`duplicate_work` on action digests (agent-mind §3.4, OF-568): two attempts ran the same action on the same…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -18869,6 +18869,22 @@
      "purpose": "`loop` over an agent run's own calls",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AppliedMaintenance",
+      "MaintenanceRevert"
+     ],
+     "path": "src/dreamer_runner/maintenance/applied.rs",
+     "purpose": "Dreamer maintenance that applies at once (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -18969,9 +18985,9 @@
       "CuratorTrigger"
      ],
      "path": "src/dreamer_runner/maintenance/curator.rs",
-     "purpose": "Curator grading data and minimum-force proposals",
+     "purpose": "Curator grading data and minimum-force findings",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -19005,8 +19021,8 @@
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
       "const": 5,
-      "crate-vis": 1,
-      "fn": 13,
+      "crate-vis": 3,
+      "fn": 14,
       "struct": 9
      }
     },
@@ -19087,7 +19103,7 @@
       "crate-vis": 7,
       "fn": 1,
       "mod": 14,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -19119,9 +19135,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/proposals.rs",
-     "purpose": "The shared Generated/Proposed writer for deterministic maintenance findings",
+     "purpose": "The shared Generated writer for deterministic maintenance findings",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {
@@ -28779,7 +28795,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "re-export": 2,
       "struct": 5
      }
@@ -35310,7 +35326,7 @@
      "path": "src/ports/lmdb_claim.rs",
      "purpose": "Claim adapter preserves the history door; current-state queries exclude stale claims",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -35955,7 +35971,7 @@
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 8,
       "struct": 3
@@ -41605,13 +41621,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/agent_admission.rs",
+     "purpose": "The receiving half of the AgentPack another party shared (OF-491, FIX 2041 and 3168)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AgentPackFacets"
      ],
      "path": "src/skill_hub/pack_catalog/agent_facets.rs",
      "purpose": "Typed, inert AGENT_PACK facets on the common pack source path",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -42643,7 +42669,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 9,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -42681,6 +42707,20 @@
      "purpose": "Calibration policy row in trusted Gate manifests",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResponsePairPick"
+     ],
+     "path": "src/skill_optimize/response_pair.rs",
+     "purpose": "The owner's pick between two frozen responses (ARCH-0053 #judge-swap, FIX 2797): which of a blind preference…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -44412,7 +44452,7 @@
      "path": "src/sync/client/residence/authority.rs",
      "purpose": "Authority history from the home for a machine that syncs what it opened (OF-469)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -45259,14 +45299,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AuthorityCheckpointPart",
       "AuthorityPageImport"
      ],
      "path": "src/sync/residence/authority_tail.rs",
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
-      "const": 1,
-      "fn": 6,
-      "struct": 1
+      "const": 2,
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -45350,7 +45391,7 @@
      "path": "src/sync/room_facts.rs",
      "purpose": "FIX 1794 (OF-522): a room's side rows on the window plane",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -45906,13 +45947,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/withdrawn_cutoffs.rs",
      "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -49252,7 +49293,7 @@
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -51037,13 +51078,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/replica.rs",
      "purpose": "OF-522: a room's turn rows on the owner's other machines",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 17
      }
     },
     {
@@ -52877,7 +52918,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53626,14 +53667,14 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53885,9 +53926,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 179,
+   "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3270,
+   "source_files": 3273,
    "test_files": 902
   },
   "oneiron-android": {
@@ -56794,7 +56835,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 49,
+      "const": 50,
       "crate-vis": 1
      }
     },
@@ -61018,7 +61059,7 @@
      "purpose": "Which models a node offers the owner's other nodes, and the row a node writes for each one it hears of (FIX…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -66760,6 +66801,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/dreamer_maintenance_routes.rs",
+     "purpose": "`/v1/owner/dreamer/maintenance` (OF-023, owner ruling 10-18: \"autoapply + revert rather than holdout\"): the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/dreamer_routes.rs",
      "purpose": "`/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner…",
      "surface": {
@@ -69266,7 +69317,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/device_sync.rs",
@@ -70961,7 +71012,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 20,
       "fn": 16,
       "struct": 3
      }
@@ -70986,7 +71037,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 19,
       "re-export": 14,
       "struct": 2
@@ -72859,7 +72910,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 308,
+     "files": 309,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73001,7 +73052,7 @@
     "device_sync": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
@@ -73253,7 +73304,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 610,
+   "source_files": 611,
    "test_files": 182
   },
   "oneiron-spawn": {
