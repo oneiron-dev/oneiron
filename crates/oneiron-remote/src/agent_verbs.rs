@@ -783,7 +783,7 @@ impl OneironClient {
                     oneiron::office_body::OfficeBodyView,
                 >(client, verb, &input),
                 "vault.artifacts.body.commits" => remote_agent_verb_output::<
-                    Vec<oneiron::provenance::text_commit::TextCommitReceipt>,
+                    Vec<oneiron::office_body::OfficeBodyCommitView>,
                 >(client, verb, &input),
                 "vault.artifacts.body.edit" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyEdit,
@@ -1362,14 +1362,16 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.export", value)
     }
-    /// Lists governance receipts, newest first.
+    /// Lists governance receipts, newest first: the gate decision ledger, or
+    /// the receipts of the named kinds.
     pub fn vault_receipts(
         &self,
         limit: usize,
+        kinds: &[String],
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
         let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
             limit: Some(limit),
-            ..Default::default()
+            kinds: kinds.to_vec(),
         };
         oneiron::memory::caps::check_limit(
             input
@@ -3924,11 +3926,11 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.body.read", value)
     }
-    /// Every commit receipt of a live body, in commit order.
+    /// Every commit receipt of a live body, in commit order, or one actor's.
     pub fn vault_artifacts_body_commits(
         &self,
-        input: &oneiron::office_body::OfficeBodyArtifactRequest,
-    ) -> Result<Vec<oneiron::provenance::text_commit::TextCommitReceipt>, MemoryError> {
+        input: &oneiron::office_body::OfficeBodyCommitsRequest,
+    ) -> Result<Vec<oneiron::office_body::OfficeBodyCommitView>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

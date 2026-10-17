@@ -206,9 +206,9 @@ impl ScopedRead<'_> {
     /// clock, the visibility check `admit`, the reader's own bound on the
     /// labels `own` counts, and the label `put` writes.
     ///
-    /// Each reader's labels on a link or item are bounded by the policy,
-    /// except the vault owner's: an owner past the bound files anyway, and
-    /// the first such report on one leaves the typed own-rate check.
+    /// No reader is refused for how many labels it files (rule 5): past the
+    /// policy's bound on one link or item, a reader's label files anyway, and
+    /// the first such report on it leaves the typed own-rate check.
     fn file_weave_label<T>(
         &self,
         auth: &AuthenticatedOwner,
@@ -255,15 +255,12 @@ impl ScopedRead<'_> {
             .ok_or(Error::InvalidConfig(
                 "weave correction policy unavailable".into(),
             ))?;
-        // Writers enforce the reader's bound in this SAME serialized txn. The
-        // bound is the reader's own: another reader's labels never spend it.
+        // Writers count the reader's own labels in this SAME serialized txn;
+        // another reader's labels never count toward its bound.
         let own = own(&txn, actor)?;
         if own >= limit {
-            // Capabilities first: the owner's own reports are never refused
-            // on count. Every other reader stays bounded.
-            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &actor)? {
-                return Err(Error::IndexOverflow("weave correction labels"));
-            }
+            // Capabilities first: a count never refuses a label. Past the
+            // bound it leaves the advisory check instead.
             crate::own_rate::observe_in_txn(
                 &self.vault.store,
                 &mut txn,
