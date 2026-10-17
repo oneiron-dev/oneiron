@@ -24,6 +24,7 @@ use crate::write_envelope::WriteActor;
 use super::consts::TASK_REALIZE_ATTEMPT_KIND;
 use super::highway::{attempt_hex, invalid_state, local_node_in, qualified_key};
 use super::highway_accept::{Lane, lane_of};
+use super::runner_done::RunnerDoneAnswer;
 use super::highway_types::{
     AttemptHandle, HostBinding, TaskCallReceipt, TaskHandle, TaskOutcome, TaskPhase, TaskReport,
     TaskReportBody, TaskVia,
@@ -68,7 +69,7 @@ pub(crate) fn runner_task_key(record: &AttemptRecord, transition: &str) -> Strin
 /// The TASK a runner's row realizes, while it is one the runner may move:
 /// a live, uncancelled standard task on a runner lane. `None` means no TASK
 /// write is owed.
-fn runner_task_in(
+pub(super) fn runner_task_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &AttemptRecord,
@@ -132,6 +133,7 @@ pub(crate) fn report_runner_task_in_txn(
     run_ref: Option<EntityId>,
     report_key: &str,
     body: TaskReportBody,
+    judged: Option<RunnerDoneAnswer>,
 ) -> MemoryResult<Option<TaskCallReceipt>> {
     let Some(task_ref) = runner_task_in(vault, txn, record)? else {
         return Ok(None);
@@ -155,6 +157,7 @@ pub(crate) fn report_runner_task_in_txn(
                 report_key: report_key.to_owned(),
                 body,
             },
+            judged,
         )
         .map(Some)
 }
@@ -212,6 +215,9 @@ pub(crate) enum RunnerSettle<'a> {
     /// The try finished. Its row's result, when it names a durable entity,
     /// is the TASK's result; without one no TASK report is made.
     Done,
+    /// The try finished, as [`Self::Done`], and its runner answered "Done
+    /// means met?" before it settled (OF-533).
+    Judged(RunnerDoneAnswer),
     /// The try failed; `retryable` when the queue tries it again.
     Failed { error: &'a str, retryable: bool },
 }
@@ -243,7 +249,7 @@ fn runner_actor_in(
     Ok(None)
 }
 
-fn runner_refusal(error: MemoryError) -> Error {
+pub(super) fn runner_refusal(error: MemoryError) -> Error {
     Error::InvalidConfig(format!("runner task transition refused: {}", error.message))
 }
 
@@ -282,8 +288,12 @@ pub(crate) fn report_leased_task_in_txn(
     if record.task_ref.is_none() || !record.state.is_running() {
         return Ok(());
     }
+    let judged = match settle {
+        RunnerSettle::Judged(answer) => Some(answer),
+        RunnerSettle::Done | RunnerSettle::Failed { .. } => None,
+    };
     let (transition, body) = match settle {
-        RunnerSettle::Done => {
+        RunnerSettle::Done | RunnerSettle::Judged(_) => {
             let Some(result_ref) = record
                 .result_ref
                 .as_ref()
@@ -326,6 +336,7 @@ pub(crate) fn report_leased_task_in_txn(
         None,
         &runner_task_key(&record, transition),
         body,
+        judged,
     )
     .map_err(runner_refusal)?;
     Ok(())
