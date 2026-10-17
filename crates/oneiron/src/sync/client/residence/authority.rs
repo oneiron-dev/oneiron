@@ -15,6 +15,13 @@
 //! the fold asks for the whole coverage of the image this machine adopted,
 //! that coverage pages by the image itself, with no hash list
 //! ([`Vault::authority_history_fetch`]); isolated gaps keep exact hashes.
+//!
+//! A machine whose owner-authorized pairing returned a checkpoint pin adopts
+//! that image first, while this vault has adopted none: it reads the image
+//! the pin names from the home a part at a time
+//! (`residence.authority.checkpoint`), keeps the attestations made with the
+//! pin's own key bindings, and hands both to the adoption door, which
+//! verifies them against the pin and refuses what this vault cannot take.
 
 use base64::Engine;
 use serde::Deserialize;
@@ -25,13 +32,15 @@ use std::collections::BTreeSet;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
-    AUTHORITY_HISTORY_PAGE_MAX, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
+    AUTHORITY_CHECKPOINT_V2_MAX_BYTES, AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation,
+    AuthorityCheckpointPin, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
     AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
     decode_authority_log_entry_body,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
-    AUTHORITY_TAIL_PAGE_MAX, held_authority_entries, import_authority_page,
+    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, held_authority_entries,
+    import_authority_page,
 };
 use crate::sync::transport::TransportError;
 
@@ -63,17 +72,45 @@ struct AuthorityRangeReply {
     next: Option<String>,
 }
 
+/// One part of a kept checkpoint image.
+#[derive(Deserialize)]
+struct AuthorityCheckpointReply {
+    total: u64,
+    part: String,
+    /// On the part at offset zero: the attestations the home keeps for it.
+    #[serde(default)]
+    attestations: Vec<AuthorityCheckpointAttestation>,
+}
+
 fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
 }
 
 impl SyncClient {
     /// Takes in the signed authority entries the home holds and this machine
-    /// lacks, a page at a time, then appends those the home lacks. Returns
-    /// how many it imported.
+    /// lacks, a page at a time, then appends those the home lacks. A machine
+    /// whose pairing pinned a checkpoint adopts its image first, while this
+    /// vault has adopted none. Returns how many entries it imported.
     pub async fn catch_up_authority(&self) -> Result<usize, TransportError> {
         catch_up_authority(&self.vault, &self.config).await
     }
+}
+
+/// Whether this vault holds an adopted checkpoint, read without verifying
+/// it.
+fn checkpoint_adopted(vault: &Vault) -> crate::Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .authority_checkpoint_expectation_in_txn(&txn)?
+        .adopted_pin_digest
+        .is_some())
+}
+
+/// Whether `config` names a checkpoint pin this vault has yet to adopt an
+/// image under: its first authority catch-up adopts one.
+pub(crate) fn pinned_checkpoint_pending(vault: &Vault, config: &SyncClientConfig) -> bool {
+    config.authority_checkpoint_pin.is_some()
+        && checkpoint_adopted(vault).is_ok_and(|adopted| !adopted)
 }
 
 /// [`SyncClient::catch_up_authority`] on a vault and a client config alone,
@@ -86,6 +123,13 @@ pub(crate) async fn catch_up_authority(
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
         return Err(TransportError::Storage("home node offline".into()));
     };
+    // A checkpoint that cannot be read this round holds back no tail.
+    if let Some(pin) = &config.authority_checkpoint_pin
+        && !checkpoint_adopted(vault).map_err(storage)?
+        && let Err(error) = adopt_pinned_checkpoint(vault, &mut rpc, pin).await
+    {
+        tracing::warn!(%error, "pinned authority checkpoint not read");
+    }
     let mut taken = 0;
     let mut wanted = None;
     // Entries refused this round: named as held, so the home pages past them.
@@ -141,6 +185,82 @@ pub(crate) async fn catch_up_authority(
         );
     }
     Ok(taken)
+}
+
+/// Adopts the checkpoint image `pin` names (OF-469): read from the home, its
+/// attestations kept to those made with the pin's own key bindings, then
+/// verified against the pin and adopted in one write. The adoption door
+/// decides what this vault takes: a refusal is logged, and the tail folds
+/// as it would have.
+async fn adopt_pinned_checkpoint(
+    vault: &Vault,
+    rpc: &mut ResidenceRpc,
+    pin: &AuthorityCheckpointPin,
+) -> Result<(), TransportError> {
+    let Some((image, mut attestations)) = fetch_authority_checkpoint(rpc, &pin.checkpoint).await?
+    else {
+        tracing::warn!("the home serves no image of the pinned authority checkpoint");
+        return Ok(());
+    };
+    attestations
+        .retain(|attestation| pin.binding(&attestation.binding.root) == Some(&attestation.binding));
+    match vault.adopt_authority_checkpoint(pin, &image, &attestations) {
+        Ok(_) => tracing::info!("pinned authority checkpoint adopted"),
+        Err(error) => tracing::warn!(%error, "pinned authority checkpoint refused"),
+    }
+    Ok(())
+}
+
+/// The checkpoint image the home keeps at `checkpoint` and the attestations
+/// it keeps for it, read a part at a time. `None` when the home refuses the
+/// read or keeps no such image.
+async fn fetch_authority_checkpoint(
+    rpc: &mut ResidenceRpc,
+    checkpoint: &[u8; 32],
+) -> Result<Option<(Vec<u8>, Vec<AuthorityCheckpointAttestation>)>, TransportError> {
+    let mut image = Vec::new();
+    let mut attestations = Vec::new();
+    let mut total = None;
+    loop {
+        let reply = match rpc
+            .request(
+                "residence.authority.checkpoint",
+                json!({
+                    "checkpoint": base64::engine::general_purpose::STANDARD.encode(checkpoint),
+                    "offset": image.len(),
+                }),
+            )
+            .await
+        {
+            Ok(reply) => reply,
+            Err(TransportError::InvalidPayload(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let reply: AuthorityCheckpointReply =
+            serde_json::from_value(reply).map_err(|_| refused())?;
+        if *total.get_or_insert(reply.total) != reply.total
+            || reply.total > AUTHORITY_CHECKPOINT_V2_MAX_BYTES as u64
+            || (!image.is_empty() && !reply.attestations.is_empty())
+        {
+            return Err(refused());
+        }
+        let part = base64::engine::general_purpose::STANDARD
+            .decode(reply.part)
+            .map_err(|_| refused())?;
+        if part.is_empty()
+            || part.len() > AUTHORITY_CHECKPOINT_PART_MAX
+            || (image.len() + part.len()) as u64 > reply.total
+        {
+            return Err(refused());
+        }
+        if image.is_empty() {
+            attestations = reply.attestations;
+        }
+        image.extend_from_slice(&part);
+        if image.len() as u64 == reply.total {
+            return Ok(Some((image, attestations)));
+        }
+    }
 }
 
 /// Appends to the home the signed entries it named as lacking, parents

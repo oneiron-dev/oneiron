@@ -9,8 +9,8 @@ use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, authority_append_for,
-    authority_range_for, authority_tail_for, authority_wanted, home_search_candidates,
-    index_selection_revision, promotion_snapshot_with, sealed_shelf_after,
+    authority_checkpoint_part_for, authority_range_for, authority_tail_for, authority_wanted,
+    home_search_candidates, index_selection_revision, promotion_snapshot_with, sealed_shelf_after,
     sealed_shelf_packet_part, selected_item_blob_with, shelve_sealed_window,
     shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
     wanted_sealed_replacements, window_index_page, window_index_projection_with,
@@ -207,6 +207,15 @@ struct AuthorityRangeCovered {
     upper_inclusive: Option<String>,
 }
 
+/// A part of the checkpoint image a machine adopts (OF-469): the image's id
+/// in base64 and the byte offset the part starts at.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityCheckpointRequest {
+    checkpoint: String,
+    offset: u64,
+}
+
 /// The signed authority entries a machine appends, each canonical signed
 /// body in base64, parents first (OF-469).
 #[derive(Deserialize)]
@@ -245,6 +254,7 @@ pub(super) fn run(
             "residence.authority.tail" => authority_tail(server, peer, request.params),
             "residence.authority.append" => authority_append(server, peer, request.params),
             "residence.authority.range" => authority_range(server, peer, request.params),
+            "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
             _ => Err(AppError::bad_request(
                 "unknown residence RPC",
                 Some("method"),
@@ -1048,6 +1058,35 @@ fn authority_range(
             "rows": page.rows.iter().map(|row| encode(row)).collect::<Vec<_>>(),
             "unheld": encode(&unheld),
             "next": page.next.map(|next| encode(&next)),
+        }),
+        Some(Vec::new()),
+    ))
+}
+
+/// One part of the checkpoint image this home keeps at the id asked for,
+/// with its whole length and, on the part at offset zero, the attestations
+/// kept for it (OF-469). Only a machine of the owner's is served; any other,
+/// an image not kept here and an offset past its end look missing. Nothing
+/// here is trusted there: the machine adopts the image only once it verifies
+/// against the pin its pairing returned.
+fn authority_checkpoint(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: AuthorityCheckpointRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let id = one_hash(&input.checkpoint)?;
+    let part = authority_checkpoint_part_for(&server.vault, peer, &id, input.offset)
+        .map_err(|_| AppError::not_found("authority checkpoint", None))?
+        .ok_or_else(|| AppError::not_found("authority checkpoint", None))?;
+    let attestations = serde_json::to_value(&part.attestations)
+        .map_err(|_| AppError::internal_server_error("authority checkpoint unavailable"))?;
+    Ok((
+        json!({
+            "total": part.total,
+            "part": base64::engine::general_purpose::STANDARD.encode(&part.part),
+            "attestations": attestations,
         }),
         Some(Vec::new()),
     ))

@@ -56,6 +56,11 @@ pub struct SyncClientConfig {
     /// paired home machine's mesh connection (OF-535). The upgrade still
     /// names `server_url`, and every slip and machine proof is the same.
     pub mesh_dialer: Option<std::sync::Arc<dyn crate::sync::SyncDialer>>,
+    /// The authority checkpoint pin this machine's owner-authorized pairing
+    /// returned (OF-469), never one the home hands over. Until this vault has
+    /// adopted a checkpoint, each authority catch-up first fetches the image
+    /// the pin names from the home and adopts it, then folds the tail.
+    pub authority_checkpoint_pin: Option<crate::authority::AuthorityCheckpointPin>,
 }
 
 impl Default for SyncClientConfig {
@@ -78,6 +83,7 @@ impl Default for SyncClientConfig {
             reconnect_initial_ms: 1_000,
             ephemeral_timeout_ms: 30_000,
             mesh_dialer: None,
+            authority_checkpoint_pin: None,
         }
     }
 }
