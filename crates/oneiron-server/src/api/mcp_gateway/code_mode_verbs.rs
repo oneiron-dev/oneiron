@@ -36,6 +36,7 @@ use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mc
 use super::admission::{mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb};
 use super::tasks_response::{execute_agent_verb_input, mcp_agent_verb_arguments};
 use super::{McpCallContext, McpGatewayError};
+use crate::decision_host::PLACEMENT_BUDGET;
 use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
@@ -49,6 +50,7 @@ use oneiron::code_run::{
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
 use oneiron::llm::decision::{DecisionRung, RoutineOutcome};
 use oneiron::memory::{HostWriteOrigin, Memory};
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
     AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
@@ -62,6 +64,7 @@ use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 /// The verb door one `execute_code` run binds, under that call's connector.
 pub(crate) struct McpCodeModeVerbs {
@@ -347,9 +350,9 @@ impl RoutineDecider for LadderDecider {
 }
 
 /// The vault's replay library, as the run's browser files and reads it:
-/// what it files names the run's caller.
+/// what it files names the run's caller, placed through the host's ladder.
 struct VaultLibrary {
-    vault: Arc<oneiron::Vault>,
+    server: Arc<SyncServer>,
     by: oneiron::EntityId,
 }
 
@@ -363,7 +366,7 @@ impl WorkflowLibrary for VaultLibrary {
         site: &str,
         subgoal: Option<&str>,
     ) -> Result<Vec<LibraryCard>, BrowserError> {
-        Ok(site_workflows(&self.vault, site, subgoal)
+        Ok(site_workflows(&self.server.vault, site, subgoal)
             .map_err(library_failed)?
             .iter()
             .map(WorkflowRecord::card)
@@ -374,7 +377,7 @@ impl WorkflowLibrary for VaultLibrary {
         let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
             return Ok(None);
         };
-        Ok(oneiron::browser_library::workflow(&self.vault, id)
+        Ok(oneiron::browser_library::workflow(&self.server.vault, id)
             .map_err(library_failed)?
             .map(|record| record.program))
     }
@@ -385,13 +388,19 @@ impl WorkflowLibrary for VaultLibrary {
         program: &WorkflowProgram,
         proof: &WorkflowProof,
     ) -> Result<String, BrowserError> {
+        let deadline = RetrievalDeadline::hard(Instant::now(), PLACEMENT_BUDGET);
+        let decisions = self
+            .server
+            .decision_host()
+            .placement_decisions(self.by, &deadline);
         file_workflow(
-            &self.vault,
+            &self.server.vault,
             self.by,
             site,
             program,
             proof,
-            self.vault.now_recorded_at(),
+            self.server.vault.now_recorded_at(),
+            Some(&decisions),
         )
         .map(|id| id.to_hex())
         .map_err(library_failed)
@@ -401,8 +410,13 @@ impl WorkflowLibrary for VaultLibrary {
         let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
             return Ok(());
         };
-        record_workflow_run(&self.vault, id, met, self.vault.now_recorded_at())
-            .map_err(library_failed)
+        record_workflow_run(
+            &self.server.vault,
+            id,
+            met,
+            self.server.vault.now_recorded_at(),
+        )
+        .map_err(library_failed)
     }
 }
 
@@ -570,7 +584,7 @@ impl RunGuests {
             (Some(run), _) if desktop => run.call(call.verb, hooks.args.clone(), decider),
             (_, Some(run)) if !desktop => {
                 let library = VaultLibrary {
-                    vault: Arc::clone(&server.vault),
+                    server: Arc::clone(server),
                     by,
                 };
                 run.call(call.verb, hooks.args.clone(), decider, library)

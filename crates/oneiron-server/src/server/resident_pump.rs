@@ -28,8 +28,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use oneiron::agent_dispatch::{
-    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, ResidentAgentSpec, SpendScopeId,
-    agent_dispatch_actor,
+    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, ProjectConversationSkills,
+    ResidentAgentSpec, SpendScopeId, agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
 use oneiron::claim::CallerLocality;
@@ -346,9 +346,29 @@ fn run_bound(
     // The run is the attempt's own: a retry is a fresh attempt, and so a
     // fresh run.
     let run_id = EntityId::from_bytes(*status.attempt.id.as_bytes()).map_err(text)?;
-    let config = provider
+    let mut config = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
+    // A project conversation run runs with its skill's SKILL.md (OF-501); a
+    // run whose skill does not load is refused, never run unskilled.
+    let skills = ProjectConversationSkills::seeded(None).map_err(text)?;
+    if let Some(skill) = AgentDispatcher::new(vault)
+        .prepare_project_conversation_run(
+            &status.attempt,
+            &skills,
+            config.model.as_str(),
+            unix_now(),
+        )
+        .map_err(text)?
+        && let Some(body) = skill
+            .source_files
+            .iter()
+            .flatten()
+            .find(|file| file.path == "SKILL.md")
+            .and_then(|file| std::str::from_utf8(&file.content).ok())
+    {
+        config.task = format!("{}\n\n{}", config.task, body.trim());
+    }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
     // it names the scope it would spend under, which is not open, so its

@@ -42,7 +42,16 @@ impl Vault {
     /// Kit issue, phase 1: a fresh seed and its `OwnerRoot` entry, signed by
     /// the seed's anchor alone on this vault's current heads, and not stored.
     pub fn prepare_owner_root(&self, owner: &AuthenticatedOwner) -> Result<PreparedRoot> {
-        let seed = RecoveryRootSeed::generate()?;
+        self.prepare_owner_root_from_seed(owner, RecoveryRootSeed::generate()?)
+    }
+
+    /// Phase 1 for a given seed: [`Self::prepare_owner_root`] draws one, and
+    /// a kit's confirm passes the one its re-entered pieces rebuild.
+    pub(crate) fn prepare_owner_root_from_seed(
+        &self,
+        owner: &AuthenticatedOwner,
+        seed: RecoveryRootSeed,
+    ) -> Result<PreparedRoot> {
         let txn = self.store.env.read_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;

@@ -47,7 +47,12 @@ pub(crate) fn credential_memory<'a>(
     actor: oneiron::EntityId,
     class: oneiron::EdgeActorClass,
 ) -> oneiron::memory::Memory<'a> {
-    let memory = vault.memory(actor, class);
+    let mut memory = vault.memory(actor, class);
+    if auth.is_some() {
+        // Only this host verifies the credential again, so a verb hook's
+        // settlement never runs this caller's call without it.
+        memory = memory.for_credential();
+    }
     match auth.and_then(CoreAuth::verified_slip) {
         Some(proof) => memory.with_read_proof(proof),
         None => memory,

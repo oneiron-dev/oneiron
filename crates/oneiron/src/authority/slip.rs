@@ -178,7 +178,7 @@ impl CapabilitySlip {
     pub fn attenuate(&mut self, caveat: SlipCaveat, holder: &SigningKey) -> Result<()> {
         self.attenuate_to(caveat, holder, holder.verifying_key().to_bytes())
     }
-    fn current_binding_key(&self) -> [u8; 32] {
+    pub(super) fn current_binding_key(&self) -> [u8; 32] {
         self.caveats
             .last()
             .map_or(self.claims.binding_key, |block| block.next_binding_key)

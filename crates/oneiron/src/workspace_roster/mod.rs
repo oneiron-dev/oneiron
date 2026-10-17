@@ -188,8 +188,9 @@ pub use rooms::{
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
 pub(crate) use rooms::erase_room_side_rows;
-pub(crate) use rooms::project_room_audience_in;
+pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::{TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in};
+pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
 
 pub(crate) use rooms::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
