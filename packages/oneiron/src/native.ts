@@ -341,6 +341,7 @@ vaultNotesLifecycle(requestJson: string): string
 
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
+  inOffRecordSession(sessionRef: string): NativeClient
   lastReceiptRef(): string | null
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown

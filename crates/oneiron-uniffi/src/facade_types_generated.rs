@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 308 facade rows, 1099 generated types.
+// UniFFI census: 308 facade rows, 1100 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 276.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -1518,6 +1518,17 @@ pub struct ShapeApplyItem {
     pub state: ShapeItemState,
 }
 
+/// `oneiron::vault_shape::run::ShapeApplyRun`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeApplyRun {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "items")]
+    pub items: Vec<String>,
+}
+
 /// `oneiron::vault_shape::apply::ShapeApplyReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ShapeApplyReceipt {
@@ -1533,6 +1544,8 @@ pub struct ShapeApplyReceipt {
     pub items: Vec<ShapeApplyItem>,
     #[serde(rename = "done")]
     pub done: bool,
+    #[serde(rename = "run")]
+    pub run: ShapeApplyRun,
 }
 
 /// `oneiron::vault_shape::ShapeRead`.
