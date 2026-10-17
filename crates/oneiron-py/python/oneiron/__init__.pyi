@@ -89,6 +89,13 @@ class MemoryItem(TypedDict):
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
+    record: NotRequired[RecordRef]
+
+class RecordRef(TypedDict):
+    kind: str
+    id: str
+    short_id: NotRequired[str]
+    label: str
 
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]

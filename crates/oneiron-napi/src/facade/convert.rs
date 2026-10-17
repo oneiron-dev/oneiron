@@ -13,7 +13,7 @@ use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
     NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem,
     NapiMemoryPack, NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope,
-    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
+    NapiRecordRef, NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
     NapiWitnessReceipt, NapiWitnessTurn,
 };
 
@@ -317,6 +317,12 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
             .map(|cited| NapiCitedMessage {
                 short_id: cited.short_id,
                 value_text: cited.value_text,
+                record: cited.record.map(|record| NapiRecordRef {
+                    kind: record.kind,
+                    id: record.id,
+                    short_id: record.short_id,
+                    label: record.label,
+                }),
             })
             .collect(),
         conversation_id: item.conversation_id,

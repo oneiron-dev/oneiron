@@ -160,6 +160,20 @@ export type MemoryItem = {
 export type CitedMessage = {
   shortId: string
   valueText: string
+  /** The message as a typed record ref, the one the reader's read of it admitted. It carries no revision pin. */
+  record?: RecordRef
+}
+
+/** A typed record ref: a record the reader's own read admitted, with its display label. Display data only, never authority. */
+export type RecordRef = {
+  /** Registry kind string (`CLAIM`, `MESSAGE`, `PERSON`, ...). */
+  kind: string
+  /** 32-hex entity id. */
+  id: string
+  /** The vault's short id, when one is assigned; never revision-pinned. */
+  shortId?: string
+  /** A bounded, single-line display label. */
+  label: string
 }
 
 /** What the requested scope excluded. */
