@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 329 code-mode rows (310 host rows, 19 run rows), 1118 declarations.
+// Census: 329 code-mode rows (310 host rows, 19 run rows), 1126 declarations.
 // Replies: 268 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -115,7 +115,11 @@ declare namespace Sdk {
   type ShapePresetPick = { preset: ShapePreset; vault_id: number; members?: ShapePresetMember[] };
   type ShapePlanRequest = { seed?: ShapeSeed | null; preset?: ShapePresetPick | null };
   type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
-  type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary };
+  type ShapeReachVerdict = "can" | "asks";
+  type ShapeReachFact = { actor: string; actor_name?: string | null; verb: string; channel: string; sender: string; identity: string; class?: string | null; audience?: string[]; verdict: ShapeReachVerdict };
+  type ShapeReach = { facts: ShapeReachFact[] };
+  type ShapePlanReach = { before: ShapeReach; after: ShapeReach; unresolved: string[]; line: string };
+  type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
   type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
   type MentionProvenance = { turn: string; message: string; start: number; end: number };
   type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null };
@@ -133,7 +137,7 @@ declare namespace Sdk {
   type SteerRequest = { task_ref: string; instruction: string; key: string };
   type RunSignalState = "Pending" | "Settled" | "RefusedCancelCapacity" | "RefusedCancelUnavailable";
   type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState };
-  type DescribeRequest = { task_ref?: string | null; self?: boolean; session_id?: string | null; key?: string | null; frame_epoch?: number | null; fold?: string | null };
+  type DescribeRequest = { task_ref?: string | null; self?: boolean; vault?: boolean; session_id?: string | null; key?: string | null; frame_epoch?: number | null; fold?: string | null };
   type TaskBoardStatus = "running" | "scheduled" | "queued" | "done" | "failed";
   type TaskKind = "standard" | "consult" | "reconciliation";
   type TaskTerminalDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
@@ -143,7 +147,8 @@ declare namespace Sdk {
   type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null };
   type TasksOverflow = { known_omitted_rows: number; source_exhausted: boolean };
   type TasksSection = { rows: TaskRow[]; overflow?: TasksOverflow | null };
-  type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string };
+  type ShapeCard = { seed_id?: string | null; counts: Record<string, number>; open_applies: number; reach: ShapeReach; line: string };
+  type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard };
   type FoldReply<T> = T | { error: string };
   type FoldDescription = { fold: string; from: number; through: number; stub: string; source: string; ids: string[]; handles: string[] } | { fold: string; from: number; through: number; pending: boolean; note?: string | null; failed?: string | null };
   type TaskAssignee = "dreamer" | { agent_def: { agent_def_ref: EntityId } } | { peer: { actor_ref: EntityId } } | { child: { actor_ref: EntityId } } | { human: { actor_ref: EntityId } };
@@ -513,17 +518,20 @@ declare namespace Sdk {
   type LearningSettingsView = { catalog: LearningSettingSpecView[]; rows: LearningSettingRowView[] };
   type LearningSettingPut = { key: string; mode: LearningSettingMode; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null };
   type LearningSettingClear = { key: string; mode: LearningSettingMode; project?: string | null; task_type?: string | null };
-  type SecretLiftRequest = { start?: boolean };
+  type LiftCloseReason = "not_a_secret" | "rotated" | "accepted" | "read_clean" | "answered" | "deleted";
+  type SecretLiftClose = { proposal: string; reason: LiftCloseReason };
+  type SecretLiftRequest = { start?: boolean; close?: SecretLiftClose | null };
   type SecretScanMode = "on" | "off";
   type LiftTrigger = "switch" | "owner";
-  type LiftFamily = "records" | "side_rows" | "carriers";
+  type LiftFamily = "records" | "attempts" | "side_rows" | "carriers";
   type LiftCounts = { family: LiftFamily; read: number; masked: number; proposals: number; failed: number };
   type SecretLiftProgress = { run_id: string; trigger: LiftTrigger; requested_at: number; family: LiftFamily; retrying: number; counts: LiftCounts[] };
   type SecretLiftReceipt = { receipt_id: string; trigger: LiftTrigger; requested_by?: string | null; requested_at: number; finished_at: number; families: LiftCounts[]; masked: number; proposals: number; failed: number };
   type LiftCause = "unplaceable" | "immutable" | "held" | "file" | "no_door" | "history";
+  type LiftCauseCount = { cause: LiftCause; open: number };
   type SecretLiftProposal = { path: string; detector_reason: string; suggested_secret_name: string; project_id: string };
-  type SecretLiftHistoryProposal = { family: LiftFamily; cause: LiftCause; proposal: SecretLiftProposal; run_id: string; filed_at: number };
-  type SecretLiftStatus = { mode: SecretScanMode; paused: boolean; running?: SecretLiftProgress | null; last?: SecretLiftReceipt | null; open_proposals: number; proposals: SecretLiftHistoryProposal[] };
+  type SecretLiftHistoryProposal = { id?: string; family: LiftFamily; cause: LiftCause; proposal: SecretLiftProposal; run_id: string; filed_at: number; closed_at?: number | null; closed_by?: string | null; close_reason?: LiftCloseReason | null; close_receipt?: string | null };
+  type SecretLiftStatus = { mode: SecretScanMode; paused: boolean; running?: SecretLiftProgress | null; last?: SecretLiftReceipt | null; open_proposals: number; open_by_cause: LiftCauseCount[]; closed_proposals: number; proposals: SecretLiftHistoryProposal[] };
   type WidenProposalState = "pending" | "approved" | "declined";
   type WidenProposalsRequest = { state?: WidenProposalState | null };
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
@@ -999,7 +1007,7 @@ declare namespace Sdk {
   type OfficeBodyCommitGap = "receipt_missing";
   type OfficeBodyCommitView = { actor?: string | null; receipt?: TextCommitReceipt | null; reason?: OfficeBodyCommitGap | null };
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
-  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null };
+  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
@@ -1176,7 +1184,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
   /** One catalogued connector by name, removed ones included. */
   status(input: Sdk.ConnectorNameRequest): Promise<Sdk.ConnectorView | null | StoredResult>;
 };
-/** Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named. */
+/** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
@@ -1817,7 +1825,7 @@ declare const vault: Sdk.VaultHost & {
     bm25(input: Sdk.QueryBm25Request): Promise<Sdk.ScopedReadResult<Sdk.LexicalHit[]> | StoredResult>;
   };
   secrets: {
-    /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+    /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
     lift_history(input: Sdk.SecretLiftRequest): Promise<Sdk.SecretLiftStatus | StoredResult>;
   };
   settings: {
