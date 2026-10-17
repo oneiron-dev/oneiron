@@ -23,6 +23,7 @@ mod host_holds;
 mod rebuild;
 mod restore_class;
 mod tiers;
+use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
@@ -350,10 +351,10 @@ impl Vault {
         // Only claim/summary bodies have a canonical re-embedding path today.
         // Diagnostics are deliberately runtime-only. Other explicit vectors must
         // not silently disappear.
-        for row in self.store.vectors.iter(&txn)? {
-            let (id, _) = row?;
-            let id =
-                crate::EntityId::from_bytes(id.as_ref().try_into().map_err(|_| codec_error())?)?;
+        for row in self.store.port_vector_rows(&txn, |id, _| {
+            crate::EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
+        })? {
+            let id = row??;
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?;
             let reconstructable = match raw.as_deref() {
                 Some(raw) => {
@@ -371,18 +372,26 @@ impl Vault {
             }
         }
         // A pre-witness index is not silently restored as an empty search surface.
-        for row in self.store.text_forward.iter(&txn)? {
-            let (id, _) = row?;
-            let id = EntityId::from_bytes(id.as_ref().try_into().map_err(|_| codec_error())?)?;
+        for row in self
+            .store
+            .port_index_rows(&txn, IndexRows::TextForward, |id, _| {
+                EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
+            })?
+        {
+            let id = row??;
             if !INDEX_SOURCE_TEXT.contains(&self.store, &txn, &id)? {
                 return Err(Error::InvalidConfig(
                     "text index lacks canonical rebuild input".into(),
                 ));
             }
         }
-        for row in self.store.phonetic_forward.iter(&txn)? {
-            let (id, _) = row?;
-            let id = EntityId::from_bytes(id.as_ref().try_into().map_err(|_| codec_error())?)?;
+        for row in self
+            .store
+            .port_index_rows(&txn, IndexRows::PhoneticForward, |id, _| {
+                EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
+            })?
+        {
+            let id = row??;
             if !INDEX_SOURCE_PHONETIC.contains(&self.store, &txn, &id)? {
                 return Err(Error::InvalidConfig(
                     "phonetic index lacks canonical rebuild input".into(),

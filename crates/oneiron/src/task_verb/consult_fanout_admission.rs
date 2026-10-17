@@ -48,7 +48,8 @@ use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
-struct CachedAuto(FanoutAutoDisposition);
+/// An AUTO answer taken outside the writer, replayed inside it.
+pub(super) struct CachedAuto(pub(super) FanoutAutoDisposition);
 impl FanoutAutoDecider for CachedAuto {
     fn decide(&self, _: &FanoutPlan, _: &FanoutEstimate) -> Result<FanoutAutoDisposition> {
         Ok(self.0)

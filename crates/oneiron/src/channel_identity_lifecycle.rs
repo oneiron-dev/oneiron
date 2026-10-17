@@ -5,8 +5,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, ChannelIdentityStep,
     IdentityTransition, InboundDisposition, admit_channel_identity_transition_in_txn,
-    decode_channel_identity_body, encode_channel_identity_body, resolve_quarantine_floor_in_txn,
-    step_channel_identity_in_txn,
+    channel_identity_facts_in_txn, decode_channel_identity_body, encode_channel_identity_body,
+    resolve_quarantine_floor_in_txn, step_channel_identity_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -541,9 +541,16 @@ impl Vault {
                 // That is what keeps them from disagreeing about the same row:
                 // RELEASED is a retirement stop on both machines (the only one
                 // a delegated row has), and it routes exactly as QUARANTINE
-                // does, still delivering with outbound closed.
+                // does, still delivering with outbound closed. The state is
+                // the identity's state head; the row says only which machine
+                // (OF-272), and a family with no live heads routes nothing.
+                let inbound =
+                    channel_identity_facts_in_txn(&self.store, wtxn, &intent.identity_id)?
+                        .map_or(InboundDisposition::Closed, |facts| {
+                            facts.inbound_with_custody(current.custody())
+                        });
                 let (outcome, owner_visible_state, outbound_closed, identity_retiring) =
-                    match current.inbound() {
+                    match inbound {
                         InboundDisposition::Closed => ("closed", "tombstone", true, false),
                         InboundDisposition::DeliverRetiring => {
                             ("routable", "identity_retiring", true, true)

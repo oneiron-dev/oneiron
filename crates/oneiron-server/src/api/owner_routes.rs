@@ -37,6 +37,7 @@ use crate::owner::{
     pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod budget_hold_routes;
 mod commitment_routes;
 mod concern_routes;
 mod conflict_routes;
@@ -58,6 +59,7 @@ mod pad_routes;
 mod peer_confidence_routes;
 mod proactivity_routes;
 mod recovery_kit_routes;
+mod secret_found_routes;
 mod secret_reveal_routes;
 mod secret_use_routes;
 mod skill_judge_routes;
@@ -102,6 +104,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/pack-drift", get(pack_drift_repairs))
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
+        .merge(budget_hold_routes::routes())
         .merge(commitment_routes::routes())
         .merge(conflict_routes::routes())
         .merge(connector_consent_routes::routes())
@@ -131,6 +134,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(recovery_kit_routes::routes())
         .merge(secret_use_routes::routes())
         .merge(secret_reveal_routes::routes())
+        .merge(secret_found_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }
