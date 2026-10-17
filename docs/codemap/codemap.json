@@ -70115,8 +70115,8 @@
      "path": "src/models/router.rs",
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
-      "crate-vis": 3,
-      "fn": 4,
+      "crate-vis": 4,
+      "fn": 5,
       "struct": 1
      }
     },
