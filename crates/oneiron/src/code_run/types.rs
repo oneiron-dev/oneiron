@@ -52,7 +52,8 @@ pub enum SelfCall {
     /// projection DESCRIPTOR and hands it straight back. It reads no memory,
     /// opens no transaction, consumes no budget, and resolves no prompt text —
     /// resolution happens later, at agent dispatch, so the delegate reads fresh
-    /// state instead of a create-time snapshot.
+    /// state instead of a create-time snapshot. A verb hook bound to it runs
+    /// around it on canonical storage, as around any call.
     Context(SelfContextCall),
     /// Public first-party `self.speak(text)` (ONE-1686, RT-04).
     Speak(SelfSpeechCall),
@@ -836,6 +837,7 @@ pub struct SelfAgentSpawnCall {
 /// the knobs she seeds or pins. The host places the type, so this is a
 /// [`crate::agent_dispatch::SpawnNeed`] without its stamp.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SelfSpawnAsk {
     pub need: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
