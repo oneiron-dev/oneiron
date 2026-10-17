@@ -279,6 +279,7 @@ vaultArtifactsBodyDeckMerge(requestJson: string): string
 vaultArtifactsBodyDeckExport(requestJson: string): string
 vaultArtifactsBodyDeckGate(requestJson: string): string
 vaultArtifactsBodyDeckOracle(requestJson: string): string
+vaultArtifactsBodyDeckPreview(requestJson: string): string
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown

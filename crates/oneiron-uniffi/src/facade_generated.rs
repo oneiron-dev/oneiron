@@ -1251,6 +1251,11 @@ export_facade! {
     let output = client.vault_artifacts_body_deck_oracle(&input)?;
     crate::codec::lift_record("vault.artifacts.body.deck.oracle", &output)
 };
+"vault.artifacts.body.deck.preview" => fn vault_artifacts_body_deck_preview(&self, input: DeckPreviewRequest) -> DeckPreview = |client| {
+    let input: oneiron::office_body::DeckPreviewRequest = crate::codec::lower_record("vault.artifacts.body.deck.preview", input)?;
+    let output = client.vault_artifacts_body_deck_preview(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.deck.preview", &output)
+};
 "vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView = |client| {
     let input: oneiron::task_verb::sdk::AppendBlobVersionRequest = (artifact_ref, content, run_ref, occurred_at, learned_at).lower()?;
     let output = client.vault_artifacts_append(&input)?;
