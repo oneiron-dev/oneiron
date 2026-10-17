@@ -1,5 +1,6 @@
 //! Snapshot enumeration for whole-vault export. No raw bytes leave this module
-//! except as input to the serializer's mandatory credential-nulling transform.
+//! except as input to the serializer's mandatory credential-nulling transform,
+//! and a stored file the whole-vault archive carries as it is (OF-222).
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
@@ -37,6 +38,9 @@ pub(crate) struct ExportSnapshot {
     pub(crate) secrets_included: bool,
     /// OF-370: the vault's embedding setup, when this export carries it.
     pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
+    /// OF-222: a whole-vault archive carries each stored file an ASSET body is
+    /// as it is stored; a records archive and OKF keep today's cut.
+    pub(crate) attaches_files: bool,
 }
 
 /// One run's result manifests, as its replay record names them, each with
@@ -417,6 +421,7 @@ impl Vault {
                 secrets,
                 secrets_included: include_secrets && only.is_none() && cut == ExportCut::Archive,
                 embedding_setup,
+                attaches_files: scope == ExportScope::WholeVault,
             },
             cut,
         )

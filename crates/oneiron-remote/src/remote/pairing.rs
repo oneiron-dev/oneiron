@@ -103,8 +103,11 @@ pub(crate) fn pair(
     let url = base_url
         .join("v1/core/pairing/redeem")
         .map_err(|error| transport_error(format!("could not build the pairing URL: {error}")))?;
+    let mut encoding = HeaderMap::new();
+    let body = encode_request(body, &mut encoding);
     let response = blocking_agent()?
         .post(url)
+        .headers(encoding)
         .header(ACCEPT, HeaderValue::from_static("application/json"))
         .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
         .body(body)
