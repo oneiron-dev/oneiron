@@ -109,7 +109,8 @@ pub struct VoiceMediaBindings {
     /// The session's cadence for cutting the brain's text into sentences.
     pub chunking: VoiceChunkPolicy,
     /// Spoken audio for playout, past the session's filter, and each
-    /// generation's end.
+    /// generation's end. A full queue never holds the call: what does not
+    /// fit waits in order on the host's side.
     pub playout: mpsc::Sender<VoicePlayout>,
     /// How many calls the media queue holds.
     pub queue_capacity: usize,
@@ -164,6 +165,7 @@ impl VoiceMediaBindings {
                 brain_out: Some(self.brain_out),
                 outputs,
                 playout: self.playout,
+                staged: VecDeque::new(),
                 chunking: self.chunking,
                 queue,
                 speech: None,
@@ -287,6 +289,8 @@ pub(super) struct MediaBridge {
     brain_out: Option<mpsc::Receiver<VoiceBrainOut>>,
     outputs: mpsc::UnboundedReceiver<VoiceMediaOutput>,
     playout: mpsc::Sender<VoicePlayout>,
+    /// Playout the owner's queue had no room for yet, in order.
+    staged: VecDeque<VoicePlayout>,
     pub(super) chunking: VoiceChunkPolicy,
     /// The media queue, read for room before a sentence is sent.
     pub(super) queue: VoiceMediaSender,
@@ -365,6 +369,8 @@ pub(super) enum MediaEvent {
     Tick,
     /// The worker stopped: nothing more is heard or spoken.
     Stopped,
+    /// The owner's playout closed with audio still to hand it.
+    PlayoutClosed,
 }
 
 impl MediaBridge {
@@ -380,6 +386,8 @@ impl MediaBridge {
                 verdicts,
                 tick_at,
                 hearing,
+                playout,
+                staged,
                 ..
             } = &mut *self;
             let ticking = speech.as_ref().is_some_and(|speech| !speech.ended);
@@ -417,6 +425,16 @@ impl MediaBridge {
                 output = outputs.recv() => {
                     return output.map_or(MediaEvent::Stopped, MediaEvent::Out);
                 }
+                // Staged playout goes as the owner's queue makes room; a
+                // stopped generation's audio is dropped on the way.
+                permit = playout.reserve(), if !staged.is_empty() => match permit {
+                    Ok(permit) => match staged.pop_front() {
+                        Some(VoicePlayout::Pcm(frame)) if !frame.is_current() => {}
+                        Some(first) => permit.send(first),
+                        None => {}
+                    },
+                    Err(_) => return MediaEvent::PlayoutClosed,
+                },
             }
         }
     }
@@ -457,11 +475,24 @@ impl MediaBridge {
     }
 
     /// Hands spoken audio, or a generation's end, to the owner's playout.
-    pub(super) async fn play(&mut self, playout: VoicePlayout) -> io::Result<()> {
-        self.playout
-            .send(playout)
-            .await
-            .map_err(|_| io::Error::other("voice playout closed"))
+    /// What a full queue cannot take waits, in order, for [`Self::next`] to
+    /// send as room opens, so a slow playout never holds VAD, verdicts or
+    /// stops.
+    pub(super) fn play(&mut self, playout: VoicePlayout) -> io::Result<()> {
+        let closed = || io::Error::other("voice playout closed");
+        let playout = if self.staged.is_empty() {
+            match self.playout.try_send(playout) {
+                Ok(()) => return Ok(()),
+                Err(mpsc::error::TrySendError::Full(playout)) => playout,
+                Err(mpsc::error::TrySendError::Closed(_)) => return Err(closed()),
+            }
+        } else if self.playout.is_closed() {
+            return Err(closed());
+        } else {
+            playout
+        };
+        self.staged.push_back(playout);
+        Ok(())
     }
 
     fn utterance_id(&mut self) -> String {

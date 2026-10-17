@@ -288,7 +288,8 @@ pub enum VoiceMediaWork {
 }
 
 /// FIFO, nonblocking admission: one work item or nothing. An error admits
-/// nothing, and no call runs inside `try_submit`.
+/// nothing, and no call runs inside `try_submit`. A cancel goes ahead of
+/// queued work and is never refused for room.
 pub trait VoiceMediaQueue {
     fn try_submit(&mut self, work: VoiceMediaWork) -> Result<()>;
 }
@@ -312,14 +313,17 @@ pub enum VoiceMediaOutput {
 }
 
 /// A bounded channel from adapters to one worker. Clone the sender for each
-/// generation's adapter; the worker serves them all in order.
+/// generation's adapter; the worker serves them all in order. Cancels ride a
+/// lane of their own, so a full queue never keeps a stop from the worker.
 #[must_use]
 pub fn voice_media_channel(capacity: usize) -> (VoiceMediaSender, VoiceMediaWorker) {
     let (sender, receiver) = mpsc::channel(capacity.max(1));
+    let (stop, stops) = mpsc::unbounded_channel();
     (
-        VoiceMediaSender(sender),
+        VoiceMediaSender { work: sender, stop },
         VoiceMediaWorker {
             work: receiver,
+            stops,
             pending: VecDeque::new(),
             cancelled: BTreeSet::new(),
         },
@@ -327,19 +331,28 @@ pub fn voice_media_channel(capacity: usize) -> (VoiceMediaSender, VoiceMediaWork
 }
 
 #[derive(Clone)]
-pub struct VoiceMediaSender(mpsc::Sender<VoiceMediaWork>);
+pub struct VoiceMediaSender {
+    work: mpsc::Sender<VoiceMediaWork>,
+    stop: mpsc::UnboundedSender<GenerationEpoch>,
+}
 
 impl VoiceMediaSender {
     /// Whether the queue takes one more item now.
     #[must_use]
     pub fn has_room(&self) -> bool {
-        self.0.capacity() > 0
+        self.work.capacity() > 0
     }
 }
 
 impl VoiceMediaQueue for VoiceMediaSender {
     fn try_submit(&mut self, work: VoiceMediaWork) -> Result<()> {
-        self.0.try_send(work).map_err(|error| match error {
+        if let VoiceMediaWork::Cancel { generation } = work {
+            return self
+                .stop
+                .send(generation)
+                .map_err(|_| invalid("media worker stopped"));
+        }
+        self.work.try_send(work).map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => invalid("media queue full"),
             mpsc::error::TrySendError::Closed(_) => invalid("media worker stopped"),
         })
@@ -349,6 +362,7 @@ impl VoiceMediaQueue for VoiceMediaSender {
 /// Runs queued voice media work, in order, through the host's door.
 pub struct VoiceMediaWorker {
     work: mpsc::Receiver<VoiceMediaWork>,
+    stops: mpsc::UnboundedReceiver<GenerationEpoch>,
     pending: VecDeque<VoiceMediaWork>,
     cancelled: BTreeSet<GenerationEpoch>,
 }
@@ -368,7 +382,7 @@ impl VoiceMediaWorker {
             self.drain();
             let work = match self.pending.pop_front() {
                 Some(work) => work,
-                None => match self.work.recv().await {
+                None => match self.next().await {
                     Some(work) => {
                         self.take(work);
                         continue;
@@ -428,11 +442,26 @@ impl VoiceMediaWorker {
         }
     }
 
-    /// Takes what is already queued, without waiting.
+    /// Takes what is already queued, stops first, without waiting.
     fn drain(&mut self) {
+        while let Ok(generation) = self.stops.try_recv() {
+            self.take(VoiceMediaWork::Cancel { generation });
+        }
         while let Ok(work) = self.work.try_recv() {
             self.take(work);
         }
+    }
+
+    /// Waits for the next item, a stop before queued work; `None` once every
+    /// sender is gone.
+    async fn next(&mut self) -> Option<VoiceMediaWork> {
+        std::future::poll_fn(|cx| {
+            if let Poll::Ready(Some(generation)) = self.stops.poll_recv(cx) {
+                return Poll::Ready(Some(VoiceMediaWork::Cancel { generation }));
+            }
+            self.work.poll_recv(cx)
+        })
+        .await
     }
 
     /// A cancel drops the generation's queued speech at once; anything else
@@ -462,6 +491,9 @@ impl VoiceMediaWorker {
     ) -> Option<LlmResult<T>> {
         let mut open = true;
         std::future::poll_fn(|cx| {
+            while let Poll::Ready(Some(generation)) = self.stops.poll_recv(cx) {
+                self.take(VoiceMediaWork::Cancel { generation });
+            }
             while open {
                 match self.work.poll_recv(cx) {
                     Poll::Ready(Some(work)) => self.take(work),
