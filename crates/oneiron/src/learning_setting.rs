@@ -77,6 +77,34 @@ pub const CREDIT_DECAY: SettingSpec = SettingSpec {
     seed: 0.5,
 };
 
+/// Whether used lineage hops pass late credit up at all (ARCH-0037
+/// #lineage-credit, the power user's off switch): on at one half or more.
+pub const CREDIT_ENABLED: SettingSpec = SettingSpec {
+    key: "credit_enabled",
+    min: 0.0,
+    max: 1.0,
+    seed: 1.0,
+};
+
+/// The most used hops late credit climbs from an outcome (ARCH-0037
+/// #lineage-credit); at its maximum, the full used chain, canon's default.
+pub const CREDIT_DEPTH_CAP: SettingSpec = SettingSpec {
+    key: "credit_depth_cap",
+    min: 0.0,
+    max: 1024.0,
+    seed: 1024.0,
+};
+
+/// Whether late credit crosses only hops a contribution check measured
+/// (ARCH-0037 #lineage-credit): on at one half or more; off by default, so
+/// an unchecked used hop passes credit.
+pub const CREDIT_CHECK_EVERY_HOP: SettingSpec = SettingSpec {
+    key: "credit_check_every_hop",
+    min: 0.0,
+    max: 1.0,
+    seed: 0.0,
+};
+
 /// The probability of a random audit (`audit_rate`). Its floor is strictly
 /// above zero: the honesty floor never samples nothing.
 pub const AUDIT_RATE: SettingSpec = SettingSpec {
@@ -147,6 +175,9 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     GROUP_COMMIT_WINDOW_MS,
     GROUP_COMMIT_MAX_WRITES,
     CREDIT_DECAY,
+    CREDIT_ENABLED,
+    CREDIT_DEPTH_CAP,
+    CREDIT_CHECK_EVERY_HOP,
     AUDIT_RATE,
     LEARNING_WINDOW_HALF_LIFE_DAYS,
     LEARNING_SHIPPED_PRIOR_RUNS,
