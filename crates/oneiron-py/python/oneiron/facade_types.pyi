@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 223 facade rows, 765 declarations.
+Census: 223 facade rows, 766 declarations.
 Inputs: 192 of 223 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 180 of 223 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
@@ -291,6 +291,9 @@ class PersonRequest(TypedDict):
 class EmptyRequest(TypedDict):
     ...
 ShapeCeiling = Literal["auto", "proposed"]
+ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
+ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
+ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -336,7 +339,8 @@ class ShapeRowChannel(TypedDict):
     address: str
 class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
-    grant_ref: str
+    grant_ref: NotRequired[str]
+    bound: NotRequired[ShapeGrantBound | None]
 class ShapeRowSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
@@ -365,6 +369,10 @@ class ShapeItemStateLanded(TypedDict):
     receipt: str
 class ShapeItemStateProposed(TypedDict):
     state: Literal["proposed"]
+class ShapeItemStateFiled(TypedDict):
+    state: Literal["filed"]
+    proposal_ref: str
+    expires_at: int
 class ShapeItemStateCeremony(TypedDict):
     state: Literal["ceremony"]
 class ShapeItemStateNoDoor(TypedDict):
@@ -372,7 +380,7 @@ class ShapeItemStateNoDoor(TypedDict):
 class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
-ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState

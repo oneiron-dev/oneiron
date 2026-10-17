@@ -16,6 +16,7 @@
 //! own; it says what should be true, never a new way of making it true.
 
 mod apply;
+mod grant;
 mod live;
 mod plan;
 mod seed;
@@ -23,6 +24,7 @@ mod seed;
 pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
 };
+pub use grant::ShapeGrantBound;
 pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
 pub use seed::StoredShapeSeed;
 
@@ -96,9 +98,16 @@ pub enum ShapeRow {
     },
     /// A channel identity (ARCH-0063), by channel and address or handle.
     Channel { channel: String, address: String },
-    /// A standing grant (DEC-0006), by its registry reference: the bound's
-    /// digest. Every grant row is a widening.
-    Grant { grant_ref: String },
+    /// A standing grant (DEC-0006), declared as its bound. Its registry
+    /// reference is the bound's digest; a row may name the grant by that
+    /// reference alone, but only a row carrying the bound can mint it. Every
+    /// new grant is a widening.
+    Grant {
+        #[serde(default)]
+        grant_ref: String,
+        #[serde(default)]
+        bound: Option<ShapeGrantBound>,
+    },
     /// A sync declaration: whether one entity kind is on the wire. A shape
     /// can propose a federation; it never effects one.
     Sync { entity_kind: String, on_wire: bool },
@@ -165,8 +174,16 @@ impl ShapeRow {
                 channel: channel.clone(),
                 address: address.clone(),
             },
-            Self::Grant { grant_ref } => ShapeTarget::Grant {
-                grant_ref: grant_ref.clone(),
+            Self::Grant { grant_ref, bound } => ShapeTarget::Grant {
+                grant_ref: if grant_ref.is_empty() {
+                    bound
+                        .as_ref()
+                        .and_then(|bound| bound.bound().ok())
+                        .map(|bound| bound.digest().to_hex())
+                        .unwrap_or_default()
+                } else {
+                    grant_ref.clone()
+                },
             },
             Self::Sync { entity_kind, .. } => ShapeTarget::Sync {
                 entity_kind: entity_kind.clone(),
@@ -195,6 +212,8 @@ impl ShapeRow {
             ) => have.as_ref() == Some(want),
             (Self::Pack { version: None, .. }, Self::Pack { .. })
             | (Self::Skill { version: None, .. }, Self::Skill { .. }) => true,
+            // One reference is one bound: a grant read by it is the grant.
+            (Self::Grant { .. }, Self::Grant { .. }) => self.target() == live.target(),
             _ => self == live,
         }
     }
@@ -222,6 +241,18 @@ impl ShapeSeed {
         }
         let mut seen = BTreeSet::new();
         for row in &self.rows {
+            if let ShapeRow::Grant {
+                grant_ref,
+                bound: Some(bound),
+            } = row
+            {
+                let digest = bound.bound()?.digest().to_hex();
+                if !grant_ref.is_empty() && *grant_ref != digest {
+                    return Err(invalid(
+                        "a grant row's grant_ref is its bound's digest; they disagree",
+                    ));
+                }
+            }
             let target = row.target();
             for key in target.keys() {
                 if key.trim().is_empty() || key.len() > SHAPE_NAME_MAX_BYTES {

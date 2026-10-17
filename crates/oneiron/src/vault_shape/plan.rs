@@ -121,8 +121,9 @@ fn classify(change: ShapeChange, before: Option<&ShapeRow>, after: Option<&Shape
     }
 }
 
-/// The named door an item lands through, where the vault has one.
-fn door(change: ShapeChange, target: &ShapeTarget) -> Option<&'static str> {
+/// The named door an item lands through, where the vault has one. A grant
+/// row mints only from the bound it carries.
+fn door(change: ShapeChange, target: &ShapeTarget, after: Option<&ShapeRow>) -> Option<&'static str> {
     match (change, target) {
         (ShapeChange::Create, ShapeTarget::World { .. }) => Some("create_world"),
         (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
@@ -131,6 +132,11 @@ fn door(change: ShapeChange, target: &ShapeTarget) -> Option<&'static str> {
         }
         (ShapeChange::Create | ShapeChange::Update, ShapeTarget::Pack { .. }) => Some("put_pack"),
         (ShapeChange::Retire, ShapeTarget::Pack { .. }) => Some("remove_pack"),
+        (ShapeChange::Create, ShapeTarget::Grant { .. })
+            if matches!(after, Some(ShapeRow::Grant { bound: Some(_), .. })) =>
+        {
+            Some("create_standing_grant")
+        }
         (ShapeChange::Retire, ShapeTarget::Grant { .. }) => Some("revoke_consent_grant"),
         _ => None,
     }
@@ -240,7 +246,7 @@ impl Vault {
         let mut items = Vec::with_capacity(pending.len());
         for (seq, (target, _, change, before, after)) in pending.into_iter().enumerate() {
             let class = classify(change, before, after);
-            let door = door(change, &target).map(str::to_owned);
+            let door = door(change, &target, after).map(str::to_owned);
             summary.changes += 1;
             match class {
                 ShapeItemClass::Widening => summary.needs_word += 1,

@@ -40,7 +40,9 @@ impl Memory<'_> {
     }
 
     /// `vault.shape.apply` as this handle's principal, never the owner: the
-    /// seed is stored and every item waits for the owner's word.
+    /// seed is stored and every item waits for the owner's word. A new grant
+    /// is also filed to the owner's widen inbox under the credential this
+    /// handle reads with, when it has one.
     pub fn shape_apply_as_principal(
         &self,
         input: &ShapeApplyRequest,
@@ -48,7 +50,10 @@ impl Memory<'_> {
         let now = crate::unix_seconds_now();
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         Ok(self.vault.apply_shape(
-            ShapeApplier::Actor(self.actor),
+            ShapeApplier::Actor {
+                actor: self.actor,
+                credential: self.read_proof.as_ref(),
+            },
             input,
             now,
             &mut |id| read.is_entity_readable(id),

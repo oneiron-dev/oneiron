@@ -1,7 +1,7 @@
 //! The live arrangement read as a shape: every setup-plane row the vault
 //! holds now, under the names a seed declares. Entity-backed rows and the
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
-use super::{ShapeRow, invalid};
+use super::{ShapeGrantBound, ShapeRow, invalid};
 use crate::agent_def::decode_agent_definition;
 use crate::channel_identity::decode_channel_identity_body;
 use crate::error::Result;
@@ -119,6 +119,7 @@ impl Vault {
                 rows.push((
                     ShapeRow::Grant {
                         grant_ref: grant.bound().digest().to_hex(),
+                        bound: ShapeGrantBound::of(grant.bound()),
                     },
                     None,
                 ));
