@@ -464,7 +464,14 @@ fn promote_one(
         // dependencies in the claim's own transaction.
         match verified {
             Some(evidence) => {
-                evidence.record_message_dependencies_in_txn(vault, wtxn, &candidate.claim_id)
+                evidence.record_message_dependencies_in_txn(vault, wtxn, &candidate.claim_id)?;
+                crate::dreamer_consolidation::strength::record_verified_in_txn(
+                    vault,
+                    wtxn,
+                    candidate.claim_id,
+                    evidence,
+                    run.now_ms,
+                )
             }
             None => Ok(()),
         }
