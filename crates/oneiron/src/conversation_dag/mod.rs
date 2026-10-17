@@ -40,15 +40,18 @@ mod writes;
 
 pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
-    actor_in_txn, conversation_of, edge_ids, is_sub_session_record, is_thread_record,
-    keeps_dag_topology, parent as retained_parent, record_has_dag_topology, require_type,
+    actor_in_txn, chain as retained_chain, conversation_of, edge_ids, is_sub_session_record,
+    is_thread_record, keeps_dag_topology, parent as retained_parent, record_has_dag_topology,
+    require_type,
 };
 pub(crate) use participation::{erased_thread_room_in_txn, offer_turns_in_txn};
 pub(crate) use policy::{
     APPEND_ROW, AppendFailure, admit_append_prose, append_references, receipt_append_refusal,
     require_append_references_in_txn,
 };
-pub(crate) use quote::{ProvenRoomQuote, QuotedReply, carries_quote};
+pub(crate) use quote::{
+    ProvenRoomQuote, QuotedReply, carries_quote, pin_body_quotes_at_message_birth_in_txn,
+};
 pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,

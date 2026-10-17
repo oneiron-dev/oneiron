@@ -385,6 +385,13 @@ impl Vault {
         CARDS.get(&self.store, txn, &card_key(card_id))
     }
 
+    /// One host-held card by its id, if any, in a read of its own: the card
+    /// a host's confirm door lists as the source of its answer.
+    pub fn project_card(&self, card_id: &str) -> Result<Option<ProjectCardRecord>> {
+        let txn = self.store.env.read_txn()?;
+        self.project_card_record_in_txn(&txn, card_id)
+    }
+
     /// One authorised tap mints a host-held card's project; the tap is the
     /// Grant move. The card is the host's stored one, never a client's: a
     /// card pinned on a thread in a project's room is born by conversion under

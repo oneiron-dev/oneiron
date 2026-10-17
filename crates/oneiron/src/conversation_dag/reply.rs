@@ -225,7 +225,12 @@ fn roots_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Vec<E
     Ok(roots)
 }
 
-/// A bounded root-first reply walk and its derived metadata.
+/// A room-handle aggregate or a root-first native DAG chain, and its derived
+/// metadata. On a project room's indexed turn it is every live reply of
+/// every thread the room's index selects for the handle, with each native
+/// DAG append on the chain that has no room row, by `(at, reply id)`; its
+/// `root` is then the earliest of them, the aggregate's representative, not
+/// a claim that the threads are one chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Thread {
     pub conversation: EntityId,
@@ -343,16 +348,99 @@ pub(crate) fn invalidate_thread_meta_for_turn_put(
     Ok(())
 }
 
+/// The [`Thread`] a project room's indexed turn `trunk` selects: every live
+/// reply of every thread the room's index holds for it, quoted or not, with
+/// each live native DAG append on its chain that has no room row. `None`
+/// when the room indexes no such turn, so the caller reads the DAG chain; an
+/// indexed handle with no live reply is an empty thread, never a sibling
+/// chain. Never cached: an ordinary room row does not dirty the DAG's meta.
+fn room_thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Option<Thread>> {
+    let conversation = conversation_of(&vault.store, txn, &trunk)?;
+    let Some(indexed) =
+        crate::workspace_roster::room_thread_turns_in_txn(vault, txn, conversation, trunk)?
+    else {
+        return Ok(None);
+    };
+    let mut rows = std::collections::BTreeMap::new();
+    for turn in indexed.turns {
+        let id = EntityId::from_hex(&turn.turn_id)?;
+        if live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+            rows.insert(id, turn.at);
+        }
+    }
+    // A native append lands no room row, so only the DAG chain holds it.
+    if let Some(native) = selected_thread_in_txn(vault, txn, trunk)? {
+        for id in native.replies {
+            if crate::workspace_roster::replicated_turn_in(vault, txn, id)?.is_none() {
+                let row =
+                    crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, &id)?
+                        .ok_or(Error::EntityNotFound)?;
+                rows.insert(id, row.occurred.start);
+            }
+        }
+    }
+    let mut rows: Vec<(u64, EntityId)> = rows.into_iter().map(|(id, at)| (at, id)).collect();
+    rows.sort_unstable();
+    Ok(Some(Thread {
+        conversation,
+        root: rows.first().map(|(_, id)| *id),
+        count: rows.len() as u64,
+        last_at: rows.last().map(|(at, _)| *at),
+        replies: rows.into_iter().map(|(_, id)| id).collect(),
+    }))
+}
+
 impl Vault {
-    /// Finds all immediate thread roots; a canonical fork is not a root.
+    /// Finds all immediate thread roots; a canonical fork is not a root. On a
+    /// project room's indexed turn they are the live roots of every room
+    /// thread anchored on it, with each native DAG root that has no room row.
     pub fn thread_roots(&self, trunk: EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        roots_in_txn(self, &txn, trunk)
+        let room = conversation_of(&self.store, &txn, &trunk)?;
+        let Some(indexed) =
+            crate::workspace_roster::room_thread_turns_in_txn(self, &txn, room, trunk)?
+        else {
+            return roots_in_txn(self, &txn, trunk);
+        };
+        let mut roots = Vec::new();
+        for turn in indexed.turns {
+            // A room thread's root names its anchor and answers no turn
+            // inside the thread.
+            if turn.thread_of.as_deref().is_some_and(|anchor| {
+                turn.reply_to
+                    .as_deref()
+                    .is_none_or(|parent| parent == anchor)
+            }) {
+                let id = EntityId::from_hex(&turn.turn_id)?;
+                if live_entity_row_in_txn(&self.store, &txn, &id)?.is_live() {
+                    roots.push(id);
+                }
+            }
+        }
+        for root in roots_in_txn(self, &txn, trunk)? {
+            if crate::workspace_roster::replicated_turn_in(self, &txn, root)?.is_none() {
+                roots.push(root);
+            }
+        }
+        roots.sort_unstable();
+        roots.dedup();
+        Ok(roots)
     }
 
-    /// Reads the cached meta line without walking the reply chain.
+    /// Reads the cached meta line without walking the reply chain. A project
+    /// room's indexed turn reads its room aggregate instead, never cached.
     pub fn thread_meta(&self, trunk: EntityId) -> Result<Option<ThreadMeta>> {
         let txn = self.store.env.read_txn()?;
+        if let Some(room) = room_thread_in_txn(self, &txn, trunk)? {
+            return Ok(room
+                .root
+                .zip(room.last_at)
+                .map(|(root, last_at)| ThreadMeta {
+                    root,
+                    count: room.count,
+                    last_at,
+                }));
+        }
         conversation_of(&self.store, &txn, &trunk)?;
         let dirty = THREAD_DIRTY.contains(&self.store, &txn, &trunk)?;
         if dirty {
@@ -369,6 +457,9 @@ impl Vault {
 
     pub fn thread(&self, trunk: EntityId) -> Result<Thread> {
         let txn = self.store.env.read_txn()?;
+        if let Some(room) = room_thread_in_txn(self, &txn, trunk)? {
+            return Ok(room);
+        }
         let selected = selected_thread_in_txn(self, &txn, trunk)?;
         Ok(match selected {
             Some(selected) => Thread {
@@ -469,9 +560,11 @@ impl Vault {
     }
 
     /// Continues the thread chain on Parent without changing the conversation
-    /// HEAD. The reply target stays the caller's (or the quoted message's
-    /// TURN), so a thread reply may answer a trunk message; absent both, it
-    /// answers the chain's tip. `writer` binds it as it binds
+    /// HEAD: the first same-session thread under `trunk`, by root id, whose
+    /// audience admits the writer, else a new thread. A reply that names a
+    /// `thread_audience` always opens a new thread. The reply target stays
+    /// the caller's (or the quoted message's TURN), so a thread reply may
+    /// answer a trunk message; absent both, it answers the chain's tip. `writer` binds it as it binds
     /// [`Vault::append_dag_record`] (OF-063): the trunk and every typed ref
     /// must read for the writer, and so must the parent this door picks, in
     /// the reply's own transaction.
@@ -488,9 +581,34 @@ impl Vault {
             require_member(&self.store, txn, &input.conversation, &trunk)?;
             let mut target = trunk;
             let conversation = conversation_of(&self.store, txn, &trunk)?;
-            let candidates = chain_in_txn(self, txn, conversation, trunk, Some(input.session))?;
-            if let Some(last) = candidates.last() {
-                target = *last;
+            // FIX 3126: continue the first same-session thread, by root id,
+            // whose audience admits the writer; else open a new one. An
+            // explicit audience always opens a fresh thread.
+            if input.thread_audience.is_none() {
+                let actor = input.actor.entity_ref();
+                for root in roots_in_txn(self, txn, trunk)? {
+                    if crate::compaction::turn_session_membership_in_txn(&self.store, txn, &root)?
+                        != input.session
+                    {
+                        continue;
+                    }
+                    match crate::workspace_roster::thread_audience_allows_in(
+                        self,
+                        txn,
+                        conversation,
+                        root,
+                        actor,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) | Err(Error::EntityNotFound) => continue,
+                        Err(e) => return Err(e.into()),
+                    }
+                    target = chain_in_txn(self, txn, conversation, root, Some(input.session))?
+                        .last()
+                        .copied()
+                        .unwrap_or(root);
+                    break;
+                }
             }
             // The tip is chosen in this transaction, so a concurrent reply
             // never puts an unchecked parent under the writer.

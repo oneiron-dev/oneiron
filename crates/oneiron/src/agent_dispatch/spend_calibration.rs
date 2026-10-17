@@ -9,8 +9,9 @@
 //!
 //! A peer consult is a TASK delivery, never a local agent, so it has its own
 //! key (`consult:{peer hex}:{unit}`) and never reads an agent's row (OF-393).
-//! No measured consult usage is folded yet, so every consult states the
-//! labelled prior.
+//! A consult completion that carries its executor's measured total folds
+//! one sample, in the commit that lands it; an unmeasured consult leaves its
+//! peer on the labelled prior.
 //!
 //! The statement states its expected spend in dollars, never in units. The
 //! dollar figure is separate from the native calibration: the host's
@@ -117,10 +118,15 @@ impl DollarBasis {
 }
 
 /// What a launch's dollar figure prices: a local agent, or a peer consult,
-/// which is never priced at a local agent's rate.
+/// which is never priced at a local agent's rate. An agent's `model` is its
+/// plan's resolved model, a pin included, when the launch has one (FIX
+/// 3043); `None` prices the role's binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UsdPriceTarget {
-    Agent(EntityId),
+pub enum UsdPriceTarget<'a> {
+    Agent {
+        agent: EntityId,
+        model: Option<&'a crate::llm::ModelId>,
+    },
     PeerConsult(EntityId),
 }
 
@@ -142,7 +148,7 @@ pub trait LaunchUsdPrices: Send + Sync {
         &self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
-        target: UsdPriceTarget,
+        target: UsdPriceTarget<'_>,
         unit: &LeaseUnit,
     ) -> Result<Option<UsdUnitPrice>>;
 }
@@ -200,7 +206,7 @@ impl ExpectedSpend {
         mut self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
-        target: UsdPriceTarget,
+        target: UsdPriceTarget<'_>,
         unit: &LeaseUnit,
     ) -> Result<Self> {
         let rate = match vault.launch_usd_prices.get() {
@@ -302,12 +308,30 @@ impl AgentDispatcher<'_> {
         agent: EntityId,
         unit: &LeaseUnit,
     ) -> Result<ExpectedSpend> {
+        self.expected_agent_spend_for_model_in_txn(txn, agent, unit, None)
+    }
+
+    /// [`Self::expected_agent_spend_in_txn`] priced at `model` when the
+    /// launch's plan resolved one: the same calibrated units, the dollar
+    /// figure at the model that will run rather than the role's binding.
+    pub(super) fn expected_agent_spend_for_model_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        unit: &LeaseUnit,
+        model: Option<&crate::llm::ModelId>,
+    ) -> Result<ExpectedSpend> {
         let expected = ExpectedSpend::from_row(CALIBRATION.get(
             &self.vault.store,
             txn,
             &calibration_key(&agent, unit),
         )?);
-        expected.priced(self.vault, txn, UsdPriceTarget::Agent(agent), unit)
+        expected.priced(
+            self.vault,
+            txn,
+            UsdPriceTarget::Agent { agent, model },
+            unit,
+        )
     }
 
     /// One consult's expected spend in `unit` when delivered to `peer`: its
@@ -345,7 +369,29 @@ impl AgentDispatcher<'_> {
         units: u64,
         now: u64,
     ) -> Result<AgentSpendCalibration> {
-        let key = calibration_key(&agent, unit);
+        self.fold_sample_in_txn(txn, calibration_key(&agent, unit), units, now)
+    }
+
+    /// Folds one landed consult's measured spend into its peer's consult
+    /// calibration. The caller fences replay: one sample per consult.
+    pub(crate) fn fold_consult_spend_sample_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        peer: EntityId,
+        unit: &LeaseUnit,
+        units: u64,
+        now: u64,
+    ) -> Result<AgentSpendCalibration> {
+        self.fold_sample_in_txn(txn, consult_calibration_key(&peer, unit), units, now)
+    }
+
+    fn fold_sample_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        key: String,
+        units: u64,
+        now: u64,
+    ) -> Result<AgentSpendCalibration> {
         let previous = CALIBRATION.get(&self.vault.store, txn, &key)?;
         let row = AgentSpendCalibration::fold(previous, units, now);
         CALIBRATION.put(&self.vault.store, txn, &key, &row)?;
