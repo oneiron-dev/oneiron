@@ -252,6 +252,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/desktop_takeover_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/desktops*`: the owner takes a run's desktop over (CUA-001) |
 | `src/api/owner_routes/diary_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/diary`: the owner's doors to agent diaries (OF-490, AGM-1+8) |
 | `src/api/owner_routes/disclosure_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/disclosure`: the owner's doors to contact disclosure (OF-365, the ILDF2 consent channel) |
+| `src/api/owner_routes/dreamer_maintenance_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/dreamer/maintenance` (OF-023, owner ruling 10-18: "autoapply + revert rather than holdout"): the… |
 | `src/api/owner_routes/dreamer_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner… |
 | `src/api/owner_routes/embedding_space_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/embedding-spaces`: the owner declares embedding spaces, binds kind slots and moves a slot to a… |
 | `src/api/owner_routes/federation_connect_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/federation/connect`: the owner's Connect (ARCH-0043 #relationship-lifecycle, FIX 323), behind the… |
