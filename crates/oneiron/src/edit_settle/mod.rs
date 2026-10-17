@@ -107,11 +107,11 @@ mod records;
 mod settle;
 mod stranded;
 mod undo;
+pub use carry::{ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit};
 pub use organ_wait::{ORGAN_WAIT_CALL_MAX_BYTES, OrganWait, OrganWaitView};
 pub use pending::{
     NATIVE_OUTPUT_REPORT_MAX_BYTES, NativeOutput, PendingProposalKind, PendingProposalView,
 };
-pub use carry::{ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit};
 pub use stranded::StrandedEditProposal;
 pub use undo::{KeepUndo, KeepUndoOutcome};
 

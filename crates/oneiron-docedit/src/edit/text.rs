@@ -1,4 +1,4 @@
-//! `set_text` and `replace_run_text`.
+//! `set_text`, `replace_run_text` and `set_run_props`.
 //!
 //! The declared mapping for a whole-body write: paragraphs are aligned by
 //! their common head and tail, and the changed ones in between are paired in
@@ -16,7 +16,7 @@
 //! paragraph before them; surplus ones are removed.
 use super::check::Declared;
 use super::xml::{self, A, P, Splice};
-use super::{EditRefusal, FitUnverified, Written};
+use super::{EditRefusal, FitUnverified, RunProps, Written};
 use crate::deck::{ShapeView, SlideView, TargetRole, TextRange};
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
@@ -170,6 +170,217 @@ pub(super) fn replace_run_text(
         )]
     };
     finish(next, slide, id, &bytes, edits)
+}
+
+/// Run properties over the characters `range` of paragraph `paragraph`,
+/// counted over its runs and fields as [`DeckView`] reads them (breaks hold
+/// none). A run the range covers part of is split at the range's edges, each
+/// piece keeping the run's own properties; a field formats whole or not at
+/// all. Only the declared properties are written into each covered `a:rPr`;
+/// the text and every other property are kept.
+///
+/// [`DeckView`]: crate::deck::DeckView
+pub(super) fn set_run_props(
+    next: &mut Package,
+    slide: &SlideView,
+    shape: &ShapeView,
+    paragraph: usize,
+    range: (usize, usize),
+    expected: &str,
+    props: &RunProps<'_>,
+) -> Result<Written, EditRefusal> {
+    let id = shape.id.ok_or(EditRefusal::Missing("shape id"))?;
+    if props
+        .latin
+        .is_some_and(|face| face.is_empty() || !xml::writable(face))
+    {
+        return Err(EditRefusal::Invalid(
+            "a typeface XML cannot carry, or an empty one",
+        ));
+    }
+    let (bytes, tree) = xml::read(next, &slide.part)?;
+    let body = xml::child(&tree, shape.node.index, P, "txBody")
+        .ok_or(EditRefusal::Missing("text body"))?;
+    let paragraphs = paragraphs(&tree, body);
+    let held = paragraphs
+        .get(paragraph)
+        .ok_or(EditRefusal::Missing("paragraph"))?;
+    if held.opaque {
+        return Err(EditRefusal::TextMapping(
+            "the paragraph holds content the mapping does not know",
+        ));
+    }
+    let items: Vec<_> = held
+        .items
+        .iter()
+        .filter(|item| item.kind != Kind::Break)
+        .collect();
+    let text: Vec<char> = items
+        .iter()
+        .flat_map(|item| held.text[item.start..item.end].iter().copied())
+        .collect();
+    if text.iter().collect::<String>() != expected {
+        return Err(EditRefusal::TargetChanged);
+    }
+    let (start, end) = range;
+    if start >= end || end > text.len() {
+        return Err(EditRefusal::Invalid(
+            "a run-property range outside the paragraph",
+        ));
+    }
+    let mut edits = Vec::new();
+    let mut at = 0;
+    for item in items {
+        let (from, to) = (at, at + (item.end - item.start));
+        at = to;
+        if to <= start || from >= end {
+            continue;
+        }
+        let node = &tree.nodes[item.node];
+        if from >= start && to <= end {
+            edits.push((
+                node.span.clone(),
+                restyled(&bytes, &tree, item.node, None, props)?,
+            ));
+            continue;
+        }
+        if item.kind == Kind::Field {
+            return Err(EditRefusal::TextMapping("a field formats whole"));
+        }
+        let own: Vec<char> = held.text[item.start..item.end].to_vec();
+        let (cut_in, cut_out) = (start.max(from) - from, end.min(to) - from);
+        let mut out = Vec::new();
+        for (piece, styled) in [
+            (&own[..cut_in], false),
+            (&own[cut_in..cut_out], true),
+            (&own[cut_out..], false),
+        ] {
+            if piece.is_empty() {
+                continue;
+            }
+            let piece: String = piece.iter().collect();
+            let declared = if styled { *props } else { RunProps::default() };
+            out.extend(restyled(&bytes, &tree, item.node, Some(&piece), &declared)?);
+        }
+        edits.push((node.span.clone(), out));
+    }
+    finish(next, slide, id, &bytes, edits)
+}
+
+/// `a:rPr` children that follow `a:latin` in `CT_TextCharacterProperties`.
+const AFTER_LATIN: &[&str] = &[
+    "ea",
+    "cs",
+    "sym",
+    "hlinkClick",
+    "hlinkMouseOver",
+    "rtl",
+    "extLst",
+];
+
+/// A run's or field's bytes with the declared `props` in its `a:rPr` and,
+/// when given, `text` as its `a:t`.
+fn restyled(
+    bytes: &[u8],
+    tree: &XmlTree,
+    run: usize,
+    text: Option<&str>,
+    props: &RunProps<'_>,
+) -> Result<Vec<u8>, EditRefusal> {
+    let node = &tree.nodes[run];
+    let prefix = xml::prefix(node);
+    let flag = |on: bool| if on { "1" } else { "0" };
+    let attributes: Vec<(&str, String)> = [
+        props.bold.map(|on| ("b", flag(on).to_owned())),
+        props.italic.map(|on| ("i", flag(on).to_owned())),
+        props.size.map(|size| ("sz", size.to_string())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let latin = props.latin.map(|face| {
+        format!(
+            r#"<{} typeface="{}"/>"#,
+            xml::qualify(prefix, "latin"),
+            xml::escape_attribute(face)
+        )
+    });
+    let mut edits: Vec<Splice> = Vec::new();
+    match xml::child(tree, run, A, "rPr") {
+        Some(r_pr) => {
+            let r_pr_node = &tree.nodes[r_pr];
+            for (name, value) in &attributes {
+                edits.push(xml::set_attribute(bytes, r_pr_node, name, value));
+            }
+            if let (Some(face), Some(element)) = (props.latin, latin) {
+                match xml::child(tree, r_pr, A, "latin") {
+                    Some(held) => {
+                        edits.push(xml::set_attribute(
+                            bytes,
+                            &tree.nodes[held],
+                            "typeface",
+                            face,
+                        ));
+                    }
+                    None if r_pr_node.empty => {
+                        let close = r_pr_node.span.end - 2;
+                        if bytes.get(close..r_pr_node.span.end) != Some(b"/>".as_slice()) {
+                            return Err(EditRefusal::TextMapping(
+                                "an empty a:rPr not closed by />",
+                            ));
+                        }
+                        let tail = format!(">{element}</{}>", r_pr_node.qualified);
+                        edits.push((close..r_pr_node.span.end, tail.into_bytes()));
+                    }
+                    None => {
+                        let before = r_pr_node.children.iter().copied().find(|&at| {
+                            tree.nodes[at].namespace == A
+                                && AFTER_LATIN.contains(&tree.nodes[at].name.as_str())
+                        });
+                        edits.push(match before {
+                            Some(at) => {
+                                let point = tree.nodes[at].span.start;
+                                (point..point, element.into_bytes())
+                            }
+                            None => xml::insert_last(bytes, r_pr_node, &element),
+                        });
+                    }
+                }
+            }
+        }
+        None if !attributes.is_empty() || latin.is_some() => {
+            let r_pr = xml::qualify(prefix, "rPr");
+            let mut element = format!("<{r_pr}");
+            for (name, value) in &attributes {
+                element.push_str(&format!(r#" {name}="{value}""#));
+            }
+            match latin {
+                Some(latin) => element.push_str(&format!(">{latin}</{r_pr}>")),
+                None => element.push_str("/>"),
+            }
+            edits.push(xml::insert_first(bytes, node, &element));
+        }
+        None => {}
+    }
+    if let Some(text) = text {
+        let t =
+            xml::child(tree, run, A, "t").ok_or(EditRefusal::TextMapping("a run without text"))?;
+        let t_node = &tree.nodes[t];
+        let escaped = escape_text(text);
+        edits.push(if t_node.empty {
+            let mut value = xml::open_tag(bytes, t_node);
+            value.extend(format!("{escaped}</{}>", t_node.qualified).into_bytes());
+            (t_node.span.clone(), value)
+        } else {
+            (t_node.content.clone(), escaped.into_bytes())
+        });
+    }
+    let base = node.span.start;
+    let local = edits
+        .into_iter()
+        .map(|(range, value)| (range.start - base..range.end - base, value))
+        .collect();
+    xml::splice(&bytes[node.span.clone()], local)
 }
 
 fn finish(

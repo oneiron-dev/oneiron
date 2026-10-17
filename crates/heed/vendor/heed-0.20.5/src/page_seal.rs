@@ -88,8 +88,7 @@ unsafe fn transform(
     let cipher = XChaCha20Poly1305::new_from_slice(page_key).ok()?;
     let buffer = InOutBuf::new(input, output).ok()?;
     if seal {
-        let auth =
-            unsafe { slice::from_raw_parts_mut(keys[2].mv_data as *mut u8, AUTH as usize) };
+        let auth = unsafe { slice::from_raw_parts_mut(keys[2].mv_data as *mut u8, AUTH as usize) };
         let (nonce, tag) = auth.split_at_mut(NONCE);
         getrandom::fill(nonce).ok()?;
         let nonce = <&XNonce>::try_from(&*nonce).ok()?;
@@ -100,7 +99,9 @@ unsafe fn transform(
         let (nonce, tag) = auth.split_at(NONCE);
         let nonce = <&XNonce>::try_from(nonce).ok()?;
         let tag = <&Tag>::try_from(tag).ok()?;
-        cipher.decrypt_inout_detached(nonce, aad, buffer, tag).ok()?;
+        cipher
+            .decrypt_inout_detached(nonce, aad, buffer, tag)
+            .ok()?;
     }
     Some(())
 }
