@@ -50618,7 +50618,9 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "EscrowRetirement",
       "NewVaultKeyWrap",
+      "ResealedEscrowCapsule",
       "VaultKeyEscrowCapsule",
       "VaultKeyStatus",
       "VaultKeyUnlock",
@@ -50630,8 +50632,8 @@
      "surface": {
       "crate-vis": 19,
       "enum": 4,
-      "fn": 24,
-      "struct": 2
+      "fn": 27,
+      "struct": 4
      }
     },
     {
@@ -66927,13 +66929,14 @@
       "VaultKeyArgs",
       "VaultKeyCommand",
       "VaultKeyNamedArgs",
+      "VaultKeyResealArgs",
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
       "enum": 14,
-      "struct": 43
+      "struct": 44
      }
     },
     {
@@ -70342,7 +70345,7 @@
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
