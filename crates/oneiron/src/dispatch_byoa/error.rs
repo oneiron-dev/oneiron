@@ -109,8 +109,6 @@ pub(super) const ERR_SEAT_LOGIN_HANDLE: &str =
 
 pub(super) const ERR_SEAT_KEY_HANDLE: &str = "an API-key seat must name a custody handle";
 
-pub(super) const ERR_SEAT_TASK: &str = "runner attempt does not carry a registered runner's task";
-
 pub(super) const ERR_SEAT_ROUTE: &str = "official seat route label is not recognized";
 
 pub(super) const ERR_SEAT_SPEC: &str = "official seat spec is incomplete or unbounded";

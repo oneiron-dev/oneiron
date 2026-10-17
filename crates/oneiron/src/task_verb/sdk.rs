@@ -335,7 +335,7 @@ pub struct RoomEntry {
 /// Every field but `query` is optional and defaults to the contract's default,
 /// so an omitting client and a spelling-everything client reach the same
 /// engine call.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallRequest {
     pub query: String,
     /// One of the five effort levels, or `call`: call mode for live calls,
@@ -365,6 +365,38 @@ pub struct RecallRequest {
     /// the media.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<crate::code_run::vault_read::ContextPackMediaQuery>,
+    /// The affect the query is asked in (OF-423), as the context pack takes
+    /// it: emotion congruence ranks a candidate by how near its own valence,
+    /// arousal and dominance sit. Omitted, recall ranks as before.
+    #[serde(
+        default,
+        alias = "queryAffect",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_affect: Option<QueryAffect>,
+}
+
+/// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryAffect {
+    pub valence: f32,
+    pub arousal: f32,
+    pub dominance: f32,
+}
+
+impl QueryAffect {
+    /// The affect as the engine takes it, refused out of range.
+    pub fn vad(self) -> MemoryResult<crate::affect::Vad> {
+        let vad = crate::affect::Vad {
+            valence: self.valence,
+            arousal: self.arousal,
+            dominance: self.dominance,
+        };
+        vad.validate()
+            .map_err(|error| MemoryError::bad_request(format!("query_affect: {error}")))?;
+        Ok(vad)
+    }
 }
 
 pub use super::recall_door::{
@@ -375,6 +407,7 @@ pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use super::sdk_connector::*;
+pub use super::sdk_connector_call::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_embedding_space::*;
@@ -577,7 +610,12 @@ pub fn code_mode_declarations() -> &'static str {
                 }
                 (root, _) => {
                     let kind = declaration_type(node, 0);
-                    out.push_str(&format!("declare const {root}: {kind};\n"));
+                    let tools = if root == "connector" && node.children.contains_key("call") {
+                        CONNECTOR_TOOLS_DECLARATION
+                    } else {
+                        ""
+                    };
+                    out.push_str(&format!("declare const {root}: {tools}{kind};\n"));
                 }
             }
         }
@@ -585,6 +623,11 @@ pub fn code_mode_declarations() -> &'static str {
     });
     &DECLARATIONS
 }
+
+/// `connector.<name>.<tool>(args)`: any tool of any catalogued connector,
+/// beside the root's fixed members. The guest's proxy sends it as
+/// `connector.call` (ONE-2510), so it holds no authority that row lacks.
+const CONNECTOR_TOOLS_DECLARATION: &str = "{ readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<unknown> } } & ";
 
 /// One path segment of the verb tree. A segment can be a verb and hold verbs
 /// at once (`self.memory.diary` and `self.memory.diary.query`), so a verb is

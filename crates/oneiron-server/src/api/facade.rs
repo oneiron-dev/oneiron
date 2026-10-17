@@ -27,6 +27,7 @@
 pub(super) mod action_routes;
 mod agent_verbs;
 mod call_context;
+mod connector_call_doors;
 mod core_write_doors;
 mod decision_ask_doors;
 pub(super) mod decision_role_asks;
@@ -52,6 +53,7 @@ mod widen_proposal_doors;
 
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
+pub(crate) use connector_call_doors::connector_call_as;
 pub(crate) use dispatch::call_verb;
 
 use std::sync::Arc;
@@ -84,7 +86,10 @@ use oneiron::memory::{
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
-use oneiron::runtime_hooks::verb::{InvocationClaim, InvocationEntry, InvocationOutcome};
+use oneiron::runtime_hooks::verb::{
+    InvocationClaim, InvocationEntry, InvocationOutcome, VerbAskCredential, VerbAskDoor,
+    VerbAskDrainPermit, VerbAskRefusal,
+};
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbHookPre, VerbHookStop, hook_class};
 use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{EdgeActorClass, EntityId};
@@ -510,6 +515,9 @@ pub(crate) const INVOCATION_HEADER: &str = "x-oneiron-invocation";
 /// `memory` bound to the invocation the call names, if it names one, and
 /// to the off-record session it names (OF-063: inside an anonymous one a
 /// reference refusal writes no receipt, as its call writes none, OF-538).
+/// The facade, in the room turn the call names, is the door a credential
+/// caller's call came in by: a verb hook's ask saves it, so settlement runs
+/// the call again here (ARCH-0080 §3 Ask).
 fn facade_invocation<'v>(
     memory: oneiron::Memory<'v>,
     call: &FacadeCall<'_>,
@@ -518,6 +526,9 @@ fn facade_invocation<'v>(
         Some(session_ref) => memory.in_off_record_session(session_ref),
         None => memory,
     };
+    let memory = memory.with_credential_door(VerbAskDoor::Facade {
+        room: call.room_turn()?,
+    });
     Ok(match call.invocation()? {
         Some(invocation) => memory.with_invocation(invocation),
         None => memory,
@@ -537,16 +548,32 @@ pub(crate) async fn row_hooks_pre(
     verb: &str,
     args: serde_json::Value,
 ) -> Result<VerbHookPre, MemoryError> {
-    row_hooks_pre_with(server, None, None, actor, class, invocation, verb, args).await
+    let resume = RowHookResume::default();
+    row_hooks_pre_with(
+        server, None, None, actor, class, invocation, verb, args, resume,
+    )
+    .await
+}
+
+/// What a row's pre chain carries for settlement (ARCH-0080 §3 Ask): the
+/// credential a caller's call can run again on through its door, and the
+/// drain's permit when settlement runs it again. The default carries
+/// neither.
+#[derive(Default)]
+pub(crate) struct RowHookResume {
+    pub(crate) credential: Option<VerbAskCredential>,
+    pub(crate) drain: Option<VerbAskDrainPermit>,
 }
 
 /// [`row_hooks_pre`] for a door that holds its caller's read key and its own
 /// admission of rewritten args. The hooks read under `reader`, capped by
 /// their grant, and as `actor` when it is `None`. A rewrite must pass the
-/// row's input check, then `check`, as if the caller sent it.
+/// row's input check, then `check`, as if the caller sent it. An ask saves
+/// `resume`'s credential, and its drain permit marks the chain's thread as
+/// the drain's run of the call.
 #[expect(
     clippy::too_many_arguments,
-    reason = "row_hooks_pre's inputs plus the caller's key and rewrite admission"
+    reason = "row_hooks_pre's inputs plus the caller's key, rewrite admission and resume"
 )]
 pub(crate) async fn row_hooks_pre_with(
     server: &Arc<SyncServer>,
@@ -557,10 +584,12 @@ pub(crate) async fn row_hooks_pre_with(
     invocation: Option<InvocationId>,
     verb: &str,
     args: serde_json::Value,
+    resume: RowHookResume,
 ) -> Result<VerbHookPre, MemoryError> {
     let server = Arc::clone(server);
     let verb = verb.to_owned();
     tokio::task::spawn_blocking(move || {
+        let _drain = resume.drain.as_ref().map(VerbAskDrainPermit::enter);
         let call = VerbCall {
             verb: verb.clone(),
             invocation: invocation.unwrap_or_else(InvocationId::mint),
@@ -580,7 +609,7 @@ pub(crate) async fn row_hooks_pre_with(
         };
         server
             .vault
-            .pre_verb_hooks(call, args, &admit)?
+            .pre_verb_hooks_for_credential(call, args, &admit, resume.credential)?
             .map_err(|stop| MemoryError::from(oneiron::Error::from(stop)))
     })
     .await
@@ -638,6 +667,22 @@ async fn facade_hooks_pre(
         ),
     };
     let invocation = call.invocation()?;
+    // A credential caller's own call can run again through this door once
+    // its hook's ask settles, on the drain's permit when it does. A context
+    // the row refuses saves none.
+    let credential = match bound {
+        Some(_) if VerbCall::may_run(&server.vault, verb) => facade_invocation(
+            credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
+            call,
+        )
+        .ok()
+        .and_then(|memory| memory.verb_ask_credential()),
+        _ => None,
+    };
+    let resume = RowHookResume {
+        credential,
+        drain: call.drain().cloned(),
+    };
     // What only a hook reads, built only when one may run: the caller's read
     // key, its credential's where its connection sits (an owner-grade
     // credential that calls as the host reads as the host, its owner), and
@@ -660,7 +705,10 @@ async fn facade_hooks_pre(
     } else {
         (None, None)
     };
-    Ok(row_hooks_pre_with(server, reader, check, actor, class, invocation, verb, value).await?)
+    Ok(row_hooks_pre_with(
+        server, reader, check, actor, class, invocation, verb, value, resume,
+    )
+    .await?)
 }
 
 /// What the facade admits before a host-door row's pre chain, for a door
@@ -779,6 +827,8 @@ fn facade_invoke(
         call,
     )?;
     let memory = facade_rewrites_admitted(server, auth, verb, &value, memory);
+    // Settlement's run of the call enters its boundary here as the drain's.
+    let _drain = call.drain().map(VerbAskDrainPermit::enter);
     Ok(match call.room_turn()? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => {
@@ -860,6 +910,7 @@ fn facade_invoke_born(
         call,
     )?;
     let memory = facade_rewrites_admitted(server, auth, verb, &value, memory);
+    let _drain = call.drain().map(VerbAskDrainPermit::enter);
     Ok(match call.room_turn()? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
@@ -1205,6 +1256,15 @@ impl From<MemoryError> for FacadeApiError {
             // to correct, and a missing record and an unreadable one are this
             // same status.
             oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE => StatusCode::UNPROCESSABLE_ENTITY,
+            // A credential call settlement refused before it ran (ARCH-0080
+            // §3 Ask): the caller's credential no longer admits it, or this
+            // host could not run it again. Either way a new invocation.
+            code if VerbAskRefusal::from_code(code)
+                .is_some_and(VerbAskRefusal::names_credential) =>
+            {
+                StatusCode::FORBIDDEN
+            }
+            code if VerbAskRefusal::from_code(code).is_some() => StatusCode::CONFLICT,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

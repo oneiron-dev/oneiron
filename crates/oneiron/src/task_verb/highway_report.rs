@@ -22,6 +22,7 @@ use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, CompleteAttempt, FailAttempt,
     RetryAttempt, SetAttemptResult,
 };
+use crate::authority::TaskActorVerb;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -39,9 +40,7 @@ use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask};
 use super::highway::{
     invalid_state, lease_owner_for, local_node_in, not_found, phase_of, qualified_key, stamp_fields,
 };
-use super::highway_accept::{
-    HostFence, Lane, host_fence_in, lane_of, require_assignee, require_live_standard,
-};
+use super::highway_accept::{HostFence, Lane, lane_of, require_live_standard};
 use super::highway_block::{BlockContinuation, BlockPurpose, selected_task_ask_option};
 use super::highway_types::{
     AttemptHandle, TaskCallReceipt, TaskHandle, TaskLifecycleRecord, TaskOutcome, TaskPhase,
@@ -540,9 +539,10 @@ impl Memory<'_> {
         })
     }
 
-    /// The fence one report runs, in `txn`: the immutable facts name the
-    /// reporter, the TASK is a live standard task, and the reporter still
-    /// holds the work its lane holds work by.
+    /// The fence one report runs, in `txn`: L02's rule proves the reporter
+    /// over the immutable facts (a runner by its lease), the TASK is a live
+    /// standard task, and the reporter still holds the work its lane holds
+    /// work by.
     fn report_fence_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -551,40 +551,51 @@ impl Memory<'_> {
         body: &TaskVerbBody,
         attempt: Option<&AttemptHandle>,
     ) -> MemoryResult<Fence> {
-        let standing = self
-            .vault()
-            .task_standing_in(txn, task_ref)?
-            .ok_or_else(not_found)?;
         let lane = lane_of(body.assignee);
-        if lane != Lane::Runner {
-            require_assignee(&standing, self.actor())?;
-        }
+        let (standing, runner) = match (lane, via) {
+            (Lane::Runner, TaskVia::Host(binding)) => {
+                let (standing, fence) = self.runner_standing_in(txn, binding, task_ref)?;
+                (standing, Some(fence))
+            }
+            // Refused below: the runner's lane never reports over the wire.
+            (Lane::Runner, TaskVia::Wire) => (
+                self.vault()
+                    .task_standing_in(txn, task_ref)?
+                    .ok_or_else(not_found)?,
+                None,
+            ),
+            (Lane::External | Lane::Human, _) => (
+                self.highway_task_actor_in(
+                    txn,
+                    task_ref,
+                    TaskActorVerb::Report,
+                    "The assignee or taker reports; the owner reads its status.",
+                )?,
+                None,
+            ),
+        };
         require_live_standard(body, &standing)?;
         let generation = self
             .vault()
             .actor_binding_generation_in_txn(txn, self.actor())?;
         let task_hex = task_ref.to_hex();
-        match (lane, via) {
-            (Lane::Runner, TaskVia::Wire) => Err(invalid_state(
+        match (lane, runner) {
+            (Lane::Runner, None) => Err(invalid_state(
                 "the engine's runner reports this task through its host binding",
                 "Report from the attempt that realizes the task.",
             )),
-            (Lane::Runner, TaskVia::Host(binding)) => {
-                Ok(
-                    match host_fence_in(self.vault(), txn, binding, &task_hex)? {
-                        // The runner settles its own try; the report moves the
-                        // TASK alone.
-                        HostFence::Held(record) => Fence::Held {
-                            lane,
-                            attempt: None,
-                            lease_owner: None,
-                            team: crate::agent_dispatch::attempt_team_stamp(&record)?,
-                        },
-                        HostFence::Stale => Fence::Stale,
-                        HostFence::Missing => Fence::WrongNode,
-                    },
-                )
-            }
+            (Lane::Runner, Some(fence)) => Ok(match fence {
+                // The runner settles its own try; the report moves the TASK
+                // alone.
+                HostFence::Held(record) => Fence::Held {
+                    lane,
+                    attempt: None,
+                    lease_owner: None,
+                    team: crate::agent_dispatch::attempt_team_stamp(&record)?,
+                },
+                HostFence::Stale => Fence::Stale,
+                HostFence::Missing => Fence::WrongNode,
+            }),
             (Lane::Human, _) => Ok(
                 if standing.taker.is_some_and(|taker| {
                     taker.actor == self.actor() && taker.generation == generation
@@ -795,10 +806,12 @@ impl Memory<'_> {
             if !completed {
                 return Ok(None);
             }
-            let standing = self
-                .vault()
-                .task_standing_in(txn, task_ref)?
-                .ok_or_else(not_found)?;
+            let standing = self.highway_task_actor_in(
+                txn,
+                task_ref,
+                TaskActorVerb::Status,
+                "Replay a settled report as the task's owner or assignee.",
+            )?;
             if standing.assignee != Some(self.actor()) && standing.owner != self.actor() {
                 return Err(not_found());
             }
