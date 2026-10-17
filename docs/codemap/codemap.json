@@ -26498,14 +26498,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PdfText",
       "PdfTextError"
      ],
      "path": "src/ingest/pdf.rs",
      "purpose": "A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: \"The first adapter reads a…",
      "surface": {
-      "const": 1,
       "enum": 1,
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -27624,7 +27625,7 @@
      "purpose": "The engine's `[limits]` rows and their question port, defined in `oneiron-contracts`",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "re-export": 1
      }
     },
@@ -68419,7 +68420,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import/notes.rs",
@@ -73456,7 +73457,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 50,
+   "over_bar": 51,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 613,
    "test_files": 182
