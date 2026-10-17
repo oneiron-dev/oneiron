@@ -4,12 +4,14 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 288 code-mode rows (270 host rows, 18 run rows), 898 declarations.
-// Replies: 233 fully typed, 43 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
-// Opaque serde_json::Value leaves: 60; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 290 code-mode rows (272 host rows, 18 run rows), 904 declarations.
+// Replies: 233 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Opaque serde_json::Value leaves: 65; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
-  type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
+  type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
+  /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
+  interface VaultHost {}
   type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
   type ReportKind = "problem" | "proposal";
   type FeedbackProposal = { problem: string; fix: string };
@@ -711,7 +713,8 @@ declare namespace Sdk {
   type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type GraphAskSelection = { entity_type: number; limit: number };
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
-  type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null };
+  type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] };
+  type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null; criteria?: QuestionCriteria | null };
   type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
@@ -719,7 +722,6 @@ declare namespace Sdk {
   type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: DecisionBand };
   type QuestionActivation = "one_off" | "standing";
   type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null };
-  type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] };
   type QuestionAudience = "asker";
   type QuestionMedia = { images?: boolean; audio?: boolean };
   type FolderItemInput = { artifact_ref: string; row: number };
@@ -752,6 +754,12 @@ declare namespace Sdk {
   type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
   type ConnectorNameRequest = { name: string };
   type ConnectorView = { key_ref: string; entry: ConnectorEntry; status: string; secret_ref?: string | null; key_generation: number; registered_at: number; status_changed_at?: number | null; budgeted_as_sends: boolean };
+  type MutationIntent = "preview" | "explicit_mutation";
+  type ConnectorCallRequest = { name: string; tool: string; arguments?: unknown; mutation?: MutationIntent };
+  type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
+  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[] } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] };
+  type ConnectorSchemaRequest = { name: string; tool: string };
+  type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type OpenInput = { url: string };
   type Row = { ref: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null };
@@ -898,7 +906,7 @@ declare namespace Sdk {
   type TeamAxis = "converge" | "diverge";
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
-  type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null; confessions?: number | null; spend?: number | null; spendCap?: number | null; calls?: number | null };
+  type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
   type ReaderSpawnReceipt = { task: EntityId; attempt: string; run: EntityId; cutoff_unix_ms: number; state: string; replay: boolean };
   type TaskWaitSetRequest = { tasks: string[]; all?: boolean | null; n_of?: number | null; until?: number | null; step_key: string };
@@ -936,13 +944,17 @@ declare function ask(input: Sdk.TaskAskRequest): Promise<Sdk.Reply<Sdk.TaskAskRe
 declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.Reply<Sdk.TaskAskPreflight>>;
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
 declare function cancel(input: Sdk.TaskRequest): Promise<Sdk.Reply<Sdk.TaskCancelReceipt>>;
-declare const connector: {
+declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<Sdk.Reply<Sdk.ConnectorCallReply>> } } & {
+  /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
+  call(input: Sdk.ConnectorCallRequest): Promise<Sdk.Reply<Sdk.ConnectorCallReply>>;
   /** Every live catalogued connector whose name or summary matches the query. */
   list(input: Sdk.ConnectorListRequest): Promise<Sdk.Reply<Sdk.ConnectorEntry[]>>;
   outbound: {
     /** Schedules one send through a granted outbound connector, gated and held for delivery. */
     schedule(input: Sdk.OutboundScheduleRequest): Promise<Sdk.Reply<Sdk.OutboundIntentReceipt>>;
   };
+  /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
+  schema(input: Sdk.ConnectorSchemaRequest): Promise<Sdk.Reply<Sdk.ConnectorSchemaReply>>;
   /** One catalogued connector by name, removed ones included. */
   status(input: Sdk.ConnectorNameRequest): Promise<Sdk.Reply<Sdk.ConnectorView | null>>;
 };
@@ -1129,7 +1141,7 @@ declare const tasks: {
   /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
   wave(input: Sdk.TaskWaveRequest): Promise<Sdk.Reply<Sdk.TaskWaveReceipt>>;
 };
-declare const vault: {
+declare const vault: Sdk.VaultHost & {
   artifacts: {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.Reply<Sdk.BlobVersionView>>;
