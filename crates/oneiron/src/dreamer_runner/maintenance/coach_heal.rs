@@ -6,7 +6,9 @@
 //! lands as a proposed heal in the owner's run tray, counted by the oversight
 //! receipts. The Coach is propose-only: nothing here edits a skill, injects a
 //! prompt, resumes a run or touches an environment, and a case the ladder
-//! does not answer goes to a person. A filed heal wakes the Coach's code-fix
+//! does not answer goes to a person. A case routed to `skill_edit` carries a
+//! drafted revision of its skill for the owner to review (`coach_repair`),
+//! a gated candidate nothing here admits. A filed heal wakes the Coach's code-fix
 //! run for its case, or for its report when the report's run has no failed
 //! case (OF-380), on a deployment that exports.
 use std::time::{Duration, Instant};
@@ -15,6 +17,7 @@ use rmpv::Value;
 use serde_json::json;
 
 use super::coach::COACH_ISSUES_FACET;
+use super::coach_repair::{SkillRepairDraft, land_skill_repair_in_txn};
 use super::proposals;
 use crate::attempt_queue::AttemptId;
 use crate::code_run::blocked::{BlockedReceipt, read_blocked_receipt};
@@ -29,6 +32,7 @@ use crate::llm::decision::{
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::self_heal::blocked_reports;
+use crate::skill_optimize::SkillOptimizeAuthor;
 use crate::{EntityId, Result, Vault};
 
 /// Predicate of a proposed heal for a failure-ladder case.
@@ -182,11 +186,14 @@ impl Vault {
     /// The Coach's diagnosis of one failure-ladder case, under the leased
     /// `coach.heal` attempt the escalation woke: the route question over the
     /// case and its verified blocked reports, filed as a proposed heal. A
-    /// replay returns the heal already filed. Returns the proposal.
+    /// `skill_edit` heal carries the revision `author` drafts of the case's
+    /// skill, landed as a gated candidate with the heal. A replay returns the
+    /// heal already filed. Returns the proposal.
     pub fn run_coach_heal(
         &self,
         attempt: &DreamerAdmittedAttempt,
         decisions: &HealDecisions<'_>,
+        author: &dyn SkillOptimizeAuthor,
         now: u64,
     ) -> Result<EntityId> {
         self.require_coach_attempt(attempt, COACH_HEAL_ATTEMPT_KIND)?;
@@ -225,6 +232,15 @@ impl Vault {
                 .collect::<Vec<_>>(),
         }));
         let (route, decided) = decisions.route_or_person(b"case", &evidence, &state);
+        let repair = match route {
+            HealRoute::SkillEdit => Some(self.draft_coach_skill_repair(
+                &case,
+                author,
+                attempt.status.attempt.id,
+                now,
+            )?),
+            HealRoute::PromptInject | HealRoute::Environment | HealRoute::Person => None,
+        };
         let value = json!({
             "case": case_ref,
             "agent": case.scope.agent_ref,
@@ -235,6 +251,7 @@ impl Vault {
             ),
             "route": route.as_str(),
             "decided": decided,
+            "repair": repair.as_ref().map(SkillRepairDraft::value),
             "evidence": case.evidence_ref,
             "checkpoint": case.pre_fail_checkpoint_ref,
             "qa_thread": case.qa_thread_ref,
@@ -249,6 +266,16 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             if let Some(settled) = blocked_reports::settled_in_txn(self, &*txn, &key)? {
                 return Ok(settled.proposal);
+            }
+            if let Some(repair) = &repair {
+                land_skill_repair_in_txn(
+                    self,
+                    txn,
+                    repair,
+                    COACH_HEAL_ATTEMPT_KIND,
+                    attempt.status.attempt.id,
+                    now,
+                )?;
             }
             let proposal = proposals::emit_in_txn(
                 self,
