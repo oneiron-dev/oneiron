@@ -151,7 +151,27 @@ pub(crate) async fn render_live_weave_lens_listing(
     request: WeaveReportRequest,
 ) -> (MemoryResult<LensFrameCard>, Vec<EntityId>) {
     let producers = Arc::new(ProducerRows::default());
-    let answer = render_listing(server, caller, request, &producers).await;
+    let answer = render_listing(server, caller, request, &producers, None).await;
+    (answer, producers.take())
+}
+
+/// [`render_live_weave_lens_listing`] for a run's re-render of a live
+/// subscription (OF-181, FIX 2612): the run that rendered the card owns it,
+/// so a successful render replaces the card the same run rendered for the
+/// same subscription, a failed one keeps the last good card, and the run's
+/// end closes them all.
+#[allow(
+    dead_code,
+    reason = "L13 threads the creating run and subscription from the facade call (FIX 2612)"
+)]
+pub(crate) async fn render_live_weave_lens_for_run(
+    server: &Arc<SyncServer>,
+    caller: WeaveLensCaller,
+    request: WeaveReportRequest,
+    owner: crate::lens_frames::CardOwner,
+) -> (MemoryResult<LensFrameCard>, Vec<EntityId>) {
+    let producers = Arc::new(ProducerRows::default());
+    let answer = render_listing(server, caller, request, &producers, Some(owner)).await;
     (answer, producers.take())
 }
 
@@ -160,6 +180,7 @@ async fn render_listing(
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
     producers: &Arc<ProducerRows>,
+    owner: Option<crate::lens_frames::CardOwner>,
 ) -> MemoryResult<LensFrameCard> {
     let vault = Arc::clone(server.vault());
     let runtime = server.ai.model_runtime();
@@ -307,9 +328,19 @@ async fn render_listing(
             continue;
         };
         let (frame, card) = hosted.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
-        server
-            .lens_frames
-            .record(&auth, frame, card.render.clone())?;
+        match owner {
+            Some(owner) => {
+                server.lens_frames.replace_for_subscription(
+                    &auth,
+                    frame,
+                    card.render.clone(),
+                    owner,
+                )?;
+            }
+            None => server
+                .lens_frames
+                .record(&auth, frame, card.render.clone())?,
+        }
         return Ok(card);
     }
     Err(MemoryError::new(
