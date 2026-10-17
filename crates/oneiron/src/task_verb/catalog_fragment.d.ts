@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 320 code-mode rows (302 host rows, 18 run rows), 1098 declarations.
-// Replies: 259 fully typed, 47 typed down to an opaque serde_json::Value leaf, 13 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 321 code-mode rows (303 host rows, 18 run rows), 1098 declarations.
+// Replies: 260 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
 declare namespace Sdk {
@@ -288,6 +288,7 @@ declare namespace Sdk {
   type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[] };
   type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt };
   type WeaveDigestRequest = { scheduled_for?: number | null };
+  type GeneratedUiCatalog = "lens_atom_kit";
   type LensText = string;
   type LensTextSpan = { type: "literal"; value: LensText } | { type: "interpolation"; value: { key: string; fallback: LensText } };
   type TextBlockAtom = { spans: LensTextSpan[] };
@@ -338,11 +339,6 @@ declare namespace Sdk {
   type LensAtom = LensAtomWire;
   type SelfUiBindableProperty = "checked" | "selected" | "value" | "text";
   type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty };
-  type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] };
-  type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode };
-  type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number };
-  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null; lens_refused?: WeaveLensRefusal | null };
-  type GeneratedUiCatalog = "lens_atom_kit";
   type GeneratedUiNode = { id: string; parent?: string | null; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; childRefs?: string[] };
   type GeneratedUiActionTier = "local" | "deterministic_tool" | "model_round_trip";
   type GeneratedUiActionDeclaration = { elementId: string; actionId: string; tier: GeneratedUiActionTier; action: SelfUiAction };
@@ -351,7 +347,11 @@ declare namespace Sdk {
   type GeneratedUiArchiveReason = "completed" | "expired" | "dismissed" | "superseded";
   type GeneratedUiCardLifecycle = { phase: GeneratedUiCardPhase; revision: number; archiveReason?: GeneratedUiArchiveReason | null };
   type GeneratedUiRender = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; root: string; nodes: GeneratedUiNode[]; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot; lifecycle: GeneratedUiCardLifecycle };
+  type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] };
+  type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode };
   type LensFrameCard = { card_id: string; render: GeneratedUiRender; lens: GeneratedLens };
+  type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number };
+  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: LensFrameCard | null; lens_refused?: WeaveLensRefusal | null };
   type WeaveWrongLinkRequest = { source_ref: string; kind: string; target_ref: string };
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type PackFileInput = { path: string; text: string };
@@ -868,7 +868,7 @@ declare namespace Sdk {
   type PointInput = { image: string; x: number; y: number };
   type TypeInput = { ref: string; text: string; clear?: boolean };
   type SelectInput = { ref: string; option: string };
-  type WaitForInput = { role?: string | null; name?: string | null; timeout_ms?: number | null };
+  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null };
   type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ExpectOutput = { met: boolean; row?: Row | null };
@@ -1209,7 +1209,7 @@ declare namespace self {
     type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until some page row matches a role and name. */
+    /** Waits until a page row its refs name, or else some row matching a role and name, is there. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
@@ -1249,7 +1249,7 @@ declare namespace self {
     type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until some window row matches a role and name. */
+    /** Waits until a window row its refs name, or else some row matching a role and name, is there. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Moves the session onto another desktop window and observes it. */
     window(input: Sdk.WindowInput): Promise<Sdk.Observation | StoredResult>;
@@ -1852,13 +1852,19 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
   };
   weave: {
-    /** One of the bound actor's saved weave digests, or the newest, under the current read policy. */
+    /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
     digest(input: Sdk.WeaveDigestRequest): Promise<Sdk.WeaveDigestView | null | StoredResult>;
     /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
     lens(input: Sdk.WeaveReportRequest): Promise<Sdk.LensFrameCard | StoredResult>;
     link: {
       /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
       wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
+    };
+    owner: {
+      link: {
+        /** The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays. */
+        wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
+      };
     };
     /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
     report(input: Sdk.WeaveReportRequest): Promise<Sdk.WeaveReportView | StoredResult>;

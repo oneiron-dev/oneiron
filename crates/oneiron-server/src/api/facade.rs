@@ -832,6 +832,7 @@ fn facade_invoke(
             .listing_producers(producers),
         call,
     )?;
+    let memory = facade_task_decisions(server, verb, memory)?;
     let memory = facade_rewrites_admitted(server, auth, verb, &value, memory);
     // Settlement's run of the call enters its boundary here as the drain's.
     let _drain = call.drain().map(VerbAskDrainPermit::enter);
@@ -915,12 +916,34 @@ fn facade_invoke_born(
             .listing_producers(producers),
         call,
     )?;
+    let memory = facade_task_decisions(server, verb, memory)?;
     let memory = facade_rewrites_admitted(server, auth, verb, &value, memory);
     let _drain = call.drain().map(VerbAskDrainPermit::enter);
     Ok(match call.room_turn()? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
     })
+}
+
+/// `memory` with the host's task decisions bound, on a task row that asks
+/// them (OF-533): a post's take question and a report's done and ask-up
+/// questions then go through the host's ladder instead of asking up. A
+/// model rung may block on the server's runtime, so the dispatch runs these
+/// rows on a blocking thread; every other row's surface stays unbound. A
+/// ladder the host cannot build refuses the row.
+fn facade_task_decisions<'v>(
+    server: &'v SyncServer,
+    verb: &str,
+    memory: oneiron::Memory<'v>,
+) -> Result<oneiron::Memory<'v>, FacadeApiError> {
+    if !matches!(verb, "tasks.create" | "tasks.update") {
+        return Ok(memory);
+    }
+    let decisions = server
+        .decision_host()
+        .task_decisions()
+        .map_err(MemoryError::from)?;
+    Ok(memory.with_task_decisions(decisions))
 }
 
 /// A verb that reads around the read lane is not served inside a room turn.

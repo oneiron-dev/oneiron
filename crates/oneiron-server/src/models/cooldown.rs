@@ -49,6 +49,10 @@ const HEALTH_REST_MAX_SECS: u64 = 60;
 const STABLE_SUCCESSES: u32 = 3;
 /// How long, in seconds, those answers span at least, from the first.
 const STABLE_SECS: u64 = 30;
+/// How long, in seconds, one probation request holds its offer's slot before
+/// the slot is free again. Without it, a media job no poll came back for
+/// would hold the slot until a restart.
+const PROBE_HOLD_MAX_SECS: u64 = 1_800;
 
 /// How long a wait for an offer back sleeps before it asks again whether
 /// the call may still go out: well inside a stopped turn's grace.
@@ -100,17 +104,32 @@ pub(super) struct Rest {
 
 /// One offer's health after its provider was down: its failures in a row,
 /// the end of its rest, and, once it answered again, its answers since and
-/// when the first came. On probation, the token of the one request out now.
+/// when the first came. On probation, the one request out now.
 #[derive(Clone, Copy, Debug, Default)]
 struct Health {
     strikes: u32,
     until: u64,
     successes: u32,
     first_success_at: Option<u64>,
-    probing: Option<u64>,
+    probing: Option<Probe>,
+}
+
+/// The probation request out now: its slot's token and when it took it.
+#[derive(Clone, Copy, Debug)]
+struct Probe {
+    token: u64,
+    since: u64,
 }
 
 impl Health {
+    /// The probation request out at `now`. A slot held past
+    /// [`PROBE_HOLD_MAX_SECS`] is free again: its request is a job no poll
+    /// came back for, and its end, if one comes, still counts.
+    fn probe_out(&self, now: u64) -> Option<Probe> {
+        self.probing
+            .filter(|probe| now.saturating_sub(probe.since) < PROBE_HOLD_MAX_SECS)
+    }
+
     fn rest(&self) -> Rest {
         Rest {
             until: self.until,
@@ -384,7 +403,7 @@ impl OfferCooldowns {
         let health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
         health
             .get(&key)
-            .filter(|held| held.until <= now && held.probing.is_some())?;
+            .filter(|held| held.until <= now && held.probe_out(now).is_some())?;
         Some(*self.health_changed.borrow())
     }
 
@@ -414,13 +433,13 @@ impl OfferCooldowns {
         if held.until > now {
             return Err(ProbeBlocked::Resting(held.rest()));
         }
-        if held.probing.is_some() {
+        if held.probe_out(now).is_some() {
             return Err(ProbeBlocked::Busy {
                 seen: *self.health_changed.borrow(),
             });
         }
         let token = self.probes.fetch_add(1, Ordering::Relaxed);
-        held.probing = Some(token);
+        held.probing = Some(Probe { token, since: now });
         drop(health);
         permit.slot = Some(token);
         Ok(permit)
@@ -432,7 +451,7 @@ impl OfferCooldowns {
     fn release_probe(&self, key: &str, token: u64) {
         let mut health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(held) = health.get_mut(key)
-            && held.probing == Some(token)
+            && held.probing.is_some_and(|probe| probe.token == token)
         {
             held.probing = None;
         }
@@ -467,7 +486,7 @@ impl OfferCooldowns {
         if let Some(held) = health.get(&key) {
             status.strikes = held.strikes;
             status.successes = held.successes;
-            status.probing = held.probing.is_some();
+            status.probing = held.probe_out(now).is_some();
             if held.until > now {
                 status.state = HealthState::Down;
                 status.until = Some(held.until);

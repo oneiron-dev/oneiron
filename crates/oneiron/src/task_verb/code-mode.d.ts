@@ -464,6 +464,11 @@ declare const vault: {
     link: {
       wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
     };
+    owner: {
+      link: {
+        wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
+      };
+    };
     report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
   };
   widen_proposals: ((input: { state?: 'pending' | 'approved' | 'declined' | null }) => Promise<unknown>) & {
