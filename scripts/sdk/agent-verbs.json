@@ -1984,6 +1984,7 @@
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
       "scope": "Read",
+      "task_work": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -2038,6 +2039,7 @@
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },
@@ -2052,6 +2054,7 @@
       "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_wait(input.handle, Some(&input.step_key))?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },
@@ -2067,6 +2070,7 @@
       "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_answer(&input.handle, &input.word)?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },
