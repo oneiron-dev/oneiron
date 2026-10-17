@@ -67,6 +67,7 @@
 mod codec;
 mod doors;
 mod floor;
+mod found_keys;
 mod known_values;
 mod masked_files;
 mod owner_door;
@@ -96,6 +97,14 @@ pub(crate) use self::doors::{
     restore_secret_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+pub use self::found_keys::{
+    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled,
+    NOTIFICATION_PRODUCER_FOUND_KEY,
+};
+pub(crate) use self::found_keys::{
+    FoundNote, KeptValues, note_found_keys_in_txn, raise_found_key_notices_in_txn,
+    settle_found_key_in_txn,
+};
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSweep, KnownValues, handle_text};
 pub use self::masked_files::SecretSight;

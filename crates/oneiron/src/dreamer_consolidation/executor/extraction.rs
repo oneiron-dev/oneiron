@@ -232,9 +232,12 @@ impl ConsolidationExecutor<'_> {
             .map(|candidate| candidate.project)
             .filter(|project| asked.iter().all(|candidate| candidate.project == *project));
         let to = self.ask_route(step_ctx.vault, project)?;
+        // The pack is the attempt's one correction read: the attempt names it.
+        let key =
+            EntityId::from_bytes(*step_ctx.attempt_id.as_bytes()).map_err(crate::Error::from)?;
         let Some(decided) = self
             .decide(
-                step_ctx, pass, resources, &to, &questions, &evidence, &state, charges,
+                step_ctx, pass, resources, &to, key, &questions, &evidence, &state, charges,
             )
             .await?
         else {

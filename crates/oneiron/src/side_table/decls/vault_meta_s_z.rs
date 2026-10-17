@@ -50,6 +50,13 @@ side_tables! {
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;
+    /// The keys a mask on write lifted out of one record or file, each with its handle, its kind,
+    /// where it sat and what the owner did about it (OF-560's found-key notice). Holds no value.
+    /// Key: id16 (the record, or the file's ASSET).
+    SECRET_FOUND_KEY: VaultMeta b"secret_found_key:v1:" Named;
+    /// A record whose found keys still owe the owner their needs-you notice: raised at the next
+    /// write's commit boundary, then removed. Key: id16 (the record).
+    SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named;
     /// Each custody record's known values, one entry per generation it held: the value's length,
     /// a keyed fingerprint of it and a keyed tag of its first bytes, never the value (OF-560 C).
     /// Derived and node-local: no checkpoint image or sync carries it. Key: id16 (custody record
@@ -520,6 +527,9 @@ side_tables! {
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
     /// Registered external ask wait. Key: id16 + bytes32.
     TASK_ASK_WAIT: VaultMeta b"tasks.wait/" Named;
+    /// Fan-out launch held for, or launched past, the approval mode: its frozen payload, plan,
+    /// statement, pause or width-check row and ruling (OF-393). Key: hex32 (launch ref).
+    TASK_FANOUT_LAUNCH: VaultMeta b"tasks/fanout/launch.v1/" Named;
     /// Consult fan-out plan. Key: hex32.
     TASK_FANOUT_RUN: VaultMeta b"tasks/fanout/v1/" Named;
     /// Retired consult fan-out policy carrier; the policy manifest now governs.

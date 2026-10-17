@@ -446,14 +446,23 @@ impl Vault {
                     Ok(staged) => staged,
                     Err(err) => return Rows::Discard(Err(E::from(err))),
                 };
+                let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
                 let (result, postcommit) = {
                     let _active_write_txn = crate::store::active_write_txn_guard();
                     let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
-                    match f(wtxn) {
+                    // A key this write's mask found raises its notice here.
+                    match f(wtxn).and_then(|result| {
+                        crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
+                            .map_err(E::from)?;
+                        Ok(result)
+                    }) {
                         Ok(result) => (result, vad_scope.finish()),
                         Err(err) => return Rows::Discard(Err(err)),
                     }
                 };
+                if let Err(err) = rekeys.finish(&self.store, wtxn) {
+                    return Rows::Discard(Err(E::from(err)));
+                }
                 if let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn) {
                     return Rows::Discard(Err(E::from(err)));
                 }

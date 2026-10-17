@@ -1,18 +1,22 @@
 //! Private iroh data plane. `Minimal` has no public lookup; relay is disabled
-//! unless the caller supplies an explicit private relay map.
+//! unless the caller supplies an explicit private relay map. A transport bound
+//! for pairing leaves a path receipt for every connection, direct or relayed,
+//! and for every refused or failed attempt ([`PathRecorder`]).
 
 use std::{
+    collections::BTreeMap,
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex, PoisonError},
     task::{Context, Poll},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::stream::{self, StreamExt};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, SecretKey,
     address_lookup::{AddressLookup, EndpointInfo, Error as LookupError, Item},
-    endpoint::{Accepting, Connection, presets},
+    endpoint::{Accepting, Connection, PathEvent, presets},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_future::boxed::BoxStream;
@@ -21,10 +25,190 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     AcceptPolicy, MachineId, MachineRoster, MeshConnection, MeshDuplex, MeshError, MeshFuture,
-    MeshStream, MeshTransport, transport_key::TransportKey,
+    MeshPathDirection, MeshPathKind, MeshPathOutcome, MeshPathReceipt, MeshStream, MeshTransport,
+    PathReceipts, transport_key::TransportKey,
 };
 
 const MAX_MESSAGE: usize = 1024 * 1024;
+
+/// How long the refused or failed attempts from one machine, or from keys no
+/// MACHINE names, fold into one path receipt.
+const REFUSAL_RECEIPT_WINDOW: Duration = Duration::from_secs(60);
+
+/// Refusals folded since each machine's last refusal receipt, by direction
+/// (inbound or not) and the machine the roster named, if any: when that
+/// receipt was written and how many came since.
+type RefusalTally = BTreeMap<(bool, Option<MachineId>), (Instant, u64)>;
+
+/// Leaves one transport's path receipts: a row per admitted connection,
+/// written when it opens and again when it closes, and the refused or failed
+/// attempts, folded per machine a window.
+#[derive(Debug, Clone)]
+struct PathRecorder {
+    sink: Arc<dyn PathReceipts>,
+    refusals: Arc<StdMutex<RefusalTally>>,
+}
+
+impl PathRecorder {
+    fn new(sink: Arc<dyn PathReceipts>) -> Self {
+        Self {
+            sink,
+            refusals: Arc::default(),
+        }
+    }
+
+    /// Writes `receipt` for a refused or failed attempt from `machine`,
+    /// unless that machine's refusals already left a receipt this window:
+    /// then the attempt only counts toward its next one.
+    fn refused(
+        &self,
+        mut receipt: MeshPathReceipt,
+        machine: Option<MachineId>,
+        connection: Option<&Connection>,
+    ) {
+        let key = (receipt.direction == MeshPathDirection::Inbound, machine);
+        let now = Instant::now();
+        {
+            let mut tally = self.refusals.lock().unwrap_or_else(PoisonError::into_inner);
+            match tally.get_mut(&key) {
+                Some((since, folded)) if now.duration_since(*since) < REFUSAL_RECEIPT_WINDOW => {
+                    *folded += 1;
+                    return;
+                }
+                Some((since, folded)) => {
+                    receipt.attempts = *folded + 1;
+                    *since = now;
+                    *folded = 0;
+                }
+                None => {
+                    tally.insert(key, (now, 0));
+                }
+            }
+        }
+        receipt.machine = machine.map(|machine| machine.to_hex());
+        if let Some(connection) = connection {
+            note_open_paths(&mut receipt, connection);
+        }
+        let sink = Arc::clone(&self.sink);
+        drop(tokio::task::spawn_blocking(move || sink.record(&receipt)));
+    }
+
+    /// Writes `receipt` for a connection admitted now, and again once it
+    /// closes, with the paths that carried its data meanwhile.
+    fn admitted(&self, mut receipt: MeshPathReceipt, connection: &Connection) {
+        note_open_paths(&mut receipt, connection);
+        let mut events = connection.path_events();
+        // Taken while this handle lives, so the close always reaches it.
+        let closing = connection.weak_handle().closed();
+        let sink = Arc::clone(&self.sink);
+        tokio::spawn(async move {
+            receipt.id = write_receipt(&sink, &receipt).await.unwrap_or_default();
+            tokio::pin!(closing);
+            let closed = loop {
+                tokio::select! {
+                    closed = &mut closing => break closed,
+                    event = events.next() => match event {
+                        Some(PathEvent::Selected { remote_addr, .. }) => {
+                            note_used_path(&mut receipt, &remote_addr);
+                        }
+                        Some(_) => {}
+                        None => break (&mut closing).await,
+                    },
+                }
+            };
+            receipt.closed_at_ms = Some(unix_millis());
+            receipt.detail = closed.map(|closed| closed.reason.to_string());
+            write_receipt(&sink, &receipt).await;
+        });
+    }
+}
+
+/// Writes `receipt` on a blocking thread: its id, or `None` when it did not
+/// land.
+async fn write_receipt(sink: &Arc<dyn PathReceipts>, receipt: &MeshPathReceipt) -> Option<String> {
+    let sink = Arc::clone(sink);
+    let receipt = receipt.clone();
+    tokio::task::spawn_blocking(move || sink.record(&receipt))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Notes which paths `connection` has open, and the one carrying its data.
+fn note_open_paths(receipt: &mut MeshPathReceipt, connection: &Connection) {
+    let (mut direct, mut relay) = (false, false);
+    for path in connection.paths().iter() {
+        direct |= path.is_ip();
+        relay |= path.is_relay();
+        if path.is_selected() {
+            note_used_path(receipt, path.remote_addr());
+        }
+    }
+    receipt.paths = match (direct, relay) {
+        (true, true) => MeshPathKind::Mixed,
+        (true, false) => MeshPathKind::Direct,
+        (false, true) => MeshPathKind::Relayed,
+        (false, false) => MeshPathKind::None,
+    };
+}
+
+/// Notes that the path at `addr` carried the connection's data.
+fn note_used_path(receipt: &mut MeshPathReceipt, addr: &iroh::TransportAddr) {
+    match addr {
+        iroh::TransportAddr::Ip(addr) => {
+            receipt.used_direct = true;
+            receipt.direct_addr = Some(addr.to_string());
+        }
+        iroh::TransportAddr::Relay(url) => {
+            receipt.used_relay = true;
+            receipt.relay_url = Some(url.to_string());
+        }
+        _ => {}
+    }
+}
+
+/// A receipt for an attempt with `key` that `error` refused or failed.
+fn attempt(
+    direction: MeshPathDirection,
+    outcome: MeshPathOutcome,
+    alpn: &[u8],
+    key: Option<[u8; 32]>,
+    error: &MeshError,
+) -> MeshPathReceipt {
+    let mut receipt = MeshPathReceipt::new(direction, outcome, alpn);
+    receipt.endpoint_key = key.map(key_hex);
+    receipt.detail = Some(error.to_string());
+    receipt
+}
+
+/// A receipt for a connection to `machine` at `key`, admitted now.
+fn admission(
+    direction: MeshPathDirection,
+    alpn: &[u8],
+    machine: MachineId,
+    key: [u8; 32],
+) -> MeshPathReceipt {
+    let mut receipt = MeshPathReceipt::new(direction, MeshPathOutcome::Admitted, alpn);
+    receipt.machine = Some(machine.to_hex());
+    receipt.endpoint_key = Some(key_hex(key));
+    receipt
+}
+
+fn key_hex(key: [u8; 32]) -> String {
+    use std::fmt::Write;
+    key.iter().fold(String::with_capacity(64), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
+}
 
 #[derive(Debug, Clone)]
 struct RosterLookup {
@@ -63,23 +247,58 @@ struct GateHandler {
     policy: AcceptPolicy,
     alpn: Vec<u8>,
     accepted: mpsc::Sender<(MachineId, Vec<u8>, Connection)>,
+    receipts: Option<PathRecorder>,
+}
+impl GateHandler {
+    /// Leaves the receipt of an inbound attempt `error` refused, folded with
+    /// the refusals of the machine the roster names for `key`.
+    fn refused(&self, connection: &Connection, key: [u8; 32], error: &MeshError) {
+        let Some(receipts) = &self.receipts else {
+            return;
+        };
+        let machine = self
+            .policy
+            .roster
+            .by_endpoint(key)
+            .ok()
+            .flatten()
+            .map(|(machine, _)| machine);
+        let receipt = attempt(
+            MeshPathDirection::Inbound,
+            MeshPathOutcome::Refused,
+            &self.alpn,
+            Some(key),
+            error,
+        );
+        receipts.refused(receipt, machine, Some(connection));
+    }
 }
 impl ProtocolHandler for GateHandler {
     async fn on_accepting(&self, accepting: Accepting) -> Result<Connection, AcceptError> {
         // Await the authenticated TLS identity before permitting any application streams.
         // Never use 0-RTT/0.5-RTT: grants must be checked before data is served.
         let connection = accepting.await?;
-        self.policy
-            .inbound(*connection.remote_id().as_bytes(), &self.alpn)
-            .map_err(|_| n0_error::e!(AcceptError::NotAllowed))?;
+        let key = *connection.remote_id().as_bytes();
+        if let Err(error) = self.policy.inbound(key, &self.alpn) {
+            self.refused(&connection, key, &error);
+            return Err(n0_error::e!(AcceptError::NotAllowed));
+        }
         Ok(connection)
     }
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // Recheck: revocation can race the completed handshake before dispatch.
-        let machine = self
-            .policy
-            .inbound(*connection.remote_id().as_bytes(), &self.alpn)
-            .map_err(|_| n0_error::e!(AcceptError::NotAllowed))?;
+        let key = *connection.remote_id().as_bytes();
+        let machine = match self.policy.inbound(key, &self.alpn) {
+            Ok(machine) => machine,
+            Err(error) => {
+                self.refused(&connection, key, &error);
+                return Err(n0_error::e!(AcceptError::NotAllowed));
+            }
+        };
+        if let Some(receipts) = &self.receipts {
+            let receipt = admission(MeshPathDirection::Inbound, &self.alpn, machine, key);
+            receipts.admitted(receipt, &connection);
+        }
         self.accepted
             .send((machine, self.alpn.clone(), connection))
             .await
@@ -110,16 +329,28 @@ pub struct IrohTransport {
     policy: AcceptPolicy,
     accepted: Mutex<mpsc::Receiver<(MachineId, Vec<u8>, Connection)>>,
     alpns: Vec<Vec<u8>>,
+    receipts: Option<PathRecorder>,
 }
 impl IrohTransport {
     /// Bind only an explicitly supplied address and optional private relay map.
     /// A `None` relay map means direct-only (including all conformance tests).
+    /// It leaves no path receipts.
     pub async fn bind(
         secret: SecretKey,
         policy: AcceptPolicy,
         alpns: Vec<Vec<u8>>,
         bind_addr: SocketAddr,
         private_relays: Option<RelayMap>,
+    ) -> Result<Self, MeshError> {
+        Self::bind_with(secret, policy, alpns, bind_addr, private_relays, None).await
+    }
+    async fn bind_with(
+        secret: SecretKey,
+        policy: AcceptPolicy,
+        alpns: Vec<Vec<u8>>,
+        bind_addr: SocketAddr,
+        private_relays: Option<RelayMap>,
+        receipts: Option<PathRecorder>,
     ) -> Result<Self, MeshError> {
         if alpns.is_empty() || alpns.iter().any(Vec::is_empty) {
             return Err(MeshError::Unavailable);
@@ -159,6 +390,7 @@ impl IrohTransport {
                     policy: policy.clone(),
                     alpn: alpn.clone(),
                     accepted: tx.clone(),
+                    receipts: receipts.clone(),
                 },
             );
         }
@@ -167,24 +399,40 @@ impl IrohTransport {
             policy,
             accepted: Mutex::new(rx),
             alpns,
+            receipts,
         })
     }
-    /// Production pairing door: the device key derives the transport signer.
+    /// Production pairing door: the device key derives the transport signer,
+    /// and every connection and refused attempt leaves a path receipt in
+    /// `receipts`.
     pub async fn bind_paired(
         key: TransportKey,
         policy: AcceptPolicy,
         alpns: Vec<Vec<u8>>,
         bind_addr: SocketAddr,
         private_relays: Option<RelayMap>,
+        receipts: Arc<dyn PathReceipts>,
     ) -> Result<Self, MeshError> {
-        Self::bind(
+        Self::bind_with(
             key.into_iroh_secret(),
             policy,
             alpns,
             bind_addr,
             private_relays,
+            Some(PathRecorder::new(receipts)),
         )
         .await
+    }
+    /// Leaves the receipt of a dial to `machine` that was refused or failed.
+    fn dial_refused(
+        &self,
+        machine: MachineId,
+        receipt: MeshPathReceipt,
+        connection: Option<&Connection>,
+    ) {
+        if let Some(receipts) = &self.receipts {
+            receipts.refused(receipt, Some(machine), connection);
+        }
     }
     pub fn id(&self) -> [u8; 32] {
         *self.router.endpoint().id().as_bytes()
@@ -206,17 +454,52 @@ impl MeshTransport for IrohTransport {
             if !self.alpns.contains(&alpn) {
                 return Err(MeshError::Refused);
             }
-            let row = self.policy.outbound(machine, &alpn)?;
+            let row = match self.policy.outbound(machine, &alpn) {
+                Ok(row) => row,
+                Err(error) => {
+                    let receipt = attempt(
+                        MeshPathDirection::Outbound,
+                        MeshPathOutcome::Refused,
+                        &alpn,
+                        None,
+                        &error,
+                    );
+                    self.dial_refused(machine, receipt, None);
+                    return Err(error);
+                }
+            };
             let key =
                 EndpointId::from_bytes(&row.endpoint_key).map_err(|_| MeshError::InvalidRoster)?;
             // Key only: addresses must be resolved by our private roster lookup.
-            let connection = self
+            let connection = match self
                 .router
                 .endpoint()
                 .connect(EndpointAddr::new(key), &alpn)
                 .await
-                .map_err(|e| MeshError::Io(e.to_string()))?;
+            {
+                Ok(connection) => connection,
+                Err(error) => {
+                    let error = MeshError::Io(error.to_string());
+                    let receipt = attempt(
+                        MeshPathDirection::Outbound,
+                        MeshPathOutcome::Failed,
+                        &alpn,
+                        Some(row.endpoint_key),
+                        &error,
+                    );
+                    self.dial_refused(machine, receipt, None);
+                    return Err(error);
+                }
+            };
             if connection.remote_id() != key {
+                let receipt = attempt(
+                    MeshPathDirection::Outbound,
+                    MeshPathOutcome::Refused,
+                    &alpn,
+                    Some(*connection.remote_id().as_bytes()),
+                    &MeshError::Refused,
+                );
+                self.dial_refused(machine, receipt, Some(&connection));
                 return Err(MeshError::Refused);
             }
             let admitted = IrohConnection {
@@ -226,7 +509,26 @@ impl MeshTransport for IrohTransport {
                 policy: self.policy.clone(),
                 incoming: false,
             };
-            admitted.check()?;
+            if let Err(error) = admitted.check() {
+                let receipt = attempt(
+                    MeshPathDirection::Outbound,
+                    MeshPathOutcome::Refused,
+                    &admitted.alpn,
+                    Some(row.endpoint_key),
+                    &error,
+                );
+                self.dial_refused(machine, receipt, Some(&admitted.inner));
+                return Err(error);
+            }
+            if let Some(receipts) = &self.receipts {
+                let receipt = admission(
+                    MeshPathDirection::Outbound,
+                    &admitted.alpn,
+                    machine,
+                    row.endpoint_key,
+                );
+                receipts.admitted(receipt, &admitted.inner);
+            }
             Ok(Box::new(admitted) as Box<dyn MeshConnection>)
         })
     }
