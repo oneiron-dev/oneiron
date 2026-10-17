@@ -35,7 +35,8 @@ pub(crate) fn resolve_core_room(
 
 /// The caller's read narrowed to the audience it speaks to: a room's met world set, roster and
 /// its own agents' reads; else the caller and each contact present, through the contact's one
-/// linked PERSON; else the read as it is.
+/// linked PERSON; else the read as it is. A speaker that entered the room unplaced is met by its
+/// entry fact, under the cut it entered at, in either branch (OF-365 P5).
 pub(crate) fn narrow_to_core_audience<'a>(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
@@ -54,8 +55,15 @@ pub(crate) fn narrow_to_core_audience<'a>(
             Some(worlds) => scoped_read.within_worlds(worlds),
             None => scoped_read,
         };
+        let mut audience = members.to_vec();
+        audience.extend(
+            interlocutors
+                .into_iter()
+                .flat_map(oneiron::InterlocutorSet::non_owner)
+                .filter_map(oneiron::interlocutor::Interlocutor::audience_ref),
+        );
         return Ok(scoped_read
-            .for_audience(members)
+            .for_audience(&audience)
             .with_peer_reads(room.agent_reads()));
     }
     let Some(set) = interlocutors.filter(|set| set.has_non_owner()) else {
@@ -69,6 +77,10 @@ pub(crate) fn narrow_to_core_audience<'a>(
         audience.push(parse_entity_id_param(actor, "principal_ref")?);
     }
     for party in set.non_owner() {
+        if let Some(entry) = party.audience_ref() {
+            audience.push(entry);
+            continue;
+        }
         let Some(contact) = party
             .contact_ref()
             .and_then(|id| oneiron::EntityId::from_hex(id).ok())

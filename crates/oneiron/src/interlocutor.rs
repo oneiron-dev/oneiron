@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::conversation::ContainerAttendee;
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
 };
@@ -107,6 +108,12 @@ pub struct Interlocutor {
     relationship: Option<String>,
     claimed_owner: bool,
     owner_print_matched: bool,
+    /// The entry fact of an unplaced voice speaker in the container its
+    /// session is bound to (OF-365 P5): its history cut, which an audience
+    /// names until the speaker is placed. Kept when the owner names the
+    /// speaker, since a name alone is no membership window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audience_ref: Option<EntityId>,
 }
 
 impl Interlocutor {
@@ -126,6 +133,7 @@ impl Interlocutor {
             relationship: None,
             claimed_owner: false,
             owner_print_matched: false,
+            audience_ref: None,
         }
     }
 
@@ -142,6 +150,7 @@ impl Interlocutor {
             relationship: None,
             claimed_owner,
             owner_print_matched: false,
+            audience_ref: None,
         }
     }
 
@@ -161,6 +170,7 @@ impl Interlocutor {
             relationship: None,
             claimed_owner: false,
             owner_print_matched: true,
+            audience_ref: None,
         }
     }
 
@@ -181,6 +191,7 @@ impl Interlocutor {
             relationship: None,
             claimed_owner: false,
             owner_print_matched: false,
+            audience_ref: None,
         }
     }
 
@@ -198,6 +209,7 @@ impl Interlocutor {
             relationship: None,
             claimed_owner: false,
             owner_print_matched: false,
+            audience_ref: None,
         }
     }
 
@@ -244,6 +256,14 @@ impl Interlocutor {
     #[must_use]
     pub fn owner_print_matched(&self) -> bool {
         self.owner_print_matched
+    }
+
+    /// The entry fact an audience names for this party in place of a
+    /// PERSON: set only for a speaker of a container-bound voice session
+    /// that entered it unplaced. The record cut is the entry's.
+    #[must_use]
+    pub fn audience_ref(&self) -> Option<EntityId> {
+        self.audience_ref
     }
 }
 
@@ -315,14 +335,21 @@ impl InterlocutorSet {
     }
 
     /// Whether `other` holds the same people, placed the same way: entry for
-    /// entry, the same class, presence evidence, contact and owner flags.
-    /// Labels, relationship names and first-touch notes are cosmetic and do
-    /// not count.
+    /// entry, the same class, presence evidence, contact, owner flags and
+    /// container entry. One unknown replacing another is no same audience,
+    /// since each enters with a cut of its own. Labels, relationship names
+    /// and first-touch notes are cosmetic and do not count.
     #[must_use]
     pub fn same_audience(&self, other: &Self) -> bool {
-        fn placed(
-            set: &InterlocutorSet,
-        ) -> Vec<(&'static str, &'static str, Option<&str>, bool, bool)> {
+        type Placed<'a> = (
+            &'static str,
+            &'static str,
+            Option<&'a str>,
+            bool,
+            bool,
+            Option<EntityId>,
+        );
+        fn placed(set: &InterlocutorSet) -> Vec<Placed<'_>> {
             let mut placed: Vec<_> = set
                 .entries
                 .iter()
@@ -333,6 +360,7 @@ impl InterlocutorSet {
                         entry.contact_ref.as_deref(),
                         entry.claimed_owner,
                         entry.owner_print_matched,
+                        entry.audience_ref,
                     )
                 })
                 .collect();
@@ -506,7 +534,22 @@ impl Vault {
         input: &InterlocutorResolutionInput,
     ) -> Result<InterlocutorSet> {
         let rtxn = self.store.env.read_txn()?;
-        self.resolve_interlocutors_in(&rtxn, input, &|_| Ok(true), true)
+        self.resolve_interlocutors_in(&rtxn, input, &|_| Ok(true), true, None)
+    }
+
+    /// [`Self::resolve_interlocutors`] for a voice session its host bound
+    /// to `container`, the committed room it is heard in (OF-365 P5). An
+    /// unplaced speaker answers to its first entry there: the identity the
+    /// owner gave on the revision it entered under, and the entry fact as
+    /// its [`Interlocutor::audience_ref`]. A speaker with no entry yet has
+    /// neither, and stays an anonymous unknown that narrows to nothing.
+    pub fn resolve_interlocutors_in_container(
+        &self,
+        input: &InterlocutorResolutionInput,
+        container: EntityId,
+    ) -> Result<InterlocutorSet> {
+        let rtxn = self.store.env.read_txn()?;
+        self.resolve_interlocutors_in(&rtxn, input, &|_| Ok(true), true, Some(container))
     }
 
     /// [`Self::resolve_interlocutors`] for a caller that reads as `read`, in
@@ -532,6 +575,7 @@ impl Vault {
             input,
             &|id| read.is_ref_readable_with_policy_in(&rtxn, &policy, id),
             read_rosters,
+            None,
         )
     }
 
@@ -541,6 +585,7 @@ impl Vault {
         input: &InterlocutorResolutionInput,
         admit: &dyn Fn(&EntityId) -> Result<bool>,
         read_rosters: bool,
+        container: Option<EntityId>,
     ) -> Result<InterlocutorSet> {
         let mut non_owner: Vec<Interlocutor> = Vec::with_capacity(input.parties.len());
         let mut seen_contact_refs: HashSet<String> = HashSet::new();
@@ -602,7 +647,7 @@ impl Vault {
         // `session_owner()` via `with_session_owner`.
         if let Some(voice_session_ref) = input.voice_session_ref.as_deref() {
             let parties = if read_rosters {
-                self.voice_roster_parties(rtxn, voice_session_ref)
+                self.voice_roster_parties(rtxn, voice_session_ref, container)
             } else {
                 Err(Error::EntityNotFound)
             };
@@ -649,11 +694,13 @@ impl Vault {
     /// roster that resolves but names nobody legitimately yields no entries.
     /// One party per distinct speaker: repeated segments of the same speaker
     /// key or placed identity collapse before the caller's contact-ref
-    /// dedupe sees them.
+    /// dedupe sees them. In a session bound to `container`, an unplaced
+    /// speaker is read through its first entry there.
     fn voice_roster_parties(
         &self,
         rtxn: &heed::RoTxn<'_>,
         voice_session_ref: &str,
+        container: Option<EntityId>,
     ) -> Result<Vec<Interlocutor>> {
         let roster = self
             .voice_session_roster_in_txn(rtxn, voice_session_ref)?
@@ -686,16 +733,35 @@ impl Vault {
             if !seen_parties.insert(party) {
                 continue;
             }
-            let answer = match &segment.evidence {
-                VoiceAttributionEvidence::ResidualCluster { .. } => self.attendee_identity_in_txn(
-                    rtxn,
-                    voice_session_ref,
-                    &segment.speaker_key,
-                    roster.roster_revision,
-                )?,
-                _ => None,
+            // A bound speaker's identity is the one given on its entry
+            // revision, which a later placement elsewhere does not move.
+            let (answer, audience_ref) = match (&segment.evidence, container) {
+                (VoiceAttributionEvidence::ResidualCluster { .. }, Some(container)) => self
+                    .container_attendee_entry_in_txn(
+                        rtxn,
+                        container,
+                        &ContainerAttendee::Speaker {
+                            session_key: voice_session_ref.to_owned(),
+                            speaker_key: segment.speaker_key.clone(),
+                        },
+                    )?
+                    .map_or((None, None), |entry| {
+                        (entry.identity, Some(entry.entry_ref))
+                    }),
+                (VoiceAttributionEvidence::ResidualCluster { .. }, None) => (
+                    self.attendee_identity_in_txn(
+                        rtxn,
+                        voice_session_ref,
+                        &segment.speaker_key,
+                        roster.roster_revision,
+                    )?,
+                    None,
+                ),
+                _ => (None, None),
             };
-            parties.push(self.voice_roster_party(rtxn, segment, answer)?);
+            let mut party = self.voice_roster_party(rtxn, segment, answer)?;
+            party.audience_ref = audience_ref;
+            parties.push(party);
         }
         Ok(parties)
     }

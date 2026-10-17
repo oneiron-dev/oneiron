@@ -156,6 +156,14 @@ pub(crate) fn admit_attendee_entry_in_txn(
             };
             fact.validate()?;
             put(vault, txn, entry_ref, ATTENDEE_ENTRY, &fact, entered_at)?;
+            // The newcomer barrier's first arm, before the commit: output
+            // marked before this entry no longer goes out into its
+            // container. Its commit moves the mark again; a rollback only
+            // over-cancels.
+            vault
+                .store
+                .container_output
+                .entering(entry_ref, event.container);
             (fact, true)
         }
     };

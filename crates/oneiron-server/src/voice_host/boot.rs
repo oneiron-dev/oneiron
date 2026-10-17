@@ -9,6 +9,10 @@
 //! at the on-device locality of a kernel-checked local socket. The socket's
 //! 0600 mode alone proves no owner. A bad or missing token closes the socket
 //! before any audio is admitted; an admitted call is answered `accepted`.
+//! The hello may name the `room` the call is heard in and the voice
+//! `roster` its speakers are matched under. A room the caller cannot read
+//! closes the socket. A bound call enters each speaker it cannot place into
+//! the room, and an attendee's entry stops the call's output (OF-365 P5).
 //!
 //! The call then runs on the wire's media ops (`wire`): the chat role
 //! answers each heard final (`brain`) on the owner's budget line, its
@@ -21,10 +25,13 @@ use std::time::Duration;
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::claim::CallerLocality;
+use oneiron::disclosure::RoomParty;
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, VoiceChunkPolicy};
-use oneiron::voice_cascade::VoiceSessionConfig;
 use oneiron::voice_cascade::uds::{MAX_FRAME_BYTES, SocketGuard};
+use oneiron::voice_cascade::{
+    VOICE_IDENTITY_ASK_SECONDS, VoiceContainerBinding, VoiceSessionConfig,
+};
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, Vault, WriteActor};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -51,6 +58,12 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const LIVENESS_EVERY: Duration = Duration::from_secs(5);
 /// Brain events the host holds before the brain waits.
 const BRAIN_QUEUE: usize = 256;
+/// A roster ref is a speaker entry's session key, which holds this many
+/// bytes at most.
+const MAX_ROSTER_REF_BYTES: usize = 128;
+/// The live contacts a speaker's "who is this?" ask offers at most: the
+/// entry's own cap.
+const MAX_ROOM_CANDIDATES: usize = 32;
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -60,6 +73,12 @@ enum Hello {
         binding: BindingProof,
         sample_rate: u32,
         channels: u16,
+        /// The room the call is heard in, by its id.
+        #[serde(default)]
+        room: Option<String>,
+        /// The voice roster the call's speakers are matched under.
+        #[serde(default)]
+        roster: Option<String>,
     },
 }
 
@@ -163,6 +182,8 @@ async fn call(
         binding,
         sample_rate,
         channels,
+        room,
+        roster,
     } = tokio::time::timeout(HELLO_TIMEOUT, hello(&mut stream))
         .await
         .map_err(|_| refused("no hello"))??;
@@ -185,6 +206,15 @@ async fn call(
         .ok_or_else(|| refused("principal"))?;
     let payer = WriteActor::new(actor, EdgeActorClass::Human);
     let instructions = instructions(&auth, vault)?;
+    if roster.as_deref().is_some_and(|roster| {
+        roster.is_empty() || roster.trim() != roster || roster.len() > MAX_ROSTER_REF_BYTES
+    }) {
+        return Err(refused("roster"));
+    }
+    let container = room
+        .as_deref()
+        .map(|room| bind_room(vault, &auth, actor, room))
+        .transpose()?;
 
     let call_ref = format!("voice-call:{}", EntityId::now().to_hex());
     let mut session = VoiceSessionConfig::new(
@@ -192,11 +222,12 @@ async fn call(
         InterlocutorResolutionInput {
             owner_session: true,
             parties: Vec::new(),
-            voice_session_ref: None,
+            voice_session_ref: roster,
         },
     );
     session.policy_caller_ref = auth.principal_ref().map(str::to_owned);
     session.policy_person = Some(owner);
+    session.container = container;
 
     // The host's own model calls run on the call's line, and the host
     // meters them on an observer of its own, as a pass's host does.
@@ -282,6 +313,40 @@ async fn call(
         }
     });
     connection.serve_until(host, stop).await
+}
+
+/// The room `room` names, bound as the call's container: one the caller
+/// reads, with its members as the caller reads them. Each speaker the call
+/// cannot place enters it as the caller, and is offered as any of the
+/// room's contacts.
+fn bind_room(
+    vault: &Vault,
+    auth: &CoreAuth,
+    caller: EntityId,
+    room: &str,
+) -> io::Result<VoiceContainerBinding> {
+    let room = EntityId::from_hex(room).map_err(|_| refused("room"))?;
+    let read = crate::api::scoped_read_for_core_auth(vault, auth).map_err(|_| refused("room"))?;
+    // A room the caller cannot read is one that does not exist.
+    let members = vault
+        .room_audience_members_under(&read, room, Some(caller))
+        .map_err(|_| refused("room"))?;
+    let mut candidates = Vec::new();
+    for party in vault.room_parties(&members).map_err(failed)? {
+        if let RoomParty::Contact(contact) = party
+            && !candidates.contains(&contact)
+            && candidates.len() < MAX_ROOM_CANDIDATES
+        {
+            candidates.push(contact);
+        }
+    }
+    Ok(VoiceContainerBinding {
+        container: room,
+        writer: caller,
+        writer_class: EdgeActorClass::Human,
+        candidates,
+        ask_seconds: VOICE_IDENTITY_ASK_SECONDS,
+    })
 }
 
 /// Resolves once the call's credential is no longer live.

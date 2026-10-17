@@ -3,6 +3,7 @@ mod attendee;
 mod body;
 mod deletion;
 mod membership;
+mod output_guard;
 mod preview;
 mod privacy_erase;
 mod roles;
@@ -20,6 +21,8 @@ pub(crate) use deletion::{
     room_message_owner_in, room_person_write_allowed,
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
+pub(crate) use output_guard::ContainerOutputGuard;
+pub use output_guard::OutputMark;
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
 pub(crate) use roles::{RoomHost, room_host_in_txn};

@@ -421,9 +421,39 @@ impl Vault {
         container: EntityId,
         attendee: &ContainerAttendee,
     ) -> Result<Option<ContainerAttendeeEntry>> {
-        let entry_ref = crate::task_verb::attendee_entry_id(container, attendee)?;
         let txn = self.store.env.read_txn()?;
-        let Some(fact) = crate::task_verb::read_attendee_entry_in(self, &txn, entry_ref)? else {
+        self.container_attendee_entry_in_txn(&txn, container, attendee)
+    }
+
+    /// The entry `entry_ref` names; `None` for any other row. A host that
+    /// was woken by a committed TASK reads the entry here.
+    pub fn container_attendee_entry_by_ref(
+        &self,
+        entry_ref: EntityId,
+    ) -> Result<Option<ContainerAttendeeEntry>> {
+        let txn = self.store.env.read_txn()?;
+        self.attendee_entry_in_txn(&txn, entry_ref)
+    }
+
+    /// [`Self::container_attendee_entry`] in the caller's snapshot.
+    pub(crate) fn container_attendee_entry_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        container: EntityId,
+        attendee: &ContainerAttendee,
+    ) -> Result<Option<ContainerAttendeeEntry>> {
+        let entry_ref = crate::task_verb::attendee_entry_id(container, attendee)?;
+        self.attendee_entry_in_txn(txn, entry_ref)
+    }
+
+    /// The entry `entry_ref` names, with the identity the owner gave an
+    /// unplaced speaker on the revision it entered under.
+    fn attendee_entry_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entry_ref: EntityId,
+    ) -> Result<Option<ContainerAttendeeEntry>> {
+        let Some(fact) = crate::task_verb::read_attendee_entry_in(self, txn, entry_ref)? else {
             return Ok(None);
         };
         let identity = match &fact.attendee {
@@ -432,7 +462,7 @@ impl Vault {
                 session_key,
                 speaker_key,
             } => {
-                self.attendee_identity_in_txn(&txn, session_key, speaker_key, fact.roster_revision)?
+                self.attendee_identity_in_txn(txn, session_key, speaker_key, fact.roster_revision)?
             }
         };
         Ok(Some(ContainerAttendeeEntry {
@@ -442,7 +472,7 @@ impl Vault {
             roster_revision: fact.roster_revision,
             entered_at: fact.entered_at,
             identity,
-            decided: entry_decided_in(self, &txn, &entry_ref)?,
+            decided: entry_decided_in(self, txn, &entry_ref)?,
         }))
     }
 }

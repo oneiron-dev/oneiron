@@ -306,6 +306,9 @@ pub struct StoreCore {
     /// A failed digest lane stays quiet until a committed relevant change.
     /// This is per-vault, content-free and never gates unrelated deadlines.
     pub(crate) proactivity_suspended: Mutex<Option<u64>>,
+    /// The container output guard: each container's last attendee-entry
+    /// mark (OF-365 P5). Per vault, in memory, never persisted.
+    pub(crate) container_output: crate::conversation::ContainerOutputGuard,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
