@@ -559,10 +559,12 @@ the secret as the call's credential, in place of the connector's own. Its
 `connector:<connector>`, the connector the name routes to, and the call itself
 still runs under the run's own standing grant and gate. The tool's reply comes
 back as `result`, marked foreign, with the value replaced. A call the gate
-holds answers with its `call_ref`, and the run does not wait on it. The
+holds parks the run on its `call_ref`, as a held `connector.call` does. The
 settler sends it once the hold clears, with the same secret, and the door
-checks the binding again at that send. An embedded vault refuses
-`connector.call`.
+checks the binding again at that send. The run then resumes with the call's
+settled reply, the `connector.call` reply cleared of the value, bound as
+`wait<n>`. An embedded vault refuses `connector.call`.
+
 When the host's model ladder served the turn, each verb call the turn's
 program makes carries the provider that answered it, and a reveal's ask names
 that provider. An agent no host model drives, such as an external HTTP or MCP
