@@ -889,9 +889,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
+        // Due digests, which a Dreamer's timer would otherwise serve (OF-499).
+        ladder_workers.push(crate::ai_host::home_digests::spawn(
+            &sync_server,
+            admitted(),
+        ));
     }
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
     ladder_workers.push(crate::saved_query_sweep::spawn(&sync_server, admitted()));
+    // Queued campaign enrollments land on the campaign's home node (ARCH-0059).
+    ladder_workers.push(crate::campaign_enrollment::spawn(&sync_server, admitted()));
     // Uncertain identities are decided, or asked of the person (OF-123).
     ladder_workers.push(crate::ai_host::identity::spawn(&sync_server, admitted()));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
