@@ -299,15 +299,18 @@ impl<'a> HostSelfDispatcher<'a> {
             },
             context,
         )?;
+        let launch = result.launch().cloned();
         Ok(SelfDispatchOutcome::AgentSpawn(match result {
             AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status) => {
                 SelfAgentSpawnResult::Queued {
                     attempt_ref: status.attempt.id,
+                    launch,
                 }
             }
             AgentDispatchOutcome::WorkflowDispatched(status)
             | AgentDispatchOutcome::WorkflowExisting(status) => SelfAgentSpawnResult::Queued {
                 attempt_ref: status.attempt.id,
+                launch,
             },
             AgentDispatchOutcome::ProposedWiden(proposal) => SelfAgentSpawnResult::ProposedWiden {
                 proposal_ref: proposal.proposal_id,

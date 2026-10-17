@@ -668,9 +668,13 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::AgentSpawn(value) => {
             use crate::code_run::{AgentSpawnKind, AgentSpawnOutput, SelfAgentSpawnResult};
             let spawn = match value {
-                SelfAgentSpawnResult::Queued { attempt_ref } => AgentSpawnOutput::Queued {
+                SelfAgentSpawnResult::Queued {
+                    attempt_ref,
+                    launch,
+                } => AgentSpawnOutput::Queued {
                     kind: AgentSpawnKind::AgentSpawn,
                     attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
+                    launch: launch.clone(),
                 },
                 SelfAgentSpawnResult::ProposedWiden { proposal_ref } => {
                     AgentSpawnOutput::ProposedWiden {

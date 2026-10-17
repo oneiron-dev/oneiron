@@ -46,6 +46,11 @@ pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
             "depth_remaining",
             call.context.depth_remaining.map_or(Value::Nil, Value::from),
         ),
+        // OF-532: the budget the host pinned; another pin is another request.
+        (
+            "budget",
+            call.context.budget.map_or(Value::Nil, Value::from),
+        ),
         // OF-541: the type asked for and the planner ask; a changed need or
         // pin is a new request, never an old plan's result.
         (
@@ -87,14 +92,30 @@ pub(super) fn ask_request(call: &TaskAskSpec) -> Result<Value> {
         .map_err(|_| invalid_code_run_replay("ask request encode"))
 }
 
-pub(super) fn spawn_value(result: &SelfAgentSpawnResult) -> Value {
-    match result {
-        SelfAgentSpawnResult::Queued { attempt_ref } => request_map(vec![
+pub(super) fn spawn_value(result: &SelfAgentSpawnResult) -> Result<Value> {
+    Ok(match result {
+        SelfAgentSpawnResult::Queued {
+            attempt_ref,
+            launch,
+        } => request_map(vec![
             ("kind", Value::from("agent_spawn")),
             ("state", Value::from("queued")),
             (
                 "attempt",
                 Value::from(crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())),
+            ),
+            // The launch statement replays as it was stated (OF-532).
+            (
+                "launch",
+                match launch {
+                    Some(launch) => {
+                        let bytes = rmp_serde::to_vec_named(launch)
+                            .map_err(|_| invalid_code_run_replay("spawn launch encode"))?;
+                        rmpv::decode::read_value(&mut bytes.as_slice())
+                            .map_err(|_| invalid_code_run_replay("spawn launch encode"))?
+                    }
+                    None => Value::Nil,
+                },
             ),
         ]),
         SelfAgentSpawnResult::ProposedWiden { proposal_ref } => request_map(vec![
@@ -102,7 +123,7 @@ pub(super) fn spawn_value(result: &SelfAgentSpawnResult) -> Value {
             ("state", Value::from("proposed_widen")),
             ("proposal", Value::from(proposal_ref.as_str())),
         ]),
-    }
+    })
 }
 
 pub(super) fn decode_spawn(value: &Value) -> Result<SelfAgentSpawnResult> {
@@ -112,6 +133,17 @@ pub(super) fn decode_spawn(value: &Value) -> Result<SelfAgentSpawnResult> {
             attempt_ref: crate::attempt_queue::AttemptId::from_bytes(
                 crate::EntityId::from_hex(str_value(map_get(m, "attempt")?)?)?.as_bytes(),
             )?,
+            launch: match map_get(m, "launch")? {
+                Value::Nil => None,
+                launch => {
+                    let bytes = rmp_serde::to_vec_named(launch)
+                        .map_err(|_| invalid_code_run_replay("spawn launch decode"))?;
+                    Some(
+                        rmp_serde::from_slice(&bytes)
+                            .map_err(|_| invalid_code_run_replay("spawn launch decode"))?,
+                    )
+                }
+            },
         }),
         "proposed_widen" => Ok(SelfAgentSpawnResult::ProposedWiden {
             proposal_ref: str_value(map_get(m, "proposal")?)?.to_owned(),
