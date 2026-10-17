@@ -3406,6 +3406,7 @@ pub fn cancel(
     memory: &Memory<'_>,
     input: TaskRequest,
 ) -> MemoryResult<crate::task_verb::TaskCancelReceipt> {
+    crate::gate::record_references::admit_row_references(memory, "cancel", &input, &["/task_ref"])?;
     memory.cancel(crate::task_verb::TaskCancelTarget::Task(
         crate::EntityId::from_hex(&input.task_ref)?,
     ))
@@ -3458,6 +3459,12 @@ pub fn tasks_update(
     memory: &Memory<'_>,
     input: TaskUpdateRequest,
 ) -> MemoryResult<crate::task_verb::TaskUpdateReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.update",
+        &input,
+        &["/task_ref"],
+    )?;
     memory.tasks_update_request(&input)
 }
 pub fn vault_witness(
@@ -3465,12 +3472,6 @@ pub fn vault_witness(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     crate::memory::caps::check_witness_turn(&input)?;
-    crate::gate::record_references::admit_prose_links(
-        memory,
-        "vault.witness",
-        &input,
-        &["/messages/*[author=companion]/content"],
-    )?;
     memory.witness(&input)
 }
 pub fn vault_claims_upsert(
@@ -3544,6 +3545,7 @@ pub fn vault_kv_put(
     memory: &Memory<'_>,
     input: crate::memory::KeyValuePut,
 ) -> MemoryResult<crate::memory::KeyValuePutReceipt> {
+    crate::gate::record_references::admit_prose_links(memory, "vault.kv.put", &input, &["/value"])?;
     memory.key_value_put(&input)
 }
 pub fn vault_kv_delete(
@@ -3959,18 +3961,36 @@ pub fn vault_artifacts_keep(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::KeptProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.keep",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_keep(&input)
 }
 pub fn vault_artifacts_discard(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::DiscardedProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.discard",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_discard(&input)
 }
 pub fn vault_artifacts_undo(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::UndoneKeep> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.undo",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_undo(&input)
 }
 pub fn can(
@@ -4120,12 +4140,6 @@ pub fn vault_rooms_speak(
     memory: &Memory<'_>,
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
-    crate::gate::record_references::admit_prose_links(
-        memory,
-        "vault.rooms.speak",
-        &input,
-        &["/messages/*[author=companion]/content"],
-    )?;
     memory.rooms_speak(&input)
 }
 pub fn vault_projects_propose(
@@ -4676,12 +4690,24 @@ pub fn vault_claims_retract(
     memory: &Memory<'_>,
     input: ClaimRefRequest,
 ) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.claims.retract",
+        &input,
+        &["/claim_ref"],
+    )?;
     memory.claim_retract(&input.claim_ref)
 }
 pub fn vault_forget(
     memory: &Memory<'_>,
     input: ForgetRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.forget",
+        &input,
+        &["/claim_ref"],
+    )?;
     memory_requests::forget_claims(memory, input)
 }
 pub fn vault_claims_list(
@@ -4833,6 +4859,12 @@ pub fn vault_notes_create(
     memory: &Memory<'_>,
     input: CreateNoteRequest,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "vault.notes.create",
+        &input,
+        &["/markdown"],
+    )?;
     memory.create_note(&input.kind, &input.markdown)
 }
 pub fn vault_notes_from_entity(
@@ -4851,5 +4883,17 @@ pub fn vault_notes_edit(
     memory: &Memory<'_>,
     input: EditNoteRequest,
 ) -> MemoryResult<crate::note::NoteProgramEditOutcome> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "vault.notes.edit",
+        &input,
+        &["/edit/text"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.edit",
+        &input,
+        &["/note_ref"],
+    )?;
     memory.edit_note(&input.note_ref, &input.edit)
 }
