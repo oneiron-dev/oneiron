@@ -159,24 +159,16 @@ boundary is covered by this script and `crates/oneiron-napi/tests/node_host.cjs`
 
 ## Code-mode declarations
 
-`crates/oneiron/src/task_verb/code-mode.d.ts` is the verb table as code mode
-declares it: one signature per row at its full path (`vault.recall`,
-`self.focus.refresh`, a bare `describe`), which the engine
-renders from each row's compiled input schema (`code_mode_declarations`). The
-executor prompt and shadow mode's type check read that rendering. This script
-cannot see the schemas, so `--check` only requires the file to declare exactly
-the table's rows; the engine test `code_mode_declarations_file_is_the_verb_table`
-requires it byte for byte. Regenerate it after a table edit with:
-
-```
-ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron --lib code_mode_declarations_file_is_the_verb_table
-```
-
 `crates/oneiron/src/task_verb/catalog_fragment.d.ts` is the code-mode catalog
-fragment (ONE-2510 S2, EIRI-ARCH-0002 §The contract). This script writes it
-from the table and the Rust types its rows name (`catalog_fragment.py`). It
-covers every row code mode serves, at its SDK path, and lays the verbs out as
-`code_mode_declarations` does. Each row has its typed input and its typed
+fragment (ONE-2510 S2, EIRI-ARCH-0002 §The contract), and
+`crates/oneiron/src/task_verb/code-mode.d.ts` is the same text at a second
+path. This script writes both from the table and the Rust types its rows name
+(`catalog_fragment.py`). Neither is edited by hand: a new row reaches both
+through its `agent-verbs.json` entry and a run of this script. The text covers every row
+code mode serves, at its full SDK path (`vault.recall`, `self.focus.refresh`,
+a bare `describe`). `self` is a namespace of constants, every other root a
+constant and a bare verb a function, so a row named by a reserved word
+(`vault.export`) is a valid method. Each row has its typed input and its typed
 reply, `Promise<T | StoredResult>`: the guest's verb import resolves with the
 output itself (`typed.rs` `self.verbs.call`), or with runtime.d.ts's
 `StoredResult` card past 512 KiB. A refusal throws its JSON text as a string,
@@ -191,5 +183,9 @@ answers those inputs, so the other projections read `output` alone. The
 fragment's revision is `CATALOG_FRAGMENT_REVISION` in
 `catalog_fragment_revision.rs`: `sha256:` and the hex digest of the text, for
 the executor to restate after compaction. The engine reads both through
-`task_verb::sdk::code_mode_catalog_fragment()`, and `--check` flags either
-file when it falls behind the table.
+`task_verb::sdk::code_mode_catalog_fragment()`: the executor prompt teaches the
+text and its shadow type check reads it, and `code_mode_declarations()`
+returns the same text. The code-check oracle fixtures and the hook contract
+stamp read `code-mode.d.ts`. The script reads the text back before writing it
+and refuses one that does not declare exactly the code-mode rows; `--check`
+flags any of the three files when it falls behind the table.
