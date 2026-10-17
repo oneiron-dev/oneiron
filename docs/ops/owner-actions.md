@@ -910,13 +910,22 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
 - `PUT /v1/owner/embedding-spaces` with `{"id", "dimensions", "accepts", "query_towers"}` (and
   optional `"evidence": {"floor", "strong"}`) declares a space. `POST .../bind` with
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
-  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included.
+  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included. Both
+  refuse a slot an open move carries until the move ends.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
+- **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
+  `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
+  for the preset, apply at each `serve` start. A start declares only spaces the vault does not
+  hold and binds only slots the vault leaves unbound and no open move carries, so a door edit
+  or a model move stays. A listed space the vault holds at another width stops `serve`: a new
+  width needs a new id.
 - **Moving to a new model version.** `POST .../move` with `{"candidate", "incumbent", "margin"}`
   starts moving every slot the incumbent serves to the candidate. Leave out `incumbent` for the
   text index. The media backfill fills the candidate while the incumbent keeps serving, and
-  writes probes meanwhile: short queries the chat seat writes from text documents, and the
-  captioner or Local-vision seat from images. Once the candidate holds every document, the
+  writes probes meanwhile: short queries the chat seat writes from text documents, the
+  captioner or Local-vision seat from images, and the chat seat from audio once the
+  `[models.media]` transcribe seat has transcribed it. Audio and image bytes never go to a
+  third-party seat for a probe. Once the candidate holds every document, the
   probes run on both spaces, and on the incumbent twice for its retest noise. The candidate swaps
   in by itself only when every kind is not worse: the low end of the kind's family-grouped
   paired interval stays at or above minus that noise, or minus your stricter `margin`. A kind
@@ -924,12 +933,17 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   than 10 probe families, or an interval across the margin, reads unknown. Unknown never swaps
   by itself: the move stays open and is checked again every 6 hours. Each swap, keep and undo
   leaves a short note in the inbox.
+- The media backfill skips any document a space's model refuses by its content (a format it
+  cannot read, a content filter) until the document changes, so one bad file never stalls a
+  space or a move. A model that refuses everything it is sent before it has embedded anything
+  is treated as down, and the backfill retries it.
 - `POST .../move/check` with `{"candidate"}` runs the probes now. `.../move/approve` swaps a
   full candidate in on your yes. `.../move/undo` binds the incumbent again after a swap, and
-  `.../move/abandon` ends an open move without one.
+  `.../move/abandon` ends an open move without one. An undo works for 30 days after the swap.
+  Then the incumbent retires (its rows and declaration go) unless a slot binds it again.
 - `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
-  one. Audio probes are only the ones you store.
+  one.
 
 On a stopped vault the same acts run from the command line, and each prints what the route
 answers:
