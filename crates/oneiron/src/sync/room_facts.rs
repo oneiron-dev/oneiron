@@ -517,7 +517,7 @@ impl Vault {
         if let Err(error) =
             self.with_write_txn_grouped(|wtxn| DIRTY.put(&self.store, wtxn, &cell, &()))
         {
-            tracing::warn!(room = %room, error = %error, "room side cell not marked");
+            tracing::warn!(room = %room.to_hex(), error = %error, "room side cell not marked");
         }
     }
 
@@ -538,7 +538,7 @@ impl Vault {
             }
             Ok(_) => {}
             Err(error) => {
-                tracing::warn!(turn = %turn, error = %error, "room side rows not mirrored");
+                tracing::warn!(turn = %turn.to_hex(), error = %error, "room side rows not mirrored");
             }
         }
     }
