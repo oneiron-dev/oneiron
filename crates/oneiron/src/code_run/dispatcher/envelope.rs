@@ -4,13 +4,16 @@ use crate::ports::EntityStoreRead;
 use rmpv::Value;
 use xxhash_rust::xxh3::xxh3_128;
 
+use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
+use crate::attempt_queue::AttemptId;
 use crate::code_run::consent;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::SelfEffect;
-use crate::entity_id::EntityId;
+use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore};
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::task_verb::sdk::AgentVerb;
+use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeKind,
     SourceLineage, Vault, WriteEnvelope, WriteProvenance,
@@ -52,6 +55,46 @@ impl HostSelfDispatcher<'_> {
         self.write_envelope_with(SelfEffect::AgentVerb, admission.as_ref(), call)
     }
 
+    /// The envelope `self.team.submit`'s review claim is written under: the
+    /// run's own, grouped in the owner's inbox under the run that wrote it,
+    /// so the review is never a pending row the grouped inbox skips. A
+    /// code-emission run keeps its Dreamer run; any other run's group is the
+    /// leader's own agent-dispatch attempt, which queues as a Dreamer run.
+    /// Answers the group beside the envelope.
+    pub(super) fn team_submit_envelope(
+        &self,
+        vault: &Vault,
+        leader: AttemptId,
+    ) -> Result<(WriteEnvelope, String)> {
+        let run_group = match self.non_candidate_code_emission_admission()? {
+            Some(admission) => admission.dreamer_run_id,
+            None => {
+                let status = DreamerRunnerStore::new(vault).status(leader)?;
+                if !status.is_some_and(|status| {
+                    status.payload.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE
+                }) {
+                    return Err(Error::InvalidConfig(
+                        "a team submit's leader is not an agent-dispatch attempt".into(),
+                    ));
+                }
+                bytes_to_hex_lower(leader.as_bytes())
+            }
+        };
+        let call = vec![
+            (
+                Value::from("verb"),
+                Value::from(RunVerb::SelfTeamSubmit.as_str()),
+            ),
+            (
+                Value::from("runner"),
+                Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+            ),
+            (Value::from("run_id"), Value::from(run_group.as_str())),
+        ];
+        let envelope = self.write_envelope_with(SelfEffect::Team, None, call)?;
+        Ok((envelope, run_group))
+    }
+
     fn write_envelope_with(
         &self,
         effect: SelfEffect,
@@ -86,12 +129,14 @@ impl HostSelfDispatcher<'_> {
         // persists nothing a lineage could qualify — and only when the host
         // has actually observed an external effect, so an unobserved run
         // builds the byte-identical trivial envelope it built before. A verb
-        // call's claims are claims the run wrote, so they carry it too.
+        // call's claims are claims the run wrote, so they carry it too, as
+        // does a team submit's review (the one Team write built here).
         let lineage = match effect {
             SelfEffect::MemoryPutClaim
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
             | SelfEffect::AgentVerb
+            | SelfEffect::Team
                 if self.external_effect_seen.get() =>
             {
                 SourceLineage::of(self.source()).with(ClaimSource::ToolOutput)
