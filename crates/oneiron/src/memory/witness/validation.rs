@@ -110,15 +110,15 @@ pub(super) fn validate_existing_witness_quote(
     stored: &[u8],
     incoming: Option<&crate::conversation_dag::QuotedReply>,
 ) -> MemoryResult<()> {
-    match incoming {
-        Some(quoted) => Ok(quoted.require_stored_in_txn(vault, txn, stored)?),
-        None if crate::conversation_dag::carries_quote(stored)? => {
-            Err(MemoryError::bad_request(
+    let Some(quoted) = incoming else {
+        if crate::conversation_dag::carries_quote(stored)? {
+            return Err(MemoryError::bad_request(
                 "the witnessed turn carries a quote; a retry carries the same one",
-            ))
+            ));
         }
-        None => Ok(()),
-    }
+        return Ok(());
+    };
+    Ok(quoted.require_stored_in_txn(vault, txn, stored)?)
 }
 
 /// Checks whether a deterministic MESSAGE already exists. Its canonical body

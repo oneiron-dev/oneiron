@@ -489,8 +489,8 @@ pub(crate) fn admit_participation_in_txn(
         JoinSubject::Agent(agent) => {
             let standing = agent_standing_in_txn(vault, txn, room, branch, agent, scope)?
                 .ok_or_else(|| lacks("the agent has no Ready join in this room or thread"))?;
-            if let JoinCause::Wrote { turn } = &admitted.cause {
-                if !agent_spoken_to_in_txn(vault, txn, room, branch, agent, *turn, answers)? {
+            if let JoinCause::Wrote { turn } = admitted.cause {
+                if !agent_spoken_to_in_txn(vault, txn, room, branch, agent, turn, answers)? {
                     return Err(lacks(
                         "an agent speaks only when it is addressed, holds a task there, or lands an accepted offer",
                     ));

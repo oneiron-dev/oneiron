@@ -180,11 +180,12 @@ pub(crate) fn admit_witness(
             let (Some(anchor), Some(parent)) = (thread_of, reply_to) else {
                 return Err(quote_outside_thread());
             };
+            let parent = dag_parent_in_txn(vault, txn, anchor, parent)?;
             Some(QuotedReply::prove_in_txn(
                 vault,
                 txn,
                 room,
-                dag_parent_in_txn(vault, txn, anchor, parent)?,
+                parent,
                 crate::WriteActor::new(actor, class),
                 quote,
                 turn_id,
