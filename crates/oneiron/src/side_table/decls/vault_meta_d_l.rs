@@ -131,7 +131,8 @@ side_tables! {
     /// The NOTE review's page cursor: the last NOTE id a review finished. Key: ().
     DREAMER_NOTE_REVIEW_CURSOR: VaultMeta b"dreamer:note-review:cursor:v1" Named;
     /// What a NOTE review last read and decided for one NOTE: the BLAKE3 of the markdown, so an
-    /// unchanged NOTE is not read again, and its verdict and importance. Key: id16.
+    /// unchanged NOTE is not read again, its verdict and importance, and a sealed pad's missed
+    /// keep lines with the re-asks spent on them (FIX 2240). Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored;

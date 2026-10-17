@@ -7,10 +7,10 @@
 //! `routine` set: its options are the step's candidates, the ladder also
 //! offers NONE, reobserve and "too complicated, ask up", and the answer comes
 //! back as the outcome the program acts on. A screenshot rides as an image
-//! evidence ref, read at the Local-vision rung on the caller's own run; a
-//! `locate` question finds its target there as a Box, once the host's
-//! presence question says it is there. The subgoal's steps
-//! share one clock through `until_ms`.
+//! evidence ref, read at the Local-vision rung on the caller's own run; a Box
+//! or Point question finds its target there, once the host's presence
+//! question says it is there. A Score is one number in the caller's own
+//! range. The subgoal's steps share one clock through `until_ms`.
 //!
 //! A screenshot the calling code run's browser holds is named by its
 //! `blake3:` ref. The run reads it from its own browser and hands it in as
@@ -24,14 +24,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use oneiron::claim::ScopedRead;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
-    AnswerContract, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
-    MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineTrail, routine_choice,
+    AnswerContract, DecisionAnswer, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
+    LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineOutcome, RoutineTrail,
+    routine_choice,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{
-    BlobArtifactInput, BlobVersionView, ImageViewRequest, MEMORY_CODE_INTERNAL, Memory,
-    MemoryError, MemoryResult,
+    BlobArtifactInput, BlobVersionView, ImageViewRequest, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
@@ -101,9 +102,10 @@ impl HeldImage {
 /// views it can in the call's state, beside the caller's own `state`. An
 /// image is pulled through `lane`, the same caller's scoped read; a caller
 /// with none reads no image. A `held` image is the run's own screenshot,
-/// read from its browser. The dial climbs from the first filled rung (the
-/// Local-vision seat for an image) to the request's ceiling (`big` when
-/// absent); a verdict never queues an owner ask.
+/// read from its browser. The dial climbs from the first rung that takes the
+/// question's contract over its images (the Local-vision seat for an image)
+/// to the request's ceiling (`big` when absent); a verdict never queues an
+/// owner ask.
 ///
 /// Every model rung blocks on the server's runtime: call this on a blocking
 /// thread.
@@ -139,7 +141,7 @@ pub(crate) fn run_verdict(
             MemoryError::bad_request_with(
                 "the question does not make a typed question",
                 &[
-                    "Word it in 1 to 16384 bytes, with at most 64 distinct options of 1 to 256 bytes each.",
+                    "Word it in 1 to 16384 bytes, with at most 64 distinct options of 1 to 256 bytes each, or a score's finite min below its max.",
                 ],
             )
         })?;
@@ -212,6 +214,11 @@ pub(crate) fn run_verdict(
     if let Some(rung) = &local {
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
+    // A rung that cannot take the contract over the images is passed over:
+    // a Score starts above a seat that reads none, and never drops its image.
+    dial.first = ladder
+        .first_taking(&question, dial, &images)
+        .ok_or_else(|| no_rung(&question.contract, !images.is_empty()))?;
     let failed = |error: oneiron::Error| {
         MemoryError::bad_request_with(
             format!("ai.verdict: {error}"),
@@ -219,6 +226,39 @@ pub(crate) fn run_verdict(
         )
     };
     let reversibility = request.reversibility.into();
+    // A Box or Point question asks the host's presence question first.
+    if question.contract.locates() {
+        let located = ladder
+            .run_located(
+                &question,
+                principal,
+                &evidence,
+                &images,
+                &state,
+                dial,
+                &host.bands(),
+                reversibility,
+                &deadline,
+            )
+            .map_err(failed)?;
+        let outcome = if request.routine {
+            Some(RoutineOutcome::of_located(&located).map_err(failed)?)
+        } else {
+            None
+        };
+        let screenshot = outcome.as_ref().is_some_and(|outcome| {
+            RoutineTrail {
+                misses: request.misses,
+            }
+            .record(outcome)
+        });
+        return Ok(AiVerdict {
+            outcome,
+            screenshot,
+            until_ms: Some(until_ms),
+            ..located_verdict(located)
+        });
+    }
     if request.routine {
         let routine = ladder
             .run_routine(
@@ -244,30 +284,6 @@ pub(crate) fn run_verdict(
             ..routine.decision.into()
         });
     }
-    // A locate question asks the host's presence question first: the answer is on the
-    // Box contract, the receipt the step's that stands.
-    if question.contract.locates() {
-        let located = ladder
-            .run_located(
-                &question,
-                principal,
-                &evidence,
-                &images,
-                &state,
-                dial,
-                &host.bands(),
-                reversibility,
-                &deadline,
-            )
-            .map_err(failed)?;
-        let answer = located.answer.clone();
-        let (decision, _) = located.split();
-        return Ok(AiVerdict {
-            answer,
-            until_ms: Some(until_ms),
-            ..decision.into()
-        });
-    }
     let decision = ladder
         .run_images(
             &question,
@@ -287,35 +303,57 @@ pub(crate) fn run_verdict(
     })
 }
 
-/// The request's answer contract: a Box for `locate`, a routine step's
-/// Choice for `routine`, else yes/no or one of its labels.
+/// The request's answer contract, as the call asks it: a Box or a Point
+/// finds its target in `image`, and a routine step is a Choice among its
+/// candidates (the ladder adds NONE, reobserve and ask up) or a Box or a
+/// Point.
 fn contract(request: &AiVerdictRequest) -> MemoryResult<AnswerContract> {
-    if request.locate {
-        if !request.options.is_empty() || request.image.is_none() {
-            return Err(MemoryError::bad_request_with(
-                "a locate question finds its target in an image",
-                &["Name the image's view handle, and no options."],
-            ));
-        }
-        return Ok(AnswerContract::Box);
+    let contract = request.contract.clone();
+    if contract.locates() && request.image.is_none() {
+        return Err(MemoryError::bad_request_with(
+            "a box or point question finds its target in an image",
+            &["Name the image's view handle."],
+        ));
     }
-    if request.routine {
-        return routine_choice(&request.options).map_err(|_| {
+    if !request.routine {
+        return Ok(contract);
+    }
+    match contract {
+        AnswerContract::Choice { options } => routine_choice(&options).map_err(|_| {
             MemoryError::bad_request_with(
                 "a routine step offers 1 to 61 candidates",
                 &[
                     "Name each candidate once; NONE, reobserve and \"too complicated, ask up\" are offered for you.",
                 ],
             )
-        });
-    }
-    Ok(if request.options.is_empty() {
-        AnswerContract::Noul
-    } else {
-        AnswerContract::Choice {
-            options: request.options.clone(),
+        }),
+        AnswerContract::Box | AnswerContract::Point => Ok(contract),
+        AnswerContract::Noul | AnswerContract::Score { .. } => {
+            Err(MemoryError::bad_request_with(
+                "a routine step is a choice among its candidates, or a box or point",
+                &["Ask a yes/no or a score without `routine`."],
+            ))
         }
-    })
+    }
+}
+
+/// A Box or Point call's verdict: the answer on its contract, the
+/// coordinates' confidence only when they were read (a found absence's
+/// P(yes) is the presence step's, never a coordinate's), no rung for an
+/// abstain, the standing step's receipt, and the presence step beside it.
+fn located_verdict(located: LocatedDecision) -> AiVerdict {
+    let answer = located.answer.clone();
+    let read = located.location.is_some();
+    let presence = located.presence.clone();
+    let (standing, _) = located.split();
+    let verdict = AiVerdict::from(standing);
+    AiVerdict {
+        p: verdict.p.filter(|_| read),
+        rung: verdict.rung.filter(|_| answer != DecisionAnswer::Abstain),
+        answer,
+        presence,
+        ..verdict
+    }
 }
 
 /// A held screenshot kept as a blob artifact the caller writes, its bytes a
@@ -472,6 +510,28 @@ pub(crate) fn vision_rung(
     let seat = LocalVisionModel::new(&server.ai, vault, run, tokio::runtime::Handle::current())
         .ok_or_else(unbound)?;
     seat.rung().map_err(|_| unbound())
+}
+
+/// The typed reply when no rung up to the ceiling takes the question:
+/// `MODEL_UNAVAILABLE`, naming the capability the call needs.
+fn no_rung(contract: &AnswerContract, images: bool) -> MemoryError {
+    let answers = match contract {
+        AnswerContract::Noul => "a yes/no".to_owned(),
+        AnswerContract::Choice { options } => format!("a choice of {} options", options.len()),
+        AnswerContract::Score { .. } => "a score".to_owned(),
+        AnswerContract::Box => "a box".to_owned(),
+        AnswerContract::Point => "a point".to_owned(),
+    };
+    let reads = if images { "reads images and " } else { "" };
+    MemoryError::new(
+        MEMORY_CODE_MODEL_UNAVAILABLE,
+        format!(
+            "ai.verdict needs a rung that {reads}answers {answers}; none up to the ceiling does"
+        ),
+        &[
+            "Bind a rung that takes it or raise the ceiling; a score over an image is never asked without the image.",
+        ],
+    )
 }
 
 fn internal() -> MemoryError {

@@ -57,7 +57,7 @@ use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
-use oneiron::llm::decision::{DecisionRung, RoutineOutcome};
+use oneiron::llm::decision::{AnswerContract, DecisionRung, RoutineOutcome};
 use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
@@ -104,12 +104,21 @@ struct RunBrowser {
     run_id: oneiron::EntityId,
 }
 
-/// One run's desktop guest, held as the run's browser is.
+/// One run's desktop guest, held as the run's browser is. Its seat is in
+/// the server's registry while the door is bound, so the owner can take the
+/// desktop over (CUA-001).
 struct RunDesktop {
     guest: DesktopGuest,
-    session: Mutex<Option<DesktopSession>>,
+    session: Arc<crate::server::DesktopSeat>,
+    seats: Arc<crate::server::DesktopSeats>,
     vault: Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
+}
+
+impl Drop for RunDesktop {
+    fn drop(&mut self) {
+        self.seats.release(self.run_id, &self.session);
+    }
 }
 
 /// A run's guest session as the door drives it: its verbs, whether its
@@ -280,10 +289,17 @@ pub(crate) enum VerdictAsker {
 
 impl RoutineDecider for LadderDecider {
     fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
-        let locate = ask.options.is_empty();
+        // A step with no candidates finds its target in the screenshot.
+        let contract = if ask.options.is_empty() {
+            AnswerContract::Box
+        } else {
+            AnswerContract::Choice {
+                options: ask.options,
+            }
+        };
         let request = AiVerdictRequest {
             question: ask.question.to_owned(),
-            options: ask.options,
+            contract,
             evidence: Vec::new(),
             state: Some(ask.state),
             // No model: the ladder stops at its rule rung.
@@ -293,7 +309,6 @@ impl RoutineDecider for LadderDecider {
             deadline_ms: None,
             routine: true,
             image: ask.image.map(|(image, _)| image.to_owned()),
-            locate,
             misses: ask.misses,
             until_ms: ask.until_ms,
         };
@@ -503,14 +518,20 @@ impl RunDesktop {
     fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
         let mut guest = server.desktop_guest()?.clone();
         guest.policy = browser_send_policy(server);
+        let session = Arc::new(Mutex::new(None));
+        server.desktop_seats.register(run_id, &session);
         Some(Self {
             guest,
-            session: Mutex::new(None),
+            session,
+            seats: Arc::clone(&server.desktop_seats),
             vault: Arc::clone(&server.vault),
             run_id,
         })
     }
 
+    /// A desktop verb. While a person is asked or holds the desktop, the
+    /// session refuses it `desktop_taken_over`; the first answer after they
+    /// hand it back carries the takeover's record as `takeover`.
     fn call(
         &self,
         verb: AgentVerb,
@@ -536,7 +557,17 @@ impl RunDesktop {
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
         driver.set_decider(Box::new(decider));
         driver.set_receipt_sink(Box::new(writer));
-        drive_run_guest(&self.vault, self.run_id, driver, verb, input)
+        let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
+        if let Some(object) = output.as_object_mut()
+            && let Some(record) = driver.take_returned()
+        {
+            object.insert(
+                "takeover".into(),
+                serde_json::to_value(record)
+                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+            );
+        }
+        Ok(output)
     }
 }
 
