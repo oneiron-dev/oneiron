@@ -113,11 +113,12 @@ export_facade! {
     let output = client.vault_claims_upsert(&claim)?;
     Lift::lift(output)
 };
-"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>) -> MemoryPack = |client| {
+"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>) -> MemoryPack = |client| {
     let effort: oneiron::memory::RecallEffort = effort.lower()?;
     let scope: oneiron::memory::RecallScope = scope.lower()?;
     let limit: usize = limit.lower()?;
-    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms)?;
+    let media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media.lower()?;
+    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media)?;
     Lift::lift(output)
 };
 "vault.export" => fn vault_export(&self, format: Option<String>) -> MemoryExport = |client| {
@@ -539,6 +540,16 @@ export_facade! {
     let output = client.vault_artifacts_view(&input)?;
     crate::codec::lift_record("vault.artifacts.view", &output)
 };
+"vault.code.diff" => fn vault_code_diff(&self, input: CodeDiffRequest) -> Option<CodeDiffView> = |client| {
+    let input: oneiron::code_document::CodeDiffRequest = crate::codec::lower_record("vault.code.diff", input)?;
+    let output = client.vault_code_diff(&input)?;
+    crate::codec::lift_record("vault.code.diff", &output)
+};
+"vault.code.blame" => fn vault_code_blame(&self, input: CodeStateRequest) -> Option<CodeBlameView> = |client| {
+    let input: oneiron::code_document::CodeStateRequest = crate::codec::lower_record("vault.code.blame", input)?;
+    let output = client.vault_code_blame(&input)?;
+    crate::codec::lift_record("vault.code.blame", &output)
+};
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
     let output = client.vault_artifacts_export(&input)?;
@@ -748,6 +759,11 @@ export_facade! {
     let input: oneiron::conversation::TurnActionRequest = crate::codec::lower_record("vault.conversations.turn.retry", input)?;
     let output = client.vault_conversations_turn_retry(&input)?;
     crate::codec::lift_record("vault.conversations.turn.retry", &output)
+};
+"vault.messages.react" => fn vault_messages_react(&self, input: MessageReactionRequest) -> MessageReactionReceipt = |client| {
+    let input: oneiron::reaction::MessageReactionRequest = crate::codec::lower_record("vault.messages.react", input)?;
+    let output = client.vault_messages_react(&input)?;
+    crate::codec::lift_record("vault.messages.react", &output)
 };
 "vault.rooms.host" => fn vault_rooms_host(&self, input: RoomHostRequest) -> RoomStanding = |client| {
     let input: oneiron::task_verb::sdk::RoomHostRequest = crate::codec::lower_record("vault.rooms.host", input)?;
@@ -988,6 +1004,11 @@ export_facade! {
     let input: oneiron::memory::AdmitImportedClaimInput = input.lower()?;
     let output = client.vault_claims_admit(&input)?;
     Lift::lift(output)
+};
+"vault.artifacts.create" => fn vault_artifacts_create(&self, input: ArtifactCreateRequest) -> Option<ArtifactView> = |client| {
+    let input: oneiron::blob_artifact::ArtifactCreateRequest = crate::codec::lower_record("vault.artifacts.create", input)?;
+    let output = client.vault_artifacts_create(&input)?;
+    crate::codec::lift_record("vault.artifacts.create", &output)
 };
 "vault.artifacts.put" => fn vault_artifacts_put(&self, input: BlobArtifactInput) -> EntityRefReceipt = |client| {
     let input: oneiron::memory::BlobArtifactInput = input.lower()?;

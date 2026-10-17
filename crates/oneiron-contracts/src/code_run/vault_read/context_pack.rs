@@ -21,6 +21,11 @@ pub struct CoreContextPackRequest {
     /// Optional vector seed.
     #[serde(default, rename = "query_vector", alias = "queryVector")]
     pub query_vector: Option<Vec<f32>>,
+    /// Optional media seed (OF-370): bytes the host embeds into one declared
+    /// space and searches as one more ranked list beside `query` and
+    /// `query_vector`. It seeds a pack on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<ContextPackMediaQuery>,
     /// Maximum primary candidates to retrieve.
     #[serde(default = "default_limit")]
     pub limit: usize,
@@ -56,6 +61,40 @@ impl CoreContextPackRequest {
                 .or(self.max_neighbors),
         }
     }
+}
+
+/// A retrieval request's media query (OF-370), the wire shape of the
+/// server's `POST /v1/core/context-pack` `media`: bytes its host embeds into
+/// one declared space through the `ai.embed` rung that space's id names.
+/// The engine never embeds them itself: a host with no media runtime refuses
+/// the request rather than read it without them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContextPackMediaQuery {
+    /// Declared embedding space id: an `ai.embed` rung id from
+    /// `GET /v1/ai/options`, then `@where`.
+    pub space: String,
+    /// Media type of the bytes; it picks the space's query tower: `image/*`,
+    /// `audio/*`, or `text/*` (UTF-8).
+    pub mime: String,
+    /// The bytes, standard base64, at most `[limits].retrieval_query_bytes`
+    /// as sent.
+    #[serde(alias = "bytesB64")]
+    pub bytes_b64: String,
+    /// The kinds of item the space's list keeps; every kind the space holds
+    /// when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<MediaQueryKind>,
+}
+
+/// One kind of item a media query's list keeps: the input kinds a declared
+/// space holds, spelled as the engine's `InputKind` spells them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaQueryKind {
+    Text,
+    Image,
+    Audio,
 }
 
 /// Nested edge-expansion depth controls.
