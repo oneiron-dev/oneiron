@@ -564,7 +564,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "describe": { description: "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named.", scope: "Read", proposes: false, hostDoor: false, section: true },
   "tasks.create": { description: "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal.", scope: "Write", proposes: true, hostDoor: false, section: true },
   "tasks.wave": { description: "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "tasks.update": { description: "Records the owner's acknowledgement of a failed TASK; any other task stays as it was.", scope: "Write", proposes: false, hostDoor: false, section: true },
+  "tasks.update": { description: "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK.", scope: "Write", proposes: false, hostDoor: false, section: true },
   "vault.witness": { description: "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.claims.upsert": { description: "Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.recall": { description: "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -1440,7 +1440,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       create: (input: Facade.TaskCreateRequest, options?: O): FacadeReturns<"tasks.create">[K] => invoke("tasks.create", input, options, newInvocation()),
       /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
       wave: (input: Facade.TaskWaveRequest, options?: O): FacadeReturns<"tasks.wave">[K] => invoke("tasks.wave", input, options, newInvocation()),
-      /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
+      /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
       update: (input: Facade.TaskUpdateRequest, options?: O): FacadeReturns<"tasks.update">[K] => invoke("tasks.update", input, options, newInvocation()),
       /** Admits one person's word on an ask; the word is evidence, never approval. */
       answer: (input: Facade.TaskAnswerRequest, options?: O): FacadeReturns<"tasks.answer">[K] => invoke("tasks.answer", input, options, newInvocation()),
