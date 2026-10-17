@@ -15,6 +15,8 @@
 //! an open, and carries the receipt, ids only. It also purges the world's sealed
 //! copies on this replica's shelf and its sealing mirrors (`content`). Old offline
 //! backups and a key a caller already holds are outside what the erasure reaches.
+//! A legal hold on the world, or on a claim its key seals, refuses the delete
+//! before any pad goes (ARCH-0038 #legal-hold).
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -29,7 +31,7 @@ use crate::deletion::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_WORLD, ENTITY_TYPE_WORLD_KEY_PAD};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -319,6 +321,34 @@ pub(super) fn live_pad_tag_in_txn(
     Ok(false)
 }
 
+/// Refuses destroying `world`'s keys while a legal hold stands on the world or
+/// on a claim its key seals: destroying the key destroys every such claim's
+/// sealed bytes, and every path that destroys bytes reads the hold. Only a
+/// claim body names a world (`sync::types::entity_world`).
+fn reject_held_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+) -> Result<()> {
+    let mut sealed = vec![world];
+    let claims = store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)?
+        .collect::<Result<Vec<_>>>()?;
+    for id in claims {
+        let Some(raw) = store.port_entity_raw(txn, &id)? else {
+            continue;
+        };
+        if matches!(crate::sync::types::entity_world(&raw), Ok(Some(of)) if of == world) {
+            sealed.push(id);
+        }
+    }
+    store.reject_legal_holds_in_txn(
+        txn,
+        &sealed,
+        &crate::store::legal_hold::HoldActor::UNATTRIBUTED,
+    )
+}
+
 /// Destroys `world`'s keys on this replica, in the caller's write transaction:
 /// purges every pad row of the world, stages each one's hard tombstone, and
 /// writes the permanent destroyed fact with its receipt. `target` is any row
@@ -344,6 +374,10 @@ pub(crate) fn destroy_world_keys_in_txn(
     let existing = DESTROYED.get(store, wtxn, &fact)?;
     if !is_world && rows.is_empty() && existing.is_none() {
         return Ok(None);
+    }
+    // Destroyed once already, only a late pad is left to purge.
+    if existing.is_none() {
+        reject_held_world_in_txn(store, wtxn, target)?;
     }
     let tombstone = TombstoneValueV2 {
         reason: TombstoneReason::UserHardDelete,

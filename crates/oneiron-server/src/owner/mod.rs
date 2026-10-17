@@ -24,6 +24,7 @@ pub(crate) mod runs;
 pub(crate) mod schedule;
 pub(crate) mod secrets;
 pub(crate) mod stamp;
+pub(crate) mod vault_key;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;

@@ -1,6 +1,7 @@
 //! The owner's own commands on a stopped vault: doctor, backup, restore,
 //! window and clock recovery, export, the secret scan switch, registering and
-//! rotating a secret, import consent and agent-run consent.
+//! rotating a secret, the vault key's wraps, import consent and agent-run
+//! consent.
 //!
 //! Holding the vault's writer lease is the owner proof here, the same local
 //! door the embedded export uses; a running `serve` answers the same actions
@@ -25,6 +26,9 @@ use crate::owner::backup::{self, BackupPlan};
 use crate::owner::embedder::EmbedderReport;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
+
+mod vault_key;
+pub use self::vault_key::vault_key;
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
@@ -237,8 +241,28 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         .backup
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("name the backup file to restore"))?;
-    // A backup opens with this install's keystore, as configured.
+    if args.inspect {
+        let unlocks = oneiron::recovery::checkpoint::CheckpointKey::unlocks(backup)
+            .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?;
+        return emit(&crate::owner::vault_key::BackupUnlocks::from(unlocks));
+    }
+    // A backup opens with this install's keystore, as configured, unless the
+    // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;
+    let unlock = vault_key::HostUnlock::read(&args, backup)?;
+    let pins = args.trust.as_deref().map(vault_key::read_pins).transpose()?;
+    if !args.rehearse && !config.vault_path.join("data.mdb").exists() {
+        return emit(&vault_key::restore_fresh(
+            backup, &config, keystore, &unlock, pins,
+        )?);
+    }
+    let key = vault_key::backup_key(
+        backup,
+        &config.vault_path,
+        keystore.as_ref(),
+        &unlock,
+        pins,
+    )?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
         let mut source =
@@ -246,19 +270,25 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         if let Some(keystore) = keystore {
             source = source.with_keystore(keystore);
         }
-        return emit(&backup::rehearse(
-            backup,
-            vault_config(&config),
-            args.scratch.as_deref(),
-            &source,
-        )?);
+        let scratch = args.scratch.as_deref();
+        return emit(&match key {
+            Some(key) => {
+                backup::rehearse_keyed(backup, vault_config(&config), scratch, &source, key)?
+            }
+            None => backup::rehearse(backup, vault_config(&config), scratch, &source)?,
+        });
     }
-    emit(&backup::restore_over(
-        backup,
-        &config.vault_path,
-        vault_config(&config),
-        keystore,
-    )?)
+    emit(&match key {
+        Some(key) => {
+            backup::restore_over_keyed(backup, &config.vault_path, vault_config(&config), key)?
+        }
+        None => backup::restore_over(
+            backup,
+            &config.vault_path,
+            vault_config(&config),
+            keystore,
+        )?,
+    })
 }
 
 #[derive(Serialize)]
