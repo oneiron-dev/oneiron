@@ -23,17 +23,15 @@ pub struct ProjectAsk {
 }
 
 impl Vault {
-    /// The project `task` is placed in, and who an ask on it goes to: that
-    /// project's effective leader and board, as its signed history folds
-    /// them in this snapshot. A TASK on no served project's list, or on two,
-    /// routes nowhere.
-    pub(crate) fn project_ask_route_in_txn(
+    /// The served project whose task list holds `task` in this snapshot, if
+    /// any. A TASK on two served projects' lists is refused, never guessed.
+    pub(crate) fn task_served_project_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         task: EntityId,
-    ) -> Result<(EntityId, BTreeSet<EntityId>)> {
+    ) -> Result<Option<EntityId>> {
         let Some(reader) = ProjectReader::new(&self.store, txn, self.privacy_posture())? else {
-            return Err(unplaced());
+            return Ok(None);
         };
         let task = task.to_hex();
         let mut placed = None;
@@ -48,8 +46,27 @@ impl Vault {
                 .into());
             }
         }
-        let project = placed.ok_or_else(unplaced)?;
-        let effective = reader.effective(project)?.ok_or_else(unplaced)?;
+        match placed {
+            Some(id) if reader.effective(id)?.is_some() => Ok(Some(id)),
+            _ => Ok(None),
+        }
+    }
+
+    /// The project `task` is placed in, and who an ask on it goes to: that
+    /// project's effective leader and board, as its signed history folds
+    /// them in this snapshot. A TASK on no served project's list, or on two,
+    /// routes nowhere.
+    pub(crate) fn project_ask_route_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task: EntityId,
+    ) -> Result<(EntityId, BTreeSet<EntityId>)> {
+        let project = self
+            .task_served_project_in_txn(txn, task)?
+            .ok_or_else(unplaced)?;
+        let (_, effective) = self
+            .effective_project_in_txn(txn, project)?
+            .ok_or_else(unplaced)?;
         let holders = std::iter::once(&effective.leader)
             .chain(&effective.board)
             .map(|id| EntityId::from_hex(id))
