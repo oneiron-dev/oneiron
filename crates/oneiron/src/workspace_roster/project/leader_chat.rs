@@ -67,10 +67,7 @@ pub(crate) fn verify_existing_turn(
     actor: EntityId,
     project: EntityId,
 ) -> Result<()> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &id)?
         .ok_or_else(denied)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
     if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
@@ -101,7 +98,8 @@ pub(crate) fn validate_local_turns(
     turns: &BTreeSet<EntityId>,
 ) -> Result<()> {
     for turn in turns {
-        let Some(raw) = store.entities.get(txn, turn.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, turn)?
+        else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
@@ -116,7 +114,9 @@ pub(crate) fn validate_local_turns(
             false,
             crate::limits::MAX_ANCESTOR_DEPTH,
         )? {
-            let Some(raw) = store.entities.get(txn, room.as_bytes())? else {
+            let Some(raw) =
+                crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &room)?
+            else {
                 continue;
             };
             let h = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
@@ -142,10 +142,7 @@ pub(crate) fn settle_record(
     actor: EntityId,
     project: EntityId,
 ) -> Result<()> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
         .ok_or_else(denied)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
     if !matches!(
@@ -383,11 +380,9 @@ impl Vault {
         };
         let bytes = rmp_serde::to_vec_named(value).map_err(|_| denied())?;
         let chat: LeaderChat = decode(&bytes).map_err(|_| denied())?;
-        let raw = self
-            .store
-            .entities
-            .get(&txn, message.as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
+        let raw =
+            crate::ports::EntityStoreRead::port_entity_raw_wiped(&self.store, &txn, &message)?
+                .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
         // Opaque replicated bodies, even ones that name real leaders, cannot
         // manufacture an authenticated speaker proof or a positive scope stamp.
@@ -494,7 +489,7 @@ pub(crate) fn admit_turn(
     actor: EntityId,
     has_unattributed_message: bool,
 ) -> Result<Option<EntityId>> {
-    if vault.store.entities.get(txn, room.as_bytes())?.is_none() {
+    if crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &room)?.is_none() {
         return Ok(None); // ordinary witness may mint a fresh Conversation
     }
     let body = crate::conversation::body_in(vault, txn, room)?;

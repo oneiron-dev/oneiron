@@ -6,9 +6,9 @@ use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
 };
 use crate::error::{Error, Result};
-use crate::ports::{ChangeLogRecord, EntityStoreRead, TombstoneStore};
+use crate::ports::{ChangeLogStoreRead, EntityStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
-use crate::side_table::{self, LegacyJson, Named, SideTable};
+use crate::side_table::{self, LegacyJson, SideTable};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 
@@ -17,8 +17,6 @@ const POLICY: SideTable<(), DreamerWakePolicy, LegacyJson> =
 const STATE: SideTable<(), WakeState, LegacyJson> = SideTable::new(&side_table::DREAMER_WAKE_STATE);
 const OUTBOX: SideTable<[u8; 1], WakePolicyTrigger, LegacyJson> =
     SideTable::new(&side_table::DREAMER_WAKE_RECIPE_INPUT);
-const CHANGE: SideTable<[u8; 16], ChangeLogRecord, Named> =
-    SideTable::new(&side_table::PORTS_CHANGE);
 const DEFAULT_POLICY: &str = include_str!("wake_policy_defaults.json");
 
 fn invalid() -> Error {
@@ -304,11 +302,10 @@ struct WakeCounts {
 fn count_new(vault: &Vault, txn: &heed::RoTxn<'_>, state: &mut WakeState) -> Result<WakeCounts> {
     let mut last = state.processed_change_id;
     let mut changed = std::collections::BTreeSet::new();
-    let start = state
-        .processed_change_id
-        .as_ref()
-        .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
-    for entry in CHANGE.iter_range(&vault.store, txn, start, std::ops::Bound::Unbounded)? {
+    for entry in vault
+        .store
+        .port_changelog_after(txn, state.processed_change_id)?
+    {
         let (id, change) = entry.map_err(|error| match error {
             Error::Store(crate::error::StoreError::SideTableRow {
                 problem: crate::error::SideTableRowProblem::KeyShape,
