@@ -26,7 +26,7 @@
 //!   does. Delete rewrites nothing; a deleted world restores from the bundles it is
 //!   in until they age out (DEC-0006: delete is backup-only undo).
 //! - A holder keeps [`SEALED_BUNDLE_KEEP`] generations, each bundle with its pad
-//!   object ([`retired_bundle_generations`]).
+//!   object, and never retires the newest by age ([`retired_bundle_generations`]).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ use oneiron_crypto::{
 };
 use zeroize::Zeroizing;
 
-use super::pads::{WorldKeyPad, pad_in_txn};
+use super::pads::{WorldKeyPad, pad_in_txn, world_keys_destroyed_in_txn};
 use super::{
     MachineSecret, RecoveryRootSeed, WORLD_KEY_EPOCH, WorldKey, WorldKeyId, WrapRecipient,
     base_world, open_counted, os_fill, recipients, refused,
@@ -118,9 +118,10 @@ pub fn sealed_bundle_slot(unix_secs: u64) -> u64 {
 }
 
 /// The generations a holder retires from `kept` in slot `now_slot`: every one
-/// past the newest [`SEALED_BUNDLE_KEEP`], and every one that many slots old, so
-/// nothing outlives 90 days even when uploads stop. A retired generation's pad
-/// object goes with it.
+/// past the newest [`SEALED_BUNDLE_KEEP`], and every older one that many slots
+/// old, so nothing but the last copy outlives 90 days when uploads stop. The
+/// newest is never retired by age (owner ruling: spare the last copy). A retired
+/// generation's pad object goes with it.
 #[must_use]
 pub fn retired_bundle_generations(
     now_slot: u64,
@@ -134,7 +135,8 @@ pub fn retired_bundle_generations(
         .into_iter()
         .enumerate()
         .filter(|(rank, generation)| {
-            *rank >= SEALED_BUNDLE_KEEP || generation.slot.saturating_add(KEEP_SLOTS) <= now_slot
+            *rank >= SEALED_BUNDLE_KEEP
+                || (*rank > 0 && generation.slot.saturating_add(KEEP_SLOTS) <= now_slot)
         })
         .map(|(_, generation)| generation)
         .collect()
@@ -490,6 +492,37 @@ impl OpenedVaultBundle {
             .map(|section| section.open(&self.vault_id, key))
             .transpose()
     }
+
+    /// The world sections not sealed under any of `keys`, still sealed: what a
+    /// publisher carries on when it replaces or drops the sections of those
+    /// keys.
+    #[must_use]
+    pub fn sections_except(&self, keys: &[&WorldKey]) -> Vec<SealedBundleSection> {
+        let tags: BTreeSet<[u8; 32]> = keys
+            .iter()
+            .map(|key| section_digest(SECTION_TAG_CONTEXT, &self.vault_id, key))
+            .collect();
+        self.sections
+            .iter()
+            .filter(|section| !tags.contains(&section.tag))
+            .cloned()
+            .collect()
+    }
+
+    /// Whether a machine the owner vouched for signed the bundle, mine here now
+    /// or removed since: the key of its roster chain an owner-held key accepted,
+    /// or of its chain under an owner anchor, in `fold`.
+    #[cfg(feature = "sync")]
+    #[must_use]
+    pub(crate) fn signed_by_owner_machine(&self, fold: &AuthorityFold) -> bool {
+        fold.machine(self.publisher).is_some_and(|machine| {
+            machine
+                .roster_trusted
+                .iter()
+                .chain(machine.anchored.values())
+                .any(|chain| self.signed_by(&chain.profile.machine_key))
+        })
+    }
 }
 
 /// One generation's pads, opened.
@@ -590,6 +623,22 @@ impl Vault {
         worlds: &[(EntityId, &[u8])],
         carried: &[SealedBundleSection],
     ) -> Result<SealedVaultUpload> {
+        self.seal_vault_bundle_carrying(slot, base, worlds, carried, None)
+    }
+
+    /// [`Self::seal_vault_bundle`] for a publisher that carries `carried` on
+    /// from the generation whose pad object is `latest`: the new pad object
+    /// also holds each pad of `latest` this machine has no row for, of a world
+    /// still cloud-bound whose keys were not destroyed here, so a carried
+    /// section's key still restores with the kit.
+    pub(crate) fn seal_vault_bundle_carrying(
+        &self,
+        slot: u64,
+        base: &[u8],
+        worlds: &[(EntityId, &[u8])],
+        carried: &[SealedBundleSection],
+        latest: Option<&OpenedKeyPads>,
+    ) -> Result<SealedVaultUpload> {
         let secret = self.machine_secret_outside_txn()?;
         let mut keys: Vec<(Arc<WorldKey>, &[u8])> = Vec::with_capacity(worlds.len());
         for &(world, payload) in worlds {
@@ -598,7 +647,7 @@ impl Vault {
             }
             keys.push((self.world_key(world)?, payload));
         }
-        let plan = self.seal_plan(&secret, &keys)?;
+        let plan = self.seal_plan(&secret, &keys, latest)?;
         let generation = SealedBundleGeneration::fresh(slot)?;
         let mut sections = Vec::with_capacity(keys.len() + carried.len());
         for (key, payload) in &keys {
@@ -628,6 +677,7 @@ impl Vault {
         &self,
         secret: &MachineSecret,
         keys: &[(Arc<WorldKey>, &[u8])],
+        latest: Option<&OpenedKeyPads>,
     ) -> Result<SealPlan> {
         let txn = self.store.env.read_txn()?;
         let signing = self.door_signing_key_in_txn(&txn, secret.machine)?;
@@ -674,6 +724,16 @@ impl Vault {
                 pads.push((key.id, Zeroizing::new(*pad.bytes())));
             }
         }
+        // A carried section's key keeps the pad the latest generation held for
+        // it, unless its world left the cloud or its keys were destroyed here.
+        for (key, pad) in latest.map_or(&[][..], |latest| &latest.entries[..]) {
+            if cloud_bound(&fold, key.world)
+                && !pads.iter().any(|(held, _)| held == key)
+                && !world_keys_destroyed_in_txn(&self.store, &txn, key.world)?
+            {
+                pads.push((*key, Zeroizing::new(**pad)));
+            }
+        }
         Ok(SealPlan {
             vault_id,
             signing,
@@ -700,6 +760,65 @@ impl Vault {
         Ok(opened)
     }
 
+    /// [`Self::open_vault_bundle`] for a publisher that carries the bundle's
+    /// sections on: it opens with this machine's capsule, and a machine the
+    /// owner vouched for signed it, mine here now or removed since
+    /// ([`OpenedVaultBundle::signed_by_owner_machine`]). So a latest generation
+    /// that a machine removed since sealed does not stop the next upload.
+    #[cfg(feature = "sync")]
+    pub(crate) fn open_vault_bundle_to_carry(
+        &self,
+        bundle: &SealedVaultBundle,
+    ) -> Result<OpenedVaultBundle> {
+        let secret = self.machine_secret_outside_txn()?;
+        let opened = bundle.open_with(&self.bundle_vault_id()?, &secret.secret)?;
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if !opened.signed_by_owner_machine(&fold) {
+            return Err(refused("no machine of the owner's signed the bundle"));
+        }
+        Ok(opened)
+    }
+
+    /// Every world that rides the cloud bundle now ([`cloud_bound`]).
+    #[cfg(feature = "sync")]
+    pub(crate) fn sealed_bundle_worlds(&self) -> Result<BTreeSet<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(fold
+            .worlds
+            .keys()
+            .copied()
+            .chain(fold.all_world_keys().map(|key| key.id.world))
+            .filter(|world| cloud_bound(&fold, *world))
+            .collect())
+    }
+
+    /// Kit restore: stores each pad of `pads` whose key this vault's authority
+    /// names and whose row is not here, so the root's wraps open again (the
+    /// base section carries no pad row). A world whose keys were destroyed here
+    /// gets none. Returns how many it stored.
+    #[cfg(feature = "sync")]
+    pub(crate) fn restore_key_pads(&self, pads: &OpenedKeyPads) -> Result<usize> {
+        self.with_write_txn(|txn| {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let now = self.instant_in_txn(txn)?.secs();
+            let mut stored = 0;
+            for (key, pad) in &pads.entries {
+                if fold.world_key(key).is_none()
+                    || pad_in_txn(&self.store, txn, key)?.is_some()
+                    || world_keys_destroyed_in_txn(&self.store, txn, key.world)?
+                {
+                    continue;
+                }
+                let pad = WorldKeyPad::from_bytes(Zeroizing::new(**pad));
+                self.put_pad_in_txn(txn, key, &pad, now)?;
+                stored += 1;
+            }
+            Ok(stored)
+        })
+    }
+
     /// The sections of `opened` this machine may read now, opened. A key whose pad
     /// row is not here takes its pad from `pads`, the pad object of the bundle's
     /// generation. Whether to import a section, a deleted world's included, is the
@@ -709,29 +828,38 @@ impl Vault {
         opened: &OpenedVaultBundle,
         pads: Option<&OpenedKeyPads>,
     ) -> Result<Vec<OpenedBundleSection>> {
+        open_sections(opened, &self.bundle_reader_keys(pads, false)?)
+    }
+
+    /// Every key this machine opens of a world it may read now, its pad from
+    /// this machine or else from `pads`, the pad object of the bundle's
+    /// generation. A world read everywhere counts only with `public_too`.
+    pub(crate) fn bundle_reader_keys(
+        &self,
+        pads: Option<&OpenedKeyPads>,
+        public_too: bool,
+    ) -> Result<Vec<WorldKey>> {
         let secret = self.machine_secret_outside_txn()?;
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let me = WrapRecipient::Machine(secret.machine);
         let mut keys = Vec::new();
-        {
-            let txn = self.store.env.read_txn()?;
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            let me = WrapRecipient::Machine(secret.machine);
-            for key in fold.all_world_keys() {
-                let world = key.id.world;
-                if fold.world_privacy(world).read == EffectiveRead::Everywhere
-                    || !fold.world_readable_on(world, Destination::Machine(secret.machine))
-                {
-                    continue;
-                }
-                let pad = pad_in_txn(&self.store, &txn, &key.id)?
-                    .or_else(|| pads.and_then(|pads| pads.pad(&key.id)));
-                if let Some(world_key) =
-                    pad.and_then(|pad| open_counted(&fold, key, me, &secret.secret, &pad))
-                {
-                    keys.push(world_key);
-                }
+        for key in fold.all_world_keys() {
+            let world = key.id.world;
+            if (!public_too && fold.world_privacy(world).read == EffectiveRead::Everywhere)
+                || !fold.world_readable_on(world, Destination::Machine(secret.machine))
+            {
+                continue;
+            }
+            let pad = pad_in_txn(&self.store, &txn, &key.id)?
+                .or_else(|| pads.and_then(|pads| pads.pad(&key.id)));
+            if let Some(world_key) =
+                pad.and_then(|pad| open_counted(&fold, key, me, &secret.secret, &pad))
+            {
+                keys.push(world_key);
             }
         }
-        open_sections(opened, &keys)
+        Ok(keys)
     }
 
     /// Kit restore: every section of `opened` whose key is wrapped to the kit's

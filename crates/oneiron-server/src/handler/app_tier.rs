@@ -8,6 +8,9 @@ use super::ephemeral::{
     canonical_ephemeral_frames, ephemeral_hub_candidate, validate_ephemeral_payload,
 };
 use super::window_sync::handle_window_sync;
+use oneiron::receipt::{CallOutcome, call_bytes_digest, call_json_digest};
+
+use crate::api::call_receipt;
 use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, SyncMessage};
 use crate::server::SyncServer;
@@ -261,8 +264,44 @@ impl VerbCall {
 }
 
 /// Answers an app-tier frame here, except a verb RPC, which it hands back to
-/// run off the caller's loop.
+/// run off the caller's loop. A frame the socket refuses (no live bound
+/// principal, an older protocol, a malformed envelope) closes it with no
+/// reply to carry a ref; its receipt names the connection (FIX 811).
 pub(super) fn handle_app_message_with_connection(
+    server: &SyncServer,
+    state: &mut ConnState,
+    tag: u8,
+    payload: &[u8],
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    connection: Option<&mut crate::livequery::connection::Connection>,
+) -> Result<Option<VerbCall>, ProtocolError> {
+    let answered = answer_app_message(server, state, tag, payload, direct_tx, connection);
+    if let Err(error) = &answered {
+        let method = (tag == protocol::TAG_RPC)
+            .then(|| crate::livequery::decode_rpc(payload).ok())
+            .flatten()
+            .map(|request| request.method);
+        let (verb, request_digest) = match method {
+            // A bind carries a credential: its receipt digests none of it.
+            Some(method) if method == "auth.bind" => (method, call_bytes_digest(&[])),
+            Some(method) => (method, call_bytes_digest(payload)),
+            None if tag == protocol::TAG_RPC => ("rpc".to_owned(), call_bytes_digest(payload)),
+            None => ("subscribe".to_owned(), call_bytes_digest(payload)),
+        };
+        call_receipt::record_socket_reply(
+            server,
+            verb,
+            CallOutcome::Refused {
+                code: error.kind().to_owned(),
+            },
+            request_digest,
+            None,
+        );
+    }
+    answered
+}
+
+fn answer_app_message(
     server: &SyncServer,
     state: &mut ConnState,
     tag: u8,
@@ -310,8 +349,20 @@ pub(super) fn handle_app_message_with_connection(
                     .wire_telemetry
                     .record("auth.bind", actor, oneiron_vault_contract::now_ts());
             state.bound_auth = Some(binding?.at(state.locality));
-            for frame in crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?
-            {
+            // FIX 811: the bind is the connection's reply, and its receipt
+            // digests none of the credential.
+            let stamp = call_receipt::record_socket_reply(
+                server,
+                request.method,
+                CallOutcome::Ok,
+                call_bytes_digest(&[]),
+                None,
+            );
+            for frame in crate::livequery::stamped_rpc_result(
+                request.request_id,
+                &serde_json::Value::Null,
+                &stamp,
+            )? {
                 direct_tx
                     .send(frame)
                     .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
@@ -330,9 +381,19 @@ pub(super) fn handle_app_message_with_connection(
             .as_deref()
             .map_or(0, crate::livequery::connection::Connection::conn_id);
         let frames = if request.method == "ping" {
-            vec![crate::livequery::ping_result(
+            // FIX 811: a ping is the connection's reply, echoing its params.
+            let digest = call_json_digest(&request.params);
+            let stamp = call_receipt::record_socket_reply(
+                server,
+                request.method,
+                CallOutcome::Ok,
+                digest.clone(),
+                Some(digest),
+            );
+            vec![crate::livequery::stamped_ping_result(
                 request.request_id,
                 request.params,
+                &stamp,
             )?]
         } else if request.method.starts_with("residence.") {
             let bound = auth.clone();
