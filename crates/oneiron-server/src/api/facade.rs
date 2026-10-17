@@ -31,6 +31,7 @@ mod guest_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 mod widen_proposal_doors;
+mod policy_doors;
 pub(super) mod role_picks;
 mod setting_doors;
 mod share_doors;
@@ -334,6 +335,18 @@ async fn facade_call_receipt(
                 reply
             }
         };
+    }
+    if let Some(refusal) = &refusal {
+        result_digest = Some(oneiron::receipt::call_refusal_digest(
+            &refusal.body.error.code,
+            &refusal.body.error.message,
+        ));
+    }
+    if let Some(refusal) = &refusal {
+        result_digest = Some(oneiron::receipt::call_refusal_digest(
+            &refusal.body.error.code,
+            &refusal.body.error.message,
+        ));
     }
     let outcome = match &refusal {
         Some(refusal) => CallOutcome::Refused {

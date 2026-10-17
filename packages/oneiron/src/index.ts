@@ -392,6 +392,15 @@ export class Oneiron {
         /** The owner clears one learned-setting row of a key, mode and scope. */
         clear: (input: Facade.LearningSettingClear): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningClear(input) as Facade.LearningSettingsView),
       }),
+      wake_policy: {
+        /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
+        set: (input: Facade.WakePolicySetRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsWakePolicySet(input) as Facade.PolicyActionOutcome),
+      },
+      /** Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling. */
+      inference_defaults: Object.assign((input: Facade.EmptyRequest = {}): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaults(input) as Facade.PolicyActionOutcome), {
+        /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
+        replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
+      }),
     },
     /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
     widen_proposals: Object.assign((input: Facade.WidenProposalsRequest): Facade.WidenProposalsView => this.#call(() => this.#client.vaultWidenProposals(input) as Facade.WidenProposalsView), {

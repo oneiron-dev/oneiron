@@ -138,7 +138,10 @@ impl RpcReply {
                 oneiron::receipt::CallOutcome::Refused {
                     code: error.code().to_owned(),
                 },
-                None,
+                Some(oneiron::receipt::call_refusal_digest(
+                    error.code(),
+                    error.message(),
+                )),
                 Vec::new(),
             ),
         };

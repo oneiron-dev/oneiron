@@ -881,6 +881,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_settings_wake_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.wake_policy.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_inference_defaults(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.inference_defaults", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_inference_defaults_replace(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.inference_defaults.replace", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_lenses_propose(
         &self,
         input: serde_json::Value,

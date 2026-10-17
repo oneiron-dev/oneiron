@@ -57,6 +57,10 @@ impl AppError {
         &self.code
     }
 
+    pub(super) fn message(&self) -> &str {
+        &self.message
+    }
+
     pub(super) fn invalid_params() -> Self {
         Self::new(
             oneiron::memory::MEMORY_CODE_BAD_REQUEST,

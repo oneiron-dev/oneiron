@@ -469,6 +469,21 @@ export_facade! {
     let output = client.vault_widen_proposals_decline(&input)?;
     crate::codec::lift_record("vault.widen_proposals.decline", &output)
 };
+"vault.settings.wake_policy.set" => fn vault_settings_wake_policy_set(&self, input: WakePolicySetRequest) -> PolicyActionOutcome = |client| {
+    let input: oneiron::policy_setting_doors::WakePolicySetRequest = crate::codec::lower_record("vault.settings.wake_policy.set", input)?;
+    let output = client.vault_settings_wake_policy_set(&input)?;
+    crate::codec::lift_record("vault.settings.wake_policy.set", &output)
+};
+"vault.settings.inference_defaults" => fn vault_settings_inference_defaults(&self) -> PolicyActionOutcome = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.settings.inference_defaults")?;
+    let output = client.vault_settings_inference_defaults(&input)?;
+    crate::codec::lift_record("vault.settings.inference_defaults", &output)
+};
+"vault.settings.inference_defaults.replace" => fn vault_settings_inference_defaults_replace(&self, input: InferenceDefaultsReplaceRequest) -> PolicyActionOutcome = |client| {
+    let input: oneiron::policy_setting_doors::InferenceDefaultsReplaceRequest = crate::codec::lower_record("vault.settings.inference_defaults.replace", input)?;
+    let output = client.vault_settings_inference_defaults_replace(&input)?;
+    crate::codec::lift_record("vault.settings.inference_defaults.replace", &output)
+};
 "vault.lenses.propose" => fn vault_lenses_propose(&self, input: LensProposeRequest) -> LensProposalReceipt = |client| {
     let input: oneiron::lens::LensProposeRequest = crate::codec::lower_record("vault.lenses.propose", input)?;
     let output = client.vault_lenses_propose(&input)?;

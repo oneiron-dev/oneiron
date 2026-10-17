@@ -121,6 +121,9 @@ vaultSettingsLearningClear(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown
+vaultSettingsWakePolicySet(input: unknown): unknown
+vaultSettingsInferenceDefaults(input: unknown): unknown
+vaultSettingsInferenceDefaultsReplace(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown

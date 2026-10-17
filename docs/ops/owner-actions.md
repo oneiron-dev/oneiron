@@ -694,6 +694,11 @@ participates, the vault keeps a standing grant on that channel for the sender, s
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
 
+The counts come from the Coach's detectors. Each diagnostic they raise counts once, ever: a missed
+recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
+`other` with its detector named. Your own refusal of a single consent ask is never counted. A
+diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
+
 ## Model-graded self-heal detectors
 
 Canon ships no detector wording, so no model-graded detector runs until you write one. Each
@@ -927,6 +932,17 @@ The commands open a stopped vault. A running server answers the same at
 Each answers with the key's catalog entry and rows. The host verbs `vault.settings.learning`,
 `.put` and `.clear` take the same input over the facade and MCP. All of them are the owner's
 alone, and clearing an absent row succeeds.
+
+The app's policy actions have host verbs too. Each runs the same action as
+`POST /v1/core/actions/{verb}`:
+- `vault.settings.wake_policy.set` with `{"policy", "idempotency_key"}` runs
+  `dreamer.wake_policy.set`, which needs the owner's own credential.
+- `vault.settings.inference_defaults` with `{}` runs `inference.defaults.read`.
+- `vault.settings.inference_defaults.replace` with `{"defaults", "idempotency_key"}` runs
+  `inference.defaults.replace`.
+
+The two inference verbs need the caller's Auto ceiling. Each answers with the action's
+`outcome`. A retry with the same idempotency key gets the first call's answer.
 
 ## Widen proposals
 

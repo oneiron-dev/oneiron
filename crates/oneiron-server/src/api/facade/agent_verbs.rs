@@ -183,6 +183,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.widen_proposals.decline",
             post(vault_widen_proposals_decline),
         )
+        .route(
+            "/vault.settings.wake_policy.set",
+            post(vault_settings_wake_policy_set),
+        )
+        .route(
+            "/vault.settings.inference_defaults",
+            post(vault_settings_inference_defaults),
+        )
+        .route(
+            "/vault.settings.inference_defaults.replace",
+            post(vault_settings_inference_defaults_replace),
+        )
         .route("/vault.lenses.propose", post(vault_lenses_propose))
         .route("/vault.lenses.activate", post(vault_lenses_activate))
         .route("/vault.lenses.deactivate", post(vault_lenses_deactivate))
@@ -2528,6 +2540,93 @@ async fn vault_widen_proposals_decline(
     .await?;
     let output = facade_output(
         super::host_doors::vault_widen_proposals_decline(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_settings_wake_policy_set(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.settings.wake_policy.set")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.wake_policy.set", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.settings.wake_policy.set",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_wake_policy_set(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_settings_inference_defaults(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.settings.inference_defaults")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.inference_defaults", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.settings.inference_defaults",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_inference_defaults(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_settings_inference_defaults_replace(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.settings.inference_defaults.replace")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.inference_defaults.replace", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.settings.inference_defaults.replace",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_inference_defaults_replace(
             &server,
             &auth,
             facade_input(hooks.args.clone())?,
