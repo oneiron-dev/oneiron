@@ -5,18 +5,21 @@ use super::codec::{invalid, parse_scope, scope_value};
 use super::derivation::{self, ScopeSummaryMetadata, SummaryDerivation};
 use super::doors::{
     LandedHeader, ScopeSources, SummaryContent, header_landed_in_txn, land_in_txn, mint_in_txn,
-    scope_sources_in_txn, standing_composition_in_txn, validate_landing_in_txn,
+    reply_lane, scope_sources_in_txn, settle_header, standing_composition_in_txn,
+    validate_landing_in_txn,
 };
 use super::purpose::SummaryPurpose;
 use crate::attempt_queue::AttemptId;
 use crate::conversation_dag::{
-    ScopePath, ScopeSelector, actor_in_txn, prove_branch_span, selected_thread_in_txn,
+    AppendFailure, ScopePath, ScopeSelector, actor_in_txn, prove_branch_span,
+    selected_thread_in_txn,
 };
 use crate::dreamer_consolidation::{
     DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, ScopeSummaryEvidence, scope_summary_evidence_in_txn,
 };
 use crate::dreamer_runner::{DreamerAttemptPayload, DreamerConsolidationScope};
 use crate::error::{Error, Result};
+use crate::memory::Memory;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
 
@@ -93,6 +96,17 @@ impl ScopeSummaryPlan {
         hash.update(&self.observation(&evidence.fingerprint()?)?);
         hash.update(params_hash);
         Ok(*hash.finalize().as_bytes())
+    }
+
+    /// The requester's surface a landing's reply is checked and receipted on
+    /// (OF-063), bound from the declaration's admitted byline.
+    fn requester_surface<'v>(&self, vault: &'v Vault) -> Memory<'v> {
+        vault.memory(self.requester.entity_ref(), self.requester.actor_class())
+    }
+
+    /// Whether the declaration lands a reply TURN with its header.
+    fn asks_reply(&self) -> bool {
+        self.as_record && self.land_on.is_some()
     }
 }
 
@@ -332,11 +346,13 @@ impl Vault {
         memo: &[u8; 32],
         params_hash: &[u8; 32],
     ) -> Result<bool> {
-        self.with_write_txn_grouped(|txn| {
+        let requester = plan.requester_surface(self);
+        let lane = reply_lane(&requester, plan.asks_reply())?;
+        let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             if plan_in_txn(self, txn, &derivation::decode(&plan.input)?)? != *plan
                 || scope_summary_evidence_in_txn(self, txn, &plan.sources)? != *evidence
             {
-                return Ok(false);
+                return Ok((false, None));
             }
             let previous = if let Some(previous) = plan.previous
                 && plan.editor_text.is_none()
@@ -356,28 +372,30 @@ impl Vault {
                 Some(summary) => summary,
                 None => match standing_composition_in_txn(self, txn, first, memo)? {
                     Some(summary) => summary,
-                    None => return Ok(false),
+                    None => return Ok((false, None)),
                 },
             };
-            let landed = if let Some(turn) = plan.land_on
+            let (landed, reply) = if let Some(turn) = plan.land_on
                 && !header_landed_in_txn(self, txn, &summary, &turn)?
             {
-                Some(land_in_txn(
+                let (landed, reply) = land_in_txn(
                     self,
                     txn,
                     &summary,
                     &turn,
                     plan.requester,
-                    plan.as_record,
+                    lane.as_ref(),
                     self.store.clock.now_recorded_at(),
-                )?)
+                )?;
+                (Some(landed), reply)
             } else {
-                None
+                (None, None)
             };
             super::status::record_result_in_txn(self, txn, attempt, summary, landed.as_ref())?;
             derivation::register_in_txn(self, txn, &derivation::decode(&plan.input)?, summary)?;
-            Ok(true)
-        })
+            Ok((true, reply))
+        });
+        settle_header(&requester, outcome)
     }
 
     /// The final plan and every source version are read again in the SAME
@@ -396,9 +414,11 @@ impl Vault {
             ));
         }
         let id = composed_summary_id(attempt);
-        self.with_write_txn_grouped(|txn| {
+        let requester = plan.requester_surface(self);
+        let lane = reply_lane(&requester, plan.asks_reply())?;
+        let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             if let Some(result) = super::status::result_in_txn(self, txn, attempt)? {
-                return Ok((EntityId::from_hex(&result.summary)?, None));
+                return Ok(((EntityId::from_hex(&result.summary)?, None), None));
             }
             let input = derivation::decode(&plan.input)?;
             if plan_in_txn(self, txn, &input)? != *plan
@@ -406,7 +426,8 @@ impl Vault {
             {
                 return Err(Error::ConcurrentWrite(
                     "summary sources or editor state changed during composition",
-                ));
+                )
+                .into());
             }
             let now = self.store.clock.now_recorded_at();
             mint_in_txn(
@@ -442,14 +463,16 @@ impl Vault {
                 },
             };
             crate::entity_doc::birth_summary_in_txn(self, txn, id, author, now, &metadata)?;
-            let landed = plan
+            let (landed, reply) = plan
                 .land_on
-                .map(|turn| land_in_txn(self, txn, &id, &turn, plan.requester, plan.as_record, now))
-                .transpose()?;
+                .map(|turn| land_in_txn(self, txn, &id, &turn, plan.requester, lane.as_ref(), now))
+                .transpose()?
+                .unzip();
             super::status::record_result_in_txn(self, txn, attempt, id, landed.as_ref())?;
             derivation::register_in_txn(self, txn, &input, id)?;
-            Ok((id, landed))
-        })
+            Ok(((id, landed), reply.flatten()))
+        });
+        settle_header(&requester, outcome)
     }
 }
 

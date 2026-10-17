@@ -2351,6 +2351,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/invitee_slip.rs",
+     "purpose": "FIX 1925: an invitee's own credential",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "InvocationSlipBinding"
      ],
@@ -4857,7 +4867,7 @@
      "path": "src/blob_artifact/born_from.rs",
      "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -13515,7 +13525,7 @@
       "const": 3,
       "crate-vis": 6,
       "enum": 4,
-      "fn": 33,
+      "fn": 34,
       "struct": 7
      }
     },
@@ -14191,7 +14201,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 22
      }
     },
@@ -14447,6 +14457,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/context_board/readers.rs",
+     "purpose": "The READERS board block (ARCH-0067 #inbox-section, ARCH-0032 #private-reads): an agent sees who may read its…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RoomBar",
       "RoomMode",
@@ -14506,7 +14527,7 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -15423,7 +15444,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 1,
       "re-export": 4
      }
@@ -21846,12 +21867,12 @@
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
       "crate-vis": 4,
-      "fn": 6,
+      "fn": 7,
       "re-export": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SharedInvitation",
@@ -21861,7 +21882,7 @@
      "purpose": "Invitee acceptance (CROSS-ARCH-0024: \"Only an accepted, vault-specific invitation\" grants membership)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -27861,7 +27882,7 @@
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -28603,19 +28624,22 @@
       "DiaryReadReceipt",
       "DiaryReadRecord",
       "DiaryReadRequest",
+      "DiaryReader",
+      "DiaryReaderList",
       "DiaryReadsRequest",
       "DiaryReadsView",
       "DiaryReviewAnswer",
-      "DiaryReviewState"
+      "DiaryReviewState",
+      "SealedPadReader"
      ],
      "path": "src/memory/diary_read.rs",
      "purpose": "The reason-logged door to an agent's diary (OF-490, owner AGM-1+8)",
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 4,
-      "fn": 13,
-      "struct": 9
+      "enum": 5,
+      "fn": 15,
+      "struct": 11
      }
     },
     {
@@ -28855,7 +28879,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 34
+      "re-export": 35
      }
     },
     {
@@ -29945,7 +29969,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 3,
       "fn": 4,
       "re-export": 9,
@@ -30209,7 +30233,7 @@
      "path": "src/note/kinds.rs",
      "purpose": "Vault-resident PACK descriptor records; the shipped kinds are data, not variants",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 4,
       "struct": 1
@@ -37311,7 +37335,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -37351,6 +37375,17 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/saved_query/sweep.rs",
+     "purpose": "The host's saved-query sweep (ARCH-0059 `eval`): the queries a wake evaluates, the people it pages through…",
+     "surface": {
+      "const": 1,
+      "fn": 2
      }
     },
     {
@@ -37426,7 +37461,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "fn": 5,
       "struct": 1
      }
@@ -38974,7 +39009,7 @@
      "path": "src/skill/exploration_trial.rs",
      "purpose": "Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -40597,7 +40632,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 11
      }
     },
@@ -40744,8 +40779,8 @@
      "path": "src/skill_optimize/gate/tradeoff.rs",
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
-      "crate-vis": 7,
-      "fn": 11,
+      "crate-vis": 10,
+      "fn": 12,
       "struct": 5
      }
     },
@@ -44525,7 +44560,7 @@
      "path": "src/task_verb/ask_types.rs",
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 16,
       "fn": 6,
       "struct": 21
@@ -45496,13 +45531,15 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HandoffAlarmRequest",
+      "InvitationSlip",
       "SharedActExecuted",
       "SharedActRequest",
       "SharedMemberAddRequest",
+      "SharedMemberInvited",
       "SharedMemberRequest",
       "SharedMemberRoleRequest",
       "SharedReceiptRequest",
@@ -45514,7 +45551,7 @@
      "purpose": "The inputs and answers of the shared-vault rows a host door answers (OF-158): the acts the shared preset…",
      "surface": {
       "fn": 13,
-      "struct": 10
+      "struct": 12
      }
     },
     {
@@ -45531,6 +45568,7 @@
      "path": "src/task_verb/sdk_shared_members.rs",
      "purpose": "The invitation rows of a shared vault (OF-531 / OF-158): `vault.members.add` invites, and the invitee lists…",
      "surface": {
+      "crate-vis": 1,
       "fn": 13,
       "struct": 6
      }
@@ -45733,7 +45771,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 15
+      "fn": 16
      }
     },
     {
@@ -46790,7 +46828,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArchivedEntity",
@@ -46891,7 +46929,7 @@
      "path": "src/vault_cleanup/retention.rs",
      "purpose": "Owner-adjustable completed-TASK retention",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -49938,7 +49976,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50239,7 +50277,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50981,7 +51019,7 @@
      "purpose": "Runtime hooks (ARCH-0080)"
     },
     "saved_query": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51368,7 +51406,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3104,
+   "source_files": 3107,
    "test_files": 903
   },
   "oneiron-android": {
@@ -51427,7 +51465,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 79,
+      "const": 80,
       "re-export": 1,
       "type": 1
      }
@@ -62038,6 +62076,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/booking/free_text.rs",
+     "purpose": "A booking page's free-text constraint (ONE-1816), parsed on the cheap seat…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/booking/helpers.rs",
      "purpose": "—",
      "surface": {
@@ -62435,7 +62483,7 @@
      "path": "src/api/context_board/scratchpad.rs",
      "purpose": "POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -62929,7 +62977,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/role_picks.rs",
-     "purpose": "OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE)",
+     "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
      }
@@ -64617,7 +64665,7 @@
      "path": "src/auth/slips.rs",
      "purpose": "HTTP/session holder proof and projection of the single log-backed slip",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -65614,6 +65662,7 @@
      "notable": [
       "BigReply",
       "BigSettings",
+      "BookingParseSettings",
       "DecisionsSettings",
       "ImagePickSettings",
       "SeatPickSettings",
@@ -65624,7 +65673,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -65968,7 +66017,7 @@
      "path": "src/decision_graph.rs",
      "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -65981,7 +66030,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "crate-vis": 12,
-      "fn": 15,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -66533,6 +66582,16 @@
      "path": "src/idempotency/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ladder_poll.rs",
+     "purpose": "Polling an engine future whose decisions run on the host's ladder",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -67613,8 +67672,18 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 10,
-      "fn": 14,
+      "fn": 15,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/jobs.rs",
+     "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -68392,6 +68461,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/saved_query_sweep.rs",
+     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/board_publisher.rs",
      "purpose": "The board publisher: committed TASK writes reach STREAM subscribers",
      "surface": {
@@ -68597,7 +68676,7 @@
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -68675,7 +68754,7 @@
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -69387,7 +69466,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 277,
+     "files": 278,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69547,6 +69626,13 @@
      "layout": "file+dir",
      "purpose": "—"
     },
+    "ladder_poll": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Polling an engine future whose decisions run on the host's ladder"
+    },
     "linear_host": {
      "files": 3,
      "impl_vault": false,
@@ -69590,7 +69676,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69644,6 +69730,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
+    },
+    "saved_query_sweep": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the…"
     },
     "server": {
      "files": 29,
@@ -69711,7 +69804,7 @@
    },
    "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 545,
+   "source_files": 549,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70084,6 +70177,7 @@
       "InspectionResolveRequest",
       "InspectionResolved",
       "InspectionState",
+      "InvitationSlip",
       "IssueCategory",
       "JoinCause",
       "JoinDecision",
@@ -70357,6 +70451,7 @@
       "SharedInvitationState",
       "SharedInvitationWithdrawRequest",
       "SharedMemberAddRequest",
+      "SharedMemberInvited",
       "SharedMemberRequest",
       "SharedMemberRoleRequest",
       "SharedReceiptRequest",
@@ -70481,7 +70576,7 @@
      "purpose": "—",
      "surface": {
       "enum": 171,
-      "struct": 425
+      "struct": 427
      }
     },
     {

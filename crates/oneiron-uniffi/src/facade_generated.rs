@@ -260,7 +260,7 @@ export_facade! {
     let output = client.vault_shared_deletion(&input)?;
     crate::codec::lift_record("vault.shared.deletion", &output)
 };
-"vault.members.add" => fn vault_members_add(&self, input: SharedMemberAddRequest) -> SharedActExecutionReceipt = |client| {
+"vault.members.add" => fn vault_members_add(&self, input: SharedMemberAddRequest) -> SharedMemberInvited = |client| {
     let input: oneiron::task_verb::sdk::SharedMemberAddRequest = crate::codec::lower_record("vault.members.add", input)?;
     let output = client.vault_members_add(&input)?;
     crate::codec::lift_record("vault.members.add", &output)
