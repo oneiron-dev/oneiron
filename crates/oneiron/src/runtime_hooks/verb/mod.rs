@@ -26,6 +26,7 @@ use crate::memory::MemoryResult;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
+pub(crate) use ask::HOOK_RESULT_NOT_RETAINED;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope, VerbAskInstrument, VerbAskRefusal,
@@ -110,8 +111,8 @@ pub struct VerbCall {
 
 impl VerbCall {
     /// The call of `verb` on `memory`: its actor and class, the invocation
-    /// its host bound or a fresh one, and the handle's read key when a hook
-    /// may run on `verb`.
+    /// its host bound or a fresh one, and the handle's read key
+    /// ([`Self::reader_of`]).
     ///
     /// # Errors
     ///
@@ -133,16 +134,20 @@ impl VerbCall {
         })
     }
 
-    /// Whether a verb hook may run on `verb`. A door builds what only a hook
-    /// reads (the caller's key, a rewrite's re-admission) only when one may,
-    /// so a call no binding takes pays nothing.
+    /// Whether a verb hook may run on `verb`: the cheap check before a host
+    /// builds what only a hook reads from the call. A door builds the
+    /// caller's key and a rewrite's re-admission on every call, since a
+    /// binding installed after this answered still runs on it.
     #[must_use]
     pub fn may_run(vault: &Vault, verb: &str) -> bool {
         vault.verb_hooks_may_run(verb)
     }
 
-    /// The key a call of `verb` on `memory` carries: the handle's read key
-    /// when a hook may run on `verb`, else none.
+    /// The key a call of `verb` on `memory` carries: the handle's read key,
+    /// built on every call, so a hook bound after the door looked still
+    /// reads under the caller's key. A handle whose key does not build (a
+    /// credential that carries no read) carries none while no hook may run
+    /// on `verb`.
     ///
     /// # Errors
     ///
@@ -151,10 +156,10 @@ impl VerbCall {
         memory: &crate::Memory<'_>,
         verb: &str,
     ) -> MemoryResult<Option<ScopedReadActorKey>> {
-        if Self::may_run(memory.vault(), verb) {
-            memory.read_key().map(Some)
-        } else {
-            Ok(None)
+        match memory.read_key() {
+            Ok(key) => Ok(Some(key)),
+            Err(error) if Self::may_run(memory.vault(), verb) => Err(error),
+            Err(_) => Ok(None),
         }
     }
 }
@@ -199,10 +204,22 @@ impl Vault {
         chain::may_run(self, verb)
     }
 
+    /// Whether an earlier try of `invocation` left what its retry must meet:
+    /// a call a hook's ask saved, in any state, or the drain running it now.
+    /// A host's cheap no-binding check never passes such a call through.
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved calls.
+    pub(crate) fn verb_hook_invocation_saved(&self, invocation: InvocationId) -> Result<bool> {
+        Ok(self.verb_hook_state.drain_holds(invocation) || ask::saved(self, invocation)?)
+    }
+
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in
     /// priority order, each outcome validated. `Err(stop)` when a hook
-    /// skipped or asked, or a blocking one failed safe. At hook depth 1 or
-    /// with hooks off, it passes `args` through untouched.
+    /// skipped or asked, or a blocking one failed safe. At hook depth 1 it
+    /// passes `args` through untouched, and with hooks off so does a call no
+    /// earlier try of its invocation left parked on an ask.
     ///
     /// # Errors
     ///

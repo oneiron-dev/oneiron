@@ -31,6 +31,15 @@ const PROCEED: &str = "proceed";
 const HOLD: &str = "hold";
 pub(super) const USED: &str =
     "this invocation's ask was already used; call again with a new invocation";
+/// The most bytes of JSON a drained call's saved result keeps for its
+/// caller's retry. Encoding stops past it.
+pub(super) const MAX_SAVED_VERB_RESULT_BYTES: usize = 65_536;
+/// The most bytes of a drained call's saved error message.
+pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
+/// The error a retry gets when the drained call completed but its result was
+/// over [`MAX_SAVED_VERB_RESULT_BYTES`]: the call ran, and must not be sent
+/// again.
+pub(crate) const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
 
 /// One stopped call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +102,66 @@ pub(super) enum SavedOutcome {
     },
 }
 
+impl SavedOutcome {
+    /// What a drained call that returned `value` saves: its JSON, encoded
+    /// through a writer that stops past [`MAX_SAVED_VERB_RESULT_BYTES`]. A
+    /// result over it saves [`HOOK_RESULT_NOT_RETAINED`] instead: the call
+    /// completed, and a retry must not send it again.
+    pub(super) fn result(value: &Value) -> Result<Self> {
+        let mut capped = Capped {
+            bytes: Vec::new(),
+            cap: MAX_SAVED_VERB_RESULT_BYTES,
+        };
+        match serde_json::to_writer(&mut capped, value) {
+            Ok(()) => Ok(Self::Ok {
+                result: String::from_utf8(capped.bytes)
+                    .map_err(|_| Error::InvariantViolation("verb hook ask outcome encode"))?,
+            }),
+            Err(error) if error.is_io() => Ok(Self::Err {
+                code: HOOK_RESULT_NOT_RETAINED.to_owned(),
+                message: format!(
+                    "the call completed once its hook's ask was answered, but its result is over \
+                     the {MAX_SAVED_VERB_RESULT_BYTES} bytes kept for a retry; do not send it \
+                     again"
+                ),
+                receipt: None,
+            }),
+            Err(_) => Err(Error::InvariantViolation("verb hook ask outcome encode")),
+        }
+    }
+
+    /// What a drained call that failed with `code` saves: its message cut to
+    /// [`MAX_SAVED_VERB_ERROR_BYTES`].
+    pub(super) fn error(code: String, message: &str) -> Self {
+        Self::Err {
+            code,
+            message: cut(message, MAX_SAVED_VERB_ERROR_BYTES),
+            receipt: None,
+        }
+    }
+}
+
+/// A writer that keeps at most `cap` bytes: a write past it fails, so the
+/// encoder stops there.
+struct Capped {
+    bytes: Vec<u8>,
+    cap: usize,
+}
+
+impl std::io::Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.bytes.len().saturating_add(buf.len()) > self.cap {
+            return Err(std::io::Error::other("over the saved result cap"));
+        }
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum VerbAskState {
@@ -127,9 +196,25 @@ pub(super) struct AskToken {
     pub(super) hook: String,
 }
 
+impl AskToken {
+    /// The Pending a call answered proceed gets while hooks are off: it
+    /// stays parked on its ask until they are back on.
+    pub(super) fn parked(&self, invocation: InvocationId) -> VerbHookStop {
+        pending(invocation, self.ask)
+    }
+}
+
+/// Whether a stopped call is saved under `invocation`, in any state.
+pub(super) fn saved(vault: &Vault, invocation: InvocationId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    ASKS.contains(&vault.store, &rtxn, &invocation.0)
+}
+
 /// Reads the ask a previous try of this invocation saved, if any. `resume`
 /// is how the caller could be resumed without it: only a caller whose call
-/// the drain would run the same way reads the drained outcome.
+/// the drain would run the same way reads the drained outcome. A row saved
+/// with a resume target is this call's only when the call presents the same
+/// one; any other is a conflict, never a new call.
 pub(super) fn retry(vault: &Vault, call: &VerbCall, resume: Option<&VerbResume>) -> Result<Retry> {
     let key = call.invocation.0;
     let row = {
@@ -148,9 +233,10 @@ pub(super) fn retry(vault: &Vault, call: &VerbCall, resume: Option<&VerbResume>)
     if row.verb != call.verb || row.actor != call.actor || row.class != call.class {
         return skipped("this invocation belongs to another call");
     }
-    // A call saved with its credential's reference resumes only for that
-    // instrument through that door, open or used.
-    if matches!(row.resume, Some(VerbResume::Credential { .. })) && row.resume.as_ref() != resume {
+    // A call saved with a resume target (its sitting and room, or its
+    // credential's instrument and door) resumes only for that target, open or
+    // used. One saved with none resumes on its caller's retry.
+    if row.resume.is_some() && row.resume.as_ref() != resume {
         return skipped("this invocation belongs to another call");
     }
     if row.state == VerbAskState::Consumed {

@@ -671,7 +671,7 @@ async fn facade_hooks_pre(
     // its hook's ask settles, on the drain's permit when it does. A context
     // the row refuses saves none.
     let credential = match bound {
-        Some(_) if VerbCall::may_run(&server.vault, verb) => facade_invocation(
+        Some(_) => facade_invocation(
             credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
             call,
         )
@@ -683,28 +683,25 @@ async fn facade_hooks_pre(
         credential,
         drain: call.drain().cloned(),
     };
-    // What only a hook reads, built only when one may run: the caller's read
-    // key, its credential's where its connection sits (an owner-grade
-    // credential that calls as the host reads as the host, its owner), and
-    // the re-admission of a rewritten ref.
-    let (reader, check) = if VerbCall::may_run(&server.vault, verb) {
-        let reader = match bound {
-            Some(_) => Some(
-                credential_memory(&server.vault, Some(auth), actor, class)
-                    .at(auth.locality())
-                    .read_key()?,
-            ),
-            None if auth.is_owner_grade() => None,
-            None => Some(
-                super::scoped_read_for_core_auth(&server.vault, auth)?
-                    .actor_key()
-                    .clone(),
-            ),
-        };
-        (reader, Some(facade_rewrite_admit(server, auth, &value)))
-    } else {
-        (None, None)
+    // What a hook reads, built on every call so a binding installed after
+    // this door looked still finds it: the caller's read key, its
+    // credential's where its connection sits (an owner-grade credential that
+    // calls as the host reads as the host, its owner), and the re-admission
+    // of a rewritten ref. A key that does not build fails the call only when
+    // a hook may run.
+    let reader = match bound {
+        Some(_) => VerbCall::reader_of(
+            &credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
+            verb,
+        )?,
+        None if auth.is_owner_grade() => None,
+        None => match super::scoped_read_for_core_auth(&server.vault, auth) {
+            Ok(read) => Some(read.actor_key().clone()),
+            Err(error) if VerbCall::may_run(&server.vault, verb) => return Err(error.into()),
+            Err(_) => None,
+        },
     };
+    let check = Some(facade_rewrite_admit(server, auth, &value));
     Ok(row_hooks_pre_with(
         server, reader, check, actor, class, invocation, verb, value, resume,
     )
@@ -826,7 +823,7 @@ fn facade_invoke(
             .listing_producers(producers),
         call,
     )?;
-    let memory = facade_rewrites_admitted(server, auth, verb, &value, memory);
+    let memory = facade_rewrites_admitted(server, auth, &value, memory);
     // Settlement's run of the call enters its boundary here as the drain's.
     let _drain = call.drain().map(VerbAskDrainPermit::enter);
     Ok(match call.room_turn()? {
@@ -909,7 +906,7 @@ fn facade_invoke_born(
             .listing_producers(producers),
         call,
     )?;
-    let memory = facade_rewrites_admitted(server, auth, verb, &value, memory);
+    let memory = facade_rewrites_admitted(server, auth, &value, memory);
     let _drain = call.drain().map(VerbAskDrainPermit::enter);
     Ok(match call.room_turn()? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
@@ -1041,20 +1038,15 @@ fn facade_rewrite_admit(
     })
 }
 
-/// `memory` bound to re-admit a hook's rewritten refs, when a hook may run on
-/// `verb`.
+/// `memory` bound to re-admit a hook's rewritten refs, on every call: a
+/// binding installed meanwhile still meets it.
 fn facade_rewrites_admitted<'v>(
     server: &SyncServer,
     auth: &CoreAuth,
-    verb: &str,
     original: &serde_json::Value,
     memory: oneiron::Memory<'v>,
 ) -> oneiron::Memory<'v> {
-    if VerbCall::may_run(&server.vault, verb) {
-        memory.with_rewrite_admit(facade_rewrite_admit(server, auth, original))
-    } else {
-        memory
-    }
+    memory.with_rewrite_admit(facade_rewrite_admit(server, auth, original))
 }
 
 /// Drops every TASKS row this credential cannot read from a described
