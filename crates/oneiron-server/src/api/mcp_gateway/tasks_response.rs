@@ -86,7 +86,8 @@ fn mcp_describe_result(
             "describe of one task returned the TASKS section",
         )),
         description @ (oneiron::task_verb::TaskDescription::SelfCard { .. }
-        | oneiron::task_verb::TaskDescription::VaultCard { .. }) => {
+        | oneiron::task_verb::TaskDescription::VaultCard { .. }
+        | oneiron::task_verb::TaskDescription::Status { .. }) => {
             let value = serde_json::to_value(description).map_err(|_| {
                 McpGatewayError::new(
                     -32603,
@@ -632,6 +633,31 @@ async fn mcp_task_row<T: Send + 'static>(
     })
 }
 
+/// The proof a direct MCP caller's own request binds for `tool`, as the
+/// HTTP facade binds it outside a room turn: the work-companion setting
+/// takes the person's own proof (OF-417), an attendee ask's answer the
+/// owner's own authorship (OF-365). Every other row binds none here, and a
+/// code-mode call's host origin suppresses either in the engine.
+fn mcp_direct_authorship<'a>(
+    server: &SyncServer,
+    tool: &str,
+    actor: &McpCallContext,
+    memory: oneiron::Memory<'a>,
+) -> Result<oneiron::Memory<'a>, McpGatewayError> {
+    if !matches!(tool, "vault.workspace.work_companion.set" | "tasks.answer") {
+        return Ok(memory);
+    }
+    let Some(auth) = actor.auth.as_ref() else {
+        return Ok(memory);
+    };
+    Ok(
+        match crate::api::facade::direct_authorship(auth, server, tool).map_err(mcp_api_error)? {
+            Some(owner) => memory.with_owner_authorship(&owner),
+            None => memory,
+        },
+    )
+}
+
 // BEGIN GENERATED MCP DISPATCH
 /// A `tools/call` of one generated verb: its arguments assemble the verb's typed
 /// input, which then takes the one dispatcher every MCP door shares.
@@ -749,6 +775,12 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.frame_epoch {
                 map.insert("frame_epoch".to_owned(), json!(value));
             }
+            if let Some(value) = &a.handle {
+                map.insert("handle".to_owned(), json!(value));
+            }
+            if let Some(value) = &a.after {
+                map.insert("after".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.create" => {
@@ -763,6 +795,15 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.assignee {
                 map.insert("assignee".to_owned(), json!(value));
             }
+            if let Some(value) = &a.intent_key {
+                map.insert("intent_key".to_owned(), json!(value));
+            }
+            if let Some(value) = &a.brief {
+                map.insert("brief".to_owned(), json!(value));
+            }
+            if let Some(value) = &a.ttl {
+                map.insert("ttl".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
@@ -771,6 +812,14 @@ fn mcp_agent_verb_input(
         "vault.fanout.resume_as" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.ack" => a.spec.clone().ok_or_else(invalid),
         "tasks.update" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.task_ref.as_deref() != map.get("task_ref").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
+        "tasks.accept" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
             let map = input.as_object_mut().ok_or_else(invalid)?;
             if a.task_ref.as_deref() != map.get("task_ref").and_then(Value::as_str) {
@@ -842,6 +891,21 @@ fn mcp_agent_verb_input(
         "vault.guests.mint_slip" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_preview" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.bind" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.fork" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.weave" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.measure_search" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.measure_held_out" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.mark_invalid" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.prune" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.select" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.promotion_basis" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.reserve_confirmation" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.promote" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.reserve_work" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.settle_work" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.refund_work" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.record_benchmark" => a.spec.clone().ok_or_else(invalid),
         "vault.authority.handoff_alarms" => Ok(Value::Object(serde_json::Map::new())),
         "vault.authority.handoff_alarms.acknowledge" => a.spec.clone().ok_or_else(invalid),
         "vault.legal_holds.place" => a.spec.clone().ok_or_else(invalid),
@@ -1260,6 +1324,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("frame_epoch") {
                 arguments.insert("frame_epoch".to_owned(), value.clone());
             }
+            if let Some(value) = input.get("handle") {
+                arguments.insert("handle".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("after") {
+                arguments.insert("after".to_owned(), value.clone());
+            }
         }
         "tasks.create" => {
             if let Some(value) = input.get("spec") {
@@ -1270,6 +1340,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("assignee") {
                 arguments.insert("assignee".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("intent_key") {
+                arguments.insert("intent_key".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("brief") {
+                arguments.insert("brief".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("ttl") {
+                arguments.insert("ttl".to_owned(), value.clone());
             }
         }
         "tasks.wave" => {
@@ -1288,6 +1367,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.update" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("task_ref") {
+                arguments.insert("task_ref".to_owned(), value.clone());
+            }
+        }
+        "tasks.accept" => {
             arguments.insert("spec".to_owned(), input.clone());
             if let Some(value) = input.get("task_ref") {
                 arguments.insert("task_ref".to_owned(), value.clone());
@@ -1481,6 +1566,51 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.records.erase_confirm" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.bind" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.fork" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.weave" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.measure_search" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.measure_held_out" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.mark_invalid" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.prune" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.select" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.promotion_basis" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.reserve_confirmation" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.promote" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.reserve_work" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.settle_work" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.refund_work" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.record_benchmark" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.authority.handoff_alarms" => {}
@@ -2177,7 +2307,14 @@ async fn execute_agent_verb_listing(
         invocation,
         origin,
     };
-    let memory = surface.memory(server, actor, producers);
+    // The direct caller's own proof, on the rows whose HTTP door binds it
+    // outside a room turn (OF-417, OF-365).
+    let memory = mcp_direct_authorship(
+        server,
+        tool,
+        actor,
+        surface.memory(server, actor, producers),
+    )?;
     // Rule 5: a task-work row takes its one turn here, for MCP and code mode
     // alike, and holds it through its hooks and its row.
     let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
@@ -2516,19 +2653,19 @@ async fn execute_agent_verb_row(
                 })
                 .await;
             }
-            if input.task_ref.is_none() && !input.self_target && !input.vault {
+            if input.task_ref.is_none()
+                && input.handle.is_none()
+                && input.after.is_none()
+                && !input.self_target
+                && !input.vault
+            {
                 // The section is narrowed to this credential before its
                 // render cap, so its counts are the credential's rows alone.
                 let rows = memory.describe_rows().map_err(mcp_facade_error)?;
                 let (value, source) = mcp_tasks_section(server, actor, rows, served)?;
                 return Ok((value, source, McpCarrierPolicy::Drain, None));
             }
-            served.extend(
-                input
-                    .task_ref
-                    .as_deref()
-                    .and_then(|id| oneiron::EntityId::from_hex(id).ok()),
-            );
+            served.extend(oneiron::task_verb::sdk::describe_named_rows(&input));
             let output =
                 oneiron::task_verb::sdk::describe(&memory, input).map_err(mcp_facade_error)?;
             let (value, source) = mcp_describe_result(output)?;
@@ -2615,6 +2752,15 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed, on a refusal too.
             served.extend(listed);
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.accept" => {
+            let input: oneiron::task_verb::TaskAccept =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.task_ref]);
+            let output =
+                oneiron::task_verb::sdk::tasks_accept(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -3405,6 +3551,127 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_records_erase_confirm(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.bind" => {
+            let input: oneiron::task_verb::sdk::ResearchBindWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_bind(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.fork" => {
+            let input: oneiron::task_verb::sdk::ResearchForkWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_fork(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.weave" => {
+            let input: oneiron::task_verb::sdk::ResearchWeaveWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_weave(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.measure_search" => {
+            let input: oneiron::task_verb::sdk::ResearchSearchWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_measure_search(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.measure_held_out" => {
+            let input: oneiron::task_verb::sdk::ResearchHeldOutWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_measure_held_out(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.mark_invalid" => {
+            let input: oneiron::task_verb::sdk::ResearchInvalidWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_mark_invalid(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.prune" => {
+            let input: oneiron::task_verb::sdk::ResearchPruneWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_prune(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.select" => {
+            let input: oneiron::task_verb::sdk::ResearchSelectWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_select(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.promotion_basis" => {
+            let input: oneiron::task_verb::sdk::ResearchBasisWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_promotion_basis(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.reserve_confirmation" => {
+            let input: oneiron::task_verb::sdk::ResearchCandidateWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_research_reserve_confirmation(&memory, input)
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.promote" => {
+            let input: oneiron::task_verb::sdk::ResearchPromoteWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_promote(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.reserve_work" => {
+            let input: oneiron::task_verb::sdk::ResearchWorkWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_reserve_work(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.settle_work" => {
+            let input: oneiron::task_verb::sdk::ResearchSettleWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_settle_work(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.refund_work" => {
+            let input: oneiron::task_verb::sdk::ResearchRefundWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_refund_work(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.record_benchmark" => {
+            let input: oneiron::task_verb::sdk::ResearchBenchmarkWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_record_benchmark(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -4360,10 +4627,16 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.projects.confirm" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.projects.confirm", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::workspace_roster::ProjectCardConfirmRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_projects_confirm(&memory, input)
-                .map_err(mcp_facade_error)?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_projects_confirm(server, auth, input).await;
+            // Derived from the rows its reads listed.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
