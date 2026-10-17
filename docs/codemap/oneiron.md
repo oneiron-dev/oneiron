@@ -1268,7 +1268,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation/tests/audience_boundaries.rs` | test | m | — | — | — |
 | `src/conversation/tests/deletion.rs` | test | L | — | — | — |
 | `src/conversation/tests/restore.rs` | test | s | — | — | ASTRA-9A-2 F2: a restore over the live vault never brings back room authority narrowed since the checkpoint |
-| `src/conversation/turn_actions.rs` | src | m | 5 struct · 1 enum · 9 fn · 1 const | TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine, TurnActionReceipt, TurnActionRequest | Continue and Retry on an assistant turn (owner ruling 10-17): a reply interrupted by a crash or a dropped… |
+| `src/conversation/turn_actions.rs` | src | m | 5 struct · 1 enum · 8 fn · 1 const · 3 crate-vis | TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine, TurnActionReceipt, TurnActionRequest | Continue and Retry on an assistant turn (owner ruling 10-17): a reply interrupted by a crash or a dropped… |
 | `src/conversation/visibility.rs` | src | m | 1 fn · 7 crate-vis | — | The audience predicate shared by all ScopedRead paths |
 | `src/conversation_dag/admission.rs` | src | L | 22 crate-vis | — | Close the legacy ChildOf-only append door after DAG adoption |
 | `src/conversation_dag/branch_scope.rs` | src | s | 2 crate-vis | — | Shared branch ownership and bounded reply-span proof for mint and stored reads |
@@ -1291,7 +1291,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/thread_projection.rs` | src | s | 3 crate-vis | — | Deterministic root-first, no-forks thread selection over a single read snapshot |
 | `src/conversation_dag/topology.rs` | src | m | 18 crate-vis | — | Shared DAG shape, session placement, and prospective Parent validation |
 | `src/conversation_dag/types.rs` | src | s | 7 struct · 2 enum | AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, QuoteSpan, ResolvedScope, ScopePath +1 | Door inputs and snapshot results |
-| `src/conversation_dag/writes.rs` | src | m | 5 fn · 3 crate-vis | — | Atomic append, explicit HEAD moves and canonical-index repair |
+| `src/conversation_dag/writes.rs` | src | m | 5 fn · 4 crate-vis | — | Atomic append, explicit HEAD moves and canonical-index repair |
 | `src/core_write/batch.rs` | src | s | 4 struct · 1 enum · 2 fn | CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt | `vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes |
 | `src/core_write/conversations.rs` | src | s | 3 struct · 4 fn | ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt | `vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN… |
 | `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 2 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | `vault.conversations.records.append` (OF-181): one DAG record and its topology, the write `POST… |
@@ -2427,14 +2427,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/tests_regressions/recall_security.rs` | src | s | — | — | Recall must not be a broader read side channel than point reads or BM25 |
 | `src/memory/transcript.rs` | src | m | 3 struct · 1 fn · 1 const · 2 crate-vis | TranscriptMessage, TranscriptPage, TranscriptTurn | One conversation's transcript, read as the bound actor: its turns in order, each with the messages it holds… |
 | `src/memory/transcript/tests.rs` | test | m | — | — | A conversation's transcript is what its reader may read of it, in order: never an erased message, never one… |
-| `src/memory/witness/base.rs` | src | m | 2 fn · 14 crate-vis | — | Base witness landing: container resolve, K7 door, batch write, text ops, session bump |
+| `src/memory/witness/base.rs` | src | m | 2 fn · 15 crate-vis | — | Base witness landing: container resolve, K7 door, batch write, text ops, session bump |
 | `src/memory/witness/codec.rs` | src | s | 14 crate-vis | — | Turn-speaker and message-envelope codec plus session alias formatting |
 | `src/memory/witness/mod.rs` | src | s | 2 re-export · 8 crate-vis | — | Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record… |
 | `src/memory/witness/program.rs` | src | L | 11 crate-vis | — | The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract… |
 | `src/memory/witness/session.rs` | src | m | 3 fn · 9 crate-vis | — | Session overlay landing: journal staging from the door's authorized values, room-shell claim |
 | `src/memory/witness/stream/admission.rs` | src | m | 6 fn · 7 crate-vis | — | Begin, append and flush |
 | `src/memory/witness/stream/completion.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | MessageCompletion | Whether a MESSAGE's reply is complete, derived from its latest stream receipt |
-| `src/memory/witness/stream/lifecycle.rs` | src | m | 1 struct · 6 fn · 1 crate-vis | MessageStreamPump | Terminal transitions and the host-driven quiet-stream pump |
+| `src/memory/witness/stream/lifecycle.rs` | src | m | 1 struct · 7 fn · 1 crate-vis | MessageStreamPump | Terminal transitions and the host-driven quiet-stream pump |
 | `src/memory/witness/stream/lift.rs` | src | s | 1 crate-vis | — | The lift sweep's door for a stream's seed (OF-067) |
 | `src/memory/witness/stream/mod.rs` | src | s | 2 fn · 3 re-export · 4 crate-vis | — | Ephemeral MESSAGE streams, waiting their turn past the vault's row, with transactional finality |
 | `src/memory/witness/stream/policy.rs` | src | s | 2 fn · 3 crate-vis | — | Durable owner policy; no token or partial content is stored here |
@@ -3999,9 +3999,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/codec.rs` | src | L | 45 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
 | `src/workspace_roster/intent.rs` | src | m | 5 struct · 1 enum · 5 fn · 3 crate-vis | CompanionBirthIntent, CompanionChoice, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent, WorkspaceRosterPreset | Onboarding request shapes and their structural validation |
 | `src/workspace_roster/join_consent.rs` | src | L | 5 struct · 6 enum · 5 fn · 1 re-export · 5 crate-vis | AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentSet, ConsentState, JoinDecision, JoinRefusal, JoinRequest +3 | One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a… |
-| `src/workspace_roster/join_door.rs` | src | m | 3 struct · 5 fn · 4 crate-vis | ConsentAnswer, JoinDecisionView, JoinOutcome | The room join and consent doors (OF-531) |
+| `src/workspace_roster/join_door.rs` | src | m | 3 struct · 5 fn · 6 crate-vis | ConsentAnswer, JoinDecisionView, JoinOutcome | The room join and consent doors (OF-531) |
 | `src/workspace_roster/join_receipt.rs` | src | m | 3 struct · 1 enum · 5 fn · 12 crate-vis | JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer | The join receipt (OF-531): one typed record per join intent |
-| `src/workspace_roster/mod.rs` | src | s | 17 re-export · 19 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
+| `src/workspace_roster/mod.rs` | src | s | 17 re-export · 21 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `src/workspace_roster/project/asks.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | ProjectAsk | A project's asks queue (ARCH-0067 tasks and asks) |
 | `src/workspace_roster/project/branch.rs` | src | m | 5 crate-vis | — | The fork rule (Astra #1434 F1) |
 | `src/workspace_roster/project/capture.rs` | src | m | 15 crate-vis | — | Capture and admission of project revisions (section 2 of the PR 3 contract) |
@@ -4059,7 +4059,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/project/validity.rs` | src | L | 28 crate-vis | — | Whether one held revision is valid on its own lineage, and the board's resolutions at one node (decisions 5… |
 | `src/workspace_roster/project/widen.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 crate-vis | ProjectWidenAsk, ProjectWidenAxis | Cross-project widening routes to an ordinary ask on the common board |
 | `src/workspace_roster/records.rs` | src | m | 2 struct · 2 enum · 4 fn · 1 const · 12 crate-vis | MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterRole | Pinned vault-meta prefixes, the step ladder, and stored roster/journal records |
-| `src/workspace_roster/rooms/audience.rs` | src | m | 14 crate-vis | — | Private thread audiences (FIX 2951) |
+| `src/workspace_roster/rooms/audience.rs` | src | m | 15 crate-vis | — | Private thread audiences (FIX 2951) |
 | `src/workspace_roster/rooms/history.rs` | src | L | 10 fn · 13 crate-vis | — | Bounded room-local history and transactional auxiliary-row cleanup |
 | `src/workspace_roster/rooms/hosting.rs` | src | m | 5 struct · 2 enum · 3 fn · 8 crate-vis | HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding | Room hosting: the speaking duty, kept apart from the engine's upkeep |
 | `src/workspace_roster/rooms/liveness.rs` | src | m | 5 struct · 1 enum · 3 fn · 8 crate-vis | RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind | Read-time room thread liveness; the room history and TASK rows remain truth |
@@ -4075,7 +4075,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/rooms/tests.rs` | test | XL | — | — | — |
 | `src/workspace_roster/rooms/thread_projection.rs` | src | s | 3 crate-vis | — | A trunk's or thread's reply selection from the room's own index (OF-460): every room thread anchored on a… |
 | `src/workspace_roster/rooms/upkeep.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | RoomUpkeepInput, RoomUpkeepThread | What a room's upkeep reads (ONEIRON-ARCH-0067 §8: the engine performs every room's mechanical upkeep, and a… |
-| `src/workspace_roster/rooms/witness.rs` | src | m | 2 crate-vis | — | Claim-before-speaking guard inside the existing witness transaction |
+| `src/workspace_roster/rooms/witness.rs` | src | m | 4 crate-vis | — | Claim-before-speaking guard inside the existing witness transaction |
 | `src/workspace_roster/runner.rs` | src | m | 4 fn · 2 crate-vis | — | Resumable onboarding runner, house-name rename, and roster read |
 | `src/workspace_roster/sharing.rs` | src | s | 4 struct · 1 enum · 4 fn | CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp, RoomSharingView | Sharing reads (ONEIRON-ARCH-0063: the owner dials personal context per contact; ONEIRON-ARCH-0067 §8… |
 | `src/workspace_roster/steps.rs` | src | L | 20 crate-vis | — | Ordered onboarding writes and idempotent primitives |

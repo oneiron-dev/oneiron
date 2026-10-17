@@ -16129,8 +16129,9 @@
      "purpose": "Continue and Retry on an assistant turn (owner ruling 10-17): a reply interrupted by a crash or a dropped…",
      "surface": {
       "const": 1,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 9,
+      "fn": 8,
       "struct": 5
      }
     },
@@ -16392,7 +16393,7 @@
      "path": "src/conversation_dag/writes.rs",
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -30996,7 +30997,7 @@
      "path": "src/memory/witness/base.rs",
      "purpose": "Base witness landing: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -31077,7 +31078,7 @@
      "purpose": "Terminal transitions and the host-driven quiet-stream pump",
      "surface": {
       "crate-vis": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -50530,7 +50531,7 @@
      "path": "src/workspace_roster/join_door.rs",
      "purpose": "The room join and consent doors (OF-531)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 5,
       "struct": 3
      }
@@ -50560,7 +50561,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "re-export": 17
      }
     },
@@ -51246,7 +51247,7 @@
      "path": "src/workspace_roster/rooms/audience.rs",
      "purpose": "Private thread audiences (FIX 2951)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -51476,7 +51477,7 @@
      "path": "src/workspace_roster/rooms/witness.rs",
      "purpose": "Claim-before-speaking guard inside the existing witness transaction",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
