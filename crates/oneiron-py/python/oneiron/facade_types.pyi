@@ -4384,10 +4384,24 @@ class AiVideoJobFailed(TypedDict):
 AiVideoJob = AiVideoJobQueued | AiVideoJobRunning | AiVideoJobDone | AiVideoJobFailed
 class AiVideoCancelled(TypedDict):
     job: str
+class AnswerContractNoul(TypedDict):
+    kind: Literal["noul"]
+class AnswerContractChoice(TypedDict):
+    kind: Literal["choice"]
+    options: list[str]
+class AnswerContractScore(TypedDict):
+    kind: Literal["score"]
+    min: float
+    max: float
+class AnswerContractBox(TypedDict):
+    kind: Literal["box"]
+class AnswerContractPoint(TypedDict):
+    kind: Literal["point"]
+AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
 AiVerdictReversibility = Literal["reversible_read", "outbound_effect"]
 class AiVerdictRequest(TypedDict):
     question: str
-    options: NotRequired[list[str]]
+    contract: NotRequired[AnswerContract]
     evidence: NotRequired[list[str]]
     state: NotRequired[Any | None]
     ceiling: NotRequired[DecisionRung | None]
@@ -4395,7 +4409,6 @@ class AiVerdictRequest(TypedDict):
     deadline_ms: NotRequired[int | None]
     routine: NotRequired[bool]
     image: NotRequired[str | None]
-    locate: NotRequired[bool]
     misses: NotRequired[int]
     until_ms: NotRequired[int | None]
 class RoutineOutcomeAct(TypedDict):
@@ -4419,24 +4432,11 @@ class AiVerdict(TypedDict):
     p: NotRequired[float | None]
     rung: NotRequired[DecisionRung | None]
     receipt: DecisionReceipt
+    presence: NotRequired[TypedDecision | None]
     outcome: NotRequired[RoutineOutcome | None]
     screenshot: NotRequired[bool]
     until_ms: NotRequired[int | None]
 DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
-class AnswerContractNoul(TypedDict):
-    kind: Literal["noul"]
-class AnswerContractChoice(TypedDict):
-    kind: Literal["choice"]
-    options: list[str]
-class AnswerContractScore(TypedDict):
-    kind: Literal["score"]
-    min: float
-    max: float
-class AnswerContractBox(TypedDict):
-    kind: Literal["box"]
-class AnswerContractPoint(TypedDict):
-    kind: Literal["point"]
-AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
 DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class GraphAskSelection(TypedDict):
     entity_type: int

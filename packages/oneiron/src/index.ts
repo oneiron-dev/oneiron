@@ -942,7 +942,7 @@ export class Oneiron {
       /** Stops a video job at its provider. */
       cancel: (input: Facade.AiVideoJobRequest): Facade.AiVideoCancelled => this.#call(() => this.#client.aiVideoCancel(input) as Facade.AiVideoCancelled),
     }),
-    /** The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt. */
+    /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
     verdict: (input: Facade.AiVerdictRequest): Facade.AiVerdict => this.#call(() => this.#client.aiVerdict(input) as Facade.AiVerdict),
   }
   readonly connector = {

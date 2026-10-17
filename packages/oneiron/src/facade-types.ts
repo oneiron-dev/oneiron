@@ -1706,18 +1706,18 @@ export type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError
 export type AiVideoJob = { state: "queued" } | { state: "running"; progress?: number | null } | { state: "done"; answer: AiAnswer } | { state: "failed"; error: LlmError }
 /** `oneiron::task_verb::sdk_host::AiVideoCancelled` */
 export type AiVideoCancelled = { job: string }
+/** `oneiron::llm::decision::types::AnswerContract` */
+export type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" }
 /** `oneiron::task_verb::sdk_host::AiVerdictReversibility` */
 export type AiVerdictReversibility = "reversible_read" | "outbound_effect"
 /** `oneiron::task_verb::sdk_host::AiVerdictRequest` */
-export type AiVerdictRequest = { question: string; options?: string[]; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; locate?: boolean; misses?: number; until_ms?: number | null }
+export type AiVerdictRequest = { question: string; contract?: AnswerContract; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; misses?: number; until_ms?: number | null }
 /** `oneiron::llm::decision::routine::RoutineOutcome` */
 export type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null }
 /** `oneiron::task_verb::sdk_host::AiVerdict` */
-export type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null }
+export type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null }
 /** `oneiron::llm::decision::types::DecisionClass` */
 export type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance"
-/** `oneiron::llm::decision::types::AnswerContract` */
-export type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" }
 /** `oneiron::llm::decision::types::DecisionQuestion` */
 export type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean }
 /** `oneiron::receipt::questions::GraphAskSelection` */

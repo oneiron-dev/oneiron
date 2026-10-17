@@ -817,7 +817,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "ai.video": { description: "Starts a video render as a provider job and answers with its ticket.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.video.poll": { description: "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.video.cancel": { description: "Stops a video job at its provider.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.verdict": { description: "The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "ai.verdict": { description: "The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.graph.ask": { description: "", scope: "Write", proposes: true, hostDoor: true, section: false },
   "vault.questions.create": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.questions.edit": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1666,7 +1666,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Stops a video job at its provider. */
         cancel: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.cancel">[K] => invoke("ai.video.cancel", input, options, newInvocation()),
       }),
-      /** The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt. */
+      /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
       verdict: (input: Facade.AiVerdictRequest, options?: O): FacadeReturns<"ai.verdict">[K] => invoke("ai.verdict", input, options, newInvocation()),
     },
     connector: {

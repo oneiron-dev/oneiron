@@ -1351,17 +1351,32 @@ The same seat answers `ai.verdict` over an image: name its view handle as
 caller's own scoped read, the image rides the receipt as an evidence ref
 with its body version, and the call starts at the Local rung on a run of its
 own. There the seat answers a Choice (`{"choice", "confidence"}`), a yes/no
-(`{"p_yes"}`) or, with `"locate": true`, a Box. A Score abstains. A rung
-above Local that reads no image is skipped.
+(`{"p_yes"}`) or a Box; a Point is the Box's centre. A rung above Local that
+reads no image is skipped.
+
+The request's `contract` says what the answer is: `{"kind": "noul"}` (yes or
+no with P(yes), when absent), `{"kind": "choice", "options": [...]}`,
+`{"kind": "score", "min": 1, "max": 5}` (one number in that range, in the
+units and direction the question names), or `{"kind": "box"}` /
+`{"kind": "point"}` (where the target sits in `image`, as fractions of it
+from its top left). The call starts at the first rung whose provider takes
+its contract over its images, so a Score starts above the rungs that read
+none. No image seat reads a score: a score over an image is refused, never
+asked without its image. A Box or Point asks the host's presence question
+first. A confident no answers `{"kind": "box", "value": null}` (or `point`),
+and the answer carries `presence`, that step with its own P(yes); `p` is
+the coordinates' confidence, and empty when they were not read.
 
 A code-mode program drives a routine browser or computer step through the
-same verb (the CUA-S1 pattern): `"routine": true` makes `options` the step's
-candidates (1 to 61), and the ladder also offers `NONE`, `reobserve` and
-`too complicated, ask up`. The answer gains an `outcome`: one of
+same verb (the CUA-S1 pattern): `"routine": true` makes a Choice's
+`options` the step's candidates (1 to 61), and the ladder also offers
+`NONE`, `reobserve` and `too complicated, ask up`; a routine Box or Point
+acts where it finds the target. The answer gains an `outcome`: one of
 `{"outcome": "act", "candidate"}`, `{"outcome": "point", "x", "y", "found"}`
-(a routine Box's centre, as fractions of the image), `{"outcome": "none"}`,
-`{"outcome": "reobserve"}` or `{"outcome": "ask_up", "reason"}`. A routine
-step's Box that finds no target reads as `none`. A ladder abstain reads as
+(a routine Point, or a Box's centre, as fractions of the image),
+`{"outcome": "none"}`, `{"outcome": "reobserve"}` or
+`{"outcome": "ask_up", "reason"}`. A routine step's Box or Point that finds
+no target reads as `none`. A ladder abstain reads as
 `ask_up`, with the ladder's reason (uncertain, deadline, no rung). The
 program passes the count of NONE and reobserve outcomes in a row as
 `"misses"`, and `"screenshot": true` says the next observation takes a

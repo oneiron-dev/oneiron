@@ -11875,6 +11875,31 @@ pub struct AiVideoCancelled {
     pub job: String,
 }
 
+/// `oneiron::llm::decision::types::AnswerContract`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum AnswerContract {
+    #[serde(rename = "noul")]
+    Noul,
+    #[serde(rename = "choice")]
+    Choice {
+        #[serde(rename = "options")]
+        options: Vec<String>,
+    },
+    #[serde(rename = "score")]
+    Score {
+        #[serde(rename = "min")]
+        min: f64,
+        #[serde(rename = "max")]
+        max: f64,
+    },
+    #[serde(rename = "box")]
+    Box,
+    #[serde(rename = "point")]
+    Point,
+}
+
 /// `oneiron::task_verb::sdk_host::AiVerdictReversibility`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AiVerdictReversibility {
@@ -11890,8 +11915,8 @@ pub enum AiVerdictReversibility {
 pub struct AiVerdictRequest {
     #[serde(rename = "question")]
     pub question: String,
-    #[serde(rename = "options", default, skip_serializing_if = "Option::is_none")]
-    pub options: Option<Vec<String>>,
+    #[serde(rename = "contract", default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<AnswerContract>,
     #[serde(rename = "evidence", default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Vec<String>>,
     #[serde(rename = "state", default, skip_serializing_if = "Option::is_none")]
@@ -11914,8 +11939,6 @@ pub struct AiVerdictRequest {
     pub routine: Option<bool>,
     #[serde(rename = "image", default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
-    #[serde(rename = "locate", default, skip_serializing_if = "Option::is_none")]
-    pub locate: Option<bool>,
     #[serde(rename = "misses", default, skip_serializing_if = "Option::is_none")]
     pub misses: Option<u32>,
     #[serde(rename = "until_ms", default, skip_serializing_if = "Option::is_none")]
@@ -11963,6 +11986,8 @@ pub struct AiVerdict {
     pub rung: Option<DecisionRung>,
     #[serde(rename = "receipt")]
     pub receipt: DecisionReceipt,
+    #[serde(rename = "presence", default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<TypedDecision>,
     #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<RoutineOutcome>,
     #[serde(
@@ -11992,31 +12017,6 @@ pub enum DecisionClass {
     Preference,
     #[serde(rename = "provenance")]
     Provenance,
-}
-
-/// `oneiron::llm::decision::types::AnswerContract`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-#[serde(deny_unknown_fields)]
-pub enum AnswerContract {
-    #[serde(rename = "noul")]
-    Noul,
-    #[serde(rename = "choice")]
-    Choice {
-        #[serde(rename = "options")]
-        options: Vec<String>,
-    },
-    #[serde(rename = "score")]
-    Score {
-        #[serde(rename = "min")]
-        min: f64,
-        #[serde(rename = "max")]
-        max: f64,
-    },
-    #[serde(rename = "box")]
-    Box,
-    #[serde(rename = "point")]
-    Point,
 }
 
 /// `oneiron::llm::decision::types::DecisionQuestion`.

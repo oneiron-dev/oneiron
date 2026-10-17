@@ -31,13 +31,17 @@ pub enum DecisionClass {
     Provenance,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AnswerContract {
+    /// Yes or no, with P(yes).
     Noul,
+    /// One of `options`.
     Choice {
         options: Vec<String>,
     },
+    /// One number from `min` to `max` (both included, `min` below `max`), in the units and
+    /// direction the question names.
     Score {
         min: f64,
         max: f64,
