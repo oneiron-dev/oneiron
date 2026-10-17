@@ -1,6 +1,8 @@
 //! Vault write doors: put, supersede, retract, model substrate, and the shared writer.
 
+use super::birth::{RowBirth, stamp_row_birth_in_txn};
 use super::imported;
+use super::made_by::MadeByClass;
 use super::lifecycle::{closed_claim_put_payload, provenance_materialization_op};
 use super::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence,
@@ -465,10 +467,14 @@ impl Vault {
         if let Some(evidence) = imported_evidence {
             imported::stamp_imported_source(&mut claim_body, evidence);
         }
+        // A derived wrapper is concluded from the evidence row it verified; a
+        // wrapper with no source row is born with no birth (OF-466 ruling).
+        let mut born_from = None;
         if let Some(evidence) = generated_evidence {
             let reader = crate::WriteActor::new(record.actor_entity_ref, actor_class);
             let (source, project) =
                 super::derived_attachment::verify(self, wtxn, subject, &evidence, reader)?;
+            born_from = Some(reader);
             claim_body.source = Some(source);
             // The row lands in the one project its source and head share,
             // never the constructor's default (ONE-1592 P3).
@@ -695,6 +701,22 @@ impl Vault {
             bindings.push(binding);
         }
         crate::batch::apply_owner_bound_claim_puts(self, wtxn, ops, bindings, true)?;
+        if let Some(actor) = born_from {
+            let evidence = self
+                .store
+                .port_entity_raw(wtxn, &subject.source)?
+                .ok_or(Error::EntityNotFound)?;
+            if let Some(birth) = RowBirth::written(
+                actor,
+                MadeByClass::Concluded,
+                PREDICATE_EDGE_PROVENANCE,
+                &[subject.source],
+                &[&evidence[ENTITY_METADATA_HEADER_LEN..]],
+                learned_at,
+            ) {
+                stamp_row_birth_in_txn(&self.store, wtxn, claim_id, &birth)?;
+            }
+        }
 
         // Re-stamp the subject edge (both directions, identical bytes) and
         // invalidate the PPR caches its endpoints feed.

@@ -178,6 +178,7 @@ impl<H: LabelClassifier> DecisionSeat for LocalDecisionSeat<H> {
                 images: Vec::new(),
                 think_row: None,
                 person_row: None,
+                rule: None,
             },
         })
     }
