@@ -30,7 +30,8 @@ use heed::RwTxn;
 use rmpv::Value;
 
 use super::container::{
-    self, MAX_FILE_KEYS, REASON_OVER_BUDGET, Stop, holds_spans, masked_copy, walk_members,
+    self, MAX_FILE_KEYS, REASON_OVER_BUDGET, Stop, holds_spans, is_sealed, masked_copy,
+    walk_members,
 };
 use super::shapes::{self, Door, HANDLE_OPEN};
 use super::{REASON_PRIVATE_KEY, provider_token_spans, scan_batch_ops, secret_scan_error};
@@ -420,7 +421,8 @@ impl Masker {
             self.file_ids.push(id);
             return masked_copy(data, places).map(Some);
         }
-        if !self.mints {
+        // A sealed file is stored as it is and left unmarked.
+        if !self.mints || is_sealed(data) {
             return Ok(None);
         }
         let mut keys = Vec::new();

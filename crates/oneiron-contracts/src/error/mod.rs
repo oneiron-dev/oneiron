@@ -248,6 +248,7 @@ pub enum ErrorKind {
     ManifestWidensFloor,
     SecretTierDenied,
     SecretDoorPolicyRefused,
+    SealedFileWithheld,
     SecretRefNotFound,
     SecretWiderThanManifest,
     SecretManifestNotFound,
