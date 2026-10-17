@@ -37,6 +37,22 @@ pub(in crate::llm::decision) mod entities {
             .collect()
     }
 }
+pub(in crate::llm::decision) mod optional_entity {
+    use super::*;
+    pub(in crate::llm::decision) fn serialize<S: Serializer>(
+        id: &Option<EntityId>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        id.map(|id| id.to_hex()).serialize(serializer)
+    }
+    pub(in crate::llm::decision) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<EntityId>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| parse(&text).map_err(serde::de::Error::custom))
+            .transpose()
+    }
+}
 fn parse(text: &str) -> Result<EntityId, &'static str> {
     let id = EntityId::from_hex(text).map_err(|_| "invalid entity reference")?;
     if id.to_hex() != text {
