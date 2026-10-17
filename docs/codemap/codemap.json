@@ -45249,6 +45249,8 @@
       "TaskRequest",
       "TaskUpdateRequest",
       "TaskWaitRequest",
+      "TaskWaveReceipt",
+      "TaskWaveRequest",
       "VaultReceiptsRequest",
       "WorkCompanionSetRequest",
       "WorkspaceRefRequest"
@@ -45259,7 +45261,7 @@
       "enum": 1,
       "fn": 9,
       "re-export": 14,
-      "struct": 33
+      "struct": 35
      }
     },
     {
@@ -45356,7 +45358,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 257
+      "fn": 258
      }
     },
     {
@@ -59237,7 +59239,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 212
+      "fn": 213
      }
     },
     {
@@ -60252,7 +60254,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 213
+      "fn": 214
      }
     },
     {
@@ -62889,7 +62891,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -62989,6 +62991,16 @@
      "path": "src/api/facade/tests/call_mode.rs",
      "purpose": "Call mode at the HTTP recall door (retrieval hub #call-mode)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/wave_doors.rs",
+     "purpose": "The credential door of `tasks.wave` (OF-427)",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -63255,13 +63267,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/board_observations.rs",
      "purpose": "Session-clock read observations and turn-local riders for MCP boards",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
@@ -63271,7 +63283,7 @@
      "path": "src/api/mcp_gateway/board_setup.rs",
      "purpose": "Board state, setup grammar, and page preflight",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -63305,13 +63317,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/exec_board_verbs.rs",
      "purpose": "Execute-code and board-verb executors",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -67294,7 +67306,7 @@
      "path": "src/mcp/registry.rs",
      "purpose": "MCP connector actor registry: cursors, board epochs, and stream proxy",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 21,
       "struct": 1
      }
@@ -68516,7 +68528,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 3
      }
     },
@@ -68650,10 +68662,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/wave_door.rs",
+     "purpose": "The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -69365,7 +69387,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 276,
+     "files": 277,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69624,7 +69646,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69687,9 +69709,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 36,
+   "over_bar": 37,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 543,
+   "source_files": 545,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70417,6 +70439,8 @@
       "TaskUpdateReceipt",
       "TaskUpdateRequest",
       "TaskWaitRequest",
+      "TaskWaveReceipt",
+      "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
       "TravelChoice",
@@ -70457,7 +70481,7 @@
      "purpose": "—",
      "surface": {
       "enum": 171,
-      "struct": 423
+      "struct": 425
      }
     },
     {
