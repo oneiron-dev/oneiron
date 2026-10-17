@@ -10619,7 +10619,7 @@
      "path": "src/code_run/agent_authoring.rs",
      "purpose": "Bounded guest definition request; actor, lease and approval stay host-owned",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -10723,7 +10723,7 @@
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5
      }
     },
@@ -37264,17 +37264,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "HookReplayCase",
+      "HookReplayCompare",
       "HookReplayEntry",
       "HookReplayResult"
      ],
      "path": "src/runtime_hooks/replay.rs",
-     "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome",
+     "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome beside the one…",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
+      "crate-vis": 4,
+      "enum": 3,
       "fn": 1,
       "struct": 1
      }
@@ -37290,7 +37292,7 @@
      "purpose": "The fact-hook runner (ARCH-0080 §4 Delivery)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 4,
       "struct": 2,
       "type": 1
@@ -37346,13 +37348,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/store.rs",
-     "purpose": "The runner's durable rows: cursors, the run memo, saved intents and the Hook receipts (ARCH-0080 §4…",
+     "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 25
      }
     },
     {
@@ -37387,12 +37389,22 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 12,
       "re-export": 2,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/record.rs",
+     "purpose": "A verb hook run's saved copy (ARCH-0080 §6 Replay): the exact input its body saw, the reads it made and what…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -51536,7 +51548,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51937,7 +51949,7 @@
    },
    "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3139,
+   "source_files": 3140,
    "test_files": 903
   },
   "oneiron-android": {
@@ -70778,6 +70790,7 @@
       "ExpectedSpend",
       "ExportDiaryRead",
       "FactKind",
+      "FactSource",
       "FanoutStatement",
       "FatalLlmError",
       "FederationGrantRole",
@@ -70803,6 +70816,9 @@
       "GuestSlipMinted",
       "HandoffAlarmRequest",
       "HolderKind",
+      "HookPhase",
+      "HookReplayCase",
+      "HookReplayCompare",
       "HookReplayOutcome",
       "HookReplayRow",
       "HooksReplayRequest",
@@ -71263,7 +71279,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 184,
+      "enum": 188,
       "struct": 479
      }
     },

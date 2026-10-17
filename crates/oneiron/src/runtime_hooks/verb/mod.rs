@@ -10,6 +10,7 @@
 
 mod ask;
 mod chain;
+mod record;
 mod redact;
 mod resume;
 mod served;
@@ -24,6 +25,7 @@ use crate::memory::MemoryResult;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
+pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
 pub use state::{InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait};
