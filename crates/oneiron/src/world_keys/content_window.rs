@@ -239,6 +239,80 @@ impl WindowManager {
         Ok(opened.binding)
     }
 
+    /// The whole mirror of `window` of the private `world`, packed with every
+    /// row of the window here, as one snapshot: what the world's section of the
+    /// sealed cloud bundle carries for the window (FIX 922). A mirror that
+    /// outlived a row deleted here starts over, as a replacement packet's does.
+    /// Refused unless this machine may read the world now.
+    pub(crate) fn sealed_mirror_snapshot(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+    ) -> Result<Vec<u8>> {
+        if window.world() != Some(world) {
+            return Err(refused("the window is not one of the world's"));
+        }
+        let vault = self.vault();
+        vault.world_key(world)?;
+        let _sealing = vault
+            .world_keys
+            .sealing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (mut mirror, fresh) = load_mirror(vault, world, window)?;
+        if !fresh && mirror_outlived_rows(vault, &mirror)? {
+            mirror = LoroDoc::new();
+        }
+        reverse_rematerialize_for_sealing(vault, &mirror, window)?;
+        let snapshot = export_snapshot(&mirror)?;
+        vault.with_write_txn_grouped(|wtxn| {
+            MIRROR.put(&vault.store, wtxn, &mirror_key(world, window), &snapshot)
+        })?;
+        Ok(snapshot)
+    }
+
+    /// Takes a bundle's `snapshot` of `window` of `world` into the window's
+    /// mirror, on a machine that may read the world now: merged as more of the
+    /// same history, never in place of it, so a mirror here that already holds
+    /// all of it stays as it is. With `materialize` the mirror's rows land here
+    /// too; without, they wait in the mirror for a promotion
+    /// ([`Self::materialize_sealed_mirror`]). Returns whether the mirror took
+    /// anything new.
+    pub(crate) fn merge_bundle_mirror(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+        snapshot: &[u8],
+        materialize: bool,
+    ) -> Result<bool> {
+        if window.world() != Some(world) {
+            return Err(refused("the window is not one of the world's"));
+        }
+        let vault = self.vault();
+        vault.world_key(world)?;
+        let incoming = LoroDoc::new();
+        import_doc(&incoming, snapshot)?;
+        let _sealing = vault
+            .world_keys
+            .sealing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (mirror, fresh) = load_mirror(vault, world, window)?;
+        let mirror = if fresh {
+            incoming
+        } else if mirror.oplog_vv().includes_vv(&incoming.oplog_vv()) {
+            return Ok(false);
+        } else {
+            import_doc(&mirror, snapshot)?;
+            mirror
+        };
+        if materialize {
+            forward_rematerialize(vault, &mirror, self.materializer(), window)?;
+        }
+        store_mirror(vault, world, window, &mirror)?;
+        Ok(true)
+    }
+
     /// This machine's sealing-mirror version vector for `window`, encoded:
     /// the `since` a sealed request states. Empty of operations when the
     /// window has no mirror yet.
