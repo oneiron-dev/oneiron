@@ -43,6 +43,7 @@ pub(crate) mod identity;
 mod judge_swap;
 mod lens_callbacks;
 mod local_vision;
+pub(crate) mod payer_funding;
 mod policy;
 pub(crate) mod self_heal_detectors;
 mod skill_author;
