@@ -916,7 +916,7 @@
      "path": "src/agent_dispatch/project_conversation.rs",
      "purpose": "The skill a project conversation's run loads before it starts (OF-501, ARCH-0067)",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -2217,6 +2217,7 @@
      "path": "src/authority/guest_revoke.rs",
      "purpose": "OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one ask guest's…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -8265,7 +8266,7 @@
      "path": "src/channel_identity/assignment.rs",
      "purpose": "Two-slot channel assignment index",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -9830,7 +9831,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -12115,7 +12116,7 @@
      "purpose": "Claim family predicates, key vocabulary, typed values, body build/parse/validate",
      "surface": {
       "const": 7,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 5,
       "fn": 8,
       "struct": 2,
@@ -12144,12 +12145,30 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "ClaimClassDescriptor",
+      "ClaimWriteClass",
+      "EnforcementStamp"
+     ],
+     "path": "src/comm/descriptor.rs",
+     "purpose": "ARCH-0057 claim-class descriptors as synced maintenance entities (OF-272)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 4
+      "crate-vis": 8,
+      "re-export": 5
      }
     },
     {
@@ -15542,8 +15561,8 @@
      "path": "src/counterparty_contact/doors.rs",
      "purpose": "Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply",
      "surface": {
-      "crate-vis": 5,
-      "fn": 6
+      "crate-vis": 6,
+      "fn": 7
      }
     },
     {
@@ -15553,7 +15572,7 @@
      "path": "src/counterparty_contact/lifecycle.rs",
      "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -15564,7 +15583,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 6
      }
     },
@@ -15575,7 +15594,7 @@
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -18939,6 +18958,7 @@
      "path": "src/edit_distance/compile.rs",
      "purpose": "Compiling approved preferences into acting revisions (OF-379): every manual edit is a critique of the…",
      "surface": {
+      "crate-vis": 2,
       "enum": 4,
       "fn": 4,
       "struct": 2
@@ -21549,10 +21569,24 @@
      "path": "src/federation/pending_act.rs",
      "purpose": "Row-driven shared-vault objection windows",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 9,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingActMatured"
+     ],
+     "path": "src/federation/pending_act/matured.rs",
+     "purpose": "The matured-act notice: the housekeeping pass that tells the Owners when a waiting shared act's window has…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -21651,6 +21685,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EraseAskKind",
+      "EraseAskStatus",
+      "SharedEraseAsk"
+     ],
+     "path": "src/federation/shared_act/erase_ask.rs",
+     "purpose": "Erase asks (ARCH-0043 \"Who may archive, delete and erase\", 2026-10-09): in a shared vault a Member requests…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -21701,7 +21752,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 9,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 8
      }
     },
@@ -24328,7 +24379,7 @@
      "path": "src/identity_topology/lifecycle_state.rs",
      "purpose": "Entity lifecycle state ([`EntityLifecycleState`]), its CRDT join, the zero-head-split ledger witness, and…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 1
      }
@@ -43967,6 +44018,7 @@
      "path": "src/task_verb/ask_band.rs",
      "purpose": "Owner-scoped, consume-once ask labels and the policy-owned question-class band",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -43989,6 +44041,16 @@
      "purpose": "Ask-scoped guest authority: reuse a person's owner-stamped bounds",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_limits.rs",
+     "purpose": "The ask rows of the engine's `[limits]` (ARCH-0044 C5, OF-520)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -44204,7 +44266,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 16,
-      "fn": 5,
+      "fn": 6,
       "struct": 21
      }
     },
@@ -45009,7 +45071,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 240
+      "fn": 247
      }
     },
     {
@@ -45174,14 +45236,16 @@
      "notable": [
       "GuestSlipMintRequest",
       "GuestSlipMinted",
+      "SharedEraseAskCloseRequest",
+      "SharedEraseAskRequest",
       "SharedInvitationRequest",
       "SharedInvitationWithdrawRequest"
      ],
      "path": "src/task_verb/sdk_shared_members.rs",
      "purpose": "The invitation rows of a shared vault (OF-531 / OF-158): `vault.members.add` invites, and the invitee lists…",
      "surface": {
-      "fn": 6,
-      "struct": 4
+      "fn": 13,
+      "struct": 6
      }
     },
     {
@@ -49794,8 +49858,8 @@
      "purpose": "—"
     },
     "comm": {
-     "files": 13,
-     "impl_vault": false,
+     "files": 14,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector"
@@ -50130,7 +50194,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 30,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50851,7 +50915,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 114,
+     "files": 115,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51007,7 +51071,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3081,
+   "source_files": 3085,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53869,7 +53933,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 40,
+      "const": 41,
       "crate-vis": 1
      }
     },
@@ -55356,6 +55420,7 @@
       "Effect",
       "FitUnverified",
       "Picture",
+      "RunProps",
       "Target",
       "ValueEdit",
       "Xfrm"
@@ -55368,7 +55433,7 @@
       "fn": 1,
       "mod": 1,
       "re-export": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -55483,9 +55548,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit/text.rs",
-     "purpose": "`set_text` and `replace_run_text`",
+     "purpose": "`set_text`, `replace_run_text` and `set_run_props`",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -55929,7 +55994,7 @@
      "purpose": "The add-part door",
      "surface": {
       "crate-vis": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -58874,7 +58939,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 195
+      "fn": 202
      }
     },
     {
@@ -59888,7 +59953,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 196
+      "fn": 203
      }
     },
     {
@@ -62111,7 +62176,7 @@
      "path": "src/api/context_pack/media_query.rs",
      "purpose": "The media query both retrieval doors take (OF-370): `POST /v1/core/context-pack` (and the Context Board's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -62537,7 +62602,7 @@
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 12
      }
     },
     {
@@ -65345,9 +65410,10 @@
       "SkillsConfig"
      ],
      "path": "src/config/skills.rs",
-     "purpose": "The `[skills]` section: how the skill-edit gate's live slice is funded at this server",
+     "purpose": "The `[skills]` section: how the skill-edit gate's live slice is funded at this server, and the skills a…",
      "surface": {
       "crate-vis": 4,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -69445,6 +69511,8 @@
       "EmbeddingSpaceProbePutRequest",
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
+      "EraseAskKind",
+      "EraseAskStatus",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectedSpend",
@@ -69628,6 +69696,8 @@
       "ParticipantsPage",
       "ParticipantsRequest",
       "PeerCount",
+      "PendingActMatured",
+      "PendingActStarted",
       "PendingAuthorityAct",
       "PendingProposalKind",
       "PendingProposalView",
@@ -69755,6 +69825,9 @@
       "SharedActRequest",
       "SharedBriefCitation",
       "SharedBriefView",
+      "SharedEraseAsk",
+      "SharedEraseAskCloseRequest",
+      "SharedEraseAskRequest",
       "SharedInvitation",
       "SharedInvitationRequest",
       "SharedInvitationState",
@@ -69875,8 +69948,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 167,
-      "struct": 395
+      "enum": 169,
+      "struct": 400
      }
     },
     {
