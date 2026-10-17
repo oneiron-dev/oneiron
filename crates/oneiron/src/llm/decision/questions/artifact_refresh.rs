@@ -6,8 +6,11 @@
 //! as a fresh proposal for Keep under a ref of its own. While that proposal or a wake's
 //! re-ask of it waits, the artifact is not asked again: the edit settle carry splits a held
 //! proposal and wakes its proposer. A Keep of one of them moves the head the question
-//! follows. The ask is the question's principal's, on the question's dial and clock,
-//! through the host's decider; an artifact or file the principal cannot read is not asked.
+//! follows. An arrival asks again only the units whose reads moved since the versions the
+//! question answered (a row's read cells or its header, a paragraph's text, a folder item's
+//! file); a schedule asks them all. The ask is the question's principal's, on the
+//! question's dial and clock, through the host's decider; an artifact or file the principal
+//! cannot read is not asked.
 
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -17,10 +20,11 @@ use serde::{Deserialize, Serialize};
 use super::refresh::{hold_failed, principal_actor, source_actor_key};
 use super::{records::*, store::*};
 use crate::blob_artifact::{ArtifactAskUnits, read_blob_artifact_head_in_txn};
+use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
 use crate::edit_roundtrip::slides_review::SlideReviewLabels;
 use crate::edit_roundtrip::{
-    ArtifactAsk, ArtifactAskRun, FolderAsk, FolderItem, ParagraphAsk, RangeRef, SheetRowsAsk,
-    UnitDecider,
+    ArtifactAsk, ArtifactAskRun, CellRef, CellValue, FolderAsk, FolderItem, ParagraphAsk,
+    RangeRef, SheetRowsAsk, UnitDecider,
 };
 use crate::edit_settle::PendingProposalView;
 use crate::llm::decision::{DecisionBandPolicy, DecisionRung, Reversibility};
@@ -136,6 +140,23 @@ impl<'a> Selection<'a> {
         match self {
             Self::FolderItems { items, .. } => items.iter().map(|item| item.artifact).collect(),
             _ => Vec::new(),
+        }
+    }
+}
+
+/// The units of a selection whose reads moved, which an arrival asks again.
+enum Changed {
+    Rows(BTreeSet<u32>),
+    Blocks(Vec<String>),
+    Items(Vec<FolderItem>),
+}
+
+impl Changed {
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Rows(rows) => rows.is_empty(),
+            Self::Blocks(blocks) => blocks.is_empty(),
+            Self::Items(items) => items.is_empty(),
         }
     }
 }
@@ -278,6 +299,7 @@ impl Asking<'_> {
             }
             ASKED.get(&vault.store, &txn, &(self.question, artifact))?
         };
+        let mut only = None;
         if let Some(stamp) = stamp.filter(|stamp| stamp.question_version == self.version) {
             let Some(baseline) = baseline(vault, artifact, &stamp)? else {
                 return Ok(None);
@@ -291,6 +313,20 @@ impl Asking<'_> {
                 .is_some_and(|every| self.now >= stamp.asked_at.saturating_add(every));
             if !(arrived || scheduled) {
                 return Ok(None);
+            }
+            if !scheduled {
+                only = self.changed_units(artifact, &selection, &baseline, &observed)?;
+                // Nothing it reads moved: the question follows the head unasked.
+                if only.as_ref().is_some_and(Changed::is_empty) {
+                    let stamp = ArtifactAsked {
+                        versions: observed,
+                        ..stamp
+                    };
+                    vault.with_write_txn(|wtxn| {
+                        ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)
+                    })?;
+                    return Ok(None);
+                }
             }
         }
         // Each read rechecks authority: the principal reads the artifact and its files.
@@ -333,7 +369,7 @@ impl Asking<'_> {
             deadline: Instant::now() + ASK_DEADLINE,
             run_ref: &reference,
         };
-        let run = ask_selection(vault, artifact, &selection, &files, ask)?;
+        let run = ask_selection(vault, artifact, &selection, &files, only.as_ref(), ask)?;
         let proposed = match &run.proposal {
             Some(proposal) => {
                 Some(vault.retain_edit_proposal(&artifact, proposal, None, self.actor, self.now)?)
@@ -350,6 +386,109 @@ impl Asking<'_> {
             ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)
         })?;
         Ok(proposed)
+    }
+
+    /// The units of `selection` whose reads moved between the `baseline` versions the
+    /// question answered and the `observed` heads: a row whose read cells (or header)
+    /// changed, its answer cell aside; a paragraph whose text changed; a folder item whose
+    /// file has a newer head. `None` when a version no longer reads, so all are asked.
+    fn changed_units(
+        &self,
+        artifact: EntityId,
+        selection: &Selection<'_>,
+        baseline: &[(EntityId, u64)],
+        observed: &[(EntityId, u64)],
+    ) -> Result<Option<Changed>> {
+        let vault = self.vault;
+        let version = |versions: &[(EntityId, u64)], id: EntityId| {
+            versions
+                .iter()
+                .find(|(read, _)| *read == id)
+                .map_or(0, |(_, version)| *version)
+        };
+        if let Selection::FolderItems { items, .. } = selection {
+            return Ok(Some(Changed::Items(
+                items
+                    .iter()
+                    .filter(|item| {
+                        version(baseline, item.artifact) != version(observed, item.artifact)
+                    })
+                    .copied()
+                    .collect(),
+            )));
+        }
+        let (then, now) = (version(baseline, artifact), version(observed, artifact));
+        let (Some(then), Some(now)) = (
+            vault.read_blob_artifact_version(&artifact, then)?,
+            vault.read_blob_artifact_version(&artifact, now)?,
+        ) else {
+            return Ok(None);
+        };
+        Ok(match selection {
+            Selection::SheetRows {
+                sheet,
+                rows,
+                answer_col,
+                header_row,
+                ..
+            } => {
+                let cols: Vec<u32> = (rows.start.col..=rows.end.col)
+                    .filter(|col| col != answer_col)
+                    .collect();
+                let wanted = |cell: &CellRef| {
+                    cols.contains(&cell.col)
+                        && ((rows.start.row..=rows.end.row).contains(&cell.row)
+                            || Some(cell.row) == *header_row)
+                };
+                let (Ok(then), Ok(now)) = (
+                    named_sheet_cells(&then, sheet, &wanted),
+                    named_sheet_cells(&now, sheet, &wanted),
+                ) else {
+                    return Ok(None);
+                };
+                let moved = |row: u32| {
+                    cols.iter().any(|col| {
+                        let cell = CellRef { col: *col, row };
+                        then.get(&cell).unwrap_or(&CellValue::Blank)
+                            != now.get(&cell).unwrap_or(&CellValue::Blank)
+                    })
+                };
+                let header_moved = header_row.is_some_and(|row| moved(row));
+                Some(Changed::Rows(
+                    (rows.start.row..=rows.end.row)
+                        .filter(|row| header_moved || moved(*row))
+                        .collect(),
+                ))
+            }
+            Selection::Paragraphs { blocks, .. } => {
+                let limits = {
+                    let txn = vault.store.env.read_txn()?;
+                    vault.docx_archive_limits_in_txn(&txn, Some(self.record.principal))?
+                };
+                let texts = |bytes: &[u8]| {
+                    let read = oneiron_docedit::docx_body::read_docx_blocks(bytes, limits).ok()?;
+                    Some(
+                        read.into_iter()
+                            .map(|block| {
+                                let text = *blake3::hash(block.text.as_bytes()).as_bytes();
+                                (block.id, text)
+                            })
+                            .collect::<std::collections::BTreeMap<_, _>>(),
+                    )
+                };
+                let (Some(then), Some(now)) = (texts(&then), texts(&now)) else {
+                    return Ok(None);
+                };
+                Some(Changed::Blocks(
+                    blocks
+                        .iter()
+                        .filter(|block| then.get(*block) != now.get(*block))
+                        .cloned()
+                        .collect(),
+                ))
+            }
+            Selection::FolderItems { .. } => None,
+        })
     }
 }
 
@@ -462,12 +601,14 @@ pub fn artifact_ask_records(
         .collect()
 }
 
-/// The builder `selection` names, over the readable `files` of a folder ask.
+/// The builder `selection` names, over the readable `files` of a folder ask, asking
+/// only the units in `only` when an arrival named them.
 fn ask_selection(
     vault: &Vault,
     artifact: EntityId,
     selection: &Selection<'_>,
     files: &[EntityId],
+    only: Option<&Changed>,
     ask: ArtifactAsk<'_>,
 ) -> Result<ArtifactAskRun> {
     match selection {
@@ -486,7 +627,10 @@ fn ask_selection(
                 answer_col: *answer_col,
                 header_row: *header_row,
                 max_count_override: *max_count,
-                only_rows: None,
+                only_rows: match only {
+                    Some(Changed::Rows(rows)) => Some(rows),
+                    _ => None,
+                },
             },
         ),
         Selection::Paragraphs {
@@ -497,7 +641,10 @@ fn ask_selection(
             &artifact,
             &ParagraphAsk {
                 ask,
-                blocks,
+                blocks: match only {
+                    Some(Changed::Blocks(changed)) => changed.as_slice(),
+                    _ => *blocks,
+                },
                 author,
                 labels,
             },
@@ -511,6 +658,10 @@ fn ask_selection(
             let items: Vec<FolderItem> = items
                 .iter()
                 .filter(|item| files.contains(&item.artifact))
+                .filter(|item| match only {
+                    Some(Changed::Items(changed)) => changed.contains(*item),
+                    _ => true,
+                })
                 .copied()
                 .collect();
             if items.is_empty() {

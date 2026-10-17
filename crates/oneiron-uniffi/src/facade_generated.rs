@@ -285,6 +285,11 @@ export_facade! {
     let output = client.vault_members_add(&input)?;
     crate::codec::lift_record("vault.members.add", &output)
 };
+"vault.members.invitation_slip" => fn vault_members_invitation_slip(&self, input: InvitationSlipRequest) -> InvitationSlip = |client| {
+    let input: oneiron::task_verb::sdk::InvitationSlipRequest = crate::codec::lower_record("vault.members.invitation_slip", input)?;
+    let output = client.vault_members_invitation_slip(&input)?;
+    crate::codec::lift_record("vault.members.invitation_slip", &output)
+};
 "vault.members.change" => fn vault_members_change(&self, input: SharedMemberRoleRequest) -> SharedActExecutionReceipt = |client| {
     let input: oneiron::task_verb::sdk::SharedMemberRoleRequest = crate::codec::lower_record("vault.members.change", input)?;
     let output = client.vault_members_change(&input)?;

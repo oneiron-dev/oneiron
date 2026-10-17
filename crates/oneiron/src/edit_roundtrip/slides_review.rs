@@ -87,6 +87,17 @@ pub fn review_image_key(image: &[u8]) -> String {
     blake3::hash(image).to_hex().to_string()
 }
 
+/// The host's review renderer (ARCH-0077 "Review images"), which a proposer
+/// wake asks for the changed slides of a held review: the engine renders
+/// nothing itself.
+pub trait SlideRenderer: Send + Sync {
+    /// The renderer's identity, saved on each judgment as provisional evidence.
+    fn name(&self) -> &str;
+    /// One PNG or JPEG per entry of `slides` (1-based numbers in `deck`), in
+    /// that order, each rendered from these exact bytes.
+    fn render(&self, deck: &[u8], slides: &[u64]) -> Result<Vec<Vec<u8>>>;
+}
+
 /// User-configured display words, including the severity words in comments.
 /// No question, glossary, prompt or user-facing label is compiled into Rust.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -647,6 +658,7 @@ pub fn review_slides(
     let mut proposal = run_comment_roundtrip(base.bytes, &patches, run_ref)?;
     proposal.base_version = base.version;
     proposal.manifest.slide_judgments = judgments;
+    proposal.manifest.slide_question = Some(question.clone());
     Ok(SlideReviewRun {
         proposal: Some(proposal),
         abstained,
@@ -830,6 +842,17 @@ pub(crate) fn validate_judgment_rows(rows: &[SlideJudgment]) -> Result<()> {
 /// Validate the receipt against the actual comment ops at the settle door.
 /// A public manifest is not a source of authority to invent judgment receipts.
 pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
+    verify_rows(proposal, false)
+}
+
+/// [`verify_judgments`] for answers the engine carried onto a newer head at
+/// Keep: each still names the deck revision it was judged against, which may
+/// be older than the proposal's base.
+pub(crate) fn verify_carried_judgments(proposal: &EditProposal) -> Result<()> {
+    verify_rows(proposal, true)
+}
+
+fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> {
     let rows = &proposal.manifest.slide_judgments;
     validate_judgment_rows(rows)?;
     if rows.is_empty() {
@@ -916,8 +939,9 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
             })
             || row.anchor.slide_part.is_empty()
             || row.anchor.shape.is_some() != target.shape_creation_id.is_some()
-            || row.frontier != proposal.base_content_hash
-            || row.judged_version != proposal.base_version
+            || (!carried
+                && (row.frontier != proposal.base_content_hash
+                    || row.judged_version != proposal.base_version))
             || row.renderer.trim().is_empty()
             || row.renderer.len() > 256
         {
@@ -971,6 +995,100 @@ fn ladder_route(row: &SlideJudgment, probability: f64) -> bool {
     }
 }
 
+/// One slide of a deck as a held review's split reads it: where it sits,
+/// and what it shows.
+pub(crate) struct SlideNow {
+    /// Its 1-based number in the deck.
+    pub(crate) slide: u64,
+    pub(crate) part: String,
+    pub(crate) sld_id: u32,
+    pub(crate) creation_id: Option<u32>,
+    /// The slide's normalized content with review metadata aside, then each
+    /// other part it renders through: a comment written on it moves nothing.
+    pub(crate) shows: [u8; 32],
+}
+
+impl SlideNow {
+    /// Whether this is the slide a judgment's anchor names.
+    pub(crate) fn is(&self, anchor: &SlideReviewAnchor) -> bool {
+        self.part == anchor.slide_part && self.sld_id == anchor.sld_id
+    }
+}
+
+/// Every slide of `bytes`, in deck order.
+pub(crate) fn deck_slides_now(bytes: &[u8], limits: Limits) -> Result<Vec<SlideNow>> {
+    let inspection = inspect_pptx(bytes).map_err(|_| invalid("held slide review deck"))?;
+    let package = Package::open(bytes, limits).map_err(|_| invalid("held slide review deck"))?;
+    let view = DeckView::read(&package).map_err(|_| invalid("held slide review deck view"))?;
+    view.slides
+        .iter()
+        .zip(1u64..)
+        .map(|(slide, number)| {
+            let identity = inspection
+                .slides
+                .iter()
+                .find(|identity| identity.part == slide.part)
+                .ok_or_else(|| invalid("held slide review deck identity"))?;
+            let mut shows = blake3::Hasher::new();
+            shows.update(&identity.fingerprint);
+            for dependency in slide
+                .dependencies
+                .iter()
+                .filter(|dependency| dependency.part != slide.part)
+            {
+                shows.update(&(dependency.part.len() as u64).to_le_bytes());
+                shows.update(dependency.part.as_bytes());
+                shows.update(&dependency.hash);
+            }
+            Ok(SlideNow {
+                slide: number,
+                part: slide.part.clone(),
+                sld_id: slide.sld_id,
+                creation_id: slide.creation_id,
+                shows: *shows.finalize().as_bytes(),
+            })
+        })
+        .collect()
+}
+
+/// The untouched answers of a held slide review, carried onto a newer head
+/// of the deck (ARCH-0075 §4): each comment is written again on its slide,
+/// wherever that slide now sits, as one comment proposal on a copy of
+/// `head`. Each answer keeps the revision it was judged against.
+pub(crate) fn carry_slide_judgments(
+    head: &[u8],
+    head_version: u64,
+    carried: Vec<(SlideJudgment, PptxCommentPatch)>,
+    run_ref: &str,
+    limits: Limits,
+) -> Result<EditProposal> {
+    let slides = deck_slides_now(head, limits)?;
+    let mut rows = Vec::with_capacity(carried.len());
+    let mut patches = Vec::with_capacity(carried.len());
+    for (mut row, mut patch) in carried {
+        let slide = slides
+            .iter()
+            .find(|slide| slide.is(&row.anchor))
+            .ok_or_else(|| invalid("a carried slide is gone"))?;
+        row.target.slide = slide.slide;
+        patch.action = PptxCommentAction::Add {
+            target: row.target.clone(),
+            text: row.comment.clone(),
+        };
+        rows.push(row);
+        patches.push(patch);
+    }
+    let mut proposal = run_comment_roundtrip(head, &patches, run_ref).map_err(|_| {
+        Error::Artifact(crate::error::ArtifactError::EditRoundtripFailed(
+            "the carried slide comments failed validation",
+        ))
+    })?;
+    proposal.base_version = Some(head_version);
+    proposal.manifest.slide_judgments = rows;
+    verify_carried_judgments(&proposal)?;
+    Ok(proposal)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SlideReviewError {
     #[error(transparent)]
@@ -1002,6 +1120,18 @@ impl Vault {
         let bytes = self
             .read_blob_artifact_version(artifact, head.version)?
             .ok_or(Error::EntityNotFound)?;
+        self.review_blob_artifact_slides_at(artifact, head.version, &bytes, request)
+    }
+
+    /// [`Self::review_blob_artifact_slides`] over one version's `bytes`, which
+    /// the units' images were rendered from.
+    pub(crate) fn review_blob_artifact_slides_at(
+        &self,
+        artifact: &EntityId,
+        version: u64,
+        bytes: &[u8],
+        request: &SlideReviewRequest<'_>,
+    ) -> std::result::Result<SlideReviewRun, SlideReviewError> {
         // The policy read ends before any provider call starts.
         let (vault_limits, route) = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
@@ -1025,8 +1155,8 @@ impl Vault {
             ..*request
         };
         let base = SlideReviewBase {
-            bytes: &bytes,
-            version: Some(head.version),
+            bytes,
+            version: Some(version),
             artifact: *artifact,
             package_limits: self.docedit_package_limits()?,
         };
