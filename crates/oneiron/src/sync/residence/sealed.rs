@@ -97,8 +97,28 @@ fn admit_sender(vault: &Vault, peer: PeerMachine, window: &WindowKey) -> Result<
     vault.require_sealed_copies(world)
 }
 
+/// Drops the home's labels of the shelved packets whose shelf key starts with
+/// `shelf_prefix` (one packet's whole key, or a tag's `hex64 ":"`), in the
+/// write transaction that expires or purges them: no label outlives its
+/// packet.
+pub(crate) fn drop_sealed_labels_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    shelf_prefix: &str,
+) -> Result<()> {
+    let prefix = format!("{LABEL_PREFIX}{shelf_prefix}");
+    let mut keys = Vec::new();
+    for row in store.sync_state.prefix_iter(wtxn, &prefix)? {
+        keys.push(row?.0.to_string());
+    }
+    for key in keys {
+        store.sync_state.delete(wtxn, &key)?;
+    }
+    Ok(())
+}
+
 /// Every label on the shelf with its live state, dropping the labels whose
-/// packet the shelf no longer holds (expired, or purged with its world).
+/// packet the shelf no longer holds.
 fn shelf_labels(vault: &Vault) -> Result<Vec<(SealedContentId, u64, WindowKey, bool)>> {
     let shelved: std::collections::BTreeMap<SealedContentId, bool> = vault
         .sealed_world_content_ids()?

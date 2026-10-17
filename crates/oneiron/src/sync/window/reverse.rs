@@ -569,7 +569,7 @@ fn reverse_rematerialize_scan(
     // NOTE text, mutable workflows and head moves change even when the
     // entity carrier already exists. Refresh through the same export gates.
     if window_key.world().is_none() {
-        wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
+        wrote_any |= crate::sync::note::refresh_for(vault, doc, window_key, withhold)?;
     }
 
     // A carrier the window kept past its row's learned month still takes

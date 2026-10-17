@@ -10,7 +10,7 @@ mod scrub;
 pub(crate) use scrub::deleted;
 
 pub(crate) use materialize::apply;
-pub(crate) use mirror::{copy_judged, copy_selected, dropped_in, refresh};
+pub(crate) use mirror::{copy_judged, copy_selected, dropped_in, refresh, refresh_for};
 
 use crate::note::documents::{doc_key, invalid};
 use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};

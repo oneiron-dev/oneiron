@@ -4,6 +4,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::side_table::{self, HexId, Named, Raw, SideKey, SideTable};
 use crate::sync::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use crate::sync::types::WindowKey;
+use crate::sync::window::Withhold;
 
 /// Recorded NOTE forks awaiting review/decision (owned by `note::proposals`;
 /// this binds the same `note_fork:v1:` declaration for this module's
@@ -40,6 +41,19 @@ impl SideKey for NoteForkKey {
 }
 
 pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Result<bool> {
+    refresh_for(vault, doc, window, Withhold::Unknown)
+}
+
+/// [`refresh`] for the machine an export serves. A proved machine's detached
+/// copy packs the NOTEs of the private worlds that machine may read; the
+/// stored window and every other door keep off what an unknown destination
+/// may not read.
+pub(crate) fn refresh_for(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window: &WindowKey,
+    withhold: Withhold<'_>,
+) -> Result<bool> {
     // NOTE rows and their text-plane carriers live in the shared base month.
     // Every caller (reverse, ordinary export, snapshot export, selector) uses
     // this door, so none may contaminate a world-only document.
@@ -53,11 +67,10 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     let mut state = State::default();
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let txn = vault.store.env.read_txn()?;
-    let flagged = crate::settings::device_local_worlds_at(
-        vault,
-        &txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let flagged = match withhold {
+        Withhold::Worlds(_) | Withhold::Peer(_) => withhold.worlds_in(vault, &txn)?,
+        Withhold::Nothing | Withhold::Unknown => Withhold::Unknown.worlds_in(vault, &txn)?,
+    };
     let mut local = BTreeSet::new();
     let mut removed = BTreeSet::new();
     for (key, raw) in rows(doc, "entities")? {

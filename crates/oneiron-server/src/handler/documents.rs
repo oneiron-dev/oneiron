@@ -209,6 +209,7 @@ fn owner_request(
     state.owner_documents.insert(entity, remote_vv.to_vec());
     let held = state.owner_documents.len();
     ask_past_row(server, state, held);
+    let peer = state.peer_machine(server.vault());
     if server
         .vault
         .get_raw(&entity)
@@ -218,7 +219,7 @@ fn owner_request(
         let frame = crate::server::blocking(|| {
             server
                 .reassert_manager
-                .export_owner_document(entity, remote_vv)
+                .export_owner_document_for(entity, remote_vv, peer)
         })
         .map_err(storage_error)?;
         let _ = direct.send(frame);
@@ -399,7 +400,7 @@ pub(super) fn document_delivery_retrying(
             match crate::server::blocking(|| {
                 server
                     .reassert_manager
-                    .export_owner_document(doc.entity, remote_vv)
+                    .export_owner_document_for(doc.entity, remote_vv, peer)
             }) {
                 Ok(frame) => out.push(frame),
                 Err(error) if waited_out(&error) => retry.extend(notice(&doc)),

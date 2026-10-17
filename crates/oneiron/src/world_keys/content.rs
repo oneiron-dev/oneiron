@@ -536,6 +536,8 @@ pub(super) fn purge_sealed_world_content_in_txn(
                 purged += 1;
             }
         }
+        #[cfg(feature = "sync")]
+        crate::sync::residence::drop_sealed_labels_in_txn(store, wtxn, &prefix)?;
         for key in RETIRED.scan_keys(store, wtxn, prefix.as_bytes())? {
             RETIRED.delete(store, wtxn, &key)?;
         }
@@ -560,6 +562,8 @@ fn expire_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>, now: u64) -> Result<
         if retired_at.saturating_add(SEALED_RETENTION_SECS) <= now {
             SHELF.delete(store, wtxn, &key)?;
             RETIRED.delete(store, wtxn, &key)?;
+            #[cfg(feature = "sync")]
+            crate::sync::residence::drop_sealed_labels_in_txn(store, wtxn, &key)?;
             expired += 1;
         }
     }

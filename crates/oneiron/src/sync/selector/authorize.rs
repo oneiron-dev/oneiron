@@ -370,7 +370,7 @@ pub(super) fn filter_window_doc(
     // Refresh a detached window, then copy only owners that pass this filter.
     let source_bytes = crate::sync::loro_support::export_snapshot(source)?;
     let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
-    crate::sync::note::refresh(vault, &refreshed, key)?;
+    crate::sync::note::refresh_for(vault, &refreshed, key, withhold)?;
     // The canonical window packs nothing an unknown destination may not
     // read but a world window's own world, which the filter below withholds
     // by key. A proved machine's export packs, into this detached copy, the

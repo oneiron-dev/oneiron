@@ -469,15 +469,20 @@ impl EntityDocument {
     }
 
     /// The owner lane's export: NOTE documents only, under one owner admission
-    /// key and the owner export's refusals.
-    pub(crate) fn export_owner(&self, remote_vv: &[u8]) -> Result<Vec<u8>> {
+    /// key and the owner export's refusals, judged for the machine the export
+    /// serves.
+    pub(crate) fn export_owner(
+        &self,
+        remote_vv: &[u8],
+        withhold: super::window::Withhold<'_>,
+    ) -> Result<Vec<u8>> {
         if !self.is_note()? {
             return Err(Error::sync_protocol(
                 SyncProtocolValidation::DocumentAdmissionDenied,
             ));
         }
         self.export_admitted(OWNER_ADMISSION_KEY, remote_vv, |txn| {
-            owner_note_admission(&self.vault, txn, self.id)
+            owner_note_admission_for(&self.vault, txn, self.id, withhold)
         })
     }
 
@@ -625,16 +630,23 @@ pub(crate) fn owner_note_admission(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
+    owner_note_admission_for(vault, txn, id, super::window::Withhold::Unknown)
+}
+
+/// [`owner_note_admission`] for the machine an export serves: an own device
+/// a standing proof names reads the NOTEs of the private worlds it may read.
+fn owner_note_admission_for(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    withhold: super::window::Withhold<'_>,
+) -> Result<()> {
     eligible(vault, txn, id)?;
     if vault.get_entity_type_in_txn(txn, &id)? != Some(crate::registry::ENTITY_TYPE_NOTE)
         || crate::settings::device_only_withholds(
             &vault.store,
             txn,
-            &crate::settings::device_local_worlds_at(
-                vault,
-                txn,
-                crate::claim::CallerLocality::OffDevice,
-            )?,
+            &withhold.worlds_in(vault, txn)?,
             &id,
         )?
     {
