@@ -200,8 +200,9 @@ pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
 pub(crate) use rooms::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
-    merge_replicated_responses_in_txn, merge_replicated_side_row_in_txn,
-    merge_replicated_turn_in_txn, replicated_side_carriers_in, replicated_side_rows_in,
+    merge_replicated_responses_in_txn, merge_replicated_shared_row_in_txn,
+    merge_replicated_side_row_in_txn, merge_replicated_turn_in_txn, merged_shared_row,
+    replicated_shared_rows_in, replicated_side_carriers_in, replicated_side_rows_in,
     replicated_turn_in,
 };
 pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
