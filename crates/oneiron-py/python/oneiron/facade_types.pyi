@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 267 facade rows, 1007 declarations.
-Inputs: 223 of 267 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 216 of 267 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Census: 269 facade rows, 1009 declarations.
+Inputs: 225 of 269 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 218 of 269 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
 """
 
@@ -1814,6 +1814,17 @@ class WeaveLinkCorrectionView(TypedDict):
     source_ref: str
     kind: str
     target_ref: str
+    actor_ref: str
+    recorded_at: int
+class WeaveWrongItemRequest(TypedDict):
+    item: str
+    item_ref: str
+    project_ref: NotRequired[str | None]
+class WeaveItemCorrectionView(TypedDict):
+    label_ref: str
+    item: str
+    item_ref: str
+    project_ref: NotRequired[str | None]
     actor_ref: str
     recorded_at: int
 class PackFileInput(TypedDict):

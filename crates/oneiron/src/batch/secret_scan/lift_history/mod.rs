@@ -23,6 +23,7 @@
 //! copy already sent keeps the raw value, and only a HardErase reaches it.
 
 mod attempts;
+mod authored;
 mod carriers;
 mod loro_blocks;
 mod notice;
