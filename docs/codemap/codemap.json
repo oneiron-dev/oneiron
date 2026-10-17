@@ -2217,6 +2217,7 @@
      "path": "src/authority/guest_revoke.rs",
      "purpose": "OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one ask guest's…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
