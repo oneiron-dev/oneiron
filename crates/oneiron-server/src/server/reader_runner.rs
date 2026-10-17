@@ -32,9 +32,9 @@ use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
     ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
-    RunDeadline,
-    SUMMARY_READ_BYTES_PER_TOKEN, SpawnHostSeat, SummarizeRecipe, SummaryRead, reader_task_brief,
-    summarize_input, summarize_prompt, summary_exceeds_window, summary_token_budget,
+    RunDeadline, SUMMARY_READ_BYTES_PER_TOKEN, SpawnHostSeat, SummarizeRecipe, SummaryRead,
+    reader_task_brief, summarize_input, summarize_prompt, summary_exceeds_window,
+    summary_token_budget,
 };
 use oneiron::engine_executor::{
     EngineExecutorError, EngineExecutorStatus, EngineNativeExecutor, JsCodeModeRuntime,
