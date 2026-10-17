@@ -3,7 +3,8 @@
 //! before anything is paid for, then embeds it here into its declared space through the
 //! `ai.embed` rung that space's id names. On the one-space preset (the text kind slot bound
 //! to a declared space) a door's text query is embedded the same way, through that space's
-//! text tower, so text searches the space instead of the vault's own index.
+//! text tower, so text searches the space instead of the vault's own index. `POST
+//! /api/search/semantic` embeds its `text` the same way.
 
 use super::super::core_engine_error;
 use crate::error::{ApiError, ApiErrorDetails};
@@ -111,11 +112,12 @@ impl ContextPackMediaQuery {
 }
 
 /// The request field a refusal names: the caller's `media`, or the text
-/// query the one-space preset embeds.
+/// query the one-space preset embeds (`text` on semantic search).
 #[derive(Clone, Copy)]
 enum SeedSource {
     Media,
     TextSlot,
+    SemanticText,
 }
 
 impl SeedSource {
@@ -123,6 +125,7 @@ impl SeedSource {
         match self {
             Self::Media => "media.space",
             Self::TextSlot => "query",
+            Self::SemanticText => "text",
         }
     }
 
@@ -130,6 +133,7 @@ impl SeedSource {
         match self {
             Self::Media => "media.mime",
             Self::TextSlot => "query",
+            Self::SemanticText => "text",
         }
     }
 }
@@ -188,6 +192,25 @@ pub(crate) async fn embed_media_seeds(
     Ok(seeds)
 }
 
+/// Semantic search's `text` on the one-space preset: the query through the
+/// text tower of declared space `space`, which the text kind slot binds.
+pub(crate) async fn embed_semantic_text(
+    server: &SyncServer,
+    space: String,
+    text: &str,
+) -> Result<Vec<f32>, ApiError> {
+    let seed = embed_seed(
+        server,
+        space,
+        InputKind::Text,
+        "text/plain",
+        text.as_bytes().to_vec(),
+        SeedSource::SemanticText,
+    )
+    .await?;
+    Ok(seed.vector)
+}
+
 /// Embeds one query into declared space `space` through the `ai.embed` rung
 /// that space's id names.
 async fn embed_seed(
@@ -240,7 +263,7 @@ fn media_query_refusal(refusal: MediaEmbedRefusal, source: SeedSource) -> ApiErr
                 SeedSource::Media => {
                     "Serve the rung the space's id names under [models.media.embed], or retry without media."
                 }
-                SeedSource::TextSlot => {
+                SeedSource::TextSlot | SeedSource::SemanticText => {
                     "The text slot binds this space (the one-space preset): serve the rung its id names under [models.media.embed], or unbind the text slot."
                 }
             }],

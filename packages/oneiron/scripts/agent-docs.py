@@ -2,10 +2,22 @@
 """Generate/check the Memory Wire agent mirror from the shipped SDK contract."""
 from pathlib import Path
 import argparse
+import os
 import re
 import json
 
 ROOT = Path(__file__).resolve().parents[3]
+
+def mirrored(markdown, source, target):
+    """Rewrites each relative link of `source` so it resolves from `target`."""
+    def relink(match):
+        link = match.group(1)
+        if re.match(r"[a-z][a-z0-9+.-]*:|#|/", link):
+            return match.group(0)
+        path, anchor = (link.split("#", 1) + [""])[:2]
+        moved = os.path.relpath(os.path.normpath(os.path.join(os.path.dirname(source), path)), os.path.dirname(target))
+        return "](" + moved + ("#" + anchor if anchor else "") + ")"
+    return re.sub(r"\]\(([^)\s]+)\)", relink, markdown)
 
 def artifacts():
     readme = (ROOT / "packages/oneiron/README.md").read_text()
@@ -26,16 +38,21 @@ def artifacts():
         "OWNER_BINDING_REQUIRED": "An owner device must bind this human actor in the authority log. Scope changes do not grant ownership.",
         "VAULT_LOCKED_SINGLE_WRITER": "Connect to the process that owns this vault. Do not remove lock files or open a second writer.",
         "INVENTED_REFERENCE": "Name only records this writer can read, by the ref the engine issued. The write was refused and receipted.",
+        "IDENTITY_UNSETTLED": "The effect named a person through a mention that is not settled yet. Settle it with `self.identity.settle`, then act.",
+        "BUDGET_SPENT": "The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line.",
+        "MODEL_UNAVAILABLE": "The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route.",
+        "WRONG_ROOT": "The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries.",
+        "PENDING_ASK": "A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one.",
     }
     if set(codes) != remedies.keys():
         raise ValueError("Document remediation for each added/removed SDK error code")
     error_doc = "# Memory Wire typed errors\n\nEvery SDK failure carries `code`, `message`, and nonempty `suggestions`.\nUse the returned suggestions; do not parse message prose. No adapter swallows\nor downgrades the engine's refusal. Future remote codes pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {remedies[code]} |\n" for code in codes)
     error_doc += "\nRemote server-specific codes and HTTP schemas are also indexed by\n[the engine API reference](../../oneiron.skills.md).\n"
-    census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in manifest order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`scripts/sdk/agent-verbs.json` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one reviewed change.\n\n"
+    census = "# Memory Wire facade census\n\nThis is the complete **shipped SDK facade**, in manifest order. It is\nnot a claim that every engine-internal method is a public SDK verb.\n`scripts/sdk/agent-verbs.json` owns this list.\nNames are stable: a new export or rename must update the engine catalog,\nboth bindings and their export-census tests in one change.\n\n"
     census += "\n".join(f"- `{verb}`" for verb in verbs) + "\n"
     return {
-        "docs/agent-sdk/quickstart.md": readme,
+        "docs/agent-sdk/quickstart.md": mirrored(readme, "packages/oneiron/README.md", "docs/agent-sdk/quickstart.md"),
         "docs/agent-sdk/types.md": "# Memory Wire type contract\n\n## JavaScript / TypeScript\n\n```ts\n" + ts + "```\n\n## Python\n\n```python\n" + py + "```\n",
         "docs/agent-sdk/errors.md": error_doc,
         "docs/agent-sdk/verbs.md": census,

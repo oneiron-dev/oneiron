@@ -17,6 +17,7 @@ mod reader_runner;
 mod recall;
 mod recall_rerank;
 mod resident_pump;
+mod run_host_door;
 mod space_move;
 mod tagging;
 mod windows;
@@ -33,6 +34,7 @@ pub(crate) use self::reader_runner::{
     READER_CHILD_READ_ONLY, ReaderRunner, ReaderSeats, run_launch_scope,
 };
 pub(crate) use self::recall::blocking;
+pub(crate) use self::run_host_door::answer_as_agent;
 pub(crate) use self::windows::withheld_from_peers;
 
 #[cfg(test)]
