@@ -138,7 +138,10 @@ impl Memory<'_> {
                 approval: ClaimApprovalStatus::Auto,
                 effected: true,
                 route: Some(route),
-            });
+                task_record: None,
+                proposal_record: None,
+            }
+            .with_record_refs());
         }
 
         // Authority ceilings still park proposals. Accounting never changes
@@ -165,7 +168,10 @@ impl Memory<'_> {
             approval: ClaimApprovalStatus::Proposed,
             effected: false,
             route: None,
-        })
+            task_record: None,
+            proposal_record: None,
+        }
+        .with_record_refs())
     }
 
     /// A caller-chosen owner_ref does not certify who authored the
@@ -253,10 +259,7 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<EntityId>> {
         let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
         let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        let origin = self
-            .task_host()
-            .map(|binding| task_create_origin_in_txn(self, &rtxn, binding))
-            .transpose()?;
+        let origin = task_create_origin_in_txn(self, &rtxn, self.task_host())?;
         let actor = self.actor();
         let position = self.birth_position();
         let facet = match position.facet {
@@ -376,6 +379,7 @@ impl Memory<'_> {
             refusal: None,
             brief,
             subproject_ref: None,
+            team: None,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).
@@ -480,7 +484,7 @@ impl Memory<'_> {
     ///
     /// A creator a host bound to this surface ([`Memory::with_task_host`])
     /// is re-proved here, in the create's transaction; with none bound the
-    /// create is a root.
+    /// create is a root, carrying the conversation the host stamped, if any.
     pub(super) fn route_created_task_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -488,16 +492,14 @@ impl Memory<'_> {
         validated: &ValidatedTaskCreate,
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
-        let origin = self
-            .task_host()
-            .map(|binding| task_create_origin_in_txn(self, &*wtxn, binding))
-            .transpose()?;
+        let origin = task_create_origin_in_txn(self, &*wtxn, self.task_host())?;
         self.route_created_task_with_origin_in_txn(wtxn, task_ref, validated, origin.as_ref(), now)
     }
 
     /// [`Self::route_created_task_in_txn`] under an origin already resolved:
     /// a live binding's, a host-bound post's, or the one an approved
-    /// proposal or wave plan witnessed. `None` is a root.
+    /// proposal or wave plan witnessed. `None` is an unstamped root; a root
+    /// witness carries only the conversation that started the work.
     pub(super) fn route_created_task_with_origin_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -528,12 +530,14 @@ impl Memory<'_> {
                 let budget = super::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
                     .and_then(|body| body.brief)
                     .and_then(|stored| stored.brief.constraints.pins.budget);
+                // OF-221: a root carries the conversation its witness kept;
+                // a child takes its parent's stored origin in dispatch.
                 let outcome = AgentDispatcher::new(self.vault()).dispatch_for_task_in_txn(
                     wtxn,
                     task_ref,
                     DispatchAgent {
                         target: AgentDispatchTarget::Custom(agent_def_ref),
-                        parent_attempt: origin.map(TaskCreateOrigin::parent_attempt),
+                        parent_attempt: origin.and_then(TaskCreateOrigin::parent_attempt),
                         dedupe_key: Some(task_route_dedupe_key(task_ref)),
                         run_id: origin.and_then(TaskCreateOrigin::run_id),
                         now,
@@ -542,6 +546,7 @@ impl Memory<'_> {
                         project_ref: origin.and_then(TaskCreateOrigin::project_ref),
                         type_ref: Some(validated.type_ref.clone()),
                         budget,
+                        origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
                         ..AgentSpawnContext::default()
                     },
                 )?;
@@ -565,11 +570,13 @@ impl Memory<'_> {
             // The synced TASK is the transport. A local attempt could never
             // reach an executor on another machine, so none is minted.
             Some(TaskAssignee::Peer { actor_ref }) => {
+                self.freeze_team_in_txn(wtxn, task_ref, origin, now)?;
                 Ok(TaskRouteOutcome::PeerSyncedOnly { actor_ref })
             }
             // A child is already running. The addressed TASK is its inbox input,
             // not permission to spawn a second executor for the same child.
             Some(TaskAssignee::Child { actor_ref }) => {
+                self.freeze_team_in_txn(wtxn, task_ref, origin, now)?;
                 Ok(TaskRouteOutcome::ChildAddressed { actor_ref })
             }
             // A person is not a worker. The TASK row and its follow-up cursor
@@ -592,6 +599,26 @@ impl Memory<'_> {
                 })
             }
         }
+    }
+
+    /// OF-540: a TASK an external taker realizes keeps the team run its
+    /// creator worked in, frozen on the synced TASK in its create's own
+    /// transaction, so it reaches the taker's node and outlives a delayed
+    /// approval; the taker's accept freezes it into its try. Never the
+    /// project's current pattern, and no live creator lease is asked for.
+    fn freeze_team_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: EntityId,
+        origin: Option<&TaskCreateOrigin>,
+        now: u64,
+    ) -> MemoryResult<()> {
+        let Some(team) = origin.and_then(TaskCreateOrigin::team) else {
+            return Ok(());
+        };
+        let mut body = super::create_validation::task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+        body.team = Some(team.clone());
+        self.rewrite_task_in_txn(wtxn, task_ref, body, now)
     }
 
     /// Enqueues the one existing `tasks.realize` attempt for the Dreamer lane,

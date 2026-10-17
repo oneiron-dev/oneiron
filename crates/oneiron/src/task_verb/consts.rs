@@ -39,7 +39,7 @@ pub(super) const TASK_BRIEF_PROPOSAL_PREDICATE: &str = "tasks.brief";
 /// [`TaskKind`](super::TaskKind): the TASK stays `Standard`. It exists so no
 /// engine runner's `claim_kind("tasks.realize")` can lease a released
 /// external try.
-pub(super) const TASK_EXTERNAL_ATTEMPT_KIND: &str = "tasks.external";
+pub(crate) const TASK_EXTERNAL_ATTEMPT_KIND: &str = "tasks.external";
 /// The one schema of [`QueueTaskBrief`](super::QueueTaskBrief).
 pub(super) const TASK_BRIEF_SCHEMA: u8 = 1;
 /// Derived TASK id of an Auto post. Parts: actor, intent key. The store-local

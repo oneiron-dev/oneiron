@@ -34,6 +34,7 @@ pub(crate) fn settle_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec
         }
         let ((artifact_id, _), record) = entry?;
         let receipt = settlement_receipt_record(artifact_id, &record)?;
+        let receipt = vault.with_withdrawn_units_in_txn(&rtxn, artifact_id, &record, receipt)?;
         if query.matches(&receipt) {
             out.push(receipt);
         }

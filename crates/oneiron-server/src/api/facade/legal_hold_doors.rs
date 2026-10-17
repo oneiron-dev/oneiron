@@ -36,8 +36,9 @@ fn owner_proof(
 }
 
 /// `act` off the runtime, as the vault owner: every legal-hold door reads or
-/// writes LMDB, and the confirm erases.
-async fn as_owner<T: Send + 'static>(
+/// writes LMDB, and the confirm erases. The embedding-space doors run on it
+/// too.
+pub(super) async fn as_owner<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     verb: &'static str,

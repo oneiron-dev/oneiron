@@ -135,8 +135,8 @@ pub struct RestoreArgs {
 
     /// How the backup's vault key unlocks: `device` (this install's
     /// keystore, from the device wrap the backup carries), `password`,
-    /// `passkey` or `escrow`. Every way but `device` needs `--trust`. Where
-    /// no vault is yet, the restore makes it and wraps its key to this
+    /// `passkey`, `escrow` or `kit`. Every way but `device` needs `--trust`.
+    /// Where no vault is yet, the restore makes it and wraps its key to this
     /// install.
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device, conflicts_with = "activate")]
     pub unlock: UnlockMethod,
@@ -148,6 +148,17 @@ pub struct RestoreArgs {
     /// With `--unlock escrow`: the escrow wrap's label.
     #[arg(long, value_name = "NAME")]
     pub label: Option<String>,
+
+    /// With `--unlock kit`: a world kit piece file, a recovery code as text
+    /// or a piece export. Give two, or one and the kit passphrase, read from
+    /// stdin or `--secret-file`.
+    #[arg(long = "piece", value_name = "FILE")]
+    pub pieces: Vec<PathBuf>,
+
+    /// With `--unlock kit`: the vault id the kit is bound to, 64 hex digits,
+    /// as `oneiron recovery-kit status` prints it.
+    #[arg(long, value_name = "HEX")]
+    pub vault_id: Option<String>,
 
     /// Trust exactly the checkpoint signers in this file, in place of this
     /// install's: `oneiron vault-key signer` prints one on a host that holds
@@ -179,6 +190,8 @@ pub enum UnlockMethod {
     Passkey,
     /// An escrow recipient's seed, from a recovery box or as a secret.
     Escrow,
+    /// The world recovery kit: its root opens the `world-kit` escrow wrap.
+    Kit,
 }
 
 /// Where a secret is read, and the recovery box that keeps escrow seeds. A
@@ -319,6 +332,11 @@ pub enum SecretsCommand {
     /// Revoke a secret: the record goes terminal and every lease over it is
     /// revoked. Reads nothing from stdin.
     Revoke(Box<SecretRevokeArgs>),
+    /// Sign a portable secret's current custody transition with your owner
+    /// anchor, for an install that cannot sign as one of your machines. Reads
+    /// your recovery kit from stdin, one recovery code per line; the kit
+    /// never leaves this process, so the vault must be stopped.
+    AnchorSign(Box<SecretAnchorSignArgs>),
 }
 
 /// A secret's custody class (ARCH-0069 S1).
@@ -384,6 +402,21 @@ pub struct SecretRevokeArgs {
     /// The secret's custody name.
     #[arg(long)]
     pub name: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SecretAnchorSignArgs {
+    /// The secret's custody name.
+    #[arg(long)]
+    pub name: String,
+
+    /// The kit has a passphrase piece: the first line of stdin is the kit
+    /// passphrase, and one recovery code then opens it.
+    #[arg(long)]
+    pub with_passphrase: bool,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -706,6 +739,171 @@ pub struct RunDecisionArgs {
     /// The bundle id `runs show` printed for exactly these proposals.
     #[arg(long)]
     pub bundle: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// Your embedding spaces (OF-370) on a stopped vault. A running server
+/// answers the same at `/v1/owner/embedding-spaces`, and only it checks a
+/// move, since the check runs its own probe towers:
+/// `oneiron api raw POST /v1/owner/embedding-spaces/move/check --data
+/// '{"candidate": "..."}'`.
+#[derive(Subcommand, Clone, Debug)]
+pub enum EmbeddingSpacesCommand {
+    /// Every declared space, the text index, the space each kind slot
+    /// reads, every move with its last check, and the probes per kind.
+    List(Box<ServeOnlyArgs>),
+    /// Declare or widen one space. A new width is a new space.
+    Declare(Box<EmbeddingSpaceDeclareArgs>),
+    /// Bind one kind slot to a declared space, or with no space return it to
+    /// its default.
+    Bind(Box<EmbeddingSpaceBindArgs>),
+    /// Bind every kind slot the space accepts, text included, to it.
+    OneSpace(Box<EmbeddingSpaceArgs>),
+    /// Drop a space no slot binds and no open move names, with its rows.
+    Retire(Box<EmbeddingSpaceArgs>),
+    /// Start moving every slot the incumbent serves to the candidate. The
+    /// next `serve` fills the candidate and checks it on its own.
+    Move(Box<EmbeddingSpaceMoveArgs>),
+    /// Swap a full candidate in on your yes, over a check that did not read
+    /// not worse.
+    MoveApprove(Box<EmbeddingSpaceCandidateArgs>),
+    /// Bind a swapped-in move's incumbent again.
+    MoveUndo(Box<EmbeddingSpaceCandidateArgs>),
+    /// End an open move with no swap.
+    MoveAbandon(Box<EmbeddingSpaceCandidateArgs>),
+    /// The probes a move's check runs: list, store or remove one.
+    #[command(subcommand)]
+    Probes(EmbeddingSpaceProbesCommand),
+}
+
+/// An input kind a slot, a space or a probe names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum EmbeddingKind {
+    Text,
+    Image,
+    Audio,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddingSpaceDeclareArgs {
+    /// The space id: an `ai.embed` rung id, then `@where`.
+    pub id: String,
+
+    /// The space's dimensions.
+    #[arg(long)]
+    pub width: usize,
+
+    /// The inputs its model embeds as documents, comma separated.
+    #[arg(long, value_delimiter = ',', required = true)]
+    pub accepts: Vec<EmbeddingKind>,
+
+    /// The query kinds its model can encode into it, comma separated.
+    #[arg(long, value_delimiter = ',')]
+    pub query_towers: Vec<EmbeddingKind>,
+
+    /// The similarity floor of this space's raw cosines; give it with
+    /// `--strong`. Without both, the vault's own floors judge the space.
+    #[arg(long, requires = "strong")]
+    pub floor: Option<f32>,
+
+    /// The score of a strong match in this space; give it with `--floor`.
+    #[arg(long, requires = "floor")]
+    pub strong: Option<f32>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddingSpaceBindArgs {
+    /// The kind slot.
+    #[arg(value_enum)]
+    pub kind: EmbeddingKind,
+
+    /// The declared space; leave it out to return the slot to its default.
+    pub space: Option<String>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddingSpaceArgs {
+    /// The declared space's id.
+    pub space: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddingSpaceMoveArgs {
+    /// The space to move to.
+    pub candidate: String,
+
+    /// The declared space it replaces; leave it out for the text index.
+    #[arg(long)]
+    pub incumbent: Option<String>,
+
+    /// A tolerance stricter than the measured retest noise.
+    #[arg(long)]
+    pub margin: Option<f32>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddingSpaceCandidateArgs {
+    /// The move's candidate space.
+    pub candidate: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum EmbeddingSpaceProbesCommand {
+    /// Every stored probe with its id.
+    List(Box<ServeOnlyArgs>),
+    /// Store one probe you wrote.
+    Put(Box<EmbeddingSpaceProbePutArgs>),
+    /// Remove one probe by its id.
+    Delete(Box<EmbeddingSpaceProbeDeleteArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddingSpaceProbePutArgs {
+    /// The kind of the documents it finds.
+    #[arg(long, value_enum)]
+    pub kind: EmbeddingKind,
+
+    /// The query.
+    #[arg(long)]
+    pub query: String,
+
+    /// The document the query was written from, 32 hex.
+    #[arg(long, value_name = "HEX")]
+    pub family: String,
+
+    /// Another document that answers it, 32 hex. Repeat for more.
+    #[arg(long = "target", value_name = "HEX")]
+    pub targets: Vec<String>,
+
+    /// Who wrote the query.
+    #[arg(long)]
+    pub author: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddingSpaceProbeDeleteArgs {
+    /// The probe's id, 32 hex, as `probes list` names it.
+    pub id: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,
