@@ -517,7 +517,7 @@ fn write_cursor(
     cursor: &IcsFeedCursor,
 ) -> Result<(), CalendarError> {
     vault.try_with_write_txn_grouped(|wtxn| {
-        CURSOR.put(&vault.store, wtxn, digest, cursor)?;
+        CURSOR.put(vault, wtxn, digest, cursor)?;
         Ok::<_, crate::Error>(())
     })?;
     Ok(())

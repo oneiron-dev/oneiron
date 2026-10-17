@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 222 facade rows, 634 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 182.
+// UniFFI census: 223 facade rows, 635 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 183.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -3230,6 +3230,13 @@ pub enum SharedVaultChange {
         #[serde(rename = "to")]
         to: String,
     },
+    #[serde(rename = "record_erased")]
+    RecordErased {
+        #[serde(rename = "record")]
+        record: String,
+        #[serde(rename = "redaction", default, skip_serializing_if = "Option::is_none")]
+        redaction: Option<String>,
+    },
 }
 
 /// `oneiron::batch::export::archive_types::ExportDiaryRead`.
@@ -3385,6 +3392,20 @@ pub struct SharedMemberInvited {
         skip_serializing_if = "Option::is_none"
     )]
     pub credential: Option<InvitationSlip>,
+}
+
+/// `oneiron::task_verb::sdk_shared_members::InvitationSlipRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InvitationSlipRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "invitation")]
+    pub invitation: String,
+    #[serde(rename = "holder_key")]
+    pub holder_key: String,
 }
 
 /// `oneiron::task_verb::sdk_shared::SharedMemberRoleRequest`.
