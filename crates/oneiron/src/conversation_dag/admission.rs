@@ -163,14 +163,7 @@ pub(crate) fn guard_record_put(
     let stored_pin = BODY_PINS.get(store, txn, id)?;
     let inferred_pin = if stored_pin.is_none() {
         if let Some(row) = prior.as_ref() {
-            let owners = super::graph::edge_ids(store, txn, id, EdgeKind::ChildOf, false, 2)?;
-            let mut owned = false;
-            for owner in owners {
-                owned |= crate::batch::stored_entity_type(store, txn, &owner)?
-                    == Some(ENTITY_TYPE_CONVERSATION)
-                    && MIGRATED.get(store, txn, &owner)?.is_some();
-            }
-            (owned || record_kind(&row.body)?.is_some())
+            adopted_turn_in(store, txn, id, &row.body)?
                 .then(|| body_pin(row.entity_type, row.occurred, row.learned_at, &row.body))
         } else {
             None
@@ -189,6 +182,46 @@ pub(crate) fn guard_record_put(
         return Err(invalid("DAG records are append-only"));
     }
     Ok(())
+}
+
+/// Whether a stored TURN with no body pin yet is a DAG record all the same:
+/// its body carries a typed `dag_kind`, or it belongs to an adopted
+/// conversation.
+fn adopted_turn_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<bool> {
+    let owners = super::graph::edge_ids(store, txn, id, EdgeKind::ChildOf, false, 2)?;
+    let mut owned = false;
+    for owner in owners {
+        owned |= crate::batch::stored_entity_type(store, txn, &owner)?
+            == Some(ENTITY_TYPE_CONVERSATION)
+            && MIGRATED.get(store, txn, &owner)?.is_some();
+    }
+    Ok(owned || record_kind(body)?.is_some())
+}
+
+/// Whether the record at `id` is an append-only DAG record, which no local
+/// put may change: it holds a body pin (a withdrawn one included), or it is
+/// a stored TURN [`guard_record_put`] would pin. A witness adding MESSAGE
+/// children to such a TURN leaves the TURN row as it is (OF-460).
+pub(crate) fn record_is_append_only_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if BODY_PINS.get(store, txn, id)?.is_some() {
+        return Ok(true);
+    }
+    if crate::batch::stored_entity_type(store, txn, id)? != Some(ENTITY_TYPE_TURN) {
+        return Ok(false);
+    }
+    match store.port_entity_record(txn, id)? {
+        Some(row) => adopted_turn_in(store, txn, id, &row.body),
+        None => Ok(false),
+    }
 }
 
 /// The pin of the TURN stored at `id` now, or `None` when `id` holds no TURN.
