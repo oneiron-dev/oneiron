@@ -34,7 +34,7 @@ side_tables! {
     /// visible claim. Key: id16.
     DISCLOSURE_TIER_A: VaultMeta b"disclosure.tier_a.v1:" Raw;
     /// Passive outbound dispatch audit observation for one attempt/try. Key: id16 + u32be.
-    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Admitted;
+    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Authored;
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
     INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson Admitted;

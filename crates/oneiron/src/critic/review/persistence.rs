@@ -103,7 +103,7 @@ pub(super) fn persist_review(
             artifacts,
         };
         let hash = review_identity_hash(request)?;
-        RESULT.put(&vault.store, txn, &hash, &stored)?;
+        RESULT.put(vault, txn, &hash, &stored)?;
         RESULT_ID.put(&vault.store, txn, &id, &RESULT.key_bytes(&hash))?;
         Ok(result)
     })
@@ -321,7 +321,7 @@ pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDiss
         stored
             .dissent
             .insert(state.artifact_id.clone(), state.clone());
-        RESULT.put(&vault.store, txn, &hash, &stored)
+        RESULT.put(vault, txn, &hash, &stored)
     })
 }
 

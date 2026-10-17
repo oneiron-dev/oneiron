@@ -92,13 +92,13 @@ side_tables! {
     /// only relays a caller-encoded `&[u8]` (`crate::receipt::send_receipt_txn`
     /// already ran `rmp_serde::to_vec_named` before calling in); binding it
     /// `Named` here would re-encode already-encoded bytes on every write.
-    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Admitted;
+    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Authored;
     /// Connector-send attempt audit row. Key: id16 + bytes32.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
     /// [`SEND_RECEIPT_SUMMARY`]: `store::send_receipt_audit` relays the same
     /// caller-encoded bytes verbatim.
-    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Admitted;
+    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored;
     /// Open SESSION per actor and machine. Key: actor id16 + machine id16.
     SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open:" Raw;
     /// Per-session lifecycle clock record (started_at, last_activity, ended_at, end_reason), keyed by
