@@ -396,6 +396,12 @@ impl Memory<'_> {
                     pin.validate()?;
                     pins.push(frontier(&pin.frontier)?);
                 }
+                // A seal pins its frontier too (ARCH-0032 #pins).
+                if let Some(seal) =
+                    super::lifecycle::note_seal_in_txn(&self.vault().store, txn, note)?
+                {
+                    pins.push(frontier(&seal.frontier)?);
+                }
                 let at_or_before = |a: &loro::Frontiers, b: &loro::Frontiers| {
                     matches!(
                         doc.doc.cmp_frontiers(a, b),

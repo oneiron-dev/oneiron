@@ -264,6 +264,7 @@ pub enum AgentVerb {
     VaultNotesFromEntity,
     VaultNotesEdit,
     VaultNotesSeal,
+    VaultNotesLifecycle,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -530,6 +531,7 @@ impl AgentVerb {
         Self::VaultNotesFromEntity,
         Self::VaultNotesEdit,
         Self::VaultNotesSeal,
+        Self::VaultNotesLifecycle,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -803,6 +805,7 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesEdit => "vault.notes.edit",
             Self::VaultNotesSeal => "vault.notes.seal",
+            Self::VaultNotesLifecycle => "vault.notes.lifecycle",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -1032,6 +1035,7 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
+                | Self::VaultNotesLifecycle
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -1305,6 +1309,7 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
+                | Self::VaultNotesLifecycle
         )
     }
     pub const fn is_section(self) -> bool {
@@ -1631,6 +1636,7 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
+                | Self::VaultNotesLifecycle
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -2073,6 +2079,7 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
+            Self::VaultNotesLifecycle => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -2340,6 +2347,7 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
+            Self::VaultNotesLifecycle => &["spec"],
         }
     }
     /// The row's one-line description, as the verb table states it.
@@ -3013,6 +3021,9 @@ impl AgentVerb {
             }
             Self::VaultNotesSeal => {
                 "Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays."
+            }
+            Self::VaultNotesLifecycle => {
+                "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one."
             }
         }
     }

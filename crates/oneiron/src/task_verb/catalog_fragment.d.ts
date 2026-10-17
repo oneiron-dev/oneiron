@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 281 code-mode rows (263 host rows, 18 run rows), 868 declarations.
-// Replies: 228 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 282 code-mode rows (264 host rows, 18 run rows), 870 declarations.
+// Replies: 229 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 55; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -822,8 +822,10 @@ declare namespace Sdk {
   type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
   type EditNoteRequest = { note_ref: string; edit: NoteEdit };
   type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
-  type NoteSealRequest = { note_ref: string };
+  type NoteRefRequest = { note_ref: string };
   type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: string; sealed_at: number };
+  type NoteLifecycleStatus = "active" | "sealed" | "archived" | "tombstoned";
+  type NoteLifecycleView = { status: NoteLifecycleStatus; seal?: NoteSeal | null };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type MemorySearchOutput = { results: MemorySearchHit[] };
@@ -1328,8 +1330,10 @@ declare const vault: {
     edit(input: Sdk.EditNoteRequest): Promise<Sdk.Reply<Sdk.NoteEditOutcome>>;
     /** Creates a NOTE of a registered kind from an existing entity. */
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.Reply<Sdk.EntityRefReceipt>>;
+    /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
+    lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.Reply<Sdk.NoteLifecycleView>>;
     /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
-    seal(input: Sdk.NoteSealRequest): Promise<Sdk.Reply<Sdk.NoteSeal>>;
+    seal(input: Sdk.NoteRefRequest): Promise<Sdk.Reply<Sdk.NoteSeal>>;
   };
   packs: {
     /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */

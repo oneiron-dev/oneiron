@@ -282,6 +282,7 @@ declare const vault: {
     create(input: { kind: string; markdown: string }): Promise<unknown>;
     edit(input: { edit: object; note_ref: string }): Promise<unknown>;
     from_entity(input: { kind: string; source_ref: string }): Promise<unknown>;
+    lifecycle(input: { note_ref: string }): Promise<unknown>;
     seal(input: { note_ref: string }): Promise<unknown>;
   };
   packs: {

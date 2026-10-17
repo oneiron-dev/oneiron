@@ -90,7 +90,7 @@ pub use kinds::{
     ContextDefault, DISSENT_NOTE_KIND, ExtractionDefault, NoteKindDescriptor, RetentionDefault,
 };
 pub(crate) use lifecycle::{note_sealed_in_txn, seal_note_in_txn};
-pub use lifecycle::{NoteLifecycleStatus, NoteSeal, NoteSealRequest};
+pub use lifecycle::{NoteLifecycleStatus, NoteLifecycleView, NoteRefRequest, NoteSeal};
 pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
 pub(crate) use write_gate::check_doc_plane_note_commit_in_txn;
 const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];

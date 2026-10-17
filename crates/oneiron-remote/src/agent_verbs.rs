@@ -733,6 +733,9 @@ impl OneironClient {
                 "vault.notes.seal" => {
                     remote_agent_verb_output::<oneiron::note::NoteSeal>(client, verb, &input)
                 }
+                "vault.notes.lifecycle" => remote_agent_verb_output::<
+                    oneiron::note::NoteLifecycleView,
+                >(client, verb, &input),
                 _ => Err(crate::error::bad_request(
                     "unknown SDK agent verb",
                     &["Use a verb from the SDK catalog."],
@@ -3578,7 +3581,7 @@ impl OneironClient {
     /// Seals one NOTE: its document freezes, and a later edit opens a fork.
     pub fn vault_notes_seal(
         &self,
-        input: &oneiron::note::NoteSealRequest,
+        input: &oneiron::note::NoteRefRequest,
     ) -> Result<oneiron::note::NoteSeal, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
@@ -3587,5 +3590,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.seal", value)
+    }
+    /// Where one NOTE stands (active, sealed, archived or tombstoned) and its seal.
+    pub fn vault_notes_lifecycle(
+        &self,
+        input: &oneiron::note::NoteRefRequest,
+    ) -> Result<oneiron::note::NoteLifecycleView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.lifecycle", value)
     }
 }

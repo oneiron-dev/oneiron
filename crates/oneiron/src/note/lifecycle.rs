@@ -46,11 +46,18 @@ pub enum NoteLifecycleStatus {
     Tombstoned,
 }
 
-/// `vault.notes.seal`: the NOTE to seal.
+/// `vault.notes.seal` and `vault.notes.lifecycle`: the NOTE named.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct NoteSealRequest {
+pub struct NoteRefRequest {
     pub note_ref: String,
+}
+
+/// `vault.notes.lifecycle`: where one NOTE stands, and its seal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoteLifecycleView {
+    pub status: NoteLifecycleStatus,
+    pub seal: Option<NoteSeal>,
 }
 
 /// `note`'s seal inside the caller's read, if it is sealed.
@@ -176,9 +183,18 @@ impl Vault {
 
 impl Memory<'_> {
     /// `vault.notes.seal`: seals one NOTE as this actor.
-    pub fn seal_note(&self, input: &NoteSealRequest) -> MemoryResult<NoteSeal> {
+    pub fn seal_note(&self, input: &NoteRefRequest) -> MemoryResult<NoteSeal> {
         let note = crate::memory::resolve_entity_ref(self.vault(), &input.note_ref)?;
         self.vault()
             .seal_note(note, WriteActor::new(self.actor(), self.actor_class()))
+    }
+
+    /// `vault.notes.lifecycle`: where one NOTE stands, and its seal.
+    pub fn note_lifecycle(&self, input: &NoteRefRequest) -> MemoryResult<NoteLifecycleView> {
+        let note = crate::memory::resolve_entity_ref(self.vault(), &input.note_ref)?;
+        Ok(NoteLifecycleView {
+            status: self.vault().note_lifecycle(note)?,
+            seal: self.vault().note_seal(note)?,
+        })
     }
 }

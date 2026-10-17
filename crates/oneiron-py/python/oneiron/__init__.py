@@ -1222,6 +1222,9 @@ class Oneiron:
         def seal(self, request: dict[str, Any]) -> dict[str, Any]:
             """Seals one NOTE: its document freezes, and a later edit opens a fork."""
             return json.loads(_translate(lambda: self._client.vault_notes_seal(json.dumps(request, allow_nan=False))))
+        def lifecycle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."""
+            return json.loads(_translate(lambda: self._client.vault_notes_lifecycle(json.dumps(request, allow_nan=False))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

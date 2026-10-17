@@ -818,7 +818,8 @@ class Oneiron:
             """Creates a NOTE of a registered kind from an existing entity."""
         def edit(self, input: Facade.EditNoteRequest) -> Facade.NoteEditOutcome:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
-        def seal(self, request: Facade.NoteSealRequest) -> Facade.NoteSeal: ...
+        def seal(self, request: Facade.NoteRefRequest) -> Facade.NoteSeal: ...
+        def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""

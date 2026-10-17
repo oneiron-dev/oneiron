@@ -4995,6 +4995,34 @@ async fn vault_notes_seal(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_lifecycle(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.notes.lifecycle",
+        oneiron::memory::RoomTurnHandle::serves("vault.notes.lifecycle"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.lifecycle",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -5277,6 +5305,7 @@ pub(crate) async fn call_verb(
         "vault.notes.from_entity" => vault_notes_from_entity(server, call, input).await,
         "vault.notes.edit" => vault_notes_edit(server, call, input).await,
         "vault.notes.seal" => vault_notes_seal(server, call, input).await,
+        "vault.notes.lifecycle" => vault_notes_lifecycle(server, call, input).await,
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
             Err(context_required(verb, VerbContext::Board))
         }
