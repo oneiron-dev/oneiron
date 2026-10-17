@@ -2,26 +2,30 @@
 //!
 //! The vault's root owner, authenticated, settles any open conflict. Anyone
 //! else needs a named owner-delegated `memory.conflict_review` Grant on the
-//! conflict's subject, the verb the resident dispute door reviews under; a
-//! person also authenticates. A decision ladder's answer is never that
-//! authority: the Dreamer settles only what its own delegation covers. The
+//! conflict's subject or on the whole vault, the verb the resident dispute
+//! door reviews under; a person also authenticates. A decision ladder's
+//! answer is never that authority: the Dreamer settles only what its own
+//! delegation covers, and only the owner's explicit act mints one. The
 //! marker reads and settlement mechanics live beside the markers, in
 //! `crate::dreamer_consolidation::settle`.
 
 use super::authorship::*;
 use super::{Memory, MemoryResult};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::dreamer_consolidation::{
-    ConflictSettleReceipt, ConflictSettlement, OpenConflict, apply_settlement_in_txn,
-    open_conflict_in_txn, open_conflicts_in_txn,
+    ConflictReviewScope, ConflictSettleReceipt, ConflictSettlement, OpenConflict,
+    apply_settlement_in_txn, open_conflict_in_txn, open_conflicts_in_txn,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
-use crate::{EntityId, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::{EntityId, Vault, WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
 
 const VERB: &str = "memory.conflict_review";
+/// A whole-vault review Grant's one selector, before the vault's root id:
+/// no subject's id spells it.
+const VAULT_SELECTOR: &str = "vault:";
 const KIND: &str = "conflict_settlement";
 const REASON: &str = "gate.memory.conflict_settlement";
 
@@ -178,19 +182,100 @@ impl Memory<'_> {
     }
 
     /// The owner-delegated Grant that lets this caller review conflicts on
-    /// `subject`, if one is live.
+    /// `subject`, its own or the whole vault's, if one is live.
     fn conflict_review_grant(
         &self,
         txn: &heed::RoTxn<'_>,
         subject: EntityId,
     ) -> Result<Option<String>, Error> {
-        let required = action_bound(
-            self.vault,
-            txn,
-            WriteActor::new(self.actor, self.actor_class),
-            VERB,
-            subject,
-        )?;
-        delegated_grant(self.vault, txn, &required)
+        let actor = WriteActor::new(self.actor, self.actor_class);
+        for scope in [
+            ConflictReviewScope::Subject(subject),
+            ConflictReviewScope::Vault,
+        ] {
+            let required = review_bound(self.vault, txn, actor, scope)?;
+            if let Some(grant) = delegated_grant(self.vault, txn, &required)? {
+                return Ok(Some(grant));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Lets `delegate` settle the open conflicts `scope` covers: a standing
+    /// Grant only the authenticated root owner mints, returned by its ref.
+    /// Nothing mints one by default, so the Dreamer settles nothing until
+    /// the owner acts (DEC-0006: a grant is never inferred).
+    pub fn grant_conflict_review(
+        &self,
+        owner: &AuthenticatedOwner,
+        delegate: WriteActor,
+        scope: ConflictReviewScope,
+    ) -> MemoryResult<String> {
+        self.with_verified_actor_write_txn(|txn| {
+            self.conflict_review_owner(txn, owner)?;
+            verify_live_actor(self.vault, txn, delegate)?;
+            let bound = review_bound(self.vault, txn, delegate, scope)?;
+            let grant_ref = bound.digest().to_hex();
+            self.vault.create_standing_grant_in_txn(txn, owner, bound)?;
+            Ok(grant_ref)
+        })
+    }
+
+    /// Ends the Grant [`Self::grant_conflict_review`] minted for `delegate`
+    /// on exactly `scope`; false when none was live. Ending the whole
+    /// vault's leaves each subject's own Grant standing.
+    pub fn revoke_conflict_review(
+        &self,
+        owner: &AuthenticatedOwner,
+        delegate: WriteActor,
+        scope: ConflictReviewScope,
+    ) -> MemoryResult<bool> {
+        self.with_verified_actor_write_txn(|txn| {
+            self.conflict_review_owner(txn, owner)?;
+            let grant_ref = review_bound(self.vault, txn, delegate, scope)?
+                .digest()
+                .to_hex();
+            Ok(self
+                .vault
+                .revoke_consent_grant_in_txn(txn, owner, &grant_ref)?
+                .is_some())
+        })
+    }
+
+    /// The owner proof must name this bound person, who owns the vault now.
+    fn conflict_review_owner(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+    ) -> Result<(), Error> {
+        if self.actor != verify_owner(self.vault, txn, owner)?
+            || self.actor_class != EdgeActorClass::Human
+        {
+            return Err(authority_denied("owner proof must name the bound caller"));
+        }
+        Ok(())
+    }
+}
+
+/// The bound a `memory.conflict_review` Grant on `scope` carries, for
+/// `actor`: a subject's names that subject, the whole vault's names
+/// [`VAULT_SELECTOR`] and its root. Both target the vault root.
+fn review_bound(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    scope: ConflictReviewScope,
+) -> Result<GrantBound, Error> {
+    match scope {
+        ConflictReviewScope::Subject(subject) => action_bound(vault, txn, actor, VERB, subject),
+        ConflictReviewScope::Vault => {
+            let root = root_id(vault, txn)?;
+            GrantBound::action(
+                ActorBound::new(actor.entity_ref().to_hex())?
+                    .with_actor_class(actor.actor_class().gate_actor_class())?,
+                ActionClass::new(VERB)?,
+                ActionEnvelope::new([format!("{VAULT_SELECTOR}{root}")])?.with_target(root)?,
+            )
+        }
     }
 }

@@ -202,8 +202,15 @@ carries `max_tokens`, 4096 when nothing else names it.
 An `openai-compat` provider at `https://api.openai.com` or `https://api.x.ai`
 runs each call as one Responses turn on a held WebSocket at its
 `/v1/responses`. A call whose conversation extends the last response that
-socket finished sends only the new items, with `previous_response_id` and
-`store = false`; any other call sends the whole conversation. A socket is
+socket finished sends only the new items, with `previous_response_id`; any
+other call sends the whole conversation. Each turn goes with `store = false`,
+so the provider keeps nothing and a replaced or reconnected socket starts the
+conversation again in full. The owner can turn storing on with
+`POST /v1/owner/settings/models` and `{"responses_store": true}` (`GET` reads
+it): each turn then goes with `store = true`, the provider keeps the response,
+and a new socket resumes a conversation from its last stored response, sending
+only the new items. The server remembers the last stored response of the 32
+most recent conversations per provider, until restart. A socket is
 replaced 5 minutes before its age limit (60 minutes at OpenAI, 59 at xAI).
 Idle sockets wait 10 minutes for a next turn, at most 8 per provider. A
 call whose socket will not open, or that carries audio, goes out over
@@ -559,10 +566,12 @@ the secret as the call's credential, in place of the connector's own. Its
 `connector:<connector>`, the connector the name routes to, and the call itself
 still runs under the run's own standing grant and gate. The tool's reply comes
 back as `result`, marked foreign, with the value replaced. A call the gate
-holds answers with its `call_ref`, and the run does not wait on it. The
+holds parks the run on its `call_ref`, as a held `connector.call` does. The
 settler sends it once the hold clears, with the same secret, and the door
-checks the binding again at that send. An embedded vault refuses
-`connector.call`.
+checks the binding again at that send. The run then resumes with the call's
+settled reply, the `connector.call` reply cleared of the value, bound as
+`wait<n>`. An embedded vault refuses `connector.call`.
+
 When the host's model ladder served the turn, each verb call the turn's
 program makes carries the provider that answered it, and a reveal's ask names
 that provider. An agent no host model drives, such as an external HTTP or MCP
