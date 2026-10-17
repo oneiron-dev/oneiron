@@ -168,6 +168,8 @@ declare const vault: {
   code: {
     blame(input: { path: string; repo: string; revision_ref?: string | null }): Promise<unknown>;
     diff(input: { after: { path: string; repo: string; revision_ref?: string | null }; before: { path: string; repo: string; revision_ref?: string | null } }): Promise<unknown>;
+    proposal_view(input: { proposal_ref: string }): Promise<unknown>;
+    repo_diff(input: { after: { repo?: string | null; revision_ref?: string | null; snapshot_ref?: string | null }; before: { repo?: string | null; revision_ref?: string | null; snapshot_ref?: string | null } }): Promise<unknown>;
   };
   commit(input: { claims: object[] }): Promise<unknown>;
   companions: {

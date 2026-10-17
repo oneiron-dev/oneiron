@@ -22,6 +22,7 @@ use oneiron::dreamer_consolidation::{
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
     DreamerClaimAuthoringStrategy, DreamerRunnerStore, Vault, WakeAttemptContext, WriteActor,
@@ -500,6 +501,7 @@ impl PassExecutorFactory for ObservedFactory {
             status: &self.status,
             resident,
             task,
+            decisions: &self.decisions,
         })
     }
 
@@ -510,6 +512,7 @@ impl PassExecutorFactory for ObservedFactory {
     ) -> oneiron::Result<Vec<Self::Exec<'p>>> {
         self.prepare(guard)?;
         let status = self.status.as_ref();
+        let decisions = &self.decisions;
         let resident = match (
             &self.weaver,
             &self.line,
@@ -547,6 +550,7 @@ impl PassExecutorFactory for ObservedFactory {
                         status,
                         resident,
                         task,
+                        decisions,
                     })
                     .collect()
             })
@@ -609,6 +613,8 @@ struct ObservedExecutor<'p, E> {
     /// What a Dreamer-lane TASK's realization borrows; none without a route.
     /// A weave lens render borrows the same route.
     task: Option<TaskLend<'p>>,
+    /// The server's decision host, which judges a completed TASK try's Done.
+    decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
 }
 
 /// The host's loan to a Dreamer-lane TASK's realization: the pass's route
@@ -818,5 +824,25 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             }
         });
         outcome
+    }
+
+    /// Asks the Done question on the server's task ladder, as the resident
+    /// pump does. Its rungs block on the server's runtime, so it runs on a
+    /// blocking thread, off this pass's; unstaffed, invalid or panicked, the
+    /// Done asks up.
+    async fn judge_done(&self, question: RunnerDoneQuestion) -> Option<RunnerDoneAnswer> {
+        let decisions = Arc::clone(self.decisions);
+        tokio::task::spawn_blocking(move || match decisions.get()?.task_decisions() {
+            Ok(decisions) => Some(question.decide(&decisions)),
+            Err(error) => {
+                tracing::warn!(%error, "the task surface's questions are invalid; Done asks up");
+                None
+            }
+        })
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the Done judge panicked; Done asks up");
+            None
+        })
     }
 }

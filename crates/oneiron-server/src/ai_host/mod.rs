@@ -467,8 +467,9 @@ impl AiHost {
         recover_dead_leases(&vault);
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
-        let mut runtime =
-            ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts);
+        let mut runtime = ModelRuntime::build_hosted(models, Some(keys), rests)
+            .with_receipts(receipts)
+            .with_media_vault(Arc::clone(&vault));
         if let Some(account) = account {
             runtime = runtime.with_host_account(account);
         }
