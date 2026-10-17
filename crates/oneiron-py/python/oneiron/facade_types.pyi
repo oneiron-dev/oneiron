@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 269 facade rows, 1014 declarations.
-Inputs: 225 of 269 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 218 of 269 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
-Opaque serde_json::Value leaves: 67; unread shapes: 2.
+Census: 278 facade rows, 1065 declarations.
+Inputs: 232 of 278 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 226 of 278 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Opaque serde_json::Value leaves: 73; unread shapes: 2.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -58,6 +58,17 @@ class ScratchpadRecallReply(TypedDict):
     sealed: bool
     matched: int
     lines: list[ScratchpadRecallReplyLine]
+class ScratchpadAppendRequest(TypedDict):
+    session_id: str
+    text: str
+    mark: NotRequired[ScratchpadRecallMark | None]
+    pin: NotRequired[bool]
+class ScratchpadWriteReply(TypedDict):
+    pad: NotRequired[EntityId | None]
+    sealed: bool
+    sealed_prior: NotRequired[EntityId | None]
+class ScratchpadSealRequest(TypedDict):
+    session_id: str
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]
@@ -483,6 +494,15 @@ class ShapePlanSummary(TypedDict):
     needs_word: int
     ceremonies: int
     no_door: int
+ShapeReachVerdict = Literal["can", "asks"]
+ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "verdict": ShapeReachVerdict})
+class ShapeReach(TypedDict):
+    facts: list[ShapeReachFact]
+class ShapePlanReach(TypedDict):
+    before: ShapeReach
+    after: ShapeReach
+    unresolved: list[str]
+    line: str
 class ShapePlan(TypedDict):
     seed_id: NotRequired[str | None]
     seed: ShapeSeed
@@ -490,6 +510,7 @@ class ShapePlan(TypedDict):
     items: list[ShapePlanItem]
     undeclared: list[ShapeRow]
     summary: ShapePlanSummary
+    reach: NotRequired[ShapePlanReach]
 class ShapeApplyRequest(TypedDict):
     plan: ShapePlan
     approve: NotRequired[list[int]]
@@ -576,6 +597,7 @@ class SteerReceipt(TypedDict):
 class DescribeRequest(TypedDict):
     task_ref: NotRequired[str | None]
     self: NotRequired[bool]
+    vault: NotRequired[bool]
     session_id: NotRequired[str | None]
     key: NotRequired[str | None]
     frame_epoch: NotRequired[int | None]
@@ -610,6 +632,12 @@ class TasksOverflow(TypedDict):
 class TasksSection(TypedDict):
     rows: list[TaskRow]
     overflow: NotRequired[TasksOverflow | None]
+class ShapeCard(TypedDict):
+    seed_id: NotRequired[str | None]
+    counts: dict[str, int]
+    open_applies: int
+    reach: ShapeReach
+    line: str
 class TaskDescriptionSection(TasksSection):
     kind: Literal["tasks_section"]
 class TaskDescriptionCard(TypedDict):
@@ -618,7 +646,10 @@ class TaskDescriptionCard(TypedDict):
 class TaskDescriptionSelfCard(TypedDict):
     kind: Literal["self_card"]
     tail: str
-TaskDescription = TaskDescriptionSection | TaskDescriptionCard | TaskDescriptionSelfCard
+class TaskDescriptionVaultCard(TypedDict):
+    kind: Literal["vault_card"]
+    card: ShapeCard
+TaskDescription = TaskDescriptionSection | TaskDescriptionCard | TaskDescriptionSelfCard | TaskDescriptionVaultCard
 class TaskAssigneeAgentDefBody(TypedDict):
     agent_def_ref: EntityId
 class TaskAssigneeAgentDef(TypedDict):
@@ -1344,6 +1375,45 @@ class CallReceipt(TypedDict):
     action_digest: NotRequired[str | None]
     served: list[str]
     served_records: NotRequired[list[RecordRef]]
+class ExplainMemoryRequest(TypedDict):
+    entity: str
+    session_id: NotRequired[str | None]
+RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
+class RetrievalScoreComponent(TypedDict):
+    signal: RetrievalSignal
+    rank: int
+    score: float
+class ExplainScoreEvidence(TypedDict):
+    result_id: str
+    final_rank: int
+    final_score: float
+    access_factor: NotRequired[float | None]
+    components: list[RetrievalScoreComponent]
+class ExplainMemoryReply(TypedDict):
+    id: str
+    run_id: NotRequired[str | None]
+    rank: NotRequired[int | None]
+    neighbor: bool
+    tier: NotRequired[str | None]
+    hook: NotRequired[str | None]
+    score: NotRequired[ExplainScoreEvidence | None]
+class ExplainGateRequest(TypedDict):
+    receipt: str
+class ExplainGateNotice(TypedDict):
+    notice_type: str
+    row_ref: NotRequired[str | None]
+class ExplainGateReply(TypedDict):
+    receipt_id: str
+    decided_at: int
+    outcome: str
+    reason_codes: list[str]
+    receipt_reasons: list[str]
+    notices: list[ExplainGateNotice]
+    actor_class: str
+    actor_ref: NotRequired[str | None]
+    content_kind: str
+    policy_manifest_version: str
+    claim_ref: NotRequired[str | None]
 class KeyValueAddress(TypedDict):
     namespace: list[str]
     key: str
@@ -2064,6 +2134,27 @@ class AuthorityAuditPage(TypedDict):
     next_after: NotRequired[EntityId | None]
     order: AuthorityAuditOrder
     scanned: int
+class MeshPathReceiptsRequest(TypedDict):
+    limit: NotRequired[int | None]
+MeshPathDirection = Literal["inbound", "outbound"]
+MeshPathOutcome = Literal["admitted", "refused", "failed"]
+MeshPathKind = Literal["direct", "relayed", "mixed", "none"]
+class MeshPathReceipt(TypedDict):
+    id: str
+    direction: MeshPathDirection
+    outcome: MeshPathOutcome
+    machine: NotRequired[str | None]
+    endpoint_key: NotRequired[str | None]
+    alpn: str
+    opened_at_ms: int
+    closed_at_ms: NotRequired[int | None]
+    paths: MeshPathKind
+    used_direct: bool
+    used_relay: bool
+    direct_addr: NotRequired[str | None]
+    relay_url: NotRequired[str | None]
+    detail: NotRequired[str | None]
+    attempts: int
 class InspectionResolveRequest(TypedDict):
     handle: str
 LensBackingTargetKind = Literal["entity", "claim"]
@@ -2574,11 +2665,16 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
+class SecretLiftClose(TypedDict):
+    proposal: str
+    reason: LiftCloseReason
 class SecretLiftRequest(TypedDict):
     start: NotRequired[bool]
+    close: NotRequired[SecretLiftClose | None]
 SecretScanMode = Literal["on", "off"]
 LiftTrigger = Literal["switch", "owner"]
-LiftFamily = Literal["records", "side_rows", "carriers"]
+LiftFamily = Literal["records", "attempts", "side_rows", "carriers"]
 class LiftCounts(TypedDict):
     family: LiftFamily
     read: int
@@ -2603,23 +2699,33 @@ class SecretLiftReceipt(TypedDict):
     proposals: int
     failed: int
 LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "history"]
+class LiftCauseCount(TypedDict):
+    cause: LiftCause
+    open: int
 class SecretLiftProposal(TypedDict):
     path: str
     detector_reason: str
     suggested_secret_name: str
     project_id: str
 class SecretLiftHistoryProposal(TypedDict):
+    id: NotRequired[str]
     family: LiftFamily
     cause: LiftCause
     proposal: SecretLiftProposal
     run_id: str
     filed_at: int
+    closed_at: NotRequired[int | None]
+    closed_by: NotRequired[str | None]
+    close_reason: NotRequired[LiftCloseReason | None]
+    close_receipt: NotRequired[str | None]
 class SecretLiftStatus(TypedDict):
     mode: SecretScanMode
     paused: bool
     running: NotRequired[SecretLiftProgress | None]
     last: NotRequired[SecretLiftReceipt | None]
     open_proposals: int
+    open_by_cause: list[LiftCauseCount]
+    closed_proposals: int
     proposals: list[SecretLiftHistoryProposal]
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):
@@ -3106,6 +3212,225 @@ class SlideReviewOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[Any]
     refused: list[SlideUnitRefused]
+class FolderItemInput(TypedDict):
+    artifact_ref: str
+    row: int
+class ArtifactAskUnitsSheetRows(TypedDict):
+    kind: Literal["sheet_rows"]
+    sheet: str
+    rows: str
+    answer_column: int
+    header_row: NotRequired[int | None]
+    max_count: NotRequired[int | None]
+class ArtifactAskUnitsParagraphs(TypedDict):
+    kind: Literal["paragraphs"]
+    blocks: list[str]
+    author: str
+    labels: Any
+class ArtifactAskUnitsFolderItems(TypedDict):
+    kind: Literal["folder_items"]
+    sheet: str
+    answer_column: int
+    items: list[FolderItemInput]
+    max_count: NotRequired[int | None]
+ArtifactAskUnits = ArtifactAskUnitsSheetRows | ArtifactAskUnitsParagraphs | ArtifactAskUnitsFolderItems
+class ArtifactAskSubmit(TypedDict):
+    artifact_ref: str
+    run_ref: str
+    question: Any
+    units: ArtifactAskUnits
+    reversibility: NotRequired[Any | None]
+    evidence_refs: NotRequired[list[str]]
+    unit_budget_ms: NotRequired[int | None]
+    deadline_ms: NotRequired[int | None]
+    made_by: NotRequired[Any | None]
+class ImageBox(TypedDict):
+    top: float
+    bottom: float
+    left: float
+    right: float
+class ImagePoint(TypedDict):
+    x: float
+    y: float
+class DecisionAnswerNoul(TypedDict):
+    kind: Literal["noul"]
+    value: bool
+class DecisionAnswerChoice(TypedDict):
+    kind: Literal["choice"]
+    value: str
+class DecisionAnswerScore(TypedDict):
+    kind: Literal["score"]
+    value: float
+class DecisionAnswerBox(TypedDict):
+    kind: Literal["box"]
+    value: ImageBox | None
+class DecisionAnswerPoint(TypedDict):
+    kind: Literal["point"]
+    value: ImagePoint | None
+class DecisionAnswerAbstain(TypedDict):
+    kind: Literal["abstain"]
+DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
+class ProviderPin(TypedDict):
+    rung: DecisionRung
+    model: str
+    version: str
+class DecisionBand(TypedDict):
+    low: float
+    high: float
+class EvidenceVersion(TypedDict):
+    id: str
+    body_hash: list[int]
+class PairedReading(TypedDict):
+    provider: ProviderPin
+    question: str
+    question_version: int
+    probability: float
+StopCause = Literal["done", "deadline", "provider_failure"]
+ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
+class ReasoningNotNeeded(TypedDict):
+    state: Literal["not_needed"]
+class ReasoningRan(TypedDict):
+    state: Literal["ran"]
+    cause: ReasoningCause
+class ReasoningSkipped(TypedDict):
+    state: Literal["skipped"]
+    cause: ReasoningCause
+class ReasoningCut(TypedDict):
+    state: Literal["cut"]
+    cause: ReasoningCause
+Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
+class DecisionTime(TypedDict):
+    budget_ms: int
+    used_ms: int
+    stop: StopCause
+    answered: NotRequired[DecisionRung | None]
+    reasoning: Reasoning
+class ImagePin(TypedDict):
+    provider: ProviderPin
+    name: str
+    evidence: EvidenceVersion
+    width: int
+    height: int
+    frame: NotRequired[PixelRegion | None]
+    edge: NotRequired[int | None]
+    sent_width: int
+    sent_height: int
+class DecisionReceipt(TypedDict):
+    question: str
+    question_version: int
+    principal: str
+    providers: list[ProviderPin]
+    band: DecisionBand
+    band_version: NotRequired[int]
+    evidence_versions: NotRequired[list[EvidenceVersion]]
+    cost_per_thousand: NotRequired[float | None]
+    paired: NotRequired[list[PairedReading]]
+    person: NotRequired[list[PairedReading]]
+    time: NotRequired[DecisionTime | None]
+    images: NotRequired[list[ImagePin]]
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
+HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
+class TypedDecision(TypedDict):
+    answer: DecisionAnswer
+    probability: NotRequired[float | None]
+    evidence: list[str]
+    in_band: bool
+    receipt: DecisionReceipt
+    human_ask: NotRequired[HumanAskReason | None]
+class UnitAbstention(TypedDict):
+    unit: Any
+    decision: NotRequired[TypedDecision | None]
+class UnitRefusal(TypedDict):
+    unit: Any
+    reason: str
+class ArtifactAskOutcome(TypedDict):
+    proposed: NotRequired[PendingProposalView | None]
+    abstained: list[UnitAbstention]
+    refused: list[UnitRefusal]
+class CriticBinding(TypedDict):
+    lens_id: str
+    lens_ref: str
+    actor_ref: str
+    actor_class: int
+class CriticReviewSubmit(TypedDict):
+    target_ref: str
+    kind: str
+    session_ref: str
+    run_ref: str
+    type_node: str
+    type_tree_version: int
+    axis: str
+    auto_resolve_threshold: float
+    catalog: Any
+    critics: list[CriticBinding]
+CritiqueVerdict = Literal["accept", "revise", "discard"]
+class CritiqueTriageScores(TypedDict):
+    accept: float
+    revise: float
+    discard: float
+CritiqueSeverity = Literal["info", "low", "medium", "high", "blocking"]
+class MergedFinding(TypedDict):
+    key: str
+    verdict: CritiqueVerdict
+    severity: CritiqueSeverity
+    confidence: float
+    artifact_ids: list[str]
+    evidence_refs: list[str]
+    suggested_edit: NotRequired[str | None]
+    auto_resolved: bool
+class CritiqueTriage(TypedDict):
+    verdict: CritiqueVerdict
+    scores: CritiqueTriageScores
+    acted_on_artifact_ids: list[str]
+    hard_veto_artifact_ids: list[str]
+    out_of_scope_artifact_ids: list[str]
+    findings: list[MergedFinding]
+    auto_resolved: bool
+class CritiqueProvenance(TypedDict):
+    critic_ref: str
+    critic_class: int
+    model_id: str
+    model_revision: NotRequired[str | None]
+LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
+class CellTypeRef(TypedDict):
+    node_id: str
+    tree_version: int
+class LearningCell(TypedDict):
+    predicate: LearningPredicate
+    subject: EntityId
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[CellTypeRef | None]
+    axis: NotRequired[str | None]
+    consent_scope: NotRequired[str | None]
+    setting_key: NotRequired[str | None]
+class CriticPrediction(TypedDict):
+    what: str
+    by_when: int
+    how_checked: OutcomeBinding
+class CritiqueArtifact(TypedDict):
+    schema_version: int
+    artifact_id: str
+    run_id: str
+    branch_job: AttemptId
+    candidate_ref: str
+    lens_id: str
+    domain: str
+    provenance: CritiqueProvenance
+    calibration: LearningCell
+    prediction: NotRequired[CriticPrediction | None]
+    verdict: CritiqueVerdict
+    severity: CritiqueSeverity
+    hard_check_passed: NotRequired[bool | None]
+    evidence_refs: list[str]
+    suggested_edit: NotRequired[str | None]
+    out_of_scope: NotRequired[bool]
+    created_at: int
+class CriticReviewOutcome(TypedDict):
+    verdict_claim_ref: str
+    triage: CritiqueTriage
+    artifacts: list[CritiqueArtifact]
+    receipts: list[DecisionReceipt]
 class DeckProposeRequest(TypedDict):
     artifact_ref: str
     transaction: Any
@@ -3216,32 +3541,6 @@ TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskA
 class TaskAnswerRequest(TypedDict):
     handle: TaskAskHandle
     word: TaskAskWord
-class ImageBox(TypedDict):
-    top: float
-    bottom: float
-    left: float
-    right: float
-class ImagePoint(TypedDict):
-    x: float
-    y: float
-class DecisionAnswerNoul(TypedDict):
-    kind: Literal["noul"]
-    value: bool
-class DecisionAnswerChoice(TypedDict):
-    kind: Literal["choice"]
-    value: str
-class DecisionAnswerScore(TypedDict):
-    kind: Literal["score"]
-    value: float
-class DecisionAnswerBox(TypedDict):
-    kind: Literal["box"]
-    value: ImageBox | None
-class DecisionAnswerPoint(TypedDict):
-    kind: Literal["point"]
-    value: ImagePoint | None
-class DecisionAnswerAbstain(TypedDict):
-    kind: Literal["abstain"]
-DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
 class OutcomeLabel(TypedDict):
     answer: str
     fact: str
@@ -4006,67 +4305,6 @@ class AiVerdictRequest(TypedDict):
     locate: NotRequired[bool]
     misses: NotRequired[int]
     until_ms: NotRequired[int | None]
-class ProviderPin(TypedDict):
-    rung: DecisionRung
-    model: str
-    version: str
-class DecisionBand(TypedDict):
-    low: float
-    high: float
-class EvidenceVersion(TypedDict):
-    id: str
-    body_hash: list[int]
-class PairedReading(TypedDict):
-    provider: ProviderPin
-    question: str
-    question_version: int
-    probability: float
-StopCause = Literal["done", "deadline", "provider_failure"]
-ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
-class ReasoningNotNeeded(TypedDict):
-    state: Literal["not_needed"]
-class ReasoningRan(TypedDict):
-    state: Literal["ran"]
-    cause: ReasoningCause
-class ReasoningSkipped(TypedDict):
-    state: Literal["skipped"]
-    cause: ReasoningCause
-class ReasoningCut(TypedDict):
-    state: Literal["cut"]
-    cause: ReasoningCause
-Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
-class DecisionTime(TypedDict):
-    budget_ms: int
-    used_ms: int
-    stop: StopCause
-    answered: NotRequired[DecisionRung | None]
-    reasoning: Reasoning
-class ImagePin(TypedDict):
-    provider: ProviderPin
-    name: str
-    evidence: EvidenceVersion
-    width: int
-    height: int
-    frame: NotRequired[PixelRegion | None]
-    edge: NotRequired[int | None]
-    sent_width: int
-    sent_height: int
-class DecisionReceipt(TypedDict):
-    question: str
-    question_version: int
-    principal: str
-    providers: list[ProviderPin]
-    band: DecisionBand
-    band_version: NotRequired[int]
-    evidence_versions: NotRequired[list[EvidenceVersion]]
-    cost_per_thousand: NotRequired[float | None]
-    paired: NotRequired[list[PairedReading]]
-    person: NotRequired[list[PairedReading]]
-    time: NotRequired[DecisionTime | None]
-    images: NotRequired[list[ImagePin]]
-    think_row: NotRequired[int | None]
-    person_row: NotRequired[int | None]
-HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
     candidate: str
@@ -4123,13 +4361,6 @@ class GraphAskRequest(TypedDict):
     unit_deadline_ms: NotRequired[int | None]
     posture: NotRequired[HostingPrivacyPosture | None]
     criteria: NotRequired[QuestionCriteria | None]
-class TypedDecision(TypedDict):
-    answer: DecisionAnswer
-    probability: NotRequired[float | None]
-    evidence: list[str]
-    in_band: bool
-    receipt: DecisionReceipt
-    human_ask: NotRequired[HumanAskReason | None]
 class AnswerRecord(TypedDict):
     claim: str
     unit: str
@@ -4165,28 +4396,6 @@ QuestionAudience = Literal["asker"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
     audio: NotRequired[bool]
-class FolderItemInput(TypedDict):
-    artifact_ref: str
-    row: int
-class ArtifactAskUnitsSheetRows(TypedDict):
-    kind: Literal["sheet_rows"]
-    sheet: str
-    rows: str
-    answer_column: int
-    header_row: NotRequired[int | None]
-    max_count: NotRequired[int | None]
-class ArtifactAskUnitsParagraphs(TypedDict):
-    kind: Literal["paragraphs"]
-    blocks: list[str]
-    author: str
-    labels: Any
-class ArtifactAskUnitsFolderItems(TypedDict):
-    kind: Literal["folder_items"]
-    sheet: str
-    answer_column: int
-    items: list[FolderItemInput]
-    max_count: NotRequired[int | None]
-ArtifactAskUnits = ArtifactAskUnitsSheetRows | ArtifactAskUnitsParagraphs | ArtifactAskUnitsFolderItems
 class ArtifactUnits(TypedDict):
     artifact: str
     selection: ArtifactAskUnits
@@ -4260,6 +4469,8 @@ class QuestionAnswerGraph(AnswerRecord):
 class QuestionAnswerArtifact(ArtifactAskRecord):
     kind: Literal["artifact"]
 QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
+class QuestionRefreshRequest(TypedDict):
+    id: EntityId
 class DecisionAskAnswerRequest(TypedDict):
     seq: int
     answer: DecisionAnswer
@@ -4627,6 +4838,7 @@ class BodyCell(TypedDict):
     value: XlsxValue
     formula: NotRequired[str | None]
     style: NotRequired[int | None]
+    format: NotRequired[str | None]
     locked: NotRequired[XlsxLock | None]
 class XlsxArea(TypedDict):
     first: tuple[int, int]
@@ -4645,11 +4857,64 @@ class BodyName(TypedDict):
 class XlsxStyle(TypedDict):
     num_fmt: int
     format: NotRequired[str | None]
+class XlsxColorRgb(TypedDict):
+    kind: Literal["rgb"]
+    argb: str
+class XlsxColorTheme(TypedDict):
+    kind: Literal["theme"]
+    theme: int
+    tint: NotRequired[float | None]
+class XlsxColorIndexed(TypedDict):
+    kind: Literal["indexed"]
+    index: int
+class XlsxColorAuto(TypedDict):
+    kind: Literal["auto"]
+XlsxColor = XlsxColorRgb | XlsxColorTheme | XlsxColorIndexed | XlsxColorAuto
+class XlsxFont(TypedDict):
+    name: NotRequired[str | None]
+    size: NotRequired[float | None]
+    bold: NotRequired[bool | None]
+    italic: NotRequired[bool | None]
+    underline: NotRequired[str | None]
+    strike: NotRequired[bool | None]
+    color: NotRequired[XlsxColor | None]
+class XlsxFill(TypedDict):
+    pattern: str
+    fg: NotRequired[XlsxColor | None]
+    bg: NotRequired[XlsxColor | None]
+class XlsxEdge(TypedDict):
+    style: str
+    color: NotRequired[XlsxColor | None]
+class XlsxBorder(TypedDict):
+    left: NotRequired[XlsxEdge | None]
+    right: NotRequired[XlsxEdge | None]
+    top: NotRequired[XlsxEdge | None]
+    bottom: NotRequired[XlsxEdge | None]
+    diagonal: NotRequired[XlsxEdge | None]
+    diagonal_up: NotRequired[bool | None]
+    diagonal_down: NotRequired[bool | None]
+class XlsxNumberFormatBuiltin(TypedDict):
+    kind: Literal["builtin"]
+    id: int
+class XlsxNumberFormatCode(TypedDict):
+    kind: Literal["code"]
+    code: str
+XlsxNumberFormat = XlsxNumberFormatBuiltin | XlsxNumberFormatCode
+class XlsxFormat(TypedDict):
+    base: int
+    font: NotRequired[XlsxFont | None]
+    fill: NotRequired[XlsxFill | None]
+    border: NotRequired[XlsxBorder | None]
+    number_format: NotRequired[XlsxNumberFormat | None]
+class BodyFormat(TypedDict):
+    id: str
+    format: XlsxFormat
 class XlsxBodyView(TypedDict):
     date1904: bool
     sheets: list[XlsxSheetView]
     names: list[BodyName]
     styles: list[XlsxStyle]
+    formats: list[BodyFormat]
 NodeId = int
 NodeKind = Literal["root", "slide", "group", "shape", "picture", "graphic_frame", "connector"]
 class GeometryProps(TypedDict):
@@ -4800,6 +5065,15 @@ class XlsxBodyOpSetStyle(TypedDict):
     sheet: str
     cell: str
     style: NotRequired[int | None]
+class XlsxBodyOpDefineFormat(TypedDict):
+    op: Literal["define_format"]
+    id: str
+    format: XlsxFormat
+class XlsxBodyOpSetFormat(TypedDict):
+    op: Literal["set_format"]
+    sheet: str
+    cell: str
+    format: str
 class XlsxBodyOpClear(TypedDict):
     op: Literal["clear"]
     sheet: str
@@ -4814,7 +5088,42 @@ class XlsxBodyOpDeleteName(TypedDict):
     op: Literal["delete_name"]
     name: str
     sheet: NotRequired[str | None]
-XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName
+class XlsxBodyOpAddSheet(TypedDict):
+    op: Literal["add_sheet"]
+    sheet: str
+    at: NotRequired[int | None]
+class XlsxBodyOpRenameSheet(TypedDict):
+    op: Literal["rename_sheet"]
+    sheet: str
+    name: str
+class XlsxBodyOpMoveSheet(TypedDict):
+    op: Literal["move_sheet"]
+    sheet: str
+    at: int
+class XlsxBodyOpDeleteSheet(TypedDict):
+    op: Literal["delete_sheet"]
+    sheet: str
+class XlsxBodyOpInsertRows(TypedDict):
+    op: Literal["insert_rows"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpDeleteRows(TypedDict):
+    op: Literal["delete_rows"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpInsertColumns(TypedDict):
+    op: Literal["insert_columns"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpDeleteColumns(TypedDict):
+    op: Literal["delete_columns"]
+    sheet: str
+    at: int
+    count: int
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):

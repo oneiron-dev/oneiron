@@ -452,6 +452,25 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 1794: a room's side rows ride beside its carrier, and a
+            // turn's claim, response and thread facts beside the turn's.
+            if window_key.world().is_none()
+                && let Some(header) = EntityMetadataHeader::parse(&raw)
+                && matches!(
+                    header.entity_type,
+                    ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
+                )
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::room_facts::mirror_room_facts(
+                    vault,
+                    doc,
+                    id,
+                    header.entity_type,
+                    None,
+                )?
+            {
+                wrote_any = true;
+            }
         }
 
         backfill_sources.push(*id);
@@ -569,7 +588,7 @@ fn reverse_rematerialize_scan(
     // NOTE text, mutable workflows and head moves change even when the
     // entity carrier already exists. Refresh through the same export gates.
     if window_key.world().is_none() {
-        wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
+        wrote_any |= crate::sync::note::refresh_for(vault, doc, window_key, withhold)?;
     }
 
     // A carrier the window kept past its row's learned month still takes

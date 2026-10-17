@@ -29,12 +29,16 @@ use crate::receipt::ReceiptQuery;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The window a resident dreams in when the host names none, in tokens.
 pub const RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS: u64 = 32_000;
 /// The share of the window its inputs may fill; the rest is the entry's.
 const INPUT_SHARE_DIVISOR: u64 = 2;
+/// The longest fork chain a resident's dreaming follows back to it.
+const MAX_FORK_DEPTH: usize = 16;
+/// The most of a diary-read reason the Inbox cut prints, as the board does.
+const REVIEW_REASON_BYTES: usize = 160;
 
 /// Each resident's committed progress: what its dreaming already read.
 const PROGRESS: SideTable<EntityId, ResidentDreamProgress, Named> =
@@ -221,6 +225,60 @@ impl Room {
     }
 }
 
+/// The agent definitions forked from `resident` whose sealed pads its
+/// dreaming reads: each whose fork chain reaches it before any other bound
+/// resident. A fork that is a bound resident itself dreams over its own.
+fn resident_forks(vault: &Vault, resident: EntityId) -> Result<Vec<EntityId>> {
+    let mut forks = Vec::new();
+    let mut after = None;
+    loop {
+        let page = vault.entities_by_type_page(
+            crate::registry::ENTITY_TYPE_AGENT_DEF,
+            after.as_ref(),
+            256,
+        )?;
+        let Some(last) = page.last().copied() else {
+            break;
+        };
+        for id in page {
+            if id != resident && forked_from_resident(vault, id, resident) {
+                forks.push(id);
+            }
+        }
+        after = Some(last);
+    }
+    Ok(forks)
+}
+
+/// Whether `fork`'s chain of fork parents reaches `resident` first. A bound
+/// resident on the way, or one whose binding does not read, ends the chain;
+/// so do a row that does not decode, a cycle and a chain past
+/// [`MAX_FORK_DEPTH`].
+fn forked_from_resident(vault: &Vault, fork: EntityId, resident: EntityId) -> bool {
+    let unbound = |id: EntityId| matches!(vault.settled_resident_agent(id), Ok(None));
+    if !unbound(fork) {
+        return false;
+    }
+    let mut seen = BTreeSet::from([fork]);
+    let mut at = fork;
+    for _ in 0..MAX_FORK_DEPTH {
+        let Ok(Some(definition)) = vault.get_agent_definition(&at) else {
+            return false;
+        };
+        let Some(parent) = definition.forked_from else {
+            return false;
+        };
+        if parent == resident {
+            return true;
+        }
+        if !seen.insert(parent) || !unbound(parent) {
+            return false;
+        }
+        at = parent;
+    }
+    false
+}
+
 /// Reads what `resident` has not dreamed over yet, oldest first within each
 /// source, until the window's input share is full. Every receipt and INBOX
 /// row past the cursor is a candidate, so a busy stretch is read over later
@@ -234,25 +292,41 @@ fn cut_for(
     let mut room = Room(window_tokens / INPUT_SHARE_DIVISOR);
     let mut cut = DreamCut::default();
 
+    // Its own sealed pads, then each of its forks': "A fork's sealed
+    // scratchpad feeds its resident's diary at the next dreaming."
+    let authors: Vec<EntityId> = std::iter::once(resident)
+        .chain(resident_forks(vault, resident)?)
+        .collect();
     let pads = {
         let txn = vault.store.env.read_txn()?;
         let mut pads = Vec::new();
-        for pad in vault.sealed_scratchpads_in_txn(&txn, resident)? {
-            if !PADS.contains(&vault.store, &txn, &(resident, pad))? {
-                pads.push(pad);
+        for &author in &authors {
+            for pad in vault.sealed_scratchpads_in_txn(&txn, author)? {
+                if !PADS.contains(&vault.store, &txn, &(resident, pad))? {
+                    pads.push((pad, author));
+                }
             }
         }
         pads
     };
     let mut pad_lines = Vec::new();
-    for pad in pads {
+    for (pad, author) in pads {
         let Some(note) = vault.read_note(&pad)? else {
             continue;
         };
-        if note.author_ref != resident {
+        if note.author_ref != author {
             continue;
         }
-        let line = format!("### {}\n{}", pad.to_hex(), note.markdown.trim());
+        let line = if author == resident {
+            format!("### {}\n{}", pad.to_hex(), note.markdown.trim())
+        } else {
+            format!(
+                "### {} (fork {})\n{}",
+                pad.to_hex(),
+                author.to_hex(),
+                note.markdown.trim()
+            )
+        };
         if !room.take(&line) {
             break;
         }
@@ -322,7 +396,7 @@ fn cut_for(
     };
     let mut inbox_lines = Vec::new();
     for item in inbox {
-        let index = format!(
+        let mut index = format!(
             "- {} {:?} thread {} with {} identities{}",
             item.occurred_at,
             item.kind,
@@ -333,6 +407,17 @@ fn cut_for(
                 .map(|payload| format!(" payload {payload}"))
                 .unwrap_or_default()
         );
+        // A pending diary read names its reader and the reason it stated,
+        // quoted as the reader's words (OF-490).
+        if let Some(review) = &item.diary_review {
+            index.push_str(&format!(
+                " diary read {} by {} ({}), reason {:?}",
+                review.request.to_hex(),
+                review.reader.to_hex(),
+                review.reader_class,
+                crate::llm::decision::cut_text(&review.reason, Some(REVIEW_REASON_BYTES))
+            ));
+        }
         // The words are quoted as data someone outside the vault wrote. A
         // row whose words overflow the room still goes in as its index line.
         let quoted = texts.get(&item.item_id).map(|words| {

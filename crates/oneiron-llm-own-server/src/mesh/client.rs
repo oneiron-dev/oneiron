@@ -7,14 +7,15 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use oneiron::{
-    BudgetLease, FatalLlmError, LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult, LlmStream,
-    LlmStreamEvent, LlmStreamResult, RetryableLlmError, Vault,
+    BudgetLease, FatalLlmError, LlmCatalogEntry, LlmGenerateFuture, LlmRequest, LlmResponse,
+    LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, RetryableLlmError, Vault,
 };
 use oneiron_mesh_transport::{MachineId, MeshConnection, MeshTransport};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
+use super::catalog::{CatalogRefresh, merge, mesh_row};
 use super::{Batch, LLM_ALPN, Reply, Request, exchange, lock, put, take};
 use crate::OwnServerTransport;
 
@@ -109,6 +110,43 @@ impl MeshLlmTransport {
     pub fn waiting(&self) -> Option<String> {
         lock(&self.leg.waiting).clone()
     }
+
+    /// Asks each of the owner's nodes granted model calls which models it
+    /// offers, and writes an own-server row for each one the vault does not
+    /// already route another way. A node that does not answer keeps the
+    /// rows it had: its models wait for it, as any call to it does.
+    ///
+    /// # Errors
+    /// A row could not be read or written.
+    pub async fn refresh_catalog(&self, vault: &Vault) -> oneiron::Result<CatalogRefresh> {
+        let leg = Arc::clone(&self.leg);
+        let (answers, mut unreached) = self
+            .runtime
+            .spawn(async move { leg.catalogs().await })
+            .await
+            .unwrap_or_else(|_| (Vec::new(), vec!["the catalog task stopped".to_owned()]));
+        let mut refresh = CatalogRefresh::default();
+        for (machine, answer) in answers {
+            match answer {
+                Ok(entries) => {
+                    for entry in entries {
+                        let model = entry.model.clone();
+                        let Some(row) = mesh_row(machine, entry) else {
+                            continue;
+                        };
+                        if merge(vault, row)? {
+                            refresh.written.push(model);
+                        } else {
+                            refresh.conflicts.push(model);
+                        }
+                    }
+                }
+                Err(why) => unreached.push(format!("node {}: {why}", machine.to_hex())),
+            }
+        }
+        refresh.unreached = unreached;
+        Ok(refresh)
+    }
 }
 
 /// Stops the spawned call when the caller lets it go.
@@ -164,6 +202,43 @@ impl futures_core::Stream for Received {
 }
 
 impl Leg {
+    /// Each granted node's offered models, and why any was not asked.
+    async fn catalogs(
+        &self,
+    ) -> (
+        Vec<(MachineId, Result<Vec<LlmCatalogEntry>, Absent>)>,
+        Vec<String>,
+    ) {
+        let mut tried = Vec::new();
+        let mut answers = Vec::new();
+        for machine in self.nodes(&mut tried) {
+            answers.push((machine, self.catalog_on(machine).await));
+        }
+        (answers, tried)
+    }
+
+    /// The models `machine` offers.
+    async fn catalog_on(&self, machine: MachineId) -> Result<Vec<LlmCatalogEntry>, Absent> {
+        let conn = self.dial(machine).await?;
+        let asked = async {
+            match exchange(&*conn, &Request::Catalog)
+                .await
+                .map_err(|err| err.to_string())?
+            {
+                Reply::Catalog(carried) => {
+                    let bytes = take(&*conn, carried).await.map_err(|err| err.to_string())?;
+                    serde_json::from_slice(&bytes)
+                        .map_err(|_| "its catalog does not decode".to_owned())
+                }
+                Reply::Refused(why) => Err(why),
+                _ => Err("an unexpected reply".into()),
+            }
+        }
+        .await;
+        conn.close();
+        asked
+    }
+
     fn nodes(&self, tried: &mut Vec<String>) -> Vec<MachineId> {
         let nodes = self.nodes.nodes().unwrap_or_else(|err| {
             tried.push(format!("the node roster: {err}"));
@@ -275,8 +350,9 @@ impl Leg {
         }
     }
 
-    /// Runs the stream on one node, passing its events on. `Err` only when
-    /// the node did not take it, before any event went out.
+    /// Runs the stream on one node, passing its events on. `Err` when the
+    /// node did not take it, or broke before any event went out: the next
+    /// node runs it from the start.
     async fn stream_on(
         &self,
         machine: MachineId,
@@ -301,20 +377,24 @@ impl Leg {
                 _ => return Err("an unexpected reply".into()),
             };
             self.taken();
+            let mut flowed = false;
             loop {
                 if send.is_closed() {
                     let _ = exchange(&*conn, &Request::Cancel { stream: id }).await;
                     return Ok(());
                 }
                 // Once events flow, a broken node ends the stream: its
-                // events cannot be taken back.
-                let cut = || Err(RetryableLlmError::StreamCut.into());
+                // events cannot be taken back. Before, another node can run it.
+                let cut = |flowed: bool| {
+                    if !flowed {
+                        return Err("broke before its first event".to_owned());
+                    }
+                    let _ = send.send(Err(RetryableLlmError::StreamCut.into()));
+                    Ok(())
+                };
                 let (events, end) = match exchange(&*conn, &Request::Next { stream: id }).await {
                     Ok(Reply::Events { events, end }) => (events, end),
-                    _ => {
-                        let _ = send.send(cut());
-                        return Ok(());
-                    }
+                    _ => return cut(flowed),
                 };
                 let batch = match take(&*conn, events)
                     .await
@@ -322,10 +402,7 @@ impl Leg {
                     .and_then(|bytes| rmp_serde::from_slice::<Batch>(&bytes).ok())
                 {
                     Some(batch) => batch,
-                    None => {
-                        let _ = send.send(cut());
-                        return Ok(());
-                    }
+                    None => return cut(flowed),
                 };
                 for event in batch.events {
                     let event = event.and_then(|json| {
@@ -336,6 +413,7 @@ impl Leg {
                     if send.send(event).is_err() || failed {
                         return Ok(());
                     }
+                    flowed = true;
                 }
                 if end {
                     return Ok(());

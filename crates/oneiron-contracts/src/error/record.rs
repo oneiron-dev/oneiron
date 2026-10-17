@@ -232,6 +232,21 @@ pub enum RecordError {
         id.to_hex()
     )]
     AuthorityLogFull { id: EntityId, signer: String },
+    /// The authority fold needs history this vault does not hold (OF-469):
+    /// no fold answers until an import closes it. `missing` ascends; on a
+    /// vault that adopted a checkpoint image it may name covered rows, which
+    /// a late fork or an op the image cannot fold past needs. Fetching them
+    /// may name further ancestors: ask for the vault's history request again
+    /// after each import.
+    #[error("authority history incomplete: {} rows required", missing.len())]
+    AuthorityHistoryRequired {
+        /// The authority vault (its genesis hash) the history belongs to.
+        vault_id: Option<[u8; 32]>,
+        /// The checkpoint v2 image id the request was computed against.
+        checkpoint: Option<[u8; 32]>,
+        /// The authority entry hashes the fold needs, ascending.
+        missing: Vec<[u8; 32]>,
+    },
     #[error("MESSAGE stream already active: {}", message.to_hex())]
     StreamAlreadyActive { message: EntityId },
     #[error("MESSAGE stream handle is not active: {}", message.to_hex())]
@@ -307,6 +322,7 @@ impl RecordError {
             Self::AuthorityLogStoreKeyMismatch { .. } => ErrorKind::AuthorityLogStoreKeyMismatch,
             Self::AuthorityLogSignerPending { .. } => ErrorKind::AuthorityLogSignerPending,
             Self::AuthorityLogFull { .. } => ErrorKind::AuthorityLogFull,
+            Self::AuthorityHistoryRequired { .. } => ErrorKind::AuthorityHistoryRequired,
         }
     }
 }

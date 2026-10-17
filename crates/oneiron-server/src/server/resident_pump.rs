@@ -58,6 +58,7 @@ use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
 use super::{ReaderSeats, SyncServer};
+use crate::config::models::PlannerSettings;
 use crate::decision_host::DecisionHost;
 use crate::mcp::{EngineRunError, McpCodeModeProvider, engine_run_seat, enter_engine_native_run};
 
@@ -519,7 +520,15 @@ fn enter_run(
     // through that handle runs only between entries.
     let proof = bound.live_run_host_binding(config.run_id).map_err(text)?;
     let _serial = live_runs
-        .register(vault, config.run_id, actor, &status.attempt, proof)
+        .register(
+            vault,
+            config.run_id,
+            actor,
+            &status.attempt,
+            proof,
+            provider.planner().cloned(),
+            config.model.as_str().to_owned(),
+        )
         .map_err(text)?
         .enter();
     enter_engine_native_run(
@@ -541,6 +550,19 @@ fn planner_binding<'a>(
     let Some(settings) = provider.planner() else {
         return Ok(None);
     };
+    seated_planner(vault, settings, config.model.as_str(), decisions)
+}
+
+/// The host's planner under `settings` for a run executing on `executor`:
+/// [`planner_binding`]'s for one entry, and an action's on a live run
+/// (OF-181), from what the run registered with. `None` when no seat
+/// resolves.
+pub(crate) fn seated_planner<'a>(
+    vault: &Vault,
+    settings: &PlannerSettings,
+    executor: &str,
+    decisions: HostPlannerDecisions<'a>,
+) -> Result<Option<HostPlannerBinding<'a>>, String> {
     let mut seats = Vec::with_capacity(settings.seats.len());
     for seat in &settings.seats {
         match planner_seat_agent(vault, &seat.agent).map_err(text)? {
@@ -561,7 +583,7 @@ fn planner_binding<'a>(
     Ok(Some(HostPlannerBinding {
         skills: PlannerSkills::seeded().map_err(text)?,
         seats,
-        executor: config.model.as_str().to_owned(),
+        executor: executor.to_owned(),
         decisions: Some(decisions),
         leader: LeaderStarterSkills::seeded().map_err(text)?,
         top: settings.top,
@@ -815,12 +837,19 @@ fn complete(
         })?;
     } else {
         // The run's durable result: the TASK's Done names it.
-        AgentDispatcher::new(vault).attach_resident_run_result(
+        let output = AgentDispatcher::new(vault).attach_resident_run_result(
             attempt,
             LEASE_OWNER,
             &outcome.replay_record,
             now,
         )?;
+        // OF-540: the result derives from what the run derived, witnessed
+        // while the lease holds; a run that cannot witness closes as bound.
+        if let Err(error) =
+            oneiron::skill_attribution::witness_agent_run_close(vault, attempt, LEASE_OWNER, output)
+        {
+            tracing::warn!(%error, attempt = ?attempt.id, "an agent run's close was not witnessed");
+        }
     }
     let judged = oneiron::task_verb::runner_done_question(vault, attempt.id)?.and_then(
         |question| match decisions.task_decisions() {

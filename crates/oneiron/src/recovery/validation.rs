@@ -86,6 +86,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     strict(snapshot.retained_claim_worlds.iter().map(|row| row.id))?;
     strict(snapshot.custody_transitions.iter().map(|row| row.id))?;
     strict(snapshot.room_turns.iter().map(|row| row.id))?;
+    strict(snapshot.room_facts.iter().map(|row| row.key.as_str()))?;
     // Custody transitions ride base windows only (OF-422).
     if snapshot.window.contains('@') && !snapshot.custody_transitions.is_empty() {
         return Err(invalid("custody transition in a world window"));
@@ -93,6 +94,10 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     // Room turn rows ride base windows only (OF-522).
     if snapshot.window.contains('@') && !snapshot.room_turns.is_empty() {
         return Err(invalid("room turn row in a world window"));
+    }
+    // Room side rows too (FIX 1794).
+    if snapshot.window.contains('@') && !snapshot.room_facts.is_empty() {
+        return Err(invalid("room side row in a world window"));
     }
     strict(
         snapshot

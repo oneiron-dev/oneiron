@@ -22,7 +22,7 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
     BudgetLine, HostAccount, LeaseUnit, RunAdmission, RunDeclaration, RunReceiptSink,
 };
-use oneiron::{BudgetGuard, ModelId, ModelLocality};
+use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
 use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
 use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
 
@@ -64,6 +64,7 @@ mod sse;
 mod status;
 #[cfg(test)]
 mod tests;
+mod token_ratio;
 mod voice;
 mod voxcpm2_speech;
 mod walk;
@@ -74,7 +75,7 @@ pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::mark_cloud_node;
+pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
@@ -87,6 +88,7 @@ pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
+pub use token_ratio::TokenRatios;
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
@@ -130,6 +132,8 @@ pub struct ModelRuntime {
     /// Where offers refused for a limit rest, and the owner's quota
     /// questions about the parked ones.
     rests: Arc<OfferCooldowns>,
+    /// Counts each catalog model's tokenizer on the fixed passage (OF-577).
+    token_ratios: Option<Arc<TokenRatios>>,
 }
 
 impl ModelRuntime {
@@ -146,6 +150,7 @@ impl ModelRuntime {
             stays_on_device: BTreeSet::new(),
             media: MediaRuntime::empty(),
             rests: OfferCooldowns::unkept(),
+            token_ratios: None,
         }
     }
 
@@ -305,6 +310,12 @@ impl ModelRuntime {
                                 ladder.model().clone(),
                                 model_family(&model, provider).map(str::to_owned),
                             );
+                            if let Ok(entry) = catalog_entry(&model, provider) {
+                                router.chat_entry(LlmCatalogEntry {
+                                    model: ladder.model().clone(),
+                                    ..entry
+                                });
+                            }
                         }
                         router.insert(ladder.model().clone(), provider.locality, ladder);
                     }
@@ -403,6 +414,11 @@ impl ModelRuntime {
                 }
                 None
             });
+        router.name_aliases(&config.aliases);
+        // Counts run on the runtime the host was built on, like a read.
+        let token_ratios = tokio::runtime::Handle::try_current()
+            .ok()
+            .map(|runtime| Arc::new(TokenRatios::new(config, runtime)));
         Self {
             seats,
             router: (!router.is_empty()).then(|| Arc::new(router)),
@@ -413,7 +429,15 @@ impl ModelRuntime {
             stays_on_device: config.stays_on_device.clone(),
             media,
             rests,
+            token_ratios,
         }
+    }
+
+    /// The host's catalog token counters; `None` without `[models]` or a
+    /// runtime to run their requests on.
+    #[must_use]
+    pub fn token_ratios(&self) -> Option<Arc<TokenRatios>> {
+        self.token_ratios.clone()
     }
 
     /// The house model's decision read, when `[models.decision_read]` binds

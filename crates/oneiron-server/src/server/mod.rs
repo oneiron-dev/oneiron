@@ -9,6 +9,7 @@ mod housekeeping;
 mod leases;
 mod lifecycle;
 mod live_runs;
+mod media_door;
 mod media_embedding;
 mod message_stream;
 #[cfg(unix)]
@@ -33,6 +34,8 @@ pub(crate) use self::lifecycle::LifecycleScheduler;
 pub(crate) use self::live_runs::{
     HeldLiveRun, LiveRunCaller, LiveRunRefusal, LiveRuns, ResolvedLiveRun,
 };
+pub use self::media_door::MediaDoor;
+pub(crate) use self::media_door::{MediaRefusal, admit_media};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
 #[cfg(unix)]
 pub(crate) use self::organs::organ_dir;
@@ -42,6 +45,7 @@ pub use self::read_shape::RetrievalQueryCheck;
 pub(crate) use self::read_shape::{QueryDoor, query_caller};
 pub(crate) use self::reader_runner::{READER_CHILD_READ_ONLY, ReaderRunner, ReaderSeats};
 pub(crate) use self::recall::blocking;
+pub(crate) use self::resident_pump::seated_planner;
 pub(crate) use self::run_host_door::answer_as_agent;
 pub(crate) use self::wave_door::{wave_plan, wave_receipt};
 

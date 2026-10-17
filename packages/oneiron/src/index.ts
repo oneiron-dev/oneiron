@@ -216,6 +216,10 @@ export class Oneiron {
       scratchpad: {
         /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
         recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
+        /** Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused. */
+        append: (input: Facade.ScratchpadAppendRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadAppend(input) as Facade.ScratchpadWriteReply),
+        /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
+        seal: (input: Facade.ScratchpadSealRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadSeal(input) as Facade.ScratchpadWriteReply),
       },
     },
     memory: {
@@ -281,10 +285,12 @@ export class Oneiron {
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
     fanout: {
-      /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none. */
+      /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none. */
       launch: (input: Facade.FanoutLaunchRequest): Facade.FanoutLaunchView | null => this.#call(() => this.#client.vaultFanoutLaunch(input) as Facade.FanoutLaunchView | null),
       /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
       resume: (input: Facade.FanoutResumeRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutResume(input) as Facade.FanoutLaunchView),
+      /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
+      resume_as: (input: Facade.FanoutResumeRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutResumeAs(input) as Facade.FanoutLaunchView),
       /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
       ack: (input: Facade.FanoutAckRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutAck(input) as Facade.FanoutLaunchView),
     },
@@ -335,6 +341,12 @@ export class Oneiron {
     images: {
       /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */
       view: (request: Facade.ImageViewRequest): Facade.PulledImage => this.#call(() => {  const result = JSON.parse(this.#client.vaultImagesView(keyedJson(request))) as Facade.PulledImage; return result }),
+    },
+    explain: {
+      /** Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it. */
+      memory: (input: Facade.ExplainMemoryRequest): Facade.ExplainMemoryReply | null => this.#call(() => this.#client.vaultExplainMemory(input) as Facade.ExplainMemoryReply | null),
+      /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
+      gate: (input: Facade.ExplainGateRequest): Facade.ExplainGateReply | null => this.#call(() => this.#client.vaultExplainGate(input) as Facade.ExplainGateReply | null),
     },
     kv: {
       /** Exact actor-owned worldless key lookup, never recall. */
@@ -408,6 +420,10 @@ export class Oneiron {
         /** The owner acknowledges one saved handoff fork alarm. */
         acknowledge: (input: Facade.HandoffAlarmRequest): Facade.AuthorityHandoffAlarm => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as Facade.AuthorityHandoffAlarm),
       }),
+    },
+    mesh: {
+      /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
+      path_receipts: (input: Facade.MeshPathReceiptsRequest): Facade.MeshPathReceipt[] => this.#call(() => this.#client.vaultMeshPathReceipts(input) as Facade.MeshPathReceipt[]),
     },
     inspection: {
       /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */
@@ -535,7 +551,7 @@ export class Oneiron {
       }),
     },
     secrets: {
-      /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+      /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
       lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
     },
     /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
@@ -586,6 +602,8 @@ export class Oneiron {
       release_wait: (request: Facade.ProposalSettleRequest): Facade.ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as Facade.ReleasedWait; return result }),
       /** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */
       review_slides: (request: Facade.SlideReviewSubmit): Facade.SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.SlideReviewOutcome; return result }),
+      /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
+      ask: (input: Facade.ArtifactAskSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ArtifactAskOutcome),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: Facade.DeckProposeRequest): Facade.DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as Facade.DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
@@ -662,6 +680,10 @@ export class Oneiron {
       proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
+    },
+    critic: {
+      /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
+      review: (input: Facade.CriticReviewSubmit): Facade.CriticReviewOutcome => this.#call(() => this.#client.vaultCriticReview(input) as Facade.CriticReviewOutcome),
     },
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */
@@ -781,6 +803,8 @@ export class Oneiron {
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
+      /** Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it. */
+      refresh: (input: Facade.QuestionRefreshRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.AnswerRecord[]),
     },
     decisions: {
       asks: {

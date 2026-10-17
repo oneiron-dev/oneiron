@@ -232,12 +232,18 @@ pub(crate) fn resolved_candidate(
         ),
         (Value::from("resolution"), resolution),
     ]);
-    let project = marker.scope_project;
-    let mut candidate =
-        ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, marker.subject, value, 1.0);
-    // The marker's own stamp is its project; a scope-map entry can never move
+    on_axes_of(
+        ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, marker.subject, value, 1.0),
+        marker,
+    )
+}
+
+/// `candidate` on `body`'s own world, relationship, scope and project.
+pub(crate) fn on_axes_of(mut candidate: ClaimCandidate, body: &crate::ClaimBody) -> ClaimCandidate {
+    let project = body.scope_project;
+    // The row's own stamp is its project; a scope-map entry can never move
     // it. Promotion keeps only a map scope, so a non-map one adds nothing.
-    let mut fields = match &marker.scope {
+    let mut fields = match &body.scope {
         Some(Value::Map(fields)) => fields.clone(),
         _ => Vec::new(),
     };
@@ -251,10 +257,10 @@ pub(crate) fn resolved_candidate(
     if !fields.is_empty() {
         candidate = candidate.with_scope(Value::Map(fields));
     }
-    if let Some(rel) = marker.rel {
+    if let Some(rel) = body.rel {
         candidate = candidate.with_relationship(rel);
     }
-    if let Some(world) = marker.world {
+    if let Some(world) = body.world {
         candidate = candidate.with_world(world);
     }
     candidate
