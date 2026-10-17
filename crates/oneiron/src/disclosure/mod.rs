@@ -12,6 +12,7 @@
 //! the agent-visible assembly block.
 
 mod attendee_ask;
+mod clearance_use;
 mod disclosable_set;
 mod room_party;
 mod scope_codec;
