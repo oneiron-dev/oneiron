@@ -161,13 +161,15 @@ pub struct CompactionRequest {
 /// the host numbers itself (an executor run), whose lineage is the host's
 /// own coverage rows, so erasing a summary never moves the run's position.
 /// A host log also says how many of its calls the `sources` were read from:
-/// the next epoch lets this one stand for the ids those calls served.
+/// the next epoch lets this one stand for the ids those calls served, and
+/// which run it is, the trigger its epoch's birth names (a fold names none).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowLog {
     Conversation,
     Host {
         prior: Option<super::PriorEpoch>,
         calls: u64,
+        run: Option<EntityId>,
     },
 }
 

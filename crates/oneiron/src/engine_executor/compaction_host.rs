@@ -596,7 +596,7 @@ impl EngineNativeExecutor<'_> {
         let calls = u64::try_from(record.bridge_calls.len())
             .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
         let request = driver.request_for_log(
-            request_id, &session, window, pins, sources, prior, calls, note,
+            request_id, &session, window, pins, sources, prior, calls, note, run_id,
         )?;
         Ok(Some((request, hooks)))
     }
