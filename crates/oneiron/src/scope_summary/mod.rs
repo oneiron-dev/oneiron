@@ -4,8 +4,16 @@
 //! not the truth list. Merge headers use the normal claim write gate.
 
 mod codec;
+mod derivation;
 mod doors;
+mod producer;
+mod purpose;
 mod request;
+mod status;
+pub(crate) use derivation::rederive_changed_in_txn;
+pub use derivation::{ScopeSummaryMetadata, SummaryDerivation, SummarySourceVersion};
+pub use purpose::SummaryPurpose;
+pub use status::{ScopeSummaryResult, ScopeSummaryStatus};
 mod word_sources;
 
 pub use codec::{

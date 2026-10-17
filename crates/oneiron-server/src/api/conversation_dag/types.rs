@@ -150,6 +150,8 @@ pub(crate) struct DagSpawnRequest {
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagSummaryRequest {
     pub scope: DagScopeRequest,
+    /// Owner-approved descriptor id; omitted selects the scope's canon birth.
+    pub purpose: Option<String>,
     /// Lands the merge header. The Dreamer writes the body, so a request
     /// carries no text (ARCH-0006a).
     pub actor: DagActor,
@@ -236,6 +238,8 @@ pub(crate) struct DagMigrationResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct DagSummaryQueuedResponse {
     pub attempt: String,
+    /// Poll this route for completion, landing ids or the refusal reason.
+    pub status: String,
     /// An identical declaration was still queued; this joined it.
     pub coalesced: bool,
 }
@@ -255,6 +259,7 @@ pub(crate) struct DagThreadMetaResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagThreadSummaryRequest {
+    pub purpose: Option<String>,
     /// Lands the merge header on the trunk; the Dreamer writes the body.
     pub actor: DagActor,
 }
@@ -318,4 +323,34 @@ pub(crate) struct ReactionResponse {
     pub id: String,
     /// `reaction.put`, `reaction.revoked` or `reaction.replayed`.
     pub event: &'static str,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagSummaryResultResponse {
+    pub summary: String,
+    pub claim: Option<String>,
+    pub record: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagSummaryStatusResponse {
+    pub attempt: String,
+    pub current_attempt: String,
+    pub state: String,
+    pub result: Option<DagSummaryResultResponse>,
+    pub failure: Option<String>,
+    pub retry_at: Option<u64>,
+    pub updated_at: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagSummaryMetadataResponse {
+    #[schema(value_type = Object)]
+    pub metadata: Value,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagSummaryPurposeResponse {
+    pub id: String,
+    pub description: String,
 }

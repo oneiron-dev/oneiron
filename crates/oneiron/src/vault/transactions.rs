@@ -454,6 +454,9 @@ impl Vault {
                         Err(err) => return Rows::Discard(Err(err)),
                     }
                 };
+                if let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn) {
+                    return Rows::Discard(Err(E::from(err)));
+                }
                 let approved =
                     match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
                         Ok(approved) => approved,
