@@ -60,6 +60,7 @@ mod skill_judge_routes;
 mod space_posting_routes;
 mod vault_key_routes;
 mod weave_routes;
+mod widen_proposal_routes;
 mod wire_health_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
@@ -106,6 +107,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(inbox_routes::routes())
         .merge(concern_routes::routes())
         .merge(learning_setting_routes::routes())
+        .merge(widen_proposal_routes::routes())
         .merge(pad_routes::routes())
         .merge(legal_hold_routes::routes())
         .merge(guest_routes::routes())

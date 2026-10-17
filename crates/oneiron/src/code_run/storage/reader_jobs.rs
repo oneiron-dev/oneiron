@@ -1060,6 +1060,11 @@ impl ExecutorStorage<'_> {
             let bytes = self
                 .read_code_run_raw_output_range(&output, start, len)?
                 .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+            // A body stored before its scan read every rule may hold a secret
+            // no mark names (OF-067); the model is shown none of it.
+            if crate::batch::secret_scan::write_payload_hit(&bytes).is_some() {
+                return refused("tainted");
+            }
             read.push(SummaryMember {
                 handle: member.handle,
                 range: member.range,

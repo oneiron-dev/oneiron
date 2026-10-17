@@ -3,7 +3,10 @@
 //! calls. A declared space names its model: its id is an `ai.embed` rung's id
 //! (`provider/name@revision`, as `GET /v1/ai/options` lists it) and then
 //! `@where`, so a space is one pinned rung and never a ladder that could
-//! answer from two models. Each call is admitted by the vault's inference
+//! answer from two models. `where` is the place of that rung's offer
+//! (ARCH-0036 `#offers`): the `[models]` provider key that binds it, so one
+//! model at two clouds is two spaces; where the rung runs is read from that
+//! provider, never from the id. Each call is admitted by the vault's inference
 //! policy for that rung, then sent and settled on the media meter; each
 //! vector it answers must be one finite vector of the space's width.
 //!
@@ -46,9 +49,17 @@ pub(crate) enum MediaEmbedRefusal {
     #[error("embedding space {0} is not declared")]
     Undeclared(String),
     #[error(
-        "embedding space {0} names no ai.embed rung; its id is a rung id GET /v1/ai/options lists, then @where"
+        "embedding space {0} names no ai.embed rung; its id is a rung id GET /v1/ai/options lists, then @ and the [models] provider key that binds it"
     )]
     Unmapped(String),
+    #[error(
+        "embedding space {space} names its offer at [models] provider {place}, but provider {providers} binds its rung here; end the id with @ and the provider key that serves it"
+    )]
+    Elsewhere {
+        space: String,
+        place: String,
+        providers: String,
+    },
     #[error("embedding space {space} has no {kind:?} query tower")]
     NoTower { space: String, kind: InputKind },
     #[error("a text query's bytes are not UTF-8")]
@@ -147,7 +158,8 @@ pub(crate) struct RuntimeMediaEmbedder {
 
 impl SyncServer {
     /// The embedder for declared space `space_id`: the `ai.embed` rung its id
-    /// names. Reads the vault's declared spaces.
+    /// names, as the `[models]` provider its `@where` names binds it. Reads
+    /// the vault's declared spaces.
     pub(crate) fn media_embedder(
         &self,
         space_id: &str,
@@ -163,12 +175,26 @@ impl SyncServer {
             .find(|space| space.id == space_id)
             .ok_or_else(|| MediaEmbedRefusal::Undeclared(space_id.to_owned()))?;
         let unmapped = || MediaEmbedRefusal::Unmapped(space.id.clone());
-        let (pinned, _) = space.id.rsplit_once('@').ok_or_else(unmapped)?;
-        let row = media
+        let (pinned, place) = space.id.rsplit_once('@').ok_or_else(unmapped)?;
+        let mut rows: Vec<_> = media
             .options(Some(AiOperation::Embed), &BTreeSet::new())
             .into_iter()
-            .find(|row| row.model == pinned)
-            .ok_or_else(unmapped)?;
+            .filter(|row| row.model == pinned)
+            .collect();
+        // `@where` picks the offer: the rung as the provider it names binds
+        // it. Its locality is that provider's.
+        let Some(at) = rows.iter().position(|row| row.provider == place) else {
+            if rows.is_empty() {
+                return Err(unmapped());
+            }
+            let providers: BTreeSet<_> = rows.iter().map(|row| row.provider.as_str()).collect();
+            return Err(MediaEmbedRefusal::Elsewhere {
+                space: space.id.clone(),
+                place: place.to_owned(),
+                providers: providers.into_iter().collect::<Vec<_>>().join(", "),
+            });
+        };
+        let row = rows.swap_remove(at);
         let model = ModelId::new(row.model).map_err(|_| unmapped())?;
         Ok(RuntimeMediaEmbedder {
             space,
