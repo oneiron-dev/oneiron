@@ -729,8 +729,16 @@ run), the child's birth fails. It is never moved to another model. The pick
 and the placement go through the host's decision ladder (section 13), each on
 its own 10-second clock. A seat whose definition this vault does not hold is
 skipped, with a log line. With no seat, the server lends no planner: a spawn
-that names an `agent` runs it directly, and a planned spawn or a leader call
-answers `planner_unbound`.
+that names an `agent` runs it directly, and a planned spawn or a leader's
+advice or pattern call answers `planner_unbound`.
+
+A leader's `self.leader.split({leader?, slice?})` reads no planner. It splits
+the TASK her run realizes into a subproject under that TASK's project (her
+lease names both), led by `leader` (herself when unset) over `slice` (the
+parent's when unset). The parent still sees one checkbox. The server signs the
+spawn with its host key: the managed issuer, or the one `auth_secret` derives;
+a host with neither answers `slip_issuer_unbound`. A TASK wraps one child, so a
+retry answers the same child.
 
 ## 7. Raw calls
 

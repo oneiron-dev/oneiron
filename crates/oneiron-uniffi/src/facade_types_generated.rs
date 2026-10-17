@@ -9848,6 +9848,8 @@ pub enum SelfEffect {
     Summarize,
     #[serde(rename = "Leader")]
     Leader,
+    #[serde(rename = "LeaderSplit")]
+    LeaderSplit,
     #[serde(rename = "Team")]
     Team,
 }

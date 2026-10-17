@@ -1674,6 +1674,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "self.leader.split",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderSplitInput>(),
+            ),
+            (
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
