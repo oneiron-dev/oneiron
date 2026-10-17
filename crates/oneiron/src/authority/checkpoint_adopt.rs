@@ -166,7 +166,7 @@ fn expectation_in_txn(
 /// The image this vault adopted, verified again from the stored pin,
 /// attestations and image bytes. None when nothing was adopted; a stored
 /// adoption that no longer verifies is corruption, never "not adopted".
-pub(super) fn adopted_authority_checkpoint_in_txn(
+pub(crate) fn adopted_authority_checkpoint_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<VerifiedAuthorityCheckpoint>> {

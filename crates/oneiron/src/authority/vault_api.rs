@@ -18,6 +18,31 @@ use std::collections::BTreeMap;
 
 use super::*;
 
+/// What this vault can say about one AUTHORITY_LOG entry, by its hash
+/// ([`Vault::authority_log_entry_status`]).
+///
+/// No variant carries an op kind for a row this vault does not store: the
+/// adopted image's row summary names none, and an unknown kind is never
+/// reported as some other kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthorityEntryStatus {
+    /// The signed entry is physically stored here, decoded.
+    Stored(AuthorityLogEntry),
+    /// The entry is not stored here, but the adopted checkpoint image covers
+    /// it: the image `checkpoint` (its id, equal to the adopted pin's
+    /// checkpoint), verified again in this read, lists `hash` among its
+    /// covered rows. That proves membership under the attested image only.
+    /// It does not say the entry is valid or authorizes anything, that a
+    /// custodian holding the signed bytes is reachable, that an archive was
+    /// fetched, or that anyone replayed the covered history independently.
+    CoveredAttested {
+        hash: AuthorityEntryHash,
+        checkpoint: [u8; 32],
+    },
+    /// Neither stored here nor covered by an adopted image.
+    Unknown,
+}
+
 impl Vault {
     /// Engine-authored write door for signed AUTHORITY_LOG entries.
     ///
@@ -192,6 +217,49 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// The status of the AUTHORITY_LOG entry `hash` names, read in one
+    /// transaction (OF-469): `Stored` when its row is here, else
+    /// `CoveredAttested` when the adopted checkpoint image covers it, else
+    /// `Unknown`. The stored row is read first, at the entity id the hash
+    /// derives, with [`Self::get_authority_log_entry`]'s type check and
+    /// decode; a stored row always wins over coverage. On a vault that
+    /// adopted no image the answer is `Stored` or `Unknown`.
+    pub fn authority_log_entry_status(
+        &self,
+        hash: &AuthorityEntryHash,
+    ) -> Result<AuthorityEntryStatus> {
+        let id = authority_log_entity_id_from_hash(hash)?;
+        let rtxn = self.store.env.read_txn()?;
+        if let Some(raw) = self
+            .store
+            .port_entity_record(&rtxn, &id)?
+            .map(|row| row.encode())
+        {
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+                return Err(Error::InvalidEntityType(header.entity_type));
+            }
+            let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            // The id is the hash's first 16 bytes; a stored entry with
+            // another full hash is a different entry.
+            if authority_entry_hash(&entry)? == *hash {
+                return Ok(AuthorityEntryStatus::Stored(entry));
+            }
+        }
+        let adopted =
+            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &rtxn)?;
+        Ok(match adopted {
+            Some(adopted) if adopted.image().rows.contains_key(hash) => {
+                AuthorityEntryStatus::CoveredAttested {
+                    hash: *hash,
+                    checkpoint: adopted.id(),
+                }
+            }
+            _ => AuthorityEntryStatus::Unknown,
+        })
     }
 
     fn backfill_authority_first_seen_sidecars(&self) -> Result<()> {

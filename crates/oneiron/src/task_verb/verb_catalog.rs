@@ -3304,7 +3304,7 @@ impl AgentVerb {
                 "Checks one pack connection with the engine's fixed read-only provider call for its declared check."
             }
             Self::VaultAuthorityAudit => {
-                "One page of the dated authority log audit: grants, revokes and confirms, for the owner."
+                "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
