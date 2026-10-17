@@ -65,6 +65,19 @@ pub(crate) struct MediaSeed {
     pub(crate) kinds: Vec<InputKind>,
 }
 
+/// The engine's wire twin of this query (the native context pack's and
+/// `vault.recall`'s `media`), decoded and embedded by the same rules.
+impl From<oneiron::code_run::vault_read::ContextPackMediaQuery> for ContextPackMediaQuery {
+    fn from(media: oneiron::code_run::vault_read::ContextPackMediaQuery) -> Self {
+        Self {
+            space: media.space,
+            mime: media.mime,
+            bytes_b64: media.bytes_b64,
+            kinds: media.kinds.into_iter().map(InputKind::from).collect(),
+        }
+    }
+}
+
 impl ContextPackMediaQuery {
     /// Decodes the query, refusing base64 past `max_bytes` before decoding it.
     pub(crate) fn decode(&self, max_bytes: usize) -> Result<DecodedMediaQuery, ApiError> {

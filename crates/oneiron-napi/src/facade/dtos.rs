@@ -353,9 +353,22 @@ pub struct NapiRecallScope {
     pub kinds: Option<Vec<String>>,
 }
 
-/// One BM25 hit (engine index scores).
+/// A recall's media query (OF-370): bytes the server embeds into one
+/// declared space, searched as that space's list beside the query's.
 #[napi(object)]
-pub struct NapiLexicalHit {
+pub struct NapiRecallMedia {
+    /// Declared embedding space id (an `ai.embed` rung id, then `@where`).
+    pub space: String,
+    /// Media type of the bytes: `image/*`, `audio/*` or `text/*`.
+    pub mime: String,
+    /// The bytes, standard base64 (`bytesB64` in JavaScript).
+    pub bytes_b64: String,
+    /// The kinds of item the space's list keeps (`text`, `image`, `audio`);
+    /// every kind the space holds when unset.
+    pub kinds: Option<Vec<String>>,
+}
+
+/// One BM25 hit (engine index scores).
     /// Short ref (hex fallback).
     pub short_id: String,
     /// Registry kind string.

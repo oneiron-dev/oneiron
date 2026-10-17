@@ -226,8 +226,10 @@ export class Oneiron {
    * saying so). `effort: "call"` is call mode for live calls: light
    * effort under a hard deadline (`deadlineMs`, or the vault's call-mode
    * deadline), answering with the best results ready, marked `partial`.
+   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server
+   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
     /** Governance receipts, newest first. */

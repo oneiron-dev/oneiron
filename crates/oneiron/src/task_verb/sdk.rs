@@ -336,10 +336,18 @@ pub struct RecallRequest {
     /// takes the vault's call-mode deadline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline_ms: Option<u64>,
+    /// A media query (OF-370): bytes the host embeds into one declared space
+    /// through the `ai.embed` rung that space's id names, searched as that
+    /// space's list beside the query's. A host that serves no such rung
+    /// refuses the recall with `MODEL_UNAVAILABLE`; it never recalls without
+    /// the media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<crate::code_run::vault_read::ContextPackMediaQuery>,
 }
 
 pub use super::recall_door::{
-    RecallDoor, recall_at_door, recall_at_door_seeded, recall_with_vector,
+    RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
+    recall_with_vector,
 };
 pub use super::sdk_connector::*;
 pub use super::sdk_diary::*;
