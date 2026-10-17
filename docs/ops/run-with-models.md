@@ -1040,13 +1040,16 @@ within its wait budget, and is never refused for it. A stable recovery is three
 answers in a row over at least 30 s. It clears the strikes, and the memory
 work the outage stopped resumes:
 
-- the attempts this server's Dreamer parked on an executor error are
-  requeued, as a restart requeues them;
+- the attempts this server's Dreamer parked because a provider was
+  unavailable are requeued, as a restart requeues them. Each parked attempt
+  records its cause, and only `provider_unavailable` counts: a server error, a
+  timeout, a cut stream or an empty answer;
 - a media backfill that was backing off tries its failing spaces again at
   once.
 
-Work parked on a signal (a budget or consent trap, a wait) is never resumed
-by a recovery.
+A recovery never resumes other parked work: work waiting on a signal (a budget
+or consent trap, a wait, a seat login), work stopped at the deadline, a
+cancelled pass, an executor error, or any other failure.
 
 `GET /v1/ai/status` shows each offer's live health. Each built rung under
 `models.seats[].rungs[]` carries `health`:

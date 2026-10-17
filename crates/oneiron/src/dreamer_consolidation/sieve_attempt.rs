@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use super::executor::ConsolidationExecutor;
 use super::roles::{DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleCall};
 use super::step_charge::StepChargeTally;
-use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::sieve::{self, RungInput};
 use crate::dreamer_wake::{DreamerAttemptExecution, SieveRung, SpanKind, WakeAttemptContext};
 use crate::llm::{
@@ -186,7 +186,8 @@ impl ConsolidationExecutor<'_> {
                     response
                 }
                 Ok(StepOutcome::Trapped { .. }) => {
-                    return Ok(charges.park("durable step trapped for resume"));
+                    return Ok(charges
+                        .park_for("durable step trapped for resume", DreamerParkCause::Signal));
                 }
                 Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                     charges.record_usage(&usage);
@@ -197,7 +198,11 @@ impl ConsolidationExecutor<'_> {
                     return Ok(charges.park("sieve reading schema refused"));
                 }
                 Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
-                Err(error) => return Ok(charges.park(&error.to_string())),
+                Err(error) => {
+                    return Ok(
+                        charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error))
+                    );
+                }
             };
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
