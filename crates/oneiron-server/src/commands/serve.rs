@@ -233,15 +233,24 @@ pub(super) async fn serve_with_config(
             crate::server::admit_every_pass(),
         ));
     }
+    // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
+    workers.push(crate::saved_query_sweep::spawn(&sync_server));
     // Uncertain identities are decided, or asked of the person (OF-123).
-    workers.push(crate::ai_host::identity::spawn(&sync_server));
+    workers.push(crate::ai_host::identity::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     workers.push(crate::ai_host::coach_heal::spawn(
         &sync_server,
         config.failure_signals.publisher_candidates()?,
+        crate::server::admit_every_pass(),
     ));
     // The nightly Coach jobs that need the host's model or rules (OF-420).
-    workers.push(crate::ai_host::coach_host::spawn(&sync_server));
+    workers.push(crate::ai_host::coach_host::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // An accepted Coach person-threshold row goes live on the ladder (Q3).
     workers.extend(crate::decision_host::spawn_person_threshold(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).
@@ -261,6 +270,7 @@ pub(super) async fn serve_with_config(
     workers.extend(crate::ai_host::self_heal_detectors::spawn(
         &sync_server,
         &config.self_heal,
+        crate::server::admit_every_pass(),
     ));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
@@ -289,7 +299,14 @@ pub(super) async fn serve_with_config(
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
-        workers.extend(spawn_fact_hooks(&sync_server, stopped.clone()).await);
+        workers.extend(
+            spawn_fact_hooks(
+                &sync_server,
+                crate::server::admit_every_pass(),
+                stopped.clone(),
+            )
+            .await,
+        );
     }
     if !config.hooks {
         sync_server.vault().suppress_verb_hooks();
@@ -387,11 +404,12 @@ pub(super) async fn serve_with_config(
 }
 
 /// Builds the hook sandbox off the runtime (it compiles and probes the
-/// component) and starts the fact-hook runner. A sandbox that fails to load
-/// starts no runner.
+/// component) and starts the fact-hook runner, each pass under `admit`. A
+/// sandbox that fails to load starts no runner. Managed serve starts it too.
 #[cfg(feature = "code-sandbox-wasmtime")]
-async fn spawn_fact_hooks(
+pub(crate) async fn spawn_fact_hooks(
     server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     use oneiron::runtime_hooks::{FactHookRunner, sandbox};
@@ -415,6 +433,7 @@ async fn spawn_fact_hooks(
                 Arc::clone(server.vault()),
                 runtime,
                 Some(verdict),
+                admit,
                 stop,
             ))
         }

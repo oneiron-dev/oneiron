@@ -47,6 +47,29 @@ pub fn recall_with_vector(
     recall_at_door(memory, input, embed, &RecallDoor::now())
 }
 
+/// What a host that embeds nothing says to a recall naming `media`.
+pub const RECALL_MEDIA_UNSERVED: &str = "vault.recall: this host serves no ai.embed rung, so it cannot search media; retry without media or recall on a server";
+
+/// `vault.recall` on a host that embeds nothing (an embedded handle): its
+/// query recalls as [`recall_with_vector`] with no vector does, and a request
+/// naming `media` is refused with the typed `MODEL_UNAVAILABLE`, since no
+/// `ai.embed` rung serves its space here. Media is never dropped.
+pub fn recall_unembedded(
+    memory: &Memory<'_>,
+    input: RecallRequest,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    if input.media.is_some() {
+        return Err(crate::memory::MemoryError::new(
+            crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+            RECALL_MEDIA_UNSERVED,
+            &[
+                "Recall media through a server that serves the space's rung under [models.media.embed].",
+            ],
+        ));
+    }
+    recall_with_vector(memory, input, |_| None)
+}
+
 /// [`recall_with_vector`] whose deadline counts from `door.arrived`. A
 /// request with a deadline (call mode, or its own `deadline_ms`) runs under
 /// it as a hard cut: the stages yield at it, and the answer holds what was

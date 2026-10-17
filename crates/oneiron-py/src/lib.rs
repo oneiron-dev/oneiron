@@ -359,6 +359,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_wave(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.wave")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.wave", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn tasks_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "tasks.update")?;
         let output = py
@@ -382,7 +389,7 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None))]
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -396,6 +403,7 @@ impl NativeClient {
         format: Option<String>,
         as_of: Option<u64>,
         deadline_ms: Option<u64>,
+        media_json: Option<&str>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -404,6 +412,9 @@ impl NativeClient {
         };
         let limit = limit.unwrap_or(10);
 
+        let media_json: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media_json
+            .map(|value| decode(value, "recall media"))
+            .transpose()?;
         let inner = &slf.inner;
         let py = slf.py();
         let output = py
@@ -416,6 +427,7 @@ impl NativeClient {
                     format.as_deref(),
                     as_of,
                     deadline_ms,
+                    media_json,
                 )
             })
             .map_err(raise)?;
@@ -1141,6 +1153,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_diff(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.diff")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.diff", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_blame(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.blame")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.blame", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_proposal_view(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.proposal_view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.proposal_view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_repo_diff(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.repo_diff")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.repo_diff", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_export(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.export")?;
         let output = py
@@ -1462,6 +1502,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.conversations.turn.retry", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_messages_react(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.messages.react")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.messages.react", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -1812,6 +1859,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.claims.admit")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.claims.admit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.create", input))
             .map_err(raise)?;
         encode(&output)
     }
