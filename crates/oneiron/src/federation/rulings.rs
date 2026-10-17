@@ -139,7 +139,7 @@ impl Vault {
             previous_value: previous.map(|p| p.value.clone()),
         };
         let anchor = ruling_anchor_id(vault_id)?;
-        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &anchor)?.is_none() {
+        if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &anchor)? {
             self.batch_in()
                 .put(
                     &anchor,
