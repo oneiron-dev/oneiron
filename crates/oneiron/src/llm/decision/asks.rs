@@ -280,11 +280,7 @@ impl Vault {
         seq: u64,
         answer: DecisionAnswer,
     ) -> Result<DecisionAsk> {
-        let kind = match holder.actor_class() {
-            EdgeActorClass::Human => HolderKind::Person,
-            EdgeActorClass::Agent => HolderKind::Agent,
-            EdgeActorClass::System => return Err(invalid("a system actor holds no role")),
-        };
+        let kind = holder_kind(holder)?;
         let actor = holder.entity_ref();
         self.settle_decision_ask(seq, answer, |txn, ask| {
             self.verify_write_actor_in_txn(txn, holder)?;
@@ -292,15 +288,28 @@ impl Vault {
                 .role
                 .as_ref()
                 .ok_or_else(|| invalid("the decision ask has no role to answer for"))?;
-            let holds = self
-                .role_holders_in_txn(txn, &role.role, ask.to.act)?
-                .iter()
-                .any(|held| held.actor == actor && held.kind == kind);
-            if !holds {
+            if !self.holds_ask_role_in_txn(txn, ask, actor, kind)? {
                 return Err(invalid("the answerer does not hold the decision ask's role"));
             }
             Ok((actor, role.role.clone(), kind))
         })
+    }
+
+    /// Whether `actor`, as `kind`, holds the role `ask` is at now (its holders read again).
+    fn holds_ask_role_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ask: &DecisionAsk,
+        actor: EntityId,
+        kind: HolderKind,
+    ) -> Result<bool> {
+        let Some(role) = &ask.role else {
+            return Ok(false);
+        };
+        Ok(self
+            .role_holders_in_txn(txn, &role.role, ask.to.act)?
+            .iter()
+            .any(|held| held.actor == actor && held.kind == kind))
     }
 
     /// One answer to ask `seq`, authorised by `answerer` (the actor, the role it answers as
@@ -360,10 +369,44 @@ impl Vault {
     /// ceiling; an unresolved ask resolves from its first role again. None, and the ask
     /// stays where it is, when no such role is left.
     pub fn climb_decision_ask(&self, seq: u64) -> Result<Option<ResolvedRole>> {
+        self.climb_decision_ask_with(seq, |_, _| Ok(()))
+    }
+
+    /// [`Self::climb_decision_ask`] for an actor, verified as the writer in the snapshot the
+    /// ask climbs in: a holder of the role the ask is at now (it passes the ask up), the
+    /// principal the ask is for, or a live owner of the vault.
+    pub fn climb_decision_ask_as(
+        &self,
+        by: &WriteActor,
+        seq: u64,
+    ) -> Result<Option<ResolvedRole>> {
+        let actor = by.entity_ref();
+        self.climb_decision_ask_with(seq, |txn, ask| {
+            self.verify_write_actor_in_txn(txn, by)?;
+            if ask.principal == actor
+                || self.holds_ask_role_in_txn(txn, ask, actor, holder_kind(by)?)?
+                || crate::policy_model::owners_in_txn(self, txn)?.contains(&actor)
+            {
+                return Ok(());
+            }
+            Err(invalid(
+                "only the ask's role holder, its principal or an owner climbs a decision ask",
+            ))
+        })
+    }
+
+    /// One climb of ask `seq`, admitted by `climber` in the snapshot it climbs in.
+    fn climb_decision_ask_with(
+        &self,
+        seq: u64,
+        climber: impl Fn(&heed::RoTxn<'_>, &DecisionAsk) -> Result<()>,
+    ) -> Result<Option<ResolvedRole>> {
         self.with_write_txn_grouped(|txn| {
             let mut ask = ASKS
                 .get(&self.store, &*txn, &seq)?
                 .ok_or_else(|| invalid("no such decision ask"))?;
+            let read: &heed::RoTxn<'_> = txn;
+            climber(read, &ask)?;
             if ask.answer.is_some() {
                 return Err(invalid("decision ask already answered"));
             }
@@ -576,6 +619,15 @@ impl AskRoleResolver for Vault {
     }
 }
 
+/// The kind of role holder `actor` writes as: a person or a bound agent.
+fn holder_kind(actor: &WriteActor) -> Result<HolderKind> {
+    match actor.actor_class() {
+        EdgeActorClass::Human => Ok(HolderKind::Person),
+        EdgeActorClass::Agent => Ok(HolderKind::Agent),
+        EdgeActorClass::System => Err(invalid("a system actor holds no role")),
+    }
+}
+
 /// The ladder's person queue over the vault's asks. Hold one per vault and lend it: an
 /// answer given through it wakes every waiter on it.
 pub struct DecisionAsks {
@@ -645,6 +697,11 @@ impl DecisionAsks {
     /// See [`Vault::climb_decision_ask`].
     pub fn climb(&self, seq: u64) -> Result<Option<ResolvedRole>> {
         self.vault.climb_decision_ask(seq)
+    }
+
+    /// See [`Vault::climb_decision_ask_as`].
+    pub fn climb_as(&self, by: &WriteActor, seq: u64) -> Result<Option<ResolvedRole>> {
+        self.vault.climb_decision_ask_as(by, seq)
     }
 
     /// Waits for the answer to ask `seq`. An ask answered before the wait, or before a
