@@ -705,6 +705,35 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             move || state.admit_http_mutation().ok()
         })
         .await?;
+    // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
+    // unless `--no-hooks`: each pass admitted like a served write. The sandbox
+    // loads before ready, as plain serve loads it, so no verb waits on it.
+    let (hooks_stop, hooks_stopped) = watch::channel(false);
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    let fact_hooks = if config.hooks {
+        let state = Arc::clone(&state);
+        crate::commands::spawn_fact_hooks(
+            &sync_server,
+            Arc::new(move || {
+                state
+                    .admit_http_mutation()
+                    .ok()
+                    .map(|admission| Box::new(admission) as Box<dyn Send>)
+            }),
+            hooks_stopped,
+        )
+        .await
+    } else {
+        None
+    };
+    #[cfg(not(feature = "code-sandbox-wasmtime"))]
+    let fact_hooks: Option<tokio::task::JoinHandle<()>> = {
+        drop(hooks_stopped);
+        None
+    };
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
+    }
 
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
@@ -865,6 +894,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     for worker in ladder_workers {
         worker.abort();
         let _ = worker.await;
+    }
+    // A hook pass in flight commits or fails whole before the runner stops.
+    let _ = hooks_stop.send(true);
+    if let Some(fact_hooks) = fact_hooks {
+        let _ = fact_hooks.await;
     }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;
