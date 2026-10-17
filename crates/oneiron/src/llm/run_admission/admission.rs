@@ -2,6 +2,7 @@
 //! connector, is admitted against the run's own declaration and its lease,
 //! and gets a one-use permit bound to the run, the model, the route, the
 //! locality and the offer that pays.
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -15,7 +16,7 @@ use super::super::{
 };
 use super::declaration::{DeclarationEditor, LeaseUnit, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
-use super::host::{AllocationRefusal, HostAccount, OfferBinding, PaidConnector};
+use super::host::{AllocationRefusal, HostAccount, OfferBinding, PaidConnector, PayerPerson};
 use super::media::MediaGate;
 use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
@@ -135,6 +136,9 @@ pub(super) struct RunInner {
     declaration: Mutex<Revisioned>,
     pub(super) guard: BudgetGuard,
     pub(super) host: Option<Arc<HostAccount>>,
+    /// Who funds the run's calls when a room's root spend scope pays for
+    /// them (OF-531), fixed when the run starts.
+    pub(super) payer: Option<PayerPerson>,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
     /// The open paid-connector permits' leases. A model permit's lease is in
@@ -193,6 +197,23 @@ impl RunAdmission {
         host: Option<Arc<HostAccount>>,
         receipts: Arc<dyn RunReceiptSink>,
     ) -> Self {
+        Self::with_payer(run, declaration, meter, host, receipts, None)
+    }
+
+    /// Starts a run as [`Self::with_meter`] does, funded by `payer`: the
+    /// PERSON a room's root spend scope names and the account the host
+    /// resolved for it before the run began (OF-531). Every offer the run
+    /// admits or gates binds that payer, so its permits, its receipts and its
+    /// offer identities carry it. `None` is a run no room pays for.
+    #[must_use]
+    pub fn with_payer(
+        run: impl Into<String>,
+        declaration: RunDeclaration,
+        meter: BudgetGuard,
+        host: Option<Arc<HostAccount>>,
+        receipts: Arc<dyn RunReceiptSink>,
+        payer: Option<PayerPerson>,
+    ) -> Self {
         let run = run.into();
         Self {
             inner: Arc::new(RunInner {
@@ -204,6 +225,7 @@ impl RunAdmission {
                 }),
                 guard: meter,
                 host,
+                payer,
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
                 paid: Mutex::new(BTreeSet::new()),
@@ -214,6 +236,12 @@ impl RunAdmission {
     #[must_use]
     pub fn run(&self) -> &str {
         &self.inner.run
+    }
+
+    /// Who funds this run's calls, when a room's root spend scope does.
+    #[must_use]
+    pub fn payer(&self) -> Option<&PayerPerson> {
+        self.inner.payer.as_ref()
     }
 
     /// The run's budget line as its meter reads now.
@@ -289,6 +317,11 @@ impl RunAdmission {
         call: RunCall<'_>,
         request_digest: Option<String>,
     ) -> Result<RunPermit, RunDenied> {
+        let offer = self.inner.bound(call.offer);
+        let call = RunCall {
+            offer: &*offer,
+            ..call
+        };
         let (revision, declaration) = self.inner.snapshot();
         let admitted = self
             .inner
@@ -323,7 +356,8 @@ impl RunAdmission {
     /// another offer never starts here, whatever route the two share.
     #[must_use]
     pub fn gate(&self, inner: Arc<dyn SingleRouteBackend>, offer: &OfferBinding) -> GatedBackend {
-        GatedBackend::new(Arc::clone(&self.inner), inner, offer.dispatch_binding())
+        let offer = self.inner.bound(offer).dispatch_binding();
+        GatedBackend::new(Arc::clone(&self.inner), inner, offer)
     }
 
     /// Admits one media call (`ai.image`, `ai.video`, `ai.speech`,
@@ -358,10 +392,11 @@ impl RunAdmission {
         reserve_units: u64,
     ) -> Result<RunPermit, RunDenied> {
         let admission = request.admission_request();
+        let offer = self.inner.bound(offer);
         let call = RunCall {
             selector,
             request: &admission,
-            offer,
+            offer: &*offer,
         };
         let (revision, declaration) = self.inner.snapshot();
         let declaration = declaration.with_reserve(reserve_units);
@@ -380,7 +415,8 @@ impl RunAdmission {
     /// [`Self::gate`] does for a text call.
     #[must_use]
     pub fn media_gate(&self, inner: Arc<dyn MediaBackend>, offer: &OfferBinding) -> MediaGate {
-        MediaGate::new(Arc::clone(&self.inner), inner, offer.dispatch_binding())
+        let offer = self.inner.bound(offer).dispatch_binding();
+        MediaGate::new(Arc::clone(&self.inner), inner, offer)
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,
@@ -493,6 +529,20 @@ impl RunAdmission {
 }
 
 impl RunInner {
+    /// `offer` as this run binds it: with the run's payer when a room's root
+    /// spend scope funds the run (OF-531). Admission and the gate both take
+    /// this one binding, so the permit's offer identity is the one the gate
+    /// compares.
+    fn bound<'a>(&self, offer: &'a OfferBinding) -> Cow<'a, OfferBinding> {
+        match &self.payer {
+            Some(payer) => Cow::Owned(OfferBinding {
+                payer_person: Some(payer.clone()),
+                ..offer.clone()
+            }),
+            None => Cow::Borrowed(offer),
+        }
+    }
+
     fn snapshot(&self) -> (u32, RunDeclaration) {
         let current = self.lock_declaration();
         (current.revision, current.declaration.clone())

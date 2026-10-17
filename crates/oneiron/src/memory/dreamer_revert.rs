@@ -12,6 +12,7 @@ use crate::dreamer_consolidation::{
     DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
     dreamer_changes_in_txn, revert_dreamer_change_in_txn,
 };
+use crate::dreamer_runner::maintenance::MaintenanceTarget;
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
 use crate::{EntityId, WriteActor};
@@ -34,19 +35,26 @@ impl Memory<'_> {
         let mut changes = dreamer_changes_in_txn(self.vault, &txn, limit)?;
         drop(txn);
         let applied = self.vault.applied_dreamer_maintenance(owner, usize::MAX)?;
-        changes
-            .changes
-            .retain(|change| applied.iter().all(|row| row.finding != change.change));
+        changes.changes.retain(|change| {
+            applied
+                .iter()
+                .all(|row| row.target != MaintenanceTarget::Finding(change.change))
+        });
+        // An identity abstention has no finding to name here; the owner's
+        // identity asks door lists it.
         changes.maintenance = applied
             .into_iter()
             .filter(|row| row.reverted.is_none())
-            .take(limit)
-            .map(|row| DreamerChange {
-                change: row.finding,
-                kind: DreamerChangeKind::Maintenance,
-                label: row.kind.to_owned(),
-                at: row.applied_at,
+            .filter_map(|row| match row.target {
+                MaintenanceTarget::Finding(change) => Some(DreamerChange {
+                    change,
+                    kind: DreamerChangeKind::Maintenance,
+                    label: row.kind.to_owned(),
+                    at: row.applied_at,
+                }),
+                MaintenanceTarget::IdentityAsk(_) => None,
             })
+            .take(limit)
             .collect();
         Ok(changes)
     }
@@ -71,12 +79,14 @@ impl Memory<'_> {
             .vault
             .applied_dreamer_maintenance(owner, usize::MAX)?
             .iter()
-            .any(|row| row.finding == change)
+            .any(|row| row.target == MaintenanceTarget::Finding(change))
         {
             // That door keeps its passes' clock, in seconds.
-            let revert = self
-                .vault
-                .revert_dreamer_maintenance(owner, change, now / 1_000)?;
+            let revert = self.vault.revert_dreamer_maintenance(
+                owner,
+                MaintenanceTarget::Finding(change),
+                now / 1_000,
+            )?;
             let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Maintenance);
             reverted.retracted = std::iter::once(change).chain(revert.closed).collect();
             reverted.restored = revert.restored;

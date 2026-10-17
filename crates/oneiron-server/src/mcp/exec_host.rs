@@ -3,6 +3,7 @@
 use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
+use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
 use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
@@ -10,6 +11,7 @@ use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
 };
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
 use std::collections::HashSet;
@@ -203,10 +205,14 @@ pub trait McpCodeModeProvider: Send + Sync {
         self.runtime()
     }
     /// The backend one reader child's model calls go through, each spent on
-    /// `meter`: its own child scope's guard, or [`Self::host_meter`]. `None`:
-    /// the provider has no metered backend to give, and the child does not
-    /// run.
-    fn reader_backend(&self, _meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
+    /// `meter` (its own child scope's guard, or [`Self::host_meter`]) and
+    /// billed to `payer` when a room's scope pays (OF-531). `None`: the
+    /// provider has no metered backend to give, and the child does not run.
+    fn reader_backend(
+        &self,
+        _meter: BudgetGuard,
+        _payer: Option<PayerPerson>,
+    ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
     /// The meter the host runs a run's own model calls on when the run
@@ -268,8 +274,9 @@ pub type RunCompactionSeat =
     Arc<dyn Fn(WriteActor, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
 
 /// Builds one reader child's backend over the host's model, its calls spent
-/// on the guard it is given.
-pub type ReaderMeter = Arc<dyn Fn(BudgetGuard) -> Arc<dyn LlmBackend> + Send + Sync>;
+/// on the guard it is given and billed to the payer, when one is given.
+pub type ReaderMeter =
+    Arc<dyn Fn(BudgetGuard, Option<PayerPerson>) -> Arc<dyn LlmBackend> + Send + Sync>;
 
 /// How many `execute_code` runs one server works on at once.
 ///
@@ -540,6 +547,7 @@ fn run_engine_native_code_mode(
     .map_err(|error| match error {
         EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
         EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
+        EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
     })
 }
 
@@ -551,6 +559,8 @@ fn run_engine_native_code_mode(
 pub(crate) enum EngineRunError {
     Binding(String),
     Run(oneiron::engine_executor::EngineExecutorError),
+    /// The run's spend scope names no payer it can bill (OF-531).
+    Payer(PayerFault),
 }
 
 impl EngineRunError {
@@ -568,6 +578,7 @@ impl fmt::Display for EngineRunError {
         match self {
             Self::Binding(error) => f.write_str(error),
             Self::Run(error) => write!(f, "{error}"),
+            Self::Payer(fault) => write!(f, "{fault}"),
         }
     }
 }
@@ -613,10 +624,13 @@ pub(crate) fn enter_engine_native_run(
             seat,
         );
     };
+    // A room-paid scope's calls bill its root payer (OF-531), else it holds.
+    let payer = scope_funding(vault, Some(scope), false).map_err(EngineRunError::Payer)?;
     let dispatcher = AgentDispatcher::new(vault);
     let guard = dispatcher.guard_for_scope(scope).map_err(binding)?;
     // The backend a reader child's calls take, on this scope's guard.
-    let backend = provider.reader_backend(guard.clone()).ok_or_else(|| {
+    let backend = provider.reader_backend(guard.clone(), payer);
+    let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
     let entered = enter_on(
