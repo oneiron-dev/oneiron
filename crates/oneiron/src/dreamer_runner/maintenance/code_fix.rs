@@ -7,13 +7,16 @@
 //! for a skill or prompt heal, the shadow result of the instruction it would
 //! add, replayed against the real failure. Each candidate the deployment's
 //! publisher supplied, pinned by the operator, is replayed against the same
-//! failure beside it. The host's model drafts and
+//! failure beside it; one pinned after a failure settled is replayed against
+//! it once, in a catch-up over past work after the host starts. The host's
+//! model drafts and
 //! replays with no tools; every judgment (the failure's class, does a replay
 //! fail the same way, did the candidate fix it, may the example leave) is a
 //! typed question on the host's decision ladder. The export doors in
 //! `failure_signals` decide what leaves, and the failure's work row keeps
 //! each verdict here after the export queue drains.
 use std::cell::OnceCell;
+use std::ops::Bound;
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
@@ -26,6 +29,7 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     COACH_HEAL_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
 };
+use crate::failure_ladder::{BlockedReportRef, HealerCase};
 use crate::failure_signals::{
     CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber,
     FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage, InventedRole,
@@ -49,6 +53,10 @@ const BLOCKED_WORK_DOMAIN: &[u8] = b"oneiron.code-fix.blocked.v1\0";
 const JOB_REPORTS: usize = 8;
 /// Most work rows one owner read returns.
 pub const MAX_CODE_FIX_WORK: usize = 256;
+/// Work rows one catch-up step reads, and top-up runs it queues: a newly
+/// pinned candidate reaches past failures a few at a time.
+const TOP_UP_SCAN: usize = 256;
+const TOP_UP_QUEUE: usize = 2;
 /// Most bytes of one report's detail, one message, or one other text a
 /// question's state carries.
 const DETAIL_BYTES: usize = 1024;
@@ -465,6 +473,18 @@ pub(super) fn wake_in_txn(
             settled: None,
         },
     )?;
+    enqueue_run_in_txn(vault, txn, key, Some(parent), now)
+}
+
+/// Queues the `coach.code_fix` attempt for the work row `key`. One waiting
+/// attempt per row: a second enqueue finds the first.
+fn enqueue_run_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: EntityId,
+    parent: Option<AttemptId>,
+    now: u64,
+) -> Result<()> {
     let input = key.to_hex();
     DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
         txn,
@@ -472,13 +492,68 @@ pub(super) fn wake_in_txn(
         DreamerAttemptPayload {
             attempt_type: COACH_CODE_FIX_FACET.into(),
             input: Value::from(input.as_str()),
-            parent_attempt: Some(parent),
+            parent_attempt: parent,
         },
         Some(format!("{COACH_CODE_FIX_FACET}:{input}")),
         None,
         now,
     )?;
     Ok(())
+}
+
+/// The candidates of `pinned` that `settled` holds no run of, each as its id
+/// and instruction.
+fn untried(settled: &CodeFixSettled, pinned: &[PublisherCandidate]) -> Vec<(String, String)> {
+    pinned
+        .iter()
+        .filter(|candidate| {
+            !settled
+                .candidates
+                .iter()
+                .any(|run| run.candidate_id == candidate.id)
+        })
+        .map(|candidate| (candidate.id.clone(), candidate.instruction.clone()))
+        .collect()
+}
+
+/// Each of `candidates` kept as not run, for `reason`: it is not tried again.
+fn not_run(candidates: &[(String, String)], reason: CodeFixWithheld) -> Vec<CandidateRun> {
+    candidates
+        .iter()
+        .map(|(candidate_id, _)| CandidateRun {
+            candidate_id: candidate_id.clone(),
+            outcome: None,
+            export: CodeFixVerdict::Withheld { reason },
+        })
+        .collect()
+}
+
+/// The failure's evidence for its questions (the case's own and each report
+/// it still reads), and its reports as those questions read them.
+fn failure_context(
+    vault: &Vault,
+    case: Option<&HealerCase>,
+    reports: &[BlockedReportRef],
+) -> Result<(Vec<EntityId>, Vec<serde_json::Value>)> {
+    let reports = case_reports(vault, reports)?;
+    let mut evidence: Vec<EntityId> = case
+        .and_then(|case| EntityId::from_hex(&case.evidence_ref).ok())
+        .into_iter()
+        .chain(reports.iter().map(|(receipt, _)| *receipt))
+        .collect();
+    evidence.sort();
+    evidence.dedup();
+    let reports = reports
+        .iter()
+        .take(JOB_REPORTS)
+        .map(|(_, report)| {
+            json!({
+                "category": report.category.as_str(),
+                "untrusted_detail": clip(&report.untrusted_detail, DETAIL_BYTES),
+            })
+        })
+        .collect();
+    Ok((evidence, reports))
 }
 
 /// Queues the Coach's code-fix run for a blocked report it just filed a heal
@@ -535,11 +610,62 @@ impl Vault {
         Ok(rows)
     }
 
+    /// One step of the catch-up that tries publisher candidates pinned after
+    /// a failure settled on that failure (OF-380): reads up to 256 work rows
+    /// after `after` and queues a top-up run for at most 2 settled ones with
+    /// no run of some id in `pinned`. Returns the key the next step goes on
+    /// after, or `None` once the last row is read. A deployment that does not
+    /// export queues nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn queue_code_fix_top_ups(
+        &self,
+        after: Option<EntityId>,
+        pinned: &[&str],
+        now: u64,
+    ) -> Result<Option<EntityId>> {
+        if pinned.is_empty() || !self.config.failure_signals.exports() {
+            return Ok(None);
+        }
+        self.with_write_txn_grouped(|txn| {
+            let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
+            let rows: Vec<(EntityId, CodeFixWork)> = WORK
+                .iter_range(&self.store, &*txn, start, Bound::Unbounded)?
+                .take(TOP_UP_SCAN)
+                .collect::<Result<_>>()?;
+            let mut next = (rows.len() == TOP_UP_SCAN)
+                .then(|| rows.last().map(|(key, _)| *key))
+                .flatten();
+            let mut queued = 0;
+            for (key, work) in &rows {
+                let Some(settled) = &work.settled else {
+                    continue;
+                };
+                let lacks = pinned
+                    .iter()
+                    .any(|id| !settled.candidates.iter().any(|run| run.candidate_id == *id));
+                if !lacks {
+                    continue;
+                }
+                enqueue_run_in_txn(self, txn, *key, None, now)?;
+                queued += 1;
+                if queued == TOP_UP_QUEUE {
+                    next = Some(*key);
+                    break;
+                }
+            }
+            Ok(next)
+        })
+    }
+
     /// The Coach's code-fix run for one case or blocked report, under its leased
     /// `coach.code_fix` attempt: the failure's class, the Coach's draft, the
     /// invented example through its export door, and the candidate's shadow
     /// replay, kept here and sent through its own door. A replay returns what
-    /// the first run kept.
+    /// the first run kept, with a run of each pinned publisher candidate it
+    /// had none of.
     pub fn run_coach_code_fix(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -561,10 +687,33 @@ impl Vault {
             WORK.get(&self.store, &txn, &key)?
                 .ok_or_else(super::invalid)?
         };
-        if let Some(settled) = work.settled {
-            return Ok(settled);
-        }
         let route = HealRoute::parse(&work.route).ok_or_else(super::invalid)?;
+        if let Some(settled) = work.settled {
+            let missing = untried(&settled, host.publisher_candidates());
+            if missing.is_empty() || !self.config.failure_signals.exports() {
+                return Ok(settled);
+            }
+            let runs =
+                self.code_fix_top_up(&work.source, route, &settled, &missing, decisions, host)?;
+            return self.with_write_txn_grouped(|txn| {
+                let mut work = WORK
+                    .get(&self.store, &*txn, &key)?
+                    .ok_or_else(super::invalid)?;
+                let mut settled = work.settled.take().ok_or_else(super::invalid)?;
+                for run in &runs {
+                    if !settled
+                        .candidates
+                        .iter()
+                        .any(|kept| kept.candidate_id == run.candidate_id)
+                    {
+                        settled.candidates.push(run.clone());
+                    }
+                }
+                work.settled = Some(settled.clone());
+                WORK.put(&self.store, txn, &key, &work)?;
+                Ok(settled)
+            });
+        }
         let settled = self.code_fix_run(&work.source, route, decisions, host, now)?;
         self.with_write_txn_grouped(|txn| {
             let mut work = WORK
@@ -616,24 +765,7 @@ impl Vault {
             ));
         };
         let case = subject.case.as_ref();
-        let reports = case_reports(self, &subject.reports)?;
-        let mut evidence: Vec<EntityId> = case
-            .and_then(|case| EntityId::from_hex(&case.evidence_ref).ok())
-            .into_iter()
-            .chain(reports.iter().map(|(receipt, _)| *receipt))
-            .collect();
-        evidence.sort();
-        evidence.dedup();
-        let reports: Vec<serde_json::Value> = reports
-            .iter()
-            .take(JOB_REPORTS)
-            .map(|(_, report)| {
-                json!({
-                    "category": report.category.as_str(),
-                    "untrusted_detail": clip(&report.untrusted_detail, DETAIL_BYTES),
-                })
-            })
-            .collect();
+        let (evidence, reports) = failure_context(self, case, &subject.reports)?;
         // A blocked report with no case has no ladder class and names no
         // skill the ladder saw.
         let about = if case.is_some() {
@@ -706,13 +838,73 @@ impl Vault {
                 reason: CodeFixWithheld::NotDrafted,
             },
         };
-        let example_id = match &example {
+        let candidates = self.replay_candidates(source, &replay, &example)?;
+        Ok(CodeFixSettled {
+            at: now,
+            failure_class,
+            example,
+            candidates,
+        })
+    }
+
+    /// The runs of `missing`, publisher candidates a settled run never
+    /// tried, each replayed once against the failure and sent through its
+    /// door. The first run's class and example stand. A failure that no longer
+    /// stands, or whose text cannot be read, keeps each as not run.
+    fn code_fix_top_up(
+        &self,
+        source: &CodeFixSource,
+        route: HealRoute,
+        settled: &CodeFixSettled,
+        missing: &[(String, String)],
+        decisions: &CodeFixDecisions<'_>,
+        host: &dyn CodeFixHost,
+    ) -> Result<Vec<CandidateRun>> {
+        let found = {
+            let txn = self.store.env.read_txn()?;
+            code_fix_subject_in(self, &txn, source)?
+        };
+        let Some(subject) = found else {
+            return Ok(not_run(missing, CodeFixWithheld::UnknownCase));
+        };
+        let Some((failure, _)) = subject.failure else {
+            return Ok(not_run(missing, CodeFixWithheld::PrivateWorld));
+        };
+        let (evidence, reports) = failure_context(self, subject.case.as_ref(), &subject.reports)?;
+        let job = CodeFixJob {
+            origin: source.clone(),
+            route,
+            failure_class: settled.failure_class,
+            source: failure,
+            reports,
+        };
+        let replay = CoachReplay {
+            job: &job,
+            host,
+            decisions,
+            evidence: &evidence,
+            candidates: missing.to_vec(),
+            baseline: OnceCell::new(),
+        };
+        self.replay_candidates(source, &replay, &settled.example)
+    }
+
+    /// Each of the replay's candidates shadow-replayed against the real
+    /// failure, its result sent through its door beside `example`'s record.
+    fn replay_candidates(
+        &self,
+        source: &CodeFixSource,
+        replay: &CoachReplay<'_>,
+        example: &CodeFixVerdict,
+    ) -> Result<Vec<CandidateRun>> {
+        let example_id = match example {
             CodeFixVerdict::Queued { id } => Some(id.clone()),
             CodeFixVerdict::Withheld { .. } => None,
         };
+        let failure_class = replay.job.failure_class;
         let mut candidates = Vec::with_capacity(replay.candidates.len());
         for (candidate_id, _) in &replay.candidates {
-            let shadow = replay.shadow_replay(&job.source, candidate_id)?;
+            let shadow = replay.shadow_replay(&replay.job.source, candidate_id)?;
             let outcome = match shadow {
                 ShadowRun::Fixed => Some(FixOutcome::Fixed),
                 ShadowRun::NotFixed => Some(FixOutcome::NotFixed),
@@ -733,12 +925,7 @@ impl Vault {
                 export,
             });
         }
-        Ok(CodeFixSettled {
-            at: now,
-            failure_class,
-            example,
-            candidates,
-        })
+        Ok(candidates)
     }
 }
 

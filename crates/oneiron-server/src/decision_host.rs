@@ -443,13 +443,15 @@ impl DecisionHost {
     /// The Dreamer's consolidation questions through this ladder, in the
     /// shipped wording: the verdict role's generated read sits at the Local
     /// slot, and an answer still in the band steps up the host's stronger
-    /// rungs to the Big rung, under the host's bands.
+    /// rungs and then asks the role the Dreamer binds for the claims'
+    /// project, under the host's bands. The work an ask decides waits for its
+    /// answer; the rest of the pass goes on.
     pub(crate) fn consolidation_decisions(&self) -> oneiron::Result<ConsolidationDecisions> {
         Ok(ConsolidationDecisions {
             ladder: self.ladder.clone(),
             dial: DecisionDial {
                 first: DecisionRung::Local,
-                ceiling: DecisionRung::Big,
+                ceiling: DecisionRung::Human,
                 band: DecisionBand::default(),
             },
             bands: self.bands.clone(),

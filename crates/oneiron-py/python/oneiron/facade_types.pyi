@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 224 facade rows, 772 declarations.
-Inputs: 193 of 224 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 181 of 224 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 49; unread shapes: 1.
+Census: 231 facade rows, 797 declarations.
+Inputs: 196 of 231 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 186 of 231 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 54; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2087,6 +2087,28 @@ class DisclosureOffered(TypedDict):
     owner_ref: str
     created_at: int
     expires_at: int
+class RevealRequest(TypedDict):
+    handle: str
+    why: str
+class RevealPending(TypedDict):
+    reveal: str
+class RevealWaitRequest(TypedDict):
+    reveal: str
+RevealDecision = Literal["pending", "granted", "denied", "expired"]
+RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None]})
+class RevealWaitAnswer(TypedDict):
+    decision: RevealDecision
+    value: NotRequired[str | None]
+    value_base64: NotRequired[str | None]
+    receipt: NotRequired[RevealReceipt | None]
+class RevealDescribeRequest(TypedDict):
+    handle: str
+class RevealProvenance(TypedDict):
+    record: str
+    place: str
+    kind: str
+    masked_at: int
+RevealHandleCard = TypedDict("RevealHandleCard", {"handle": str, "label": str, "class": str, "status": str, "band": str, "provenance": NotRequired[RevealProvenance | None], "reveal": str, "grant_ref": NotRequired[str | None], "refusal": NotRequired[str | None]})
 BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]
@@ -2138,14 +2160,32 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+FactSource = Literal["claim_changelog", "settlement"]
 FactPositionHex = str
 FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
+HookPhase = Literal["pre", "post", "fact"]
+class HookReplayCaseFact(TypedDict):
+    on: Literal["fact"]
+    source: FactSource
+    position: FactPositionHex
+    kind: FactKind
+    entity: str
+class HookReplayCaseVerb(TypedDict):
+    on: Literal["verb"]
+    run_key: str
+    invocation: str
+    verb: str
+    phase: HookPhase
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+HookReplayCompare = Literal["same", "differs", "incomplete"]
 class HookReplayOutcomeRan(TypedDict):
     status: Literal["ran"]
     outcome_json: NotRequired[str | None]
     outcome: str
     reason: NotRequired[str | None]
     recorded: NotRequired[str | None]
+    recorded_outcome_json: NotRequired[str | None]
+    compare: HookReplayCompare
     from_memo: bool
     reads_live: bool
 class HookReplayOutcomeMissingHistory(TypedDict):
@@ -2153,9 +2193,7 @@ class HookReplayOutcomeMissingHistory(TypedDict):
     reason: str
 HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
 class HookReplayRow(TypedDict):
-    position: FactPositionHex
-    kind: FactKind
-    entity: str
+    case: HookReplayCase
     result: HookReplayOutcome
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str
@@ -3484,6 +3522,10 @@ class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
 HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
+class QuestionCriteria(TypedDict):
+    yes_if_all: list[str]
+    no_if_any: list[str]
+    not_a_reason_to_say_no: list[str]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
@@ -3491,6 +3533,7 @@ class GraphAskRequest(TypedDict):
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
     posture: NotRequired[HostingPrivacyPosture | None]
+    criteria: NotRequired[QuestionCriteria | None]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
     probability: NotRequired[float | None]
@@ -3529,10 +3572,6 @@ QuestionActivation = Literal["one_off", "standing"]
 class RefreshPolicy(TypedDict):
     on_arrival: bool
     every_seconds: NotRequired[int | None]
-class QuestionCriteria(TypedDict):
-    yes_if_all: list[str]
-    no_if_any: list[str]
-    not_a_reason_to_say_no: list[str]
 QuestionAudience = Literal["asker"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
@@ -3826,6 +3865,68 @@ class ArtifactCreateRequest(TypedDict):
     content_base64: str
     run_ref: NotRequired[str | None]
     made_by: NotRequired[Any | None]
+class CoreWriteTextField(TypedDict):
+    field: str
+    value: str
+class ConversationCreateInput(TypedDict):
+    id: NotRequired[str | None]
+    occurred_start: NotRequired[int | None]
+    occurred_end: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    body: Any
+    text: NotRequired[list[CoreWriteTextField] | None]
+class CoreEntityWriteReceipt(TypedDict):
+    id: str
+    entity_type: int
+    learned_at: int
+    body: Any
+class ConversationTurnCreateInput(TypedDict):
+    conversation: str
+    id: NotRequired[str | None]
+    occurred_start: NotRequired[int | None]
+    occurred_end: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    body: Any
+    text: NotRequired[list[CoreWriteTextField] | None]
+CoreDagAddressMode = Literal["broadcast", "direct"]
+class CoreDagQuoteInput(TypedDict):
+    message: str
+    start: int
+    end: int
+class DagRecordAppendInput(TypedDict):
+    conversation: str
+    parent: NotRequired[str | None]
+    reply_to: NotRequired[str | None]
+    addr: NotRequired[CoreDagAddressMode | None]
+    to: NotRequired[list[str] | None]
+    advance: bool
+    body: Any
+    text: NotRequired[list[CoreWriteTextField] | None]
+    occurred_start: NotRequired[int | None]
+    occurred_end: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    session: NotRequired[str | None]
+    quote: NotRequired[CoreDagQuoteInput | None]
+class DagRecordAppendReceipt(TypedDict):
+    id: str
+    head: NotRequired[str | None]
+    parent: NotRequired[str | None]
+class CoreBatchEntityInput(TypedDict):
+    id: NotRequired[str | None]
+    entity_type: int
+    occurred_start: NotRequired[int | None]
+    occurred_end: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    body: Any
+    text: NotRequired[list[CoreWriteTextField] | None]
+class CoreBatchWriteInput(TypedDict):
+    entities: list[CoreBatchEntityInput]
+class CoreBatchEntityReceipt(TypedDict):
+    id: str
+    entity_type: int
+class CoreBatchWriteReceipt(TypedDict):
+    count: int
+    entities: list[CoreBatchEntityReceipt]
 class BlobArtifactInput(TypedDict):
     id: NotRequired[str | None]
     name: str
