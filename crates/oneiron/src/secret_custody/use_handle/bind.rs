@@ -130,13 +130,16 @@ impl Vault {
             created_at: crate::ports::recorded_at_in_txn(&self.store, &mut wtxn)?,
             outcome: "approved".into(),
             reason_codes: vec![SECRET_BIND_REASON.into()],
-            receipt_reasons: vec![
-                format!("handle:{handle}"),
-                format!("effector:{effector}"),
-                format!("rung:{}", request.tier_ceiling.as_u8()),
-                format!("scopes:{}", request.scopes.join(",")),
-            ],
-            system_notices: Vec::new(),
+            receipt_reasons: Vec::new(),
+            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+                SECRET_BIND_CONTENT_KIND,
+                vec![
+                    format!("handle:{handle}"),
+                    format!("effector:{effector}"),
+                    format!("rung:{}", request.tier_ceiling.as_u8()),
+                    format!("scopes:{}", request.scopes.join(",")),
+                ],
+            ),
             actor_class: "human".into(),
             actor_ref: Some(actor.to_hex()),
             content_kind: SECRET_BIND_CONTENT_KIND.into(),

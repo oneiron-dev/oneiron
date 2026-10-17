@@ -17,6 +17,20 @@ pub struct EgressReceipt {
     pub category: PolicyVerdictCategory,
     pub policy_receipt: Option<String>,
 }
+/// `body`'s whitespace as JSON `\uXXXX` escapes (every whitespace char is
+/// in the BMP), so the text decodes to the same value.
+fn escape_whitespace(body: &str) -> String {
+    let mut escaped = String::with_capacity(body.len());
+    for c in body.chars() {
+        if c.is_whitespace() {
+            escaped.push_str(&format!("\\u{:04x}", u32::from(c)));
+        } else {
+            escaped.push(c);
+        }
+    }
+    escaped
+}
+
 impl Vault {
     pub fn append_sandbox_abandon_receipt(
         &self,
@@ -87,6 +101,9 @@ impl Vault {
         let created_at = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
         let mut notices = Vec::new();
+        // Compact JSON holds whitespace only inside its strings; escaped
+        // there, no part of the body can be blank.
+        let body = escape_whitespace(&body);
         let mut remaining = body.as_str();
         while !remaining.is_empty() {
             let mut end = remaining

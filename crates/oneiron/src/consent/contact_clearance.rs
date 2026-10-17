@@ -726,8 +726,11 @@ impl Vault {
             created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
             outcome: receipt.act.gate_outcome().into(),
             reason_codes: vec![receipt.act.reason_code().into()],
-            receipt_reasons,
-            system_notices: Vec::new(),
+            receipt_reasons: Vec::new(),
+            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+                CONSENT_CONTENT_KIND,
+                receipt_reasons,
+            ),
             actor_class: if actor.is_some() { "human" } else { "engine" }.into(),
             actor_ref: actor.map(|actor| actor.to_hex()),
             content_kind: CONSENT_CONTENT_KIND.into(),
