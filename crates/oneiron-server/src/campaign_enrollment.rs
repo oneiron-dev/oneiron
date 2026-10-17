@@ -22,7 +22,8 @@ use oneiron::campaign::enrollment::{
     elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
 };
 use oneiron::saved_query::{
-    SavedQueryEvaluator, SavedQueryRecord, WakeEvaluationReport, sweep_owner_grants,
+    QueryScope, SavedQueryEvaluator, SavedQueryRecord, WakeEvaluationReport, read_saved_query,
+    sweep_owner_read,
 };
 use oneiron::{EntityId, Vault};
 
@@ -153,8 +154,8 @@ fn campaign_home_node(vault: &Vault, now: u64) -> oneiron::Result<Option<u64>> {
 }
 
 /// Runs the membership leg of one claimed attempt, re-deriving its evidence
-/// under the reach the sweep evaluates the query's owner under. No judge is
-/// bound: evidence that still hashes to the event's is answered by the memo
+/// under the read the sweep evaluates the query under: its owner's, resolved
+/// now as the owner's class. No judge is bound: evidence that still hashes to the event's is answered by the memo
 /// detection wrote, and evidence that moved makes the attempt stale whatever
 /// a judge would say.
 async fn execute(
@@ -167,14 +168,22 @@ async fn execute(
     let payload = decode_enrollment_attempt_payload(&attempt.payload)?;
     let event = campaign_enrollment_event(vault, payload.membership_event_ref)?
         .ok_or(oneiron::Error::EntityNotFound)?;
-    let grants = sweep_owner_grants(vault, event.owner_actor)?.ok_or_else(|| {
-        oneiron::Error::InvalidConfig(
-            "the saved query's owner is not the vault owner; no sweep reach covers it".into(),
-        )
+    let record = read_saved_query(vault, event.owner_actor, event.query_ref)?
+        .ok_or(oneiron::Error::EntityNotFound)?;
+    let read = sweep_owner_read(
+        vault,
+        record.definition.owner_actor,
+        record.definition.owner_actor_class,
+    )?
+    .ok_or_else(|| {
+        oneiron::Error::InvalidConfig("the saved query's owner has no usable read now".into())
     })?;
+    // The owner's read is the authority; the scope axes stay as declared.
+    let reach = QueryScope::default();
     let evaluator = SavedQueryEvaluator {
         vault,
-        owner_grants: &grants,
+        owner_grants: &reach,
+        owner_read: &read,
         judge: None,
     };
     runner.execute_claimed(node, attempt, &evaluator, now).await
