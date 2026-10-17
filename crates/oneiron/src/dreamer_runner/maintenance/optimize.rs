@@ -74,26 +74,44 @@ pub(crate) fn execute(
             cause: DreamerParkCause::Checkpoint,
         });
     }
+    // The author's and the judge's model calls block on the host's runtime,
+    // which a thread already driving the wake pass cannot enter: the body
+    // runs on its own thread, and the pass waits for it.
+    let (vault, now_ms) = (ctx.vault, ctx.now_ms);
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| optimize(attempt, vault, now_ms, optimizer))
+            .join()
+    })
+    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn optimize(
+    attempt: &DreamerAdmittedAttempt,
+    vault: &Vault,
+    now_ms: u64,
+    optimizer: &CoachSkillOptimizer<'_>,
+) -> Result<DreamerAttemptExecution> {
     let resident = resident(&attempt.status.payload.input)?;
     let id = attempt.status.attempt.id;
-    let at = ctx.now_ms / 1000;
+    let at = now_ms / 1000;
     // Resume an unscored proposal before drafting another one. A crash after
     // draft commit must not strand the candidate behind the open-edit filter.
-    let pending = pending_proposal(ctx.vault, resident, id)?;
+    let pending = pending_proposal(vault, resident, id)?;
     let (proposal, spent) = if let Some(proposal) = pending {
         (Some(proposal), true)
     } else {
         let occurred = TimeRange { start: at, end: at };
         let outcome = match resident {
             Some(resident) => run_skill_optimize_for_resident(
-                ctx.vault,
+                vault,
                 resident,
                 id,
                 optimizer.author,
                 occurred,
                 at,
             )?,
-            None => run_skill_optimize(ctx.vault, id, optimizer.author, occurred, at)?,
+            None => run_skill_optimize(vault, id, optimizer.author, occurred, at)?,
         };
         (
             outcome.proposal,
@@ -109,9 +127,9 @@ pub(crate) fn execute(
         // is measured once that trial closes. A failed preflight is the
         // gate's evidence instead.
         if let Some(live) = optimizer.live
-            && skill_edit_needs_goal_axis_report(ctx.vault, &proposal)?
+            && skill_edit_needs_goal_axis_report(vault, &proposal)?
             && crate::skill::drive_exploration_trial(
-                ctx.vault,
+                vault,
                 &proposal,
                 optimizer.scorer,
                 live.pulls_per_axis,
@@ -120,7 +138,7 @@ pub(crate) fn execute(
         {
             let bandit = live.bandits.for_proposal(&proposal)?;
             measure_skill_edit_goal_axes(
-                ctx.vault,
+                vault,
                 &proposal,
                 optimizer.scorer,
                 &*bandit,
@@ -129,7 +147,7 @@ pub(crate) fn execute(
         }
         // This gate owns its held-out read and revalidates it at commit. The
         // drafting author never receives the scores or reserved receipts.
-        score_gate_skill_edit_in_cycle(ctx.vault, &proposal, optimizer.scorer, id, at)?;
+        score_gate_skill_edit_in_cycle(vault, &proposal, optimizer.scorer, id, at)?;
     }
     Ok(DreamerAttemptExecution::Completed {
         // The host meters model calls separately. The wake counter charges

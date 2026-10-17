@@ -28,13 +28,14 @@ use oneiron::{
     DreamerClaimAuthoringStrategy, DreamerRunnerStore, Vault, WakeAttemptContext, WriteActor,
 };
 use oneiron_driver::{
-    AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher,
-    HybridTick, IdleSample, PassAttachment, PassExecutorFactory, PushTick, SessionLifecycleConfig,
-    SessionLifecycleDriver, SessionTicks, ShutdownHandle, TimerTick, WakePassFuture,
-    WakePolicyTicks, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
+    AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher, HybridTick,
+    IdleSample, PassAttachment, PassExecutorFactory, PushTick, SessionLifecycleConfig,
+    SessionLifecycleDriver, SessionTicks, ShutdownHandle, SkillOptimizerLoan, TimerTick,
+    WakePassFuture, WakePolicyTicks, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
 };
 
 use super::policy::extraction_egress;
+use super::skill_author::CoachSkillAuthor;
 use super::status::{StatusCell, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
@@ -119,9 +120,11 @@ impl DreamerHost {
     /// Starts the supervisor thread and waits until it is ticking.
     pub(super) async fn spawn(start: DreamerStart) -> anyhow::Result<Self> {
         let (ready, started) = tokio::sync::oneshot::channel();
+        // The Coach's drafts block on the server's runtime, off the Dreamer's.
+        let serve = tokio::runtime::Handle::current();
         let thread = std::thread::Builder::new()
             .name("oneiron-dreamer".into())
-            .spawn(move || run(start, ready))?;
+            .spawn(move || run(start, serve, ready))?;
         match started.await {
             Ok(Ok((shutdown, hints))) => Ok(Self {
                 shutdown,
@@ -161,7 +164,7 @@ impl DreamerHost {
 
 type Ready = tokio::sync::oneshot::Sender<anyhow::Result<(ShutdownHandle, HintPusher)>>;
 
-fn run(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
+fn run(start: DreamerStart, serve: tokio::runtime::Handle, ready: Ready) -> WakeSupervisorReport {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -172,10 +175,14 @@ fn run(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             return WakeSupervisorReport::default();
         }
     };
-    runtime.block_on(supervise(start, ready))
+    runtime.block_on(supervise(start, serve, ready))
 }
 
-async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
+async fn supervise(
+    start: DreamerStart,
+    serve: tokio::runtime::Handle,
+    ready: Ready,
+) -> WakeSupervisorReport {
     let DreamerStart {
         vault,
         runtime,
@@ -228,6 +235,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             status: Arc::clone(&status),
             decisions,
             question_timer,
+            serve,
             admission,
         };
         let lifecycle = SessionLifecycleDriver::new(
@@ -351,6 +359,8 @@ struct ObservedFactory {
     /// it, a pass runs on the shipped, unstaffed ladder.
     decisions: Arc<std::sync::OnceLock<DecisionHost>>,
     question_timer: QuestionTimer,
+    /// The server's runtime, which the Coach's drafts block on.
+    serve: tokio::runtime::Handle,
     admission: PassAdmission,
 }
 
@@ -558,6 +568,31 @@ impl PassExecutorFactory for ObservedFactory {
 
     fn actor(&self) -> Option<WriteActor> {
         Some(self.actor)
+    }
+
+    /// The Coach's skill optimizer (OF-214), once serve has bound the server
+    /// and registered its replay judge: the Coach drafts on its own seat,
+    /// each draft paid up to the pass's allowance, and that judge scores
+    /// what it drafts on its live slice.
+    fn skill_optimizer(
+        &self,
+        _vault: &Vault,
+        guard: &oneiron::BudgetGuard,
+    ) -> oneiron::Result<Option<SkillOptimizerLoan>> {
+        let (Some(server), Some(judge)) =
+            (self.question_timer.get(), crate::replay_judge::registered())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(SkillOptimizerLoan {
+            author: Box::new(CoachSkillAuthor::new(
+                server.clone(),
+                self.serve.clone(),
+                guard.read().limit_units,
+            )),
+            scorer: judge,
+            live: judge.coach_live_slice(),
+        }))
     }
 
     /// The host's gate, asked as each pass starts and held until it ends. A

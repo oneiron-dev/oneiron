@@ -6,9 +6,11 @@ use oneiron::dreamer_consolidation::{
     DREAMER_NARRATIVE_ROLE, PersonAboutExecutor, RoleBackends, RoleCall, ScopeSummaryExecutor,
 };
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
+use oneiron::dreamer_runner::maintenance::{CoachLiveSlice, CoachSkillOptimizer};
 use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
+use oneiron::skill_optimize::{HeldOutReplayNotes, SkillOptimizeAuthor};
 use oneiron::{
     BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationDecisions,
     ConsolidationExecutor, ConsolidationSink, DreamerAttemptExecutor,
@@ -22,6 +24,27 @@ use super::attachment::{LinkedShutdown, PassAttachment, PassAttachmentSource};
 /// Host-supplied consumer of the live ready TASK subset.
 pub type WaveReadyDispatcher =
     Box<dyn FnMut(&Vault, WaveDispatchCandidate) -> Result<WaveHandoffOutcome> + Send>;
+
+/// The Coach's skill optimizer for one pass, owned by the pass: the host's
+/// drafting author, its independent held-out judge and the live slice that
+/// judge's arms fund. The supervisor lends it to the pass's wake driver.
+pub struct SkillOptimizerLoan {
+    pub author: Box<dyn SkillOptimizeAuthor + Send + Sync>,
+    pub scorer: &'static (dyn HeldOutReplayNotes + Send + Sync),
+    pub live: Option<CoachLiveSlice<'static>>,
+}
+
+impl SkillOptimizerLoan {
+    /// The optimizer the wake driver borrows for the pass.
+    #[must_use]
+    pub fn optimizer(&self) -> CoachSkillOptimizer<'_> {
+        CoachSkillOptimizer {
+            author: &*self.author,
+            scorer: self.scorer,
+            live: self.live,
+        }
+    }
+}
 
 /// Builds the per-pass attempt executor. Generic-associated so executors may
 /// borrow factory-owned state (the backend constructed at startup, the
@@ -78,6 +101,17 @@ pub trait PassExecutorFactory {
         _vault: &Vault,
         _guard: &BudgetGuard,
     ) -> Result<Option<Box<dyn PassAttachment>>> {
+        Ok(None)
+    }
+
+    /// The Coach's skill optimizer for one pass, asked once the pass meter
+    /// exists. The default has none, and a skill-optimize attempt parks for
+    /// want of a host author.
+    fn skill_optimizer(
+        &self,
+        _vault: &Vault,
+        _guard: &BudgetGuard,
+    ) -> Result<Option<SkillOptimizerLoan>> {
         Ok(None)
     }
 
