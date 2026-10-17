@@ -309,6 +309,7 @@ fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
         windows_compacted: run.windows_compacted,
         windows_deferred_live: run.windows_deferred_live,
         windows_deferred_raced: run.windows_deferred_raced,
+        windows_deferred_held: run.windows_deferred_held,
         receipts_finalized: run.receipts_finalized,
         deadline_breaches: run.deadline_breaches,
         quarantine_rows_expired: run.quarantine_rows_expired,

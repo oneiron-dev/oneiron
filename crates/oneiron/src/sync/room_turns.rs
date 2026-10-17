@@ -20,7 +20,9 @@
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
-use super::loro_support::{map_contains_binary, map_get_bytes, map_insert_bytes};
+use super::loro_support::{
+    map_contains_binary, map_delete, map_for_each_bytes, map_get_bytes, map_insert_bytes,
+};
 use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -172,6 +174,52 @@ pub(crate) fn materialize_room_turns_from_delta(
         .collect();
     merge_rows(vault, window_key, rows);
     Some(Vec::new())
+}
+
+/// Deletes from `doc`'s room turn map each row whose room this vault deleted,
+/// as the merge refuses one (OF-522). A row whose room this vault holds no
+/// record of stays: a first sync can bring a turn row before its room. A live
+/// doc keeps the old rows in its history, so `pin` names the window pinned
+/// history-free before any row goes; the sweep, whose shallow cut drops that
+/// history, passes `None`. Returns whether a row went, committed.
+pub(crate) fn scrub_deleted_room_turns(
+    vault: &Vault,
+    doc: &LoroDoc,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
+    if !holds_room_turn_map(doc) {
+        return Ok(false);
+    }
+    let map = doc.get_map(ROOM_TURNS_MAP);
+    let mut rows = Vec::new();
+    map_for_each_bytes(&map, |map_key, bytes| {
+        if let Ok(turn) = decode(bytes)
+            && let Ok(room) = EntityId::from_hex(&turn.room_id)
+        {
+            rows.push((map_key.to_owned(), room));
+        }
+    });
+    let mut doomed = Vec::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        for (map_key, room) in rows {
+            if crate::ports::removed_in_txn(&vault.store, &rtxn, &room)? {
+                doomed.push(map_key);
+            }
+        }
+    }
+    if doomed.is_empty() {
+        return Ok(false);
+    }
+    // Pin before touching the live map, as the egress scrubs do.
+    if let Some(key) = pin {
+        super::window::require_history_free_window(vault, key)?;
+    }
+    for map_key in &doomed {
+        map_delete(&map, map_key)?;
+    }
+    doc.commit_with(loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN));
+    Ok(true)
 }
 
 /// Whether `doc` holds a room turn map. Looking a root up by name creates

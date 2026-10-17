@@ -1,5 +1,7 @@
 //! Carrier scrubs plus test injection hook.
 
+use std::collections::BTreeSet;
+
 use super::UPDATE_PREFIX;
 use super::codec::{decode_update_key, decode_update_value_parts};
 use super::seq::delete_bearing_seqs_in_txn;
@@ -92,6 +94,27 @@ pub(crate) fn queued_window_update_count_in_txn(
         }
     }
     Ok(count)
+}
+
+/// Every window a queued send [`scrub_window_updates_in_txn`] would drop names,
+/// read in the caller's transaction (OF-013). Delete-bearing rows and rows
+/// that name no window are not counted.
+pub(crate) fn queued_window_labels_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<String>> {
+    let delete_bearing = delete_bearing_seqs_in_txn(vault, txn)?;
+    let mut labels = BTreeSet::new();
+    for row in vault.store.sync_queue.prefix_iter(txn, UPDATE_PREFIX)? {
+        let (key, value) = row?;
+        if let (Ok(seq), Ok((row_window, _))) =
+            (decode_update_key(&key), decode_update_value_parts(&value))
+            && !delete_bearing.contains(&seq)
+        {
+            labels.insert(row_window.to_owned());
+        }
+    }
+    Ok(labels)
 }
 
 /// Discards every queued window update, delete-bearing rows and their `d:` sidecars included,
