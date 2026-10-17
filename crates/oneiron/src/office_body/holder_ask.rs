@@ -25,15 +25,32 @@ const REVISION_DOMAIN: &[u8] = b"oneiron.office.proposal_ask.v1";
 impl Memory<'_> {
     /// Ask the holders of `artifact`'s office edits about the members of
     /// `proposal` that wait, once per waiting set. An ask admission refuses
-    /// only the ask: the settlement stands, and the refusal is logged.
-    pub(super) fn ask_office_holders(&self, artifact: &EntityId, proposal: &EntityId) {
-        if let Err(error) = self.raise_office_holder_ask(artifact, proposal) {
+    /// only the ask: the settlement stands, the refusal is kept on the
+    /// proposal (`ask_refused`), and its reason is returned for the settle
+    /// or merge result to say no holder was asked.
+    pub(super) fn ask_office_holders(
+        &self,
+        artifact: &EntityId,
+        proposal: &EntityId,
+    ) -> Option<String> {
+        let error = self.raise_office_holder_ask(artifact, proposal).err()?;
+        tracing::warn!(
+            proposal = %proposal.to_hex(),
+            %error,
+            "office proposal holder ask refused"
+        );
+        let reason = error.to_string();
+        if let Err(error) = self
+            .vault()
+            .record_office_proposal_ask_refused(artifact, proposal, &reason)
+        {
             tracing::warn!(
                 proposal = %proposal.to_hex(),
                 %error,
-                "office proposal holder ask refused"
+                "office proposal ask refusal not recorded"
             );
         }
+        Some(reason)
     }
 
     fn raise_office_holder_ask(

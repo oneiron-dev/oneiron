@@ -125,6 +125,16 @@ pub struct ProposalAsk {
     pub at: u64,
 }
 
+/// A holder ask the ask admission refused, kept until an ask is raised.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalAskRefusal {
+    /// The waiting forks no holder was asked about, in member order.
+    pub forks: Vec<EntityId>,
+    /// The ask admission's refusal.
+    pub reason: String,
+    pub at: u64,
+}
+
 /// The one receipt that closes a proposal once no member waits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposalSettlement {
@@ -141,6 +151,10 @@ pub struct OfficeBodyProposal {
     /// The holder asks raised while members waited, oldest first.
     #[serde(default)]
     pub asks: Vec<ProposalAsk>,
+    /// The last holder ask the ask admission refused, cleared once an ask
+    /// is raised: its waiting members have no holder asked.
+    #[serde(default)]
+    pub ask_refused: Option<ProposalAskRefusal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -224,6 +238,39 @@ impl Vault {
                 return Ok(());
             }
             record.asks.push(ask);
+            record.ask_refused = None;
+            PROPOSALS.put(&self.store, wtxn, &key, &record)
+        })
+    }
+
+    /// Record that the ask admission refused a holder ask for the members of
+    /// an unsettled proposal that wait now.
+    pub(super) fn record_office_proposal_ask_refused(
+        &self,
+        artifact: &EntityId,
+        proposal: &EntityId,
+        reason: &str,
+    ) -> Result<()> {
+        let at = self.now_recorded_at();
+        self.with_write_txn_grouped(|wtxn| {
+            let key = (*artifact, *proposal);
+            let Some(mut record) = PROPOSALS.get(&self.store, wtxn, &key)? else {
+                return Ok(());
+            };
+            if record.settlement.is_some() {
+                return Ok(());
+            }
+            let forks = record
+                .members
+                .iter()
+                .filter(|member| member.verdict == MemberVerdict::Waiting)
+                .map(|member| member.fork)
+                .collect();
+            record.ask_refused = Some(ProposalAskRefusal {
+                forks,
+                reason: reason.to_owned(),
+                at,
+            });
             PROPOSALS.put(&self.store, wtxn, &key, &record)
         })
     }
@@ -257,6 +304,7 @@ pub(super) fn join_in_txn(
             members: vec![member],
             settlement: None,
             asks: Vec::new(),
+            ask_refused: None,
         },
         Some(proposal) => {
             let mut record = PROPOSALS
