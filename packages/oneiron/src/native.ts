@@ -182,6 +182,7 @@ vaultProjectsPropose(input: unknown): unknown
 vaultProjectsProposals(input: unknown): unknown
 vaultProjectsDismissCard(input: unknown): unknown
 vaultProjectsConfirm(input: unknown): unknown
+vaultProjectsRosterWrite(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
@@ -280,6 +281,7 @@ vaultNotesLifecycle(requestJson: string): string
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
   lastReceiptRef(): string | null
+  retry(pending: unknown, verb: string, input: unknown): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */
