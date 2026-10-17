@@ -14,9 +14,11 @@ use oneiron::skill_hub::pack_catalog::{CheckedBuiltinConnection, PackSetupSecret
 
 use super::slack_app::{SlackInstalls, public_origin, slack_app_config};
 
-/// The built-in Slack pack's connection and its request-signing secret.
+/// The built-in Slack pack's connection, its request-signing secret and the
+/// effector the pack declares for it (packs/builtin/slack/PACK.md).
 pub(crate) const SLACK_CONNECTION: &str = "slack-app";
-const SLACK_SIGNING_SECRET: &str = "slack.signing_secret";
+pub(crate) const SLACK_SIGNING_SECRET: &str = "slack.signing_secret";
+pub(crate) const SLACK_SECRET_EFFECTOR: &str = "connector:slack";
 /// The built-in LINE pack's connection and its webhook-signing secret.
 pub(crate) const LINE_CONNECTION: &str = "line-channel";
 const LINE_CHANNEL_SECRET: &str = "line.channel_secret";
