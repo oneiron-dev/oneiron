@@ -277,11 +277,13 @@ export type MemoryPack = {
   narrowing: ReadReceipt
 }
 
-/** One gate decision receipt. */
+/** One governance receipt: a gate decision, or a receipt of another family. */
 export type FacadeReceipt = {
-  /** `gate:<hex>`. */
+  /** `gate:<hex>`, or the family receipt's id. */
   receiptRef: string
-  /** `allow`, `pending`, or `deny`. */
+  /** The receipt family kind (`gate`, `hook`, `outbound`, ...). */
+  kind: string
+  /** `allow`, `pending`, or `deny`; the receipt's own outcome for another kind. */
   outcome: string
   /** Unix seconds. */
   createdAt: number
@@ -290,6 +292,8 @@ export type FacadeReceipt = {
   actorRef?: string
   contentKind: string
   claimRef?: string
+  /** A family receipt's own fields; empty on a gate-ledger row. */
+  fields: Record<string, string>
 }
 
 /** Exact namespace/key address in the bound actor/class's WORLDLESS store. */
