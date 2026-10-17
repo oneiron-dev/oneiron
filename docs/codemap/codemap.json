@@ -1693,7 +1693,7 @@
      "path": "src/attempt_queue/encoding.rs",
      "purpose": "Storage key derivation and LMDB row encode/decode for the attempt queue",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -1716,7 +1716,7 @@
      "path": "src/attempt_queue/engine/mod.rs",
      "purpose": "The [`AttemptQueue`] handle and its lease state machine",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -1800,7 +1800,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 6
      }
     },
@@ -4624,7 +4624,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "enum": 1
      }
     },
@@ -4635,7 +4635,17 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/side_row.rs",
+     "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -39038,13 +39048,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 39
+      "crate-vis": 42
      }
     },
     {
@@ -50098,7 +50108,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 106,
+     "files": 107,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51234,7 +51244,7 @@
     "side_table": {
      "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
@@ -51512,9 +51522,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 143,
+   "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3113,
+   "source_files": 3114,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54379,7 +54389,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 41,
+      "const": 42,
       "crate-vis": 1
      }
     },

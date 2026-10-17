@@ -142,9 +142,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/cancel/types.rs` | src | m | 8 struct · 5 enum · 20 fn · 8 const · 3 crate-vis | AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState, AttemptCancellation, AttemptLanding, AttemptLandingReserve, AttemptResumePoint +5 | Durable wire types of the ONE-1896 two-rung graceful-cancel protocol |
 | `src/attempt_queue/cancel/verbs.rs` | src | s | 13 struct · 7 enum | AcceptAttemptLanding, AttemptLeaseWarningReport, CancelRejectionOutcome, CancelRequestOutcome, DialLandingReserve, FinishAttemptLanding, FinishLandingOutcome, ForceAttemptCancel +12 | Verb inputs and typed outcomes for the ONE-1896 graceful-cancel doors |
 | `src/attempt_queue/completion.rs` | src | s | 3 crate-vis | — | Attempt completion inside a caller-owned transaction |
-| `src/attempt_queue/encoding.rs` | src | m | 19 crate-vis | — | Storage key derivation and LMDB row encode/decode for the attempt queue |
+| `src/attempt_queue/encoding.rs` | src | m | 20 crate-vis | — | Storage key derivation and LMDB row encode/decode for the attempt queue |
 | `src/attempt_queue/engine/enqueue_claim.rs` | src | L | 5 fn · 13 crate-vis | — | Enqueue doors plus kind-scoped claim machinery and read-repair scans |
-| `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 3 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
+| `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 4 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
 | `src/attempt_queue/engine/mutate.rs` | src | m | 5 fn · 7 crate-vis | — | Retry/intervene/manifest append plus lease-cleanup mutation doors |
 | `src/attempt_queue/engine/prune.rs` | src | s | 2 crate-vis | — | The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried… |
 | `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 23 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
@@ -152,7 +152,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/task_lease.rs` | src | s | 2 crate-vis | — | Named-task lease doors for the task highway (OF-220): claim the one ready try of a named TASK, and renew a… |
 | `src/attempt_queue/engine/workflow.rs` | src | s | 3 crate-vis | — | Transactional point-claim and retry lineage reads for ordered host composition |
 | `src/attempt_queue/executor.rs` | src | s | 2 fn · 2 crate-vis | — | Write-once executor identity for a skill-bearing attempt's terminal receipt |
-| `src/attempt_queue/mod.rs` | src | s | 6 re-export · 17 crate-vis | — | Generic LMDB-backed background attempt queue |
+| `src/attempt_queue/mod.rs` | src | s | 6 re-export · 18 crate-vis | — | Generic LMDB-backed background attempt queue |
 | `src/attempt_queue/observe.rs` | src | s | 1 fn · 2 crate-vis | — | Post-commit invalidations for local run-tree observers |
 | `src/attempt_queue/ports.rs` | src | s | — | — | JobQueue adapter over the existing lease state machine |
 | `src/attempt_queue/result.rs` | src | s | 2 fn · 3 crate-vis | — | Transaction-composable result attachment and abandonment |
@@ -402,8 +402,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/put_staging.rs` | src | m | 26 crate-vis | — | Body/index/edge row staging helpers shared by the put and update paths |
 | `src/batch/put_apply/request.rs` | src | s | 12 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
-| `src/batch/secret_scan.rs` | src | L | 1 enum · 31 crate-vis | SecretScanMode | — |
-| `src/batch/secret_scan/mask.rs` | src | m | 4 crate-vis | — | Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the… |
+| `src/batch/secret_scan.rs` | src | L | 1 enum · 32 crate-vis | SecretScanMode | — |
+| `src/batch/secret_scan/mask.rs` | src | m | 5 crate-vis | — | Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the… |
+| `src/batch/secret_scan/mask/side_row.rs` | src | m | 6 crate-vis | — | The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A) |
 | `src/batch/secret_scan/shapes.rs` | src | m | 18 crate-vis | — | Credential-shape detection shared by write, serve, and export |
 | `src/batch/secret_scan/tests.rs` | test | m | — | — | — |
 | `src/batch/secret_scan/whole_read.rs` | src | m | 10 crate-vis | — | The release doors' whole read of a value: its text, and its encoding as the write door reads a body's bytes |
@@ -3109,7 +3110,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/side_table/decls/vault_meta_m_r.rs` | src | m | — | — | — |
 | `src/side_table/decls/vault_meta_s_z.rs` | src | m | — | — | — |
 | `src/side_table/key.rs` | src | s | 3 crate-vis | — | Key types: what a table's key contributes after its declared prefix |
-| `src/side_table/mod.rs` | src | m | 39 crate-vis | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
+| `src/side_table/mod.rs` | src | L | 42 crate-vis | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `src/side_table/tests.rs` | test | L | — | — | — |
 | `src/skill/call.rs` | src | s | 1 fn | — | Callable skill execution through the caller's existing sandbox runtime and host |
 | `src/skill/call/tests.rs` | test | m | — | — | — |
