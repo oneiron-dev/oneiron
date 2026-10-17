@@ -890,8 +890,10 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
 - **Moving to a new model version.** `POST .../move` with `{"candidate", "incumbent", "margin"}`
   starts moving every slot the incumbent serves to the candidate. Leave out `incumbent` for the
   text index. The media backfill fills the candidate while the incumbent keeps serving, and
-  writes probes meanwhile: short queries the chat seat writes from text documents, and the
-  captioner or Local-vision seat from images. Once the candidate holds every document, the
+  writes probes meanwhile: short queries the chat seat writes from text documents, the
+  captioner or Local-vision seat from images, and the chat seat from audio once the
+  `[models.media]` transcribe seat has transcribed it. Audio and image bytes never go to a
+  third-party seat for a probe. Once the candidate holds every document, the
   probes run on both spaces, and on the incumbent twice for its retest noise. The candidate swaps
   in by itself only when every kind is not worse: the low end of the kind's family-grouped
   paired interval stays at or above minus that noise, or minus your stricter `margin`. A kind
@@ -904,7 +906,7 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   `.../move/abandon` ends an open move without one.
 - `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
-  one. Audio probes are only the ones you store.
+  one.
 
 ## Calling the owner routes
 
