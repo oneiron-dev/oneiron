@@ -782,7 +782,7 @@ pub(in crate::batch) fn apply_put(
         super::put_staging::stage_claim_projection_indexes(store, wtxn, &id, body, learned_at)?;
     }
     if let Some(key) = authority_first_seen_key {
-        observe_authority_put(
+        let first_stored = observe_authority_put(
             store,
             wtxn,
             &key,
@@ -791,6 +791,10 @@ pub(in crate::batch) fn apply_put(
             replicated,
             mutation_recorded_at,
         )?;
+        // OF-469 cutoffs: a row stored here for the first time counts once.
+        if first_stored && let Some(hash) = authority_entry_hash_pin.as_ref() {
+            crate::authority::note_new_authority_row_in_txn(store, wtxn, hash, data.len())?;
+        }
         crate::authority::advance_authority_cache_generation(store, wtxn)?;
     }
 
