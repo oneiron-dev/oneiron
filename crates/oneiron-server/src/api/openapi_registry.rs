@@ -80,8 +80,10 @@ use super::{
     VectorSearchQuery,
 };
 use super::{
-    __path_context_board_scratchpad, ContextBoardScratchpadMark, ContextBoardScratchpadRequest,
-    ContextBoardScratchpadResponse,
+    __path_context_board_scratchpad, __path_context_board_scratchpad_recall,
+    ContextBoardScratchpadMark, ContextBoardScratchpadRecallLine,
+    ContextBoardScratchpadRecallRequest, ContextBoardScratchpadRecallResponse,
+    ContextBoardScratchpadRequest, ContextBoardScratchpadResponse,
 };
 use super::{
     __path_core_explain_gate, __path_core_explain_memory, ExplainGateNotice, ExplainGateResponse,
@@ -146,6 +148,7 @@ use utoipa::OpenApi;
         context_board_hydrate,
         context_board_turn_history,
         context_board_scratchpad,
+        context_board_scratchpad_recall,
         core_explain_memory,
         core_explain_gate,
         core_run_tree,
@@ -347,6 +350,9 @@ use utoipa::OpenApi;
         ExplainGateResponse,
         ExplainGateNotice,
         ContextBoardScratchpadResponse,
+        ContextBoardScratchpadRecallRequest,
+        ContextBoardScratchpadRecallResponse,
+        ContextBoardScratchpadRecallLine,
         ContextBoardSession,
         ContextBoardNotification,
         ContextBoardUnprocessedItem,

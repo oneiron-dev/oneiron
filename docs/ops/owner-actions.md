@@ -961,6 +961,15 @@ The app's policy actions have host verbs too. Each runs the same action as
 The two inference verbs need the caller's Auto ceiling. Each answers with the action's
 `outcome`. A retry with the same idempotency key gets the first call's answer.
 
+Two app writes are verbs as well, so a button and an agent make them the same way:
+- `vault.messages.react` with `{"message", "by", "glyph", "occurred_at"?, "remove"?}` puts or
+  removes your own reaction. `POST /v1/core/messages/{message}/reactions` runs it as an action
+  of your credential, and the request's `Idempotency-Key` becomes the action's key. A connector
+  host's `external` provider reaction needs an owner-grade credential.
+- `vault.artifacts.create` with `{"name", "media_type", "content_base64", "run_ref"?,
+  "made_by"?}` creates an artifact with its first version. `POST /v1/core/artifacts` runs the
+  same door.
+
 ## Widen proposals
 
 When an agent asks to spawn a child with more context than its own slice holds, the gate does not

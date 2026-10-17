@@ -6,8 +6,16 @@ use crate::error::{Error, GateError, Result};
 /// binary/text tokens. All standing token detectors decide within
 /// [`KEY_MAX`] bytes of where a key starts. PEM armor is a separate
 /// streaming automaton because its header can contain arbitrary padding.
+///
+/// Its constructors keep two contracts apart (OF-067). The token and armor
+/// automata are the always-on custody reading an object bound for a repo
+/// gets, whatever the owner's switch says, as the pre-receive scan reads a
+/// pushed blob ([`Self::custody`]). The seam, the phrase rule and the
+/// blocklist are the write door's memory admission, which only the owner's
+/// switch turns on ([`Self::with_write_seam`]); a result body's taint reads
+/// them always ([`Self::exhaust`]).
 #[derive(Default)]
-pub(super) struct CredentialStream {
+pub(crate) struct CredentialStream {
     token: Vec<u8>,
     /// The open token past its first byte, for a key that starts inside it
     /// (F23): each offset is read once [`KEY_MAX`] bytes follow it, the rest
@@ -251,9 +259,18 @@ fn segment_break(byte: u8) -> bool {
 }
 
 impl CredentialStream {
-    /// A stream that also reads the write door's text rules across each feed
-    /// edge ([`Seam`]). `on` is the owner's `secrets` switch, which the batch
-    /// door that scans each chunk follows too.
+    /// The always-on custody reading alone: provider keys and private-key
+    /// armor across each feed edge. A hit refuses an object bound for a repo
+    /// with the switch off too, and before any file mark: a key in repo
+    /// content is refused, as receive-pack refuses one, not marked.
+    pub(super) fn custody() -> Self {
+        Self::default()
+    }
+
+    /// [`Self::custody`] plus the write door's text rules across each feed
+    /// edge ([`Seam`]), the phrase rule and the blocklist: the memory
+    /// admission. `on` is the owner's `secrets` switch, which the batch door
+    /// that scans each chunk follows too; off, only the custody reading runs.
     pub(super) fn with_write_seam(on: bool) -> Self {
         Self {
             seam: on.then(Seam::default),
@@ -263,16 +280,30 @@ impl CredentialStream {
         }
     }
 
+    /// [`Self::custody`] plus the write door's text rules across each feed
+    /// edge and the blocklist, always on, for a result body's taint (ARCH-0069
+    /// S7): build exhaust is marked whatever the switch says. Its reader reads
+    /// the phrase rule over the text in order itself, and each feed's own
+    /// text by the door's rules (`scan_write_seam`), as the batch door reads
+    /// each chunk an object's seam joins.
+    pub(crate) fn exhaust() -> Self {
+        Self {
+            seam: Some(Seam::default()),
+            blocklist: Some(Default::default()),
+            ..Self::default()
+        }
+    }
+
     /// Reads what the last edge left open: a segment that crossed an edge
     /// and runs to the end of the stream, and the phrase rule's last run.
-    pub(super) fn finish(&mut self) -> Result<()> {
+    pub(crate) fn finish(&mut self) -> Result<()> {
         if let Some(phrases) = &mut self.phrases {
             phrases.finish()?;
         }
         self.seam.as_mut().map_or(Ok(()), Seam::finish)
     }
 
-    pub(super) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+    pub(crate) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         if let Some(seam) = &mut self.seam {
             seam.feed(bytes)?;
         }

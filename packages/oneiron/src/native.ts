@@ -136,6 +136,8 @@ vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
+vaultCodeDiff(requestJson: string): string
+vaultCodeBlame(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
@@ -178,6 +180,7 @@ vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
+vaultMessagesReact(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsHostPin(input: unknown): unknown
 vaultRoomsHostHand(input: unknown): unknown
@@ -226,6 +229,7 @@ vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
+vaultArtifactsCreate(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown

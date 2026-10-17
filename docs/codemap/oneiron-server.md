@@ -96,7 +96,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
 | `src/api/context_board/mod.rs` | src | m | 16 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 7 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
-| `src/api/context_board/scratchpad.rs` | src | s | 6 crate-vis | — | POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548) |
+| `src/api/context_board/scratchpad.rs` | src | m | 10 crate-vis | — | POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548) |
 | `src/api/context_board/session.rs` | src | s | 2 crate-vis | — | Actor-bound session observations shared by core reads and board rendering |
 | `src/api/context_board/standing.rs` | src | s | 3 crate-vis | — | Standing blocks are pinned before Context Board retrieval can fill the session |
 | `src/api/context_pack/companion_assembly.rs` | src | s | 1 crate-vis | — | Companion scope-resolution authorization for context-pack assembly |
@@ -133,7 +133,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | s | 1 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/facade.rs` | src | L | 25 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
-| `src/api/facade/action_routes.rs` | src | m | 1 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
+| `src/api/facade/action_routes.rs` | src | m | 5 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/facade/call_context.rs` | src | s | 15 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
 | `src/api/facade/decision_ask_doors.rs` | src | s | 4 crate-vis | — | OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound agent that holds the role a… |
@@ -142,9 +142,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/graph_ask_doors.rs` | src | s | 6 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | m | 34 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 35 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 6 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
+| `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/setting_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear` |
 | `src/api/facade/share_doors.rs` | src | s | 2 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
@@ -395,9 +396,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/keystore.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 re-export · 4 crate-vis | KeystoreBackend, KeystoreConfig | The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b, P6c) |
 | `src/config/limits.rs` | src | m | 1 struct · 6 crate-vis | LimitsConfig | The `[limits]` section: the bounds on work a remote caller can start at this server |
 | `src/config/limits_tests.rs` | test | s | — | — | Resolution rows for the `[limits]` section |
+| `src/config/line.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LineConfig | `[line]`: the plan of the LINE Official Account the built-in LINE pack serves (OF-519) |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 2 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
-| `src/config/mod.rs` | src | s | 13 mod · 22 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `src/config/mod.rs` | src | s | 13 mod · 23 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/compaction.rs` | src | s | 1 struct · 2 crate-vis | CompactionSettings | `[models.code_mode.compaction]`: each code-mode run's window compacts by itself (agent-runtime-v1 §d7) |
 | `src/config/models/decision_read.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal | `[models.decision_read]`: the house model's decision read on the `local_reasoner` rung, and the recipe it… |
 | `src/config/models/decisions.rs` | src | s | 5 struct · 1 enum · 2 crate-vis | BigReply, BigSettings, DecisionsSettings, ImagePickSettings, SeatPickSettings, SystemOneSettings | `[models.decisions]`: the host's own typed questions and the System One seat on its decision ladder |
