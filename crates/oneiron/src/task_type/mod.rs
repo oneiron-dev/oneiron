@@ -996,6 +996,26 @@ pub fn type_tree(vault: &crate::Vault, project: Option<EntityId>) -> Result<Type
     )?))
 }
 
+/// The tree a stamp at `version` was placed in, for `project` (`None` is the
+/// vault tree): the tree in force when it is at that version, else the kept
+/// team-shape revision that carried it
+/// ([`crate::agent_dispatch::load_team_type_tree_at`]). `None` when no kept
+/// tree is at that version.
+///
+/// # Errors
+///
+/// Storage errors, or a stored tree file that does not decode.
+pub fn type_tree_at(
+    vault: &crate::Vault,
+    project: Option<EntityId>,
+    version: u32,
+) -> Result<Option<TypeTree>> {
+    Ok(
+        crate::agent_dispatch::load_team_type_tree_at(vault, project, u64::from(version))?
+            .map(TypeTree::from),
+    )
+}
+
 /// Missing is invalid, never untyped; an unknown node, a merged-away one,
 /// or a version past the tree in force is invalid. A stamp keeps the
 /// version it was placed at, so one read at an earlier version of the live

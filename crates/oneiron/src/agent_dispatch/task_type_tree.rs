@@ -60,6 +60,86 @@ pub(crate) fn load_team_type_tree_in_txn(
     })
 }
 
+/// The tree `project` placed in at `version` (`None` is the vault tree): the
+/// tree in force when it is at that version, else the kept revision whose
+/// tree is (the project's team-shape forks first, then the vault skill's
+/// supersession chain, newest first), else the seed tree when it is. `None`
+/// when no kept tree is at that version. A stamp placed before a tree change
+/// reads the tree it was placed in.
+///
+/// # Errors
+///
+/// Storage errors, or a stored tree file that does not decode.
+pub fn load_team_type_tree_at(
+    vault: &Vault,
+    project: Option<EntityId>,
+    version: u64,
+) -> Result<Option<TaskTypeTree>> {
+    let txn = vault.store.env.read_txn()?;
+    let in_force = load_team_type_tree_in_txn(vault, &txn, project)?;
+    if in_force.version == version {
+        return Ok(Some(in_force));
+    }
+    let vault_skill = team_shape_skill()?;
+    let mut revisions = Vec::new();
+    if let Some(project) = project
+        && let Some(record) = vault.visible_project_in_txn(&txn, project)?
+    {
+        for fork in record.skill_forks.iter().rev() {
+            if let Ok(fork) = EntityId::from_hex(fork)
+                && in_lineage_in_txn(vault, &txn, fork, vault_skill)?
+            {
+                revisions.push(fork);
+            }
+        }
+    }
+    revisions.extend(supersession_chain_in_txn(vault, &txn, vault_skill)?);
+    for skill in revisions {
+        if vault.get_skill_record_in_txn(&txn, &skill)?.is_some()
+            && let Some(tree) = stored_tree_unchecked_in_txn(vault, &txn, &skill)?
+            && tree.version == version
+        {
+            return Ok(Some(tree));
+        }
+    }
+    let seed = TaskTypeTree::seeded();
+    Ok((seed.version == version).then_some(seed))
+}
+
+/// Every revision on the vault skill's supersession chain, newest first.
+fn supersession_chain_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    vault_skill: EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut seen = BTreeSet::new();
+    let mut chain = Vec::new();
+    let mut cursor = vault_skill;
+    while seen.insert(cursor) {
+        chain.push(cursor);
+        let mut next = None;
+        for peer in crate::ports::EdgeStoreRead::port_edge_peers(
+            &vault.store,
+            txn,
+            &cursor,
+            crate::ports::EdgeDirection::In,
+            EdgeKind::Supersedes,
+        )? {
+            let peer = peer?;
+            if !seen.contains(&peer) {
+                next = Some(peer);
+                break;
+            }
+        }
+        match next {
+            Some(next) => cursor = next,
+            None => break,
+        }
+    }
+    chain.reverse();
+    Ok(chain)
+}
+
 /// The team-shape skill in force for `project`: its admitted fork, else the
 /// vault skill's newest admitted revision. `None` when neither is loadable.
 ///
