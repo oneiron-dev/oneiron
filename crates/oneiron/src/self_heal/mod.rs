@@ -52,6 +52,7 @@ use admission::stored_diagnostic_event;
 pub(crate) use admission::{
     reject_off_record_diagnostic_sources, validate_diagnostic_event_admission,
 };
+pub(crate) mod blocked_reports;
 mod centroid_evidence;
 mod consent_detector;
 pub mod tripwires;
@@ -92,9 +93,9 @@ use self::diagnostic_codec::{
     validate_diagnostic_event_body_bytes, validate_stored_diagnostic_event_body_bytes,
 };
 pub use self::event::{
-    DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector, DiagnosticCriticality,
-    DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticReplayCoordinate,
-    DiagnosticSourceKind, DiagnosticWorkingSet,
+    AgentHealthSignal, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector,
+    DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation,
+    DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
 };
 
 // Private re-exports so the pre-existing children keep their `super::{...}`

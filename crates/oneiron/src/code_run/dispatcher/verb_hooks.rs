@@ -263,7 +263,11 @@ fn parked_invocation(outcome: &rmpv::Value) -> Option<InvocationId> {
     if entry(outcome, "kind")?.as_str()? != "durable_wait" {
         return None;
     }
-    InvocationId::parse_hex(entry(outcome, "prompt")?.as_str()?.strip_prefix(VERB_HOOK_WAIT)?)
+    InvocationId::parse_hex(
+        entry(outcome, "prompt")?
+            .as_str()?
+            .strip_prefix(VERB_HOOK_WAIT)?,
+    )
 }
 
 fn entry<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
@@ -320,13 +324,16 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
         SelfDispatchOutcome::AgentDefinitionPut(value) => {
             json!({"id": value.id.to_hex(), "disposition": value.disposition.as_str()})
         }
-        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref, .. }) => json!({
-            "kind": "agent_spawn",
-            "state": "queued",
-            "attempt": crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
-        }),
+        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref, .. }) => {
+            json!({
+                "kind": "agent_spawn",
+                "state": "queued",
+                "attempt": crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
+            })
+        }
         SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
-            proposal_ref, ..
+            proposal_ref,
+            ..
         }) => json!({"kind": "agent_spawn", "state": "proposed_widen", "proposal": proposal_ref}),
         SelfDispatchOutcome::TaskAsk(value) => json!({
             "kind": "task_ask",
@@ -340,12 +347,14 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
             "state": "pending",
             "hold": hold.as_ref().map(|_| "no_live_route"),
         }),
-        SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { voided, generation }) => json!({
-            "kind": "task_ask_status",
-            "state": "changed",
-            "voided": voided.iter().map(EntityId::to_hex).collect::<Vec<_>>(),
-            "generation": generation,
-        }),
+        SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { voided, generation }) => {
+            json!({
+                "kind": "task_ask_status",
+                "state": "changed",
+                "voided": voided.iter().map(EntityId::to_hex).collect::<Vec<_>>(),
+                "generation": generation,
+            })
+        }
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Settled(result)) => {
             json!({"kind": "task_ask_status", "state": "settled", "result": result})
         }
@@ -400,9 +409,13 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         }),
         SelfCall::SkillsCall(skill) => json!({"skill": skill.skill.to_hex(), "args": skill.args}),
         SelfCall::MemorySearch(search) => json!({"query": search.query, "limit": search.limit}),
-        SelfCall::MemoryWriteFixture(write) => {
-            claim_args(call, write.id, &write.candidate, write.occurred, write.learned_at)?
-        }
+        SelfCall::MemoryWriteFixture(write) => claim_args(
+            call,
+            write.id,
+            &write.candidate,
+            write.occurred,
+            write.learned_at,
+        )?,
         SelfCall::MemoryPutClaim(put) => {
             claim_args(call, put.id, &put.candidate, put.occurred, put.learned_at)?
         }

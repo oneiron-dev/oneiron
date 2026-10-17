@@ -151,6 +151,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestRequest>(),
             ),
             (
+                "vault.weave.link.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
+                ),
+            ),
+            (
                 "vault.packs.put",
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
@@ -622,6 +627,35 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.graph.ask",
+                crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskRequest>(),
+            ),
+            (
+                "vault.questions.create",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionCreateRequest>(
+                ),
+            ),
+            (
+                "vault.questions.edit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionEditRequest>(
+                ),
+            ),
+            (
+                "vault.questions.pause",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionPauseRequest>(
+                ),
+            ),
+            (
+                "vault.questions.read",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionReadRequest>(
+                ),
+            ),
+            (
+                "vault.questions.answers",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionAnswersRequest>(
+                ),
+            ),
+            (
                 "connector.list",
                 crate::code_run::vault_read::request_schema::<ConnectorListRequest>(),
             ),
@@ -684,6 +718,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.browser.batch",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::BatchInput>(),
+            ),
+            (
+                "self.browser.library.find",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryFindInput>(),
+            ),
+            (
+                "self.browser.library.propose",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ProposeInput>(),
+            ),
+            (
+                "self.browser.library.run",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRunInput>(),
             ),
             (
                 "vault.commit",
@@ -1080,6 +1126,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.digest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.link.wrong" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1762,6 +1815,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.graph.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.pause" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.answers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2070,6 +2165,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.digest" => {
             let _input: crate::claim::WeaveDigestRequest = decode(value.clone())?;
         }
+        "vault.weave.link.wrong" => {
+            let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
+        }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
@@ -2362,6 +2460,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
+        "vault.graph.ask" => {
+            let input: crate::receipt::GraphAskRequest = decode(value.clone())?;
+            input.validate()?;
+        }
+        "vault.questions.create" => {
+            let _input: crate::receipt::QuestionCreateRequest = decode(value.clone())?;
+        }
+        "vault.questions.edit" => {
+            let _input: crate::receipt::QuestionEditRequest = decode(value.clone())?;
+        }
+        "vault.questions.pause" => {
+            let _input: crate::receipt::QuestionPauseRequest = decode(value.clone())?;
+        }
+        "vault.questions.read" => {
+            let _input: crate::receipt::QuestionReadRequest = decode(value.clone())?;
+        }
+        "vault.questions.answers" => {
+            let _input: crate::receipt::QuestionAnswersRequest = decode(value.clone())?;
+        }
         "connector.list" => {
             let _input: ConnectorListRequest = decode(value.clone())?;
         }
@@ -2409,6 +2526,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.browser.batch" => {
             let _input: oneiron_browser::BatchInput = decode(value.clone())?;
+        }
+        "self.browser.library.find" => {
+            let _input: oneiron_browser::LibraryFindInput = decode(value.clone())?;
+        }
+        "self.browser.library.propose" => {
+            let _input: oneiron_browser::ProposeInput = decode(value.clone())?;
+        }
+        "self.browser.library.run" => {
+            let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
         }
         "vault.commit" => {
             let input: CommitRequest = decode(value.clone())?;
@@ -2551,6 +2677,7 @@ pub fn invoke(
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
+        "vault.weave.link.wrong" => encode(vault_weave_link_wrong(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
@@ -2687,6 +2814,12 @@ pub fn invoke(
         "ai.video.poll" => encode(ai_video_poll(memory, decode(value)?)?),
         "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
         "ai.verdict" => encode(ai_verdict(memory, decode(value)?)?),
+        "vault.graph.ask" => encode(vault_graph_ask(memory, decode(value)?)?),
+        "vault.questions.create" => encode(vault_questions_create(memory, decode(value)?)?),
+        "vault.questions.edit" => encode(vault_questions_edit(memory, decode(value)?)?),
+        "vault.questions.pause" => encode(vault_questions_pause(memory, decode(value)?)?),
+        "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
+        "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
         "vault.commit" => encode(vault_commit(memory, decode(value)?)?),
@@ -2779,6 +2912,18 @@ pub fn invoke_browser(
             serde_json::from_value(value).map_err(invalid)?,
         )?),
         "self.browser.batch" => serde_json::to_value(self_browser_batch(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.library.find" => serde_json::to_value(self_browser_library_find(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.library.propose" => serde_json::to_value(self_browser_library_propose(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.library.run" => serde_json::to_value(self_browser_library_run(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -2947,12 +3092,7 @@ pub fn tasks_create(
         &input,
         &["/label", "/spec"],
     )?;
-    memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(
-        crate::msgpack_value_from_json(&input.spec)?,
-        input.label,
-        Some(memory.actor()),
-        Some(memory.vault().now_recorded_at()),
-    ))
+    memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
@@ -3075,6 +3215,16 @@ pub fn vault_weave_digest(
     input: crate::claim::WeaveDigestRequest,
 ) -> MemoryResult<Option<crate::claim::WeaveDigestView>> {
     memory.weave_digest(None, &input)
+}
+pub fn vault_weave_link_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongLinkRequest,
+) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
+    memory.weave_wrong_link(
+        None,
+        &memory.embedded_owner("vault.weave.link.wrong")?,
+        &input,
+    )
 }
 pub fn vault_packs_put(
     memory: &Memory<'_>,
@@ -3840,6 +3990,43 @@ pub fn ai_verdict(
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::host_only(memory, "ai.verdict", &input)
 }
+pub fn vault_graph_ask(
+    memory: &Memory<'_>,
+    input: crate::receipt::GraphAskRequest,
+) -> MemoryResult<crate::receipt::GraphAskOutcome> {
+    input.validate()?;
+    crate::task_verb::sdk::host_only(memory, "vault.graph.ask", &input)
+}
+pub fn vault_questions_create(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionCreateRequest,
+) -> MemoryResult<crate::llm::decision::questions::QuestionRecord> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.create", &input)
+}
+pub fn vault_questions_edit(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionEditRequest,
+) -> MemoryResult<crate::llm::decision::questions::QuestionRecord> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.edit", &input)
+}
+pub fn vault_questions_pause(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionPauseRequest,
+) -> MemoryResult<crate::receipt::QuestionPaused> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.pause", &input)
+}
+pub fn vault_questions_read(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionReadRequest,
+) -> MemoryResult<Option<crate::llm::decision::questions::QuestionRecord>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.read", &input)
+}
+pub fn vault_questions_answers(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionAnswersRequest,
+) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
+}
 pub fn connector_list(
     memory: &Memory<'_>,
     input: ConnectorListRequest,
@@ -3935,6 +4122,24 @@ pub fn self_browser_batch(
     input: oneiron_browser::BatchInput,
 ) -> Result<oneiron_browser::BatchOutput, oneiron_browser::BrowserError> {
     driver.batch(input)
+}
+pub fn self_browser_library_find(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::LibraryFindInput,
+) -> Result<oneiron_browser::LibraryFindOutput, oneiron_browser::BrowserError> {
+    driver.library_find(input)
+}
+pub fn self_browser_library_propose(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ProposeInput,
+) -> Result<oneiron_browser::ProposeOutput, oneiron_browser::BrowserError> {
+    driver.library_propose(input)
+}
+pub fn self_browser_library_run(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::LibraryRunInput,
+) -> Result<oneiron_browser::LibraryRunOutput, oneiron_browser::BrowserError> {
+    driver.library_run(input)
 }
 pub fn vault_commit(
     memory: &Memory<'_>,

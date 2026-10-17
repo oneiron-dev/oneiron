@@ -1,6 +1,7 @@
 //! The wake loop: admit, warn, dispatch under panic containment, stop conditions.
 
 mod concurrent;
+mod hooks;
 
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
@@ -249,14 +250,21 @@ impl<'a> DreamerWakeDriver<'a> {
         exec: &mut E,
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
+        let hooks = match self.pre_wake_hooks(&input)? {
+            Ok(hooks) => hooks,
+            Err(skipped) => return Ok(skipped),
+        };
         self.begin_wake(input.now)?;
         let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
             self.vault,
             input.scope,
             input.host_scope.as_ref(),
         )?;
-        self.run_prepared_wake_pass(input, exec, cancel, &prepared)
-            .await
+        let report = self
+            .run_prepared_wake_pass(input, exec, cancel, &prepared)
+            .await?;
+        self.post_wake_hooks(hooks, &report);
+        Ok(report)
     }
 
     fn begin_wake(&mut self, now: u64) -> Result<()> {
@@ -439,6 +447,22 @@ impl<'a> DreamerWakeDriver<'a> {
             let priority = match priority {
                 DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
                     self.store.admit_next_task_realize(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
+            // Then the weave lens renders: each published digest period
+            // through the weave-report skill, for the reader it is for.
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
+                    self.store.admit_next_weave_lens(AdmitDreamerAttempt {
                         lease_owner: input.lease_owner.clone(),
                         now: input.now,
                         budget_id: self.budget_id.clone(),

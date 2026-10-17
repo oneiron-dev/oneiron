@@ -128,6 +128,12 @@ pub struct ModelBinding {
     /// probe approval of that served row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disposition: Option<ModelDisposition>,
+    /// Whether the bound model, on every route this binding names, hears audio
+    /// clips on the chat wire. A decision rung over the role reads audio only
+    /// when this says so and the served model's catalog row admits
+    /// [`crate::llm::LlmCapability::AudioInput`]; absent is false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reads_audio: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

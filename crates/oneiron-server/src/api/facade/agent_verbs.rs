@@ -32,6 +32,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.kv.namespaces", post(vault_kv_namespaces))
         .route("/vault.weave.report", post(vault_weave_report))
         .route("/vault.weave.digest", post(vault_weave_digest))
+        .route("/vault.weave.link.wrong", post(vault_weave_link_wrong))
         .route("/vault.packs.put", post(vault_packs_put))
         .route(
             "/vault.packs.setup.prepare",
@@ -200,6 +201,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.video.poll", post(ai_video_poll))
         .route("/ai.video.cancel", post(ai_video_cancel))
         .route("/ai.verdict", post(ai_verdict))
+        .route("/vault.graph.ask", post(vault_graph_ask))
+        .route("/vault.questions.create", post(vault_questions_create))
+        .route("/vault.questions.edit", post(vault_questions_edit))
+        .route("/vault.questions.pause", post(vault_questions_pause))
+        .route("/vault.questions.read", post(vault_questions_read))
+        .route("/vault.questions.answers", post(vault_questions_answers))
         .route("/connector.list", post(connector_list))
         .route("/connector.status", post(connector_status))
         .route("/vault.commit", post(vault_commit))
@@ -898,6 +905,28 @@ async fn vault_weave_digest(
         "vault.weave.digest",
         value,
     )?))
+}
+async fn vault_weave_link_wrong(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.weave.link.wrong")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.link.wrong", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.weave.link.wrong", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_weave_link_wrong(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_packs_put(
     auth: CoreAuth,
@@ -2827,6 +2856,123 @@ async fn ai_verdict(
     let hooks = facade_hooks_pre(&server, &headers, &auth, "ai.verdict", value).await?;
     let output = facade_output(
         super::host_doors::ai_verdict(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_graph_ask(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.graph.ask")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.graph.ask", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.graph.ask", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_graph_ask(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_questions_create(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.questions.create")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.questions.create", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.questions.create", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_questions_create(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_questions_edit(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.questions.edit")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.questions.edit", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.questions.edit", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_questions_edit(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_questions_pause(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.questions.pause")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.questions.pause", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.questions.pause", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_questions_pause(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_questions_read(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.questions.read")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.questions.read", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.questions.read", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_questions_read(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_questions_answers(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.questions.answers")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.questions.answers", &value)?;
+    let hooks =
+        facade_hooks_pre(&server, &headers, &auth, "vault.questions.answers", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_questions_answers(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
     )?;
     Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }

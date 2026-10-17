@@ -1,5 +1,6 @@
 //! Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper, cfg(test) hook.
 
+use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::EffectorBudgetCharge;
 use crate::edge::EdgeActorClass;
@@ -83,6 +84,26 @@ pub(crate) struct PreparedEffect {
     /// A count bound checked under the admission writer lock; `None` for an
     /// effect with no such bound.
     pub(crate) admission_ceiling: Option<AdmissionCeiling>,
+    /// A second actor the same mutation speaks for, admitted beside the
+    /// primary under the same writer (OF-427).
+    pub(crate) co_actor: Option<CoActorAdmission>,
+}
+
+/// A second actor one external mutation speaks for (OF-427): the verified
+/// writer of the TASK a host scheduler mirrors. Its binding runs under the
+/// admission writer, checks the mutation is still the one that actor wrote,
+/// and yields the actor's gate input. Both governances must allow; the
+/// co-actor's connector key is preflighted before the primary's is charged,
+/// and charged only when it is a different key. Both decisions commit with
+/// the Pending insert, so one remote mutation spends each key once.
+pub(crate) struct CoActorAdmission {
+    pub(crate) bind: Box<
+        dyn for<'t> FnOnce(
+                &Vault,
+                &mut heed::RwTxn<'t>,
+            ) -> Result<ExternalEffectGateInput, IntentLedgerError>
+            + Send,
+    >,
 }
 
 /// A deterministic count bound on one server and tool. Admission holds the

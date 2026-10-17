@@ -207,6 +207,9 @@ export class Oneiron {
     weave: {
       report: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveReport(input) as unknown),
       digest: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveDigest(input) as unknown),
+      link: {
+        wrong: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveLinkWrong(input) as unknown),
+      },
     },
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
@@ -345,6 +348,16 @@ export class Oneiron {
         get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWorkspaceWorkCompanionGet(input) as unknown),
         set: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWorkspaceWorkCompanionSet(input) as unknown),
       },
+    },
+    graph: {
+      ask: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultGraphAsk(input) as unknown),
+    },
+    questions: {
+      create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultQuestionsCreate(input) as unknown),
+      edit: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultQuestionsEdit(input) as unknown),
+      pause: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultQuestionsPause(input) as unknown),
+      read: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultQuestionsRead(input) as unknown),
+      answers: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultQuestionsAnswers(input) as unknown),
     },
     commit: (input: Facade.CommitRequest): (Facade.CommitReceipt)[] => this.#call(() => this.#client.vaultCommit(input) as (Facade.CommitReceipt)[]),
     remember: (input: Facade.ClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultRemember(input) as Facade.CommitReceipt),
