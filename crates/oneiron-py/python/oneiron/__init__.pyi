@@ -520,14 +520,22 @@ class Oneiron:
         def report(self, spec: Facade.WeaveReportRequest) -> Facade.WeaveReportView:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
         def digest(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
-            """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
+            """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
         def lens(self, spec: Facade.WeaveReportRequest) -> Facade.LensFrameCard:
             """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
+        @property
+        def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
     class _VaultWeaveLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
+    class _VaultWeaveOwnerVerbs:
+        @property
+        def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs": ...
+    class _VaultWeaveOwnerLinkVerbs:
+        def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
+            """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
     class _VaultPacksVerbs:
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""

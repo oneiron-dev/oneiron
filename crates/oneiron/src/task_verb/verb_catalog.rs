@@ -53,6 +53,7 @@ pub enum AgentVerb {
     VaultWeaveDigest,
     VaultWeaveLens,
     VaultWeaveLinkWrong,
+    VaultWeaveOwnerLinkWrong,
     VaultPacksPut,
     VaultPacksSetupPrepare,
     VaultPacksSetupGet,
@@ -362,6 +363,7 @@ impl AgentVerb {
         Self::VaultWeaveDigest,
         Self::VaultWeaveLens,
         Self::VaultWeaveLinkWrong,
+        Self::VaultWeaveOwnerLinkWrong,
         Self::VaultPacksPut,
         Self::VaultPacksSetupPrepare,
         Self::VaultPacksSetupGet,
@@ -674,6 +676,7 @@ impl AgentVerb {
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultWeaveLens => "vault.weave.lens",
             Self::VaultWeaveLinkWrong => "vault.weave.link.wrong",
+            Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
             Self::VaultPacksSetupGet => "vault.packs.setup.get",
@@ -986,6 +989,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
+                | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1302,6 +1306,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
+                | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1643,6 +1648,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
+                | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1922,6 +1928,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultWeaveLinkWrong
+                | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
@@ -2148,6 +2155,7 @@ impl AgentVerb {
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
             Self::VaultWeaveLinkWrong => &["spec"],
+            Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -2458,6 +2466,7 @@ impl AgentVerb {
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
             Self::VaultWeaveLinkWrong => &["spec"],
+            Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -2853,13 +2862,16 @@ impl AgentVerb {
                 "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."
             }
             Self::VaultWeaveDigest => {
-                "One of the bound actor's saved weave digests, or the newest, under the current read policy."
+                "One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."
             }
             Self::VaultWeaveLens => {
                 "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."
             }
             Self::VaultWeaveLinkWrong => {
                 "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."
+            }
+            Self::VaultWeaveOwnerLinkWrong => {
+                "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."
             }
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
@@ -3299,7 +3311,9 @@ impl AgentVerb {
             Self::SelfBrowserSelect => {
                 "Picks the option of a select element by its label, text or value."
             }
-            Self::SelfBrowserWaitFor => "Waits until some page row matches a role and name.",
+            Self::SelfBrowserWaitFor => {
+                "Waits until a page row its refs name, or else some row matching a role and name, is there."
+            }
             Self::SelfBrowserExpect => {
                 "Checks that a page row is present or absent, and holds a given value."
             }
@@ -3342,7 +3356,9 @@ impl AgentVerb {
             }
             Self::SelfDesktopHotkey => "Presses a key combination in the current window.",
             Self::SelfDesktopScroll => "Scrolls a window target, or the window, by steps.",
-            Self::SelfDesktopWaitFor => "Waits until some window row matches a role and name.",
+            Self::SelfDesktopWaitFor => {
+                "Waits until a window row its refs name, or else some row matching a role and name, is there."
+            }
             Self::SelfDesktopExpect => {
                 "Checks that a window row is present or absent, and holds a given value."
             }
