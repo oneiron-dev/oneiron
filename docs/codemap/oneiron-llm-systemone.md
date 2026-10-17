@@ -11,5 +11,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | m | 1 struct · 1 fn | SystemOneSeat | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` |
+| `src/lib.rs` | src | m | 1 struct · 1 fn · 1 const | SystemOneSeat | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` |
 | `src/tests.rs` | test | s | — | — | — |
