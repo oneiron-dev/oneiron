@@ -532,6 +532,7 @@ pub(super) async fn execute_mcp_board_verb(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     served: &mut Vec<oneiron::EntityId>,
+    hooks: &mut Option<super::board_setup::McpBoardHooks>,
     call: impl FnOnce(
         &mut oneiron::board_verb::BoardVerbContext<'_, McpLiveBoard>,
     ) -> Result<
@@ -587,6 +588,15 @@ pub(super) async fn execute_mcp_board_verb(
             oneiron::board_verb::BoardVerbOutput::Frame(frame)
         }
         other => other,
+    };
+    // The hook rows this answer shows go out with it: the caller records
+    // their receipt and spends their blocks once it is released (OF-579).
+    *hooks = match &output {
+        oneiron::board_verb::BoardVerbOutput::Frame(_) => Some(board.hooks),
+        oneiron::board_verb::BoardVerbOutput::Expanded { key, .. } => {
+            Some(board.hooks.shown_by(key))
+        }
+        oneiron::board_verb::BoardVerbOutput::Subscription(_) => None,
     };
     // The present board producer serves TASKS, presence and loaded metadata.
     // None are new CLAIM/SKILL/AGENT_DEF body observations. An expansion has no
