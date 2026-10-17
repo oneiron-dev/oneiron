@@ -32344,13 +32344,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConnectorCallHost",
       "ConnectorCallInvocation",
       "ConnectorCallOutcome",
       "ConnectorCallRequest",
+      "ConnectorToolSchema",
+      "PendingConnectorCallRef",
       "UntrustedToolResult"
      ],
      "path": "src/outbound_consent/connector_call.rs",
@@ -32358,9 +32360,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 2,
-      "struct": 3,
+      "enum": 2,
+      "fn": 5,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -45700,7 +45702,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 35
      }
     },
@@ -45732,6 +45734,24 @@
      "surface": {
       "fn": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorCallReply",
+      "ConnectorSchemaReply",
+      "ConnectorSchemaRequest",
+      "ConnectorToolResult"
+     ],
+     "path": "src/task_verb/sdk_connector_call.rs",
+     "purpose": "`connector.call` and `connector.schema` (ONE-2510): one tool of one catalogued connector, called by name…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -45798,7 +45818,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 276
+      "fn": 278
      }
     },
     {
@@ -51400,7 +51420,7 @@
     "outbound_consent": {
      "files": 11,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
     },
@@ -51846,7 +51866,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 120,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52007,9 +52027,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 148,
+   "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3145,
+   "source_files": 3146,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59882,7 +59902,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 231
+      "fn": 233
      }
     },
     {
@@ -60898,7 +60918,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 232
+      "fn": 234
      }
     },
     {
@@ -63485,7 +63505,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -63516,6 +63536,16 @@
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/connector_call_doors.rs",
+     "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -63595,7 +63625,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 39
      }
     },
     {
@@ -66650,6 +66680,16 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_settle.rs",
+     "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -70164,7 +70204,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 283,
+     "files": 284,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70232,6 +70272,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…"
+    },
+    "connector_call_settle": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…"
     },
     "control_keys": {
      "files": 3,
@@ -70509,7 +70556,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 558,
+   "source_files": 560,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70780,11 +70827,16 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConnectorCallReply",
+      "ConnectorCallRequest",
       "ConnectorEntry",
       "ConnectorListRequest",
       "ConnectorNameRequest",
       "ConnectorQualificationReceipt",
+      "ConnectorSchemaReply",
+      "ConnectorSchemaRequest",
       "ConnectorSendTaskOutcome",
+      "ConnectorToolResult",
       "ConnectorView",
       "ConsentAnswer",
       "ConsentDenial",
@@ -70988,6 +71040,7 @@
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MutationIntent",
       "NativeOutputRequest",
       "NotWorse",
       "NoteAnchor",
@@ -71349,8 +71402,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 188,
-      "struct": 479
+      "enum": 190,
+      "struct": 483
      }
     },
     {
