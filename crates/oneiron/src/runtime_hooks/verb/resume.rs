@@ -9,6 +9,12 @@
 //! Only a call the drain can make as its caller made it has a target: a
 //! memory row the generated dispatcher runs, for an on-device caller with no
 //! credential. Any other call resumes on its caller's retry.
+//!
+//! While the drain runs a call, the call's invocation is held for it, so a
+//! retry in this process waits Pending rather than running the verb too. Each
+//! pass also deletes the rows [`VERB_ASK_KEEP`] outlived.
+
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +24,15 @@ use crate::session_lifecycle::SessionKey;
 use crate::task_verb::TaskAskResult;
 use crate::{EntityId, Result, Vault};
 
+use super::state::DrainScope;
 use super::{InvocationId, VerbHookStop, ask};
+
+/// How long a stopped call's row stays once its answer is used, or once its
+/// ask settled without a proceed: a retry within it still gets what the call
+/// returned. After it, the invocation reads as new.
+const VERB_ASK_KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// The most rows one drain pass deletes.
+const VERB_ASK_PRUNE_MAX: usize = 256;
 
 /// How settlement runs a stopped call again without its caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,9 +78,10 @@ impl Vault {
     /// Runs each call a settled proceed made ready, once, as its caller: the
     /// caller's actor and class, the invocation, its sitting and, for a room
     /// turn, the room, whose current terms admit the call again or refuse
-    /// it. Saves what each returned for the caller's retry. With hooks off
-    /// or suppressed it runs nothing: the chain would pass through without
-    /// using the answer up. Returns how many calls ran.
+    /// it. Saves what each returned for the caller's retry. A call whose
+    /// retry is in flight is left to that retry. With hooks off or suppressed
+    /// it runs nothing: the chain would pass through without using the
+    /// answer up. Then deletes old rows. Returns how many calls ran.
     ///
     /// # Errors
     ///
@@ -87,11 +102,20 @@ impl Vault {
                 }
             }
         }
+        let cutoff = self
+            .store
+            .clock
+            .now_recorded_at()
+            .saturating_sub(VERB_ASK_KEEP.as_secs());
+        if let Err(error) = ask::prune(self, cutoff, VERB_ASK_PRUNE_MAX) {
+            tracing::warn!(%error, "old verb hook asks wait for the next pass");
+        }
         Ok(ran)
     }
 
     /// Calls one ready row again and saves its outcome; false when it did
-    /// not run.
+    /// not run. The invocation is held from before the call until its
+    /// outcome is saved, and the row is marked running meanwhile.
     fn resume_verb_ask(&self, ready: ask::Ready) -> Result<bool> {
         let ask::Ready {
             key,
@@ -102,22 +126,36 @@ impl Vault {
             resume,
             ask: group,
         } = ready;
+        let invocation = InvocationId(key);
         let Ok(args) = serde_json::from_str(&args) else {
             ask::unready(self, key, group)?;
             return Ok(false);
         };
+        // A retry of the call in flight now resumes it itself.
+        let Some(_held) = self
+            .verb_hook_state
+            .hold_for_drain(invocation, actor, group)
+        else {
+            return Ok(false);
+        };
+        if !ask::mark_running(self, key, group)? {
+            return Ok(false);
+        }
         let VerbResume::Row { session, room } = resume;
         let mut memory = self
             .memory(actor, filter::edge_class(class))
-            .with_invocation(InvocationId(key));
+            .with_invocation(invocation);
         if let Some(session) = session {
             memory = memory.with_session(session);
         }
-        let ran = match room {
-            Some(room) => memory
-                .for_room_turn(room)
-                .and_then(|turn| turn.invoke(&verb, args)),
-            None => crate::task_verb::sdk::invoke(&memory, &verb, args),
+        let ran = {
+            let _draining = DrainScope::enter(invocation);
+            match room {
+                Some(room) => memory
+                    .for_room_turn(room)
+                    .and_then(|turn| turn.invoke(&verb, args)),
+                None => crate::task_verb::sdk::invoke(&memory, &verb, args),
+            }
         };
         let (outcome, transient) = match ran {
             Ok(value) => (
@@ -136,7 +174,10 @@ impl Vault {
                     return Ok(false);
                 }
                 // A caller's retry resumed it first and got its answer.
-                Some(stop) if ask::is_used(stop) => return Ok(false),
+                Some(stop) if ask::is_used(stop) => {
+                    ask::idle(self, key, group)?;
+                    return Ok(false);
+                }
                 hook => {
                     let transient = hook.is_none() && error.code == MEMORY_CODE_INTERNAL;
                     (

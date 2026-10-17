@@ -3,7 +3,9 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
+use crate::registry::{
+    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+};
 use crate::side_table::HexId;
 use crate::store::GateDecisionRecord;
 
@@ -31,7 +33,7 @@ impl Vault {
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let eligible = matches!(
             header.entity_type,
-            ENTITY_TYPE_PERSON | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TASK
+            ENTITY_TYPE_PERSON | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TASK | ENTITY_TYPE_NOTE
         );
         if !eligible || tombstone.reason != TombstoneReason::ArchivedByCleanup {
             return Ok(false);
@@ -185,7 +187,7 @@ impl Vault {
     /// The archive twin of [`Self::put_pending_tombstone_in_txn`], and
     /// deliberately NOT that function: an archive carries no propagation
     /// intent, so its record must live under a prefix no sync replay reads.
-    pub(super) fn put_archive_tombstone_in_txn(
+    pub(crate) fn put_archive_tombstone_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

@@ -1194,24 +1194,27 @@ pub(super) fn executor_boundary_contract() -> EngineExecutorResult<SandboxBounda
 pub(super) fn executor_system_prompt(wire: &str) -> String {
     let wire = wire.trim_end();
     let [host_verbs, verbs, runtime_types] = executor_declarations().map(|file| file.text);
+    let revision = crate::task_verb::sdk::code_mode_catalog_fragment().revision;
     format!(
         "You are Oneiron's engine-native executor.\n{wire}\n\
          The guest runs inside the CODE-1 Wasmtime WIT component boundary.\n\
          Clock and random values are host-controlled imports for replay determinism.\n\
          Use the prompt-side host verb types below as documentation only; runtime effects arrive \
-         as typed host imports:\n\n{host_verbs}\n{verbs}\n{runtime_types}"
+         as typed host imports. The verb catalog is revision {revision}:\n\n\
+         {host_verbs}\n{verbs}\n{runtime_types}"
     )
 }
 
 /// The declarations the system prompt teaches, in its order: the WIT host
-/// verbs, the verb table at each row's SDK path, and the interpreter's own
-/// functions. A shadow check reads these same texts.
+/// verbs, the code-mode catalog fragment (every row at its SDK path, with its
+/// typed input and reply), and the interpreter's own functions. A shadow
+/// check reads these same texts.
 pub(super) fn executor_declarations() -> [oneiron_code_check::Declaration<'static>; 3] {
     [
         ("code-run.d.ts", PLAIN_JS_HOST_VERB_DTS),
         (
             "code-mode.d.ts",
-            crate::task_verb::sdk::code_mode_declarations(),
+            crate::task_verb::sdk::code_mode_catalog_fragment().text,
         ),
         (
             "runtime.d.ts",
