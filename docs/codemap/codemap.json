@@ -15317,7 +15317,7 @@
      "purpose": "Typed turn-one self projection shared by the prefix and mid-run describe call",
      "surface": {
       "enum": 2,
-      "fn": 10,
+      "fn": 12,
       "struct": 8
      }
     },
@@ -28946,7 +28946,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "re-export": 2,
       "struct": 5
      }
@@ -30028,7 +30028,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -43115,7 +43115,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 7
      }
     },
@@ -43165,7 +43165,7 @@
      "path": "src/skill_reliability/provenance.rs",
      "purpose": "Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
