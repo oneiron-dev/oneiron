@@ -21,6 +21,7 @@ fn draft(
     DiagnosticEvent {
         detector_id: id.into(),
         event_class: class,
+        signal: None,
         actor_class: "system".into(),
         actor_ref: None,
         source,
