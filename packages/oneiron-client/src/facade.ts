@@ -2,7 +2,7 @@
 import type * as Facade from "./facade-types.js";
 
 /** Every facade verb, in table order. */
-export const FACADE_VERBS = ["report", "self.memory.diary", "self.memory.diary.reads", "self.memory.diary.review", "self.identity.answer", "self.identity.settle", "self.inbox.concern", "self.inbox.concern.outcome", "self.inbox.concern.move", "vault.people.list", "vault.people.get", "self.message", "self.grants.ask", "self.memory.diary.query", "cancel", "steer", "describe", "tasks.create", "tasks.update", "vault.witness", "vault.claims.upsert", "vault.recall", "vault.export", "vault.receipts", "vault.images.view", "vault.receipts.get", "vault.kv.get", "vault.kv.put", "vault.kv.delete", "vault.kv.search", "vault.kv.namespaces", "vault.weave.report", "vault.weave.digest", "vault.weave.lens", "vault.weave.link.wrong", "vault.packs.put", "vault.packs.setup.prepare", "vault.packs.setup.get", "vault.packs.setup.answer", "vault.packs.setup.verify", "vault.authority.audit", "vault.inspection.resolve", "vault.shared.propose_delete", "vault.shared.propose_transfer", "vault.shared.propose_remove_owner", "vault.shared.execute", "vault.shared.receipt", "vault.shared.outcomes", "vault.shared.deletion", "vault.members.add", "vault.members.change", "vault.members.remove", "vault.members.leave", "vault.members.invitations", "vault.members.accept", "vault.members.decline", "vault.members.withdraw_invitation", "vault.guests.revoke", "vault.authority.handoff_alarms", "vault.authority.handoff_alarms.acknowledge", "vault.legal_holds.place", "vault.legal_holds.widen", "vault.legal_holds.list", "vault.legal_holds.log", "vault.legal_holds.lift_and_erase", "vault.lenses.propose", "vault.lenses.activate", "vault.lenses.deactivate", "vault.lenses.list", "vault.lenses.default", "vault.disclosure.offer", "vault.shares.create", "vault.shares.revoke", "vault.shares.view", "vault.hooks.replay", "vault.artifacts.view", "vault.artifacts.export", "vault.artifacts.born_from", "vault.artifacts.proposals", "vault.artifacts.waits", "vault.artifacts.release_wait", "vault.artifacts.review_slides", "vault.artifacts.propose_deck", "vault.artifacts.propose_output", "vault.artifacts.keep", "vault.artifacts.discard", "vault.artifacts.undo", "can", "peek", "ask", "wait", "tasks.answer", "tasks.outcomes", "vault.rooms.list", "vault.rooms.messages", "vault.rooms.participants", "vault.rooms.render", "vault.rooms.find", "vault.rooms.get", "vault.rooms.trunk", "vault.rooms.reply_strips", "vault.rooms.claim", "vault.rooms.speak", "vault.projects.propose", "vault.projects.proposals", "vault.projects.dismiss_card", "vault.projects.confirm", "vault.projects.goal.intake", "vault.rooms.join", "vault.rooms.consent", "vault.rooms.offer", "vault.rooms.offer.answer", "vault.rooms.offers", "vault.projects.goal.revisions", "vault.projects.goal.dismiss", "vault.projects.route_tradeoff", "vault.conversations.turn.continue", "vault.conversations.turn.retry", "vault.rooms.host", "vault.rooms.host.pin", "vault.rooms.host.hand", "vault.rooms.sharing", "vault.companions.sharing.get", "vault.companions.sharing.set", "vault.workspace.work_companion.get", "vault.workspace.work_companion.set", "self.skills.save", "self.skills.fork", "self.skills.callables", "ai.options", "ai.image", "ai.speech", "ai.transcribe", "ai.embed", "ai.video", "ai.video.poll", "ai.video.cancel", "ai.verdict", "vault.graph.ask", "vault.questions.create", "vault.questions.edit", "vault.questions.pause", "vault.questions.read", "vault.questions.answers", "connector.list", "connector.status", "vault.commit", "vault.remember", "vault.claims.retract", "vault.forget", "vault.claims.list", "vault.claims.history", "vault.delete", "vault.writes.pending", "vault.hydrate", "vault.get", "vault.refs.resolve", "vault.refs.links", "vault.search.bm25", "vault.neighbors", "vault.structural.put", "vault.habits.checkin", "vault.claims.admit", "vault.artifacts.put", "vault.artifacts.append", "vault.artifacts.read", "connector.outbound.schedule", "vault.notes.create", "vault.notes.from_entity", "vault.notes.edit"] as const;
+export const FACADE_VERBS = ["report", "self.memory.diary", "self.memory.diary.reads", "self.memory.diary.review", "self.identity.answer", "self.identity.settle", "self.inbox.concern", "self.inbox.concern.outcome", "self.inbox.concern.move", "vault.people.list", "vault.people.get", "self.message", "self.grants.ask", "self.memory.diary.query", "cancel", "steer", "describe", "tasks.create", "tasks.update", "vault.witness", "vault.claims.upsert", "vault.recall", "vault.export", "vault.receipts", "vault.images.view", "vault.receipts.get", "vault.kv.get", "vault.kv.put", "vault.kv.delete", "vault.kv.search", "vault.kv.namespaces", "vault.weave.report", "vault.weave.digest", "vault.weave.lens", "vault.weave.link.wrong", "vault.packs.put", "vault.packs.setup.prepare", "vault.packs.setup.get", "vault.packs.setup.answer", "vault.packs.setup.verify", "vault.authority.audit", "vault.inspection.resolve", "vault.shared.propose_delete", "vault.shared.propose_transfer", "vault.shared.propose_remove_owner", "vault.shared.execute", "vault.shared.receipt", "vault.shared.outcomes", "vault.shared.deletion", "vault.members.add", "vault.members.change", "vault.members.remove", "vault.members.leave", "vault.members.invitations", "vault.members.accept", "vault.members.decline", "vault.members.withdraw_invitation", "vault.guests.revoke", "vault.guests.mint_slip", "vault.authority.handoff_alarms", "vault.authority.handoff_alarms.acknowledge", "vault.legal_holds.place", "vault.legal_holds.widen", "vault.legal_holds.list", "vault.legal_holds.log", "vault.legal_holds.lift_and_erase", "vault.embedding_spaces.list", "vault.embedding_spaces.declare", "vault.embedding_spaces.bind", "vault.embedding_spaces.one_space", "vault.embedding_spaces.retire", "vault.embedding_spaces.move", "vault.embedding_spaces.move_check", "vault.embedding_spaces.move_approve", "vault.embedding_spaces.move_undo", "vault.embedding_spaces.move_abandon", "vault.embedding_spaces.probes.list", "vault.embedding_spaces.probes.put", "vault.embedding_spaces.probes.delete", "vault.settings.learning", "vault.settings.learning.put", "vault.settings.learning.clear", "vault.lenses.propose", "vault.lenses.activate", "vault.lenses.deactivate", "vault.lenses.list", "vault.lenses.default", "vault.disclosure.offer", "vault.shares.create", "vault.shares.revoke", "vault.shares.view", "vault.hooks.replay", "vault.artifacts.view", "vault.artifacts.export", "vault.artifacts.born_from", "vault.artifacts.proposals", "vault.artifacts.waits", "vault.artifacts.release_wait", "vault.artifacts.review_slides", "vault.artifacts.propose_deck", "vault.artifacts.propose_output", "vault.artifacts.keep", "vault.artifacts.discard", "vault.artifacts.undo", "can", "peek", "ask", "wait", "tasks.answer", "tasks.outcomes", "vault.rooms.list", "vault.rooms.messages", "vault.rooms.participants", "vault.rooms.render", "vault.rooms.find", "vault.rooms.get", "vault.rooms.trunk", "vault.rooms.reply_strips", "vault.rooms.claim", "vault.rooms.speak", "vault.projects.propose", "vault.projects.proposals", "vault.projects.dismiss_card", "vault.projects.confirm", "vault.projects.goal.intake", "vault.rooms.join", "vault.rooms.consent", "vault.rooms.offer", "vault.rooms.offer.answer", "vault.rooms.offers", "vault.projects.goal.revisions", "vault.projects.goal.dismiss", "vault.projects.route_tradeoff", "vault.conversations.turn.continue", "vault.conversations.turn.retry", "vault.rooms.host", "vault.rooms.host.pin", "vault.rooms.host.hand", "vault.rooms.sharing", "vault.companions.sharing.get", "vault.companions.sharing.set", "vault.workspace.work_companion.get", "vault.workspace.work_companion.set", "self.skills.save", "self.skills.fork", "self.skills.callables", "ai.options", "ai.image", "ai.speech", "ai.transcribe", "ai.embed", "ai.video", "ai.video.poll", "ai.video.cancel", "ai.verdict", "vault.graph.ask", "vault.questions.create", "vault.questions.edit", "vault.questions.pause", "vault.questions.read", "vault.questions.answers", "connector.list", "connector.status", "vault.commit", "vault.remember", "vault.claims.retract", "vault.forget", "vault.claims.list", "vault.claims.history", "vault.delete", "vault.writes.pending", "vault.hydrate", "vault.get", "vault.refs.resolve", "vault.refs.links", "vault.search.bm25", "vault.neighbors", "vault.structural.put", "vault.habits.checkin", "vault.claims.admit", "vault.artifacts.put", "vault.artifacts.append", "vault.artifacts.read", "connector.outbound.schedule", "vault.notes.create", "vault.notes.from_entity", "vault.notes.edit"] as const;
 export type FacadeVerb = typeof FACADE_VERBS[number];
 
 /** Each verb's request body, as its Rust input type reads it. */
@@ -65,6 +65,7 @@ export interface FacadeInputs {
   "vault.members.decline": Facade.SharedInvitationRequest;
   "vault.members.withdraw_invitation": Facade.SharedInvitationWithdrawRequest;
   "vault.guests.revoke": Facade.GuestRevokeRequest;
+  "vault.guests.mint_slip": Facade.GuestSlipMintRequest;
   "vault.authority.handoff_alarms": Facade.EmptyRequest;
   "vault.authority.handoff_alarms.acknowledge": Facade.HandoffAlarmRequest;
   "vault.legal_holds.place": Facade.LegalHoldPlaceRequest;
@@ -72,6 +73,22 @@ export interface FacadeInputs {
   "vault.legal_holds.list": Facade.EmptyRequest;
   "vault.legal_holds.log": Facade.EmptyRequest;
   "vault.legal_holds.lift_and_erase": Facade.LegalHoldLiftAndEraseRequest;
+  "vault.embedding_spaces.list": Facade.EmptyRequest;
+  "vault.embedding_spaces.declare": Facade.EmbeddingSpaceDeclareRequest;
+  "vault.embedding_spaces.bind": Facade.EmbeddingSpaceBindRequest;
+  "vault.embedding_spaces.one_space": Facade.EmbeddingSpaceRequest;
+  "vault.embedding_spaces.retire": Facade.EmbeddingSpaceRequest;
+  "vault.embedding_spaces.move": Facade.EmbeddingSpaceMoveRequest;
+  "vault.embedding_spaces.move_check": Facade.EmbeddingSpaceCandidateRequest;
+  "vault.embedding_spaces.move_approve": Facade.EmbeddingSpaceCandidateRequest;
+  "vault.embedding_spaces.move_undo": Facade.EmbeddingSpaceCandidateRequest;
+  "vault.embedding_spaces.move_abandon": Facade.EmbeddingSpaceCandidateRequest;
+  "vault.embedding_spaces.probes.list": Facade.EmptyRequest;
+  "vault.embedding_spaces.probes.put": Facade.EmbeddingSpaceProbePutRequest;
+  "vault.embedding_spaces.probes.delete": Facade.EmbeddingSpaceProbeDeleteRequest;
+  "vault.settings.learning": Facade.LearningSettingsRequest;
+  "vault.settings.learning.put": Facade.LearningSettingPut;
+  "vault.settings.learning.clear": Facade.LearningSettingClear;
   "vault.lenses.propose": Facade.LensProposeRequest;
   "vault.lenses.activate": Facade.LensActivateRequest;
   "vault.lenses.deactivate": Facade.LensDeactivateRequest;
@@ -238,6 +255,7 @@ export interface FacadeResults {
   "vault.members.decline": Facade.SharedActExecutionReceipt;
   "vault.members.withdraw_invitation": Facade.SharedActExecutionReceipt;
   "vault.guests.revoke": Facade.GuestRevokeResponse;
+  "vault.guests.mint_slip": Facade.GuestSlipMinted;
   "vault.authority.handoff_alarms": Facade.AuthorityHandoffAlarm[];
   "vault.authority.handoff_alarms.acknowledge": Facade.AuthorityHandoffAlarm;
   "vault.legal_holds.place": Facade.LegalHold;
@@ -245,6 +263,22 @@ export interface FacadeResults {
   "vault.legal_holds.list": Facade.LegalHold[];
   "vault.legal_holds.log": Facade.LegalHoldEvent[];
   "vault.legal_holds.lift_and_erase": Facade.LegalHoldLiftAndErased;
+  "vault.embedding_spaces.list": Facade.EmbeddingSpacesView;
+  "vault.embedding_spaces.declare": Facade.EmbeddingSpacesView;
+  "vault.embedding_spaces.bind": Facade.EmbeddingSpacesView;
+  "vault.embedding_spaces.one_space": Facade.EmbeddingSpacesView;
+  "vault.embedding_spaces.retire": Facade.EmbeddingSpacesView;
+  "vault.embedding_spaces.move": Facade.SpaceMove;
+  "vault.embedding_spaces.move_check": Facade.EmbeddingSpaceMoveChecked;
+  "vault.embedding_spaces.move_approve": Facade.EmbeddingSpacesView;
+  "vault.embedding_spaces.move_undo": Facade.EmbeddingSpacesView;
+  "vault.embedding_spaces.move_abandon": Facade.EmbeddingSpacesView;
+  "vault.embedding_spaces.probes.list": Facade.EmbeddingSpaceProbes;
+  "vault.embedding_spaces.probes.put": Facade.EmbeddingSpaceProbe;
+  "vault.embedding_spaces.probes.delete": Facade.EmbeddingSpaceProbeDeleted;
+  "vault.settings.learning": Facade.LearningSettingsView;
+  "vault.settings.learning.put": Facade.LearningSettingsView;
+  "vault.settings.learning.clear": Facade.LearningSettingsView;
   "vault.lenses.propose": Facade.LensProposalReceipt;
   "vault.lenses.activate": Facade.LensActivationReceipt;
   "vault.lenses.deactivate": Facade.LensActivationReceipt;
@@ -427,6 +461,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.members.decline": { description: "The invitee declines their own invitation; nothing is granted.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.members.withdraw_invitation": { description: "An Admin with the add_member power takes back a pending invitation.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.guests.revoke": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.guests.mint_slip": { description: "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.authority.handoff_alarms": { description: "Every saved authority handoff fork alarm, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.authority.handoff_alarms.acknowledge": { description: "The owner acknowledges one saved handoff fork alarm.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.legal_holds.place": { description: "The owner places a customer legal hold on the named records or gate partitions.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -434,6 +469,22 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.legal_holds.list": { description: "Every legal hold the owner may see.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.legal_holds.log": { description: "The owner-visible legal hold log, oldest first.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.legal_holds.lift_and_erase": { description: "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.list": { description: "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.declare": { description: "Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.bind": { description: "Binds one kind slot to a declared space, or returns it to its default when no space is named.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.one_space": { description: "Binds every kind slot the space accepts, text included, to that one space.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.retire": { description: "Drops a declared space that no slot binds and no open move names, with its vector rows.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.move": { description: "Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.move_check": { description: "Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.move_approve": { description: "The owner says yes to a full candidate over a check that did not read not worse; it swaps in.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.move_undo": { description: "Binds a swapped-in move incumbent again.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.move_abandon": { description: "Ends an open embedding space move with no swap.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.probes.list": { description: "Every stored embedding space probe with its id.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.probes.put": { description: "Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.probes.delete": { description: "Removes one stored embedding space probe by its id.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.settings.learning": { description: "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.settings.learning.put": { description: "The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.settings.learning.clear": { description: "The owner clears one learned-setting row of a key, mode and scope.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.propose": { description: "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.lenses.activate": { description: "The owner selects a proposed lens revision for its pack slot.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.deactivate": { description: "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -723,6 +774,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       },
       guests: {
         revoke: (input: Facade.GuestRevokeRequest, options?: O): FacadeReturns<"vault.guests.revoke">[K] => invoke("vault.guests.revoke", input, options),
+        /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
+        mint_slip: (input: Facade.GuestSlipMintRequest, options?: O): FacadeReturns<"vault.guests.mint_slip">[K] => invoke("vault.guests.mint_slip", input, options),
       },
       legal_holds: {
         /** The owner places a customer legal hold on the named records or gate partitions. */
@@ -735,6 +788,45 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         log: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.legal_holds.log">[K] => invoke("vault.legal_holds.log", input, options),
         /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
         lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest, options?: O): FacadeReturns<"vault.legal_holds.lift_and_erase">[K] => invoke("vault.legal_holds.lift_and_erase", input, options),
+      },
+      embedding_spaces: {
+        /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
+        list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.list">[K] => invoke("vault.embedding_spaces.list", input, options),
+        /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
+        declare: (input: Facade.EmbeddingSpaceDeclareRequest, options?: O): FacadeReturns<"vault.embedding_spaces.declare">[K] => invoke("vault.embedding_spaces.declare", input, options),
+        /** Binds one kind slot to a declared space, or returns it to its default when no space is named. */
+        bind: (input: Facade.EmbeddingSpaceBindRequest, options?: O): FacadeReturns<"vault.embedding_spaces.bind">[K] => invoke("vault.embedding_spaces.bind", input, options),
+        /** Binds every kind slot the space accepts, text included, to that one space. */
+        one_space: (input: Facade.EmbeddingSpaceRequest, options?: O): FacadeReturns<"vault.embedding_spaces.one_space">[K] => invoke("vault.embedding_spaces.one_space", input, options),
+        /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
+        retire: (input: Facade.EmbeddingSpaceRequest, options?: O): FacadeReturns<"vault.embedding_spaces.retire">[K] => invoke("vault.embedding_spaces.retire", input, options),
+        /** Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space. */
+        move: (input: Facade.EmbeddingSpaceMoveRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move">[K] => invoke("vault.embedding_spaces.move", input, options),
+        /** Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes. */
+        move_check: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_check">[K] => invoke("vault.embedding_spaces.move_check", input, options),
+        /** The owner says yes to a full candidate over a check that did not read not worse; it swaps in. */
+        move_approve: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_approve">[K] => invoke("vault.embedding_spaces.move_approve", input, options),
+        /** Binds a swapped-in move incumbent again. */
+        move_undo: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_undo">[K] => invoke("vault.embedding_spaces.move_undo", input, options),
+        /** Ends an open embedding space move with no swap. */
+        move_abandon: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_abandon">[K] => invoke("vault.embedding_spaces.move_abandon", input, options),
+        probes: {
+          /** Every stored embedding space probe with its id. */
+          list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.probes.list">[K] => invoke("vault.embedding_spaces.probes.list", input, options),
+          /** Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author. */
+          put: (input: Facade.EmbeddingSpaceProbePutRequest, options?: O): FacadeReturns<"vault.embedding_spaces.probes.put">[K] => invoke("vault.embedding_spaces.probes.put", input, options),
+          /** Removes one stored embedding space probe by its id. */
+          delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest, options?: O): FacadeReturns<"vault.embedding_spaces.probes.delete">[K] => invoke("vault.embedding_spaces.probes.delete", input, options),
+        },
+      },
+      settings: {
+        /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
+        learning: Object.assign((input: Facade.LearningSettingsRequest, options?: O): FacadeReturns<"vault.settings.learning">[K] => invoke("vault.settings.learning", input, options), {
+          /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
+          put: (input: Facade.LearningSettingPut, options?: O): FacadeReturns<"vault.settings.learning.put">[K] => invoke("vault.settings.learning.put", input, options),
+          /** The owner clears one learned-setting row of a key, mode and scope. */
+          clear: (input: Facade.LearningSettingClear, options?: O): FacadeReturns<"vault.settings.learning.clear">[K] => invoke("vault.settings.learning.clear", input, options),
+        }),
       },
       lenses: {
         /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
