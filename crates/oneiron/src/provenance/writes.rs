@@ -193,7 +193,7 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
     }
 
-    pub(super) fn retract_edge_provenance_in_txn(
+    pub(crate) fn retract_edge_provenance_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,

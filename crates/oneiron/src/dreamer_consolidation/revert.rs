@@ -9,6 +9,10 @@
 //!   gave the markers its correction closed, and its supersession record,
 //!   are retracted with it, so those markers are open again for the owner.
 //!   A settlement's `conflict.resolved` answer reverts as its settlement.
+//! - An evidence attachment, the `edge.provenance` record the Dreamer wrote
+//!   on a support edge, is retracted through the provenance retract, which
+//!   re-stamps the edge from the records still live on it. The edge stays,
+//!   as a retracted edge does.
 //! - A SUMMARY the Dreamer wrote is archived, its scope's projection goes
 //!   back to the summary it replaced, and the `merge.summary` header that
 //!   landed it is retracted.
@@ -57,6 +61,8 @@ pub enum DreamerChangeKind {
     Claim,
     /// Its settlement of an open conflict.
     Settlement,
+    /// Its evidence attachment: a support edge's provenance record.
+    Evidence,
     /// A scope summary.
     Summary,
     /// A NOTE: a TASK realization's answer.
@@ -71,6 +77,7 @@ impl DreamerChangeKind {
         match self {
             Self::Claim => "claim",
             Self::Settlement => "settlement",
+            Self::Evidence => "evidence",
             Self::Summary => "summary",
             Self::Note => "note",
             Self::PersonAbout => "person_about",
@@ -166,9 +173,7 @@ pub(crate) fn dreamer_changes_in_txn(
         let change = match record.entity_type {
             ENTITY_TYPE_CLAIM => vault
                 .get_claim_in_txn(txn, &entry.id)?
-                .filter(|body| {
-                    claim_stands(body) && crate::memory::claim_author(body) == Some(dreamer)
-                })
+                .filter(|body| claim_stands(body) && author(body) == Some(dreamer))
                 .map(|body| (claim_kind(&body), body.predicate)),
             ENTITY_TYPE_SUMMARY => (summary_by(&record.body, dreamer)
                 && stands_in_txn(vault, txn, &entry.id)?)
@@ -218,7 +223,7 @@ pub(crate) fn revert_dreamer_change_in_txn(
             let body = vault
                 .get_claim_in_txn(txn, &change)?
                 .ok_or(crate::error::Error::EntityNotFound)?;
-            if crate::memory::claim_author(&body) != Some(dreamer) {
+            if author(&body) != Some(dreamer) {
                 return Err(invalid_consolidation(
                     "the Dreamer did not write this claim",
                 ));
@@ -278,9 +283,10 @@ pub(crate) fn revert_dreamer_change_in_txn(
     }
 }
 
-/// A claim's revert: a settlement's answer reverts as its settlement; any
-/// other claim is retracted with the answers its correction gave and its
-/// supersession record, and each claim it superseded stands again.
+/// A claim's revert: a settlement's answer reverts as its settlement, and an
+/// evidence attachment through the provenance retract; any other claim is
+/// retracted with the answers its correction gave and its supersession
+/// record, and each claim it superseded stands again.
 fn revert_claim_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -298,6 +304,12 @@ fn revert_claim_in_txn(
         reverted.restored = settled.restored;
         reverted.copied = settled.copied;
         reverted.left_closed = settled.left_closed;
+        return Ok(reverted);
+    }
+    if claim_kind(body) == DreamerChangeKind::Evidence {
+        vault.retract_edge_provenance_in_txn(txn, &claim, now)?;
+        let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Evidence);
+        reverted.retracted.push(claim);
         return Ok(reverted);
     }
     let superseded = superseded_by_in_txn(vault, txn, claim)?;
@@ -369,13 +381,27 @@ fn superseded_by_in_txn(
     Ok(superseded)
 }
 
+/// Who wrote a claim: its write envelope's actor, or for an edge provenance
+/// record, which carries no envelope evidence, the record's own actor.
+fn author(body: &ClaimBody) -> Option<EntityId> {
+    if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
+        return crate::provenance::decode_edge_provenance_body(&body.value)
+            .ok()
+            .map(|record| record.actor_entity_ref);
+    }
+    crate::memory::claim_author(body)
+}
+
 /// Whether a claim still stands to revert: Active and not refused.
 fn claim_stands(body: &ClaimBody) -> bool {
     body.lifecycle == ClaimLifecycleStatus::Active && body.approval != ClaimApprovalStatus::Rejected
 }
 
-/// A settlement's answer, or any other claim.
+/// A settlement's answer, an evidence attachment, or any other claim.
 fn claim_kind(body: &ClaimBody) -> DreamerChangeKind {
+    if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
+        return DreamerChangeKind::Evidence;
+    }
     let settlement = body.predicate == PREDICATE_CONFLICT_RESOLVED
         && string_at(&body.value, "resolution")
             .and_then(|resolution| string_at(resolution, "settlement"))
