@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 282 facade rows, 1076 declarations.
-Inputs: 236 of 282 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 230 of 282 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Census: 286 facade rows, 1084 declarations.
+Inputs: 240 of 286 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 234 of 286 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
 """
 
@@ -1989,6 +1989,33 @@ class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
     reason: NotRequired[str | None]
     receipt: NotRequired[PackInstallReceipt | None]
+class PackRemoveRequest(TypedDict):
+    pack: str
+class ChannelSubscriptionRequest(TypedDict):
+    agent: str
+    channel: str
+class ChannelMessageSubscription(TypedDict):
+    subscription: str
+    connector_key: str
+    connector: str
+    agent: str
+    existing: bool
+class ChannelSubscriptionsRequest(TypedDict):
+    agent: str
+class ChannelSubscriptionRow(TypedDict):
+    subscription: str
+    connector_key: str
+    connector: str
+    event_kind: NotRequired[str | None]
+    predicate: NotRequired[str | None]
+    active: bool
+class ChannelSubscriptions(TypedDict):
+    agent: str
+    subscriptions: list[ChannelSubscriptionRow]
+class ChannelSubscriptionRevokeRequest(TypedDict):
+    subscription: str
+class ChannelSubscriptionRevoked(TypedDict):
+    subscription: str
 class PackSetupRequest(TypedDict):
     pack: str
     source: NotRequired[str | None]
