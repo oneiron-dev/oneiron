@@ -401,6 +401,9 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
     let kind = match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BUDGET_SPENT => Some("budget_spent"),
         oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => Some("model_unavailable"),
+        // OF-123: an effect whose person is not settled yet keeps its name
+        // too, so an agent reads it as `error.data.error_code`, not prose.
+        oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => Some("identity_unsettled"),
         _ => None,
     };
     if let Some(kind) = kind {

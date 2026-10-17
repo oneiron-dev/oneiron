@@ -45,6 +45,11 @@ pub struct ShareCreateRequest {
     /// `intent_prompt`. None sends a brief's default, which is nothing.
     #[serde(default)]
     pub travel: Option<TravelChoice>,
+    /// The saved mention `recipient` came from, when the agent named the
+    /// person (OF-123): the share refuses while it is unsettled, so settle it
+    /// with `self.identity.settle` first.
+    #[serde(default)]
+    pub mention: Option<crate::outbound::MentionProvenance>,
 }
 
 /// `vault.shares.create`'s answer: the admitted share and what travels with
@@ -89,6 +94,7 @@ pub fn create_share_as_caller(
         created_at: memory.vault().store.clock.now_recorded_at(),
         revoked_at: None,
         expires_at: input.expires_at,
+        mention: input.mention,
     };
     let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Brief);
     let issuer = WriteActor::new(memory.actor(), memory.actor_class());

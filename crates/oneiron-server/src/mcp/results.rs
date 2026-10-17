@@ -131,6 +131,10 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "recall at medium, which needs no reranker",
             "ask the vault owner to check the model route in [models]",
         ],
+        "identity_unsettled" => &[
+            "call self.identity.settle with the person's name and this effect, then act again",
+            "if it answers needs_person, wait for the person's choice on the card before acting",
+        ],
         "verb_dispatch_failed" => {
             &["re-read the board with self.focus.refresh and retry against the current epoch"]
         }

@@ -28,6 +28,26 @@ pub(super) fn ts_from_engine(value: u64, field: &str) -> BoundaryResult<i64> {
     i64::try_from(value).map_err(|_| format!("{field} does not fit a signed 64-bit integer"))
 }
 
+/// Converts the host's mention provenance (OF-123) into the engine's. JS has
+/// no unsigned integer, so the byte span must be proven non-negative here;
+/// the engine then refuses the effect while the mention is unsettled.
+pub(super) fn mention_to_engine(
+    mention: Option<super::dtos::NapiMentionProvenance>,
+) -> BoundaryResult<Option<oneiron::outbound::MentionProvenance>> {
+    mention
+        .map(|mention| {
+            Ok(oneiron::outbound::MentionProvenance {
+                turn: mention.turn,
+                message: mention.message,
+                start: u64::try_from(mention.start)
+                    .map_err(|_| "mention.start must be a non-negative byte offset".to_owned())?,
+                end: u64::try_from(mention.end)
+                    .map_err(|_| "mention.end must be a non-negative byte offset".to_owned())?,
+            })
+        })
+        .transpose()
+}
+
 /// Converts the host's optional clock-authority fields into the engine's
 /// schedule context. Fail-closed by construction: every rejection happens here,
 /// before the draft reaches the facade, so no invalid offset, label, or level
