@@ -13,6 +13,7 @@
 //! brain's reply past the session's sentence safeguards (`speech`).
 
 mod attachment;
+mod brain;
 mod connection;
 mod extraction;
 mod media_bridge;
@@ -20,6 +21,7 @@ mod serve_bindings;
 mod speech;
 mod wire;
 
+pub use brain::{ChatBrain, ChatBrainBindings};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, VoiceBrainOut, VoicePlayout};
@@ -139,6 +141,7 @@ impl VoiceHost {
             return Err(HostError::Stopped);
         }
         let extractor = TinyExtractor::new(
+            Arc::clone(&vault),
             runtime,
             bindings.backend,
             bindings.budget,
