@@ -536,7 +536,9 @@ fn managed_page_seal(
 ) -> anyhow::Result<Option<oneiron::VaultPageSeal>> {
     let path = &managed.data_dir;
     if oneiron::world_keys::vault_is_sealed(path)? {
-        return Ok(Some(oneiron::world_keys::reopen_delivered_page_seal(path, dek)?));
+        return Ok(Some(oneiron::world_keys::reopen_delivered_page_seal(
+            path, dek,
+        )?));
     }
     if !managed.maximum_tier {
         return Ok(None);
@@ -547,7 +549,9 @@ fn managed_page_seal(
         );
         return Ok(None);
     }
-    Ok(Some(oneiron::world_keys::new_delivered_page_seal(path, dek)?))
+    Ok(Some(oneiron::world_keys::new_delivered_page_seal(
+        path, dek,
+    )?))
 }
 
 /// Hands each escrow capsule the outbox does not hold yet to the outbox the
