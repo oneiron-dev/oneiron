@@ -251,7 +251,7 @@ declare const vault: {
     receipt(input: { receipt_id: string }): Promise<unknown>;
   };
   shares: {
-    create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
+    create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; mention?: { end: number; message: string; start: number; turn: string } | null; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
   };
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
