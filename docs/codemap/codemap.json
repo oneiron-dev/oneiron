@@ -42913,7 +42913,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 9,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -42942,6 +42942,21 @@
       "enum": 4,
       "fn": 9,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OfferSwitchReceipt",
+      "OfferSwitchUndo"
+     ],
+     "path": "src/skill_optimize/offer_switch.rs",
+     "purpose": "An approved training offer's stock switch (OF-577; ARCH-0053 #training-offers: a switch binds now, with undo)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -54088,7 +54103,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54349,7 +54364,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3301,
+   "source_files": 3302,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67474,7 +67489,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/proactivity_routes.rs",
@@ -73920,7 +73935,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 623,
    "test_files": 182
