@@ -63,6 +63,9 @@ pub enum ArchiveRecordKind {
     /// One kind slot's binding, `{kind, space}` with a null `space` for an
     /// unbound slot: a row per kind, only in a whole-vault archive.
     SlotBinding,
+    /// One session's epoch floor (OF-013), `{session, epoch, turn_end}`,
+    /// only in a whole-vault archive.
+    EpochFloor,
 }
 
 impl ArchiveRecordKind {
@@ -81,6 +84,7 @@ impl ArchiveRecordKind {
             Self::SecretCustody => "records/secret_custody.jsonl",
             Self::EmbeddingSpace => "records/embedding_space.jsonl",
             Self::SlotBinding => "records/slot_binding.jsonl",
+            Self::EpochFloor => "records/epoch_floor.jsonl",
         })
     }
 

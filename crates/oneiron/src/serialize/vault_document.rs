@@ -75,6 +75,7 @@ pub(crate) fn serialize_vault_snapshot(
         run_results,
         embedding_spaces,
         slot_bindings,
+        epoch_floors: snapshot.epoch_floors,
     };
     // OF-222: a stored file an ASSET body is goes beside the document once, by
     // digest, as it is stored; its row carries the descriptor naming it.

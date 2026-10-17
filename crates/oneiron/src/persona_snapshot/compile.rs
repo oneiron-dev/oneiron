@@ -620,6 +620,14 @@ impl crate::Vault {
         kept: &BTreeSet<EntityId>,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> Result<Vec<CandidateClaim>> {
+        // The subject, admissibility, world and Tier-A filters; applied to
+        // the vault body and again to the body an audience read admits.
+        let keeps = |body: &ClaimBody| {
+            body.subject == ClaimSubject::Entity(*person_ref)
+                && admissible_claim(body)
+                && !body.world.is_some_and(|world| kept.contains(&world))
+                && !persona_snapshot_tier_a_clamped(body)
+        };
         let mut candidates = Vec::new();
         for claim_id in self.claims_for_subject(person_ref)? {
             let Some(raw) = self.get_raw(&claim_id)? else {
@@ -638,13 +646,7 @@ impl crate::Vault {
                 continue;
             }
             let body = decode_claim_body(body_bytes, true)?;
-            if body.subject != ClaimSubject::Entity(*person_ref)
-                || !admissible_claim(&body)
-                || body.world.is_some_and(|world| kept.contains(&world))
-            {
-                continue;
-            }
-            if persona_snapshot_tier_a_clamped(&body) {
+            if !keeps(&body) {
                 continue;
             }
             candidates.push(CandidateClaim { id: claim_id, body });
@@ -659,8 +661,22 @@ impl crate::Vault {
                 Some(receipt) => receipt.restrict_with(&admitted.receipt),
                 None => *receipt = Some(admitted.receipt),
             }
-            let mut rows = admitted.value.into_iter();
-            candidates.retain(|_| rows.next().flatten().is_some());
+            // Rebuild from the admitted bytes, never the vault read above: a
+            // body rewritten between the two reads must not lend its earlier
+            // text to an id the audience admitted.
+            candidates.clear();
+            for row in admitted.value.into_iter().flatten() {
+                if row.entity_type != ENTITY_TYPE_CLAIM {
+                    continue;
+                }
+                let Some(bytes) = row.body.as_deref().filter(|bytes| !bytes.is_empty()) else {
+                    continue;
+                };
+                let body = decode_claim_body(bytes, true)?;
+                if keeps(&body) {
+                    candidates.push(CandidateClaim { id: row.id, body });
+                }
+            }
         }
         candidates.sort_by(|a, b| {
             let a_salience = a.body.salience.unwrap_or(-1.0);

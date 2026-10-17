@@ -12,7 +12,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 2;
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -103,10 +103,11 @@ impl WholeVaultExport {
     }
 }
 
-/// Nine sections. Entities occur once. Derived evidence is an index into
+/// Ten sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
 /// beside the evidence ledger and carry full value metadata. The embedding
-/// setup is descriptors only (OF-370): no vector travels.
+/// setup is descriptors only (OF-370): no vector travels. Epoch floors carry a
+/// count position only (OF-013): no removed summary's words travel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WholeVaultDocument {
@@ -123,6 +124,21 @@ pub struct WholeVaultDocument {
     /// The three kind slots; `None` when the export carries no setup (a
     /// records archive, OKF).
     pub slot_bindings: Option<PortableSlotBindings>,
+    /// Every session's epoch floor, in session order; empty outside a
+    /// whole-vault export.
+    pub epoch_floors: Vec<ExportEpochFloor>,
+}
+
+/// Where one session's highest removed epoch summary left the count (OF-013):
+/// its epoch and the turn it ended at, nothing it said. An import raises the
+/// local floor to it and never lowers one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportEpochFloor {
+    /// The session's id, hex.
+    pub session: String,
+    pub epoch: u64,
+    pub turn_end: u64,
 }
 
 /// The code runs' results (OF-190 B++): each run's result manifests, and

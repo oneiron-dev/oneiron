@@ -70,6 +70,7 @@ pub(super) fn write_vault_archive(
             &["run_results", "bodies"][..],
         ),
         (ArchiveRecordKind::EmbeddingSpace, &["embedding_spaces"][..]),
+        (ArchiveRecordKind::EpochFloor, &["epoch_floors"][..]),
     ] {
         let fixed = kind
             .fixed_path()

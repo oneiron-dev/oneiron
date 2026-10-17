@@ -142,6 +142,7 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
         },
         "embedding_spaces": take(ArchiveRecordKind::EmbeddingSpace),
         "slot_bindings": slot_bindings,
+        "epoch_floors": take(ArchiveRecordKind::EpochFloor),
     });
     let mut cited = BTreeSet::new();
     cite_result_bodies(&document, &files, &mut cited)?;

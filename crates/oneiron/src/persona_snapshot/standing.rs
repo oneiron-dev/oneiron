@@ -1,7 +1,8 @@
 //! Named (agent, world) standing blocks compiled from gated persona claims.
 //! Handles are durable; compiled text is a node-local, disposable projection.
-use crate::claim::{PointRead, ScopedReadActorKey, ScopedReadReceipt};
+use crate::claim::{PointRead, ScopedReadActorKey, ScopedReadReceipt, decode_claim_body};
 use crate::consent::AuthenticatedOwner;
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -284,10 +285,17 @@ impl Vault {
         let readable = scoped.read(&reads, None)?;
         let read_receipt = readable.receipt;
         let mut claims = Vec::new();
-        for id in readable.value.into_iter().flatten().map(|row| row.id) {
-            let Some(body) = self.get_claim(&id)? else {
+        // Decode the bytes the receipt admitted; a re-fetch could see a body
+        // written after the gated read.
+        for row in readable.value.into_iter().flatten() {
+            if row.entity_type != ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let Some(bytes) = row.body.as_deref().filter(|bytes| !bytes.is_empty()) else {
                 continue;
             };
+            let body = decode_claim_body(bytes, true)?;
+            let id = row.id;
             if body.subject != ClaimSubject::Entity(handle.agent)
                 || body.world != Some(handle.world)
                 || !body.predicate.starts_with(PERSONA_PREFIX)
