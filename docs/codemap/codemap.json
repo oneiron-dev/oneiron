@@ -16551,6 +16551,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/disclosure/clearance_use.rs",
+     "purpose": "The quiet receipt of a disclosure under standing clearance (OF-365, DEC-0006: \"the owner sees a post-hoc…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "DisclosableSet"
      ],
@@ -50384,7 +50394,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51429,7 +51439,7 @@
    },
    "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3108,
+   "source_files": 3109,
    "test_files": 903
   },
   "oneiron-android": {
