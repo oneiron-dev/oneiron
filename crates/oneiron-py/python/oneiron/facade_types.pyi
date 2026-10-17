@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 202 facade rows, 698 declarations.
-Inputs: 177 of 202 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 168 of 202 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 40; unread shapes: 1.
+Census: 208 facade rows, 708 declarations.
+Inputs: 181 of 208 fully typed, 26 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 168 of 208 fully typed, 32 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 46; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -519,6 +519,12 @@ class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
+MediaQueryKind = Literal["text", "image", "audio"]
+class ContextPackMediaQuery(TypedDict):
+    space: str
+    mime: str
+    bytes_b64: str
+    kinds: NotRequired[list[MediaQueryKind]]
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -527,6 +533,7 @@ class RecallRequest(TypedDict):
     format: NotRequired[str | None]
     as_of: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
+    media: NotRequired[ContextPackMediaQuery | None]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -1478,6 +1485,7 @@ class SharedInvitation(TypedDict):
     issued_at: int
     expires_at: int
     state: SharedInvitationState
+    founding: bool
 class SharedInvitationRequest(TypedDict):
     vault_id: int
     invitation: str
@@ -1750,6 +1758,35 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+WidenProposalState = Literal["pending", "approved", "declined"]
+class WidenProposalsRequest(TypedDict):
+    state: NotRequired[WidenProposalState | None]
+class WidenProposalView(TypedDict):
+    proposal_id: str
+    state: WidenProposalState
+    parent_attempt: str
+    board_attempt: NotRequired[str | None]
+    target_kind: str
+    target: str
+    parent_context: Any
+    requested_context: Any
+    widened_parent_context: Any
+    recorded_at: int
+    landed_attempt: NotRequired[str | None]
+    declined_by: NotRequired[str | None]
+    declined_at: NotRequired[int | None]
+class WidenProposalsView(TypedDict):
+    proposals: list[WidenProposalView]
+class WidenProposalAnswer(TypedDict):
+    proposal_id: str
+class WakePolicySetRequest(TypedDict):
+    policy: Any
+    idempotency_key: str
+class PolicyActionOutcome(TypedDict):
+    outcome: Any
+class InferenceDefaultsReplaceRequest(TypedDict):
+    defaults: Any
+    idempotency_key: str
 class LensSlot(TypedDict):
     pack_name: str
     skill_id: str
@@ -3181,7 +3218,8 @@ class QuestionCriteria(TypedDict):
 QuestionAudience = Literal["asker"]
 HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class QuestionMedia(TypedDict):
-    images: bool
+    images: NotRequired[bool]
+    audio: NotRequired[bool]
 class QuestionDefinition(TypedDict):
     question: DecisionQuestion
     adapter: str

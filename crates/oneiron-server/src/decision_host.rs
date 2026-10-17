@@ -22,14 +22,16 @@ use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, TH
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadProvider,
-    DecisionRung, HeldLadder, ModelDecisionProvider, ProviderCapability, ProviderDecision,
-    ProviderPin, RemoteDecisionSeat, RuleDecisionProvider, SeatPhase, SeatRequest,
+    DecisionRung, HeldLadder, ModelDecisionProvider, PersonThreshold, ProviderCapability,
+    ProviderDecision, ProviderPin, RemoteDecisionSeat, RuleDecisionProvider, SeatPhase,
+    SeatRequest,
 };
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
     ModelId, ReasoningEffort,
 };
+use oneiron::memory::ImagePick;
 use oneiron::policy_model::PolicyDecisions;
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::saved_query::MembershipDecisions;
@@ -41,7 +43,9 @@ use oneiron::{
     Vault,
 };
 
-use crate::config::models::{BigSettings, ModelsConfig, SeatPickSettings, SystemOneSettings};
+use crate::config::models::{
+    BigSettings, ImagePickSettings, ModelsConfig, SeatPickSettings, SystemOneSettings,
+};
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
 
@@ -66,6 +70,9 @@ pub(crate) const PLACEMENT_BUDGET: std::time::Duration = std::time::Duration::fr
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
+/// How long the person row may trail an accept whose commit sent no change
+/// signal.
+const PERSON_THRESHOLD_SWEEP: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The ladder, its person queue and the bands every caller starts from.
 #[derive(Clone)]
@@ -73,7 +80,12 @@ pub struct DecisionHost {
     ladder: HeldLadder,
     asks: Arc<DecisionAsks>,
     bands: DecisionBandPolicy,
+    /// The configured start row, when the recipe names a person question.
+    person_start: Option<PersonThreshold>,
+    /// One person-row refresh at a time, so an older read never lands last.
+    person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
+    image_pick: Option<ImagePickSettings>,
 }
 
 impl DecisionHost {
@@ -97,7 +109,10 @@ impl DecisionHost {
             },
             asks,
             bands: DecisionBandPolicy::default(),
+            person_start: None,
+            person_refresh: Arc::default(),
             auto_checker: None,
+            image_pick: None,
         }
     }
 
@@ -112,6 +127,7 @@ impl DecisionHost {
         self.ladder.person = None;
         self.ladder.presence = None;
         self.bands = DecisionBandPolicy::default();
+        self.person_start = None;
         let Some((door, meter)) = read else {
             return self;
         };
@@ -126,12 +142,14 @@ impl DecisionHost {
                 Ok(person) => {
                     let mut bands = DecisionBandPolicy::default();
                     // Q3's threshold home: an accepted Coach row replaces this
-                    // start value with a higher version, here.
+                    // start value with a higher version
+                    // ([`Self::refresh_person_threshold`]).
                     match bands
                         .set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
                     {
                         Ok(()) => {
                             self.ladder.person = Some(person);
+                            self.person_start = bands.person_threshold();
                             self.bands = bands;
                         }
                         Err(error) => tracing::warn!(%error, "the person threshold is invalid"),
@@ -230,6 +248,12 @@ impl DecisionHost {
         self
     }
 
+    /// The per-image pick's wording and budget (OF-329).
+    fn with_image_pick(mut self, settings: Option<&ImagePickSettings>) -> Self {
+        self.image_pick = settings.cloned();
+        self
+    }
+
     /// The ladder every typed decision on this host goes through.
     #[must_use]
     pub fn ladder(&self) -> &HeldLadder {
@@ -249,6 +273,34 @@ impl DecisionHost {
     #[must_use]
     pub fn bands(&self) -> DecisionBandPolicy {
         self.bands.clone()
+    }
+
+    /// Installs the newest accepted Coach revision of the person row (Q3)
+    /// above the configured start row, else the start row, on every clone of
+    /// the host's bands. A host whose recipe names no person question keeps
+    /// none.
+    pub(crate) fn refresh_person_threshold(&self, vault: &Vault) -> oneiron::Result<()> {
+        let Some(start) = self.person_start else {
+            return Ok(());
+        };
+        let _turn = self
+            .person_refresh
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let row = vault
+            .latest_accepted_person_threshold()?
+            .map(|(_, row)| row)
+            .filter(|row| row.version > start.version)
+            .unwrap_or(start);
+        if self.bands.person_threshold() != Some(row) {
+            self.bands.replace_person_threshold(row)?;
+            tracing::info!(
+                threshold = row.threshold,
+                version = row.version,
+                "the person threshold row changed"
+            );
+        }
+        Ok(())
     }
 
     /// A dial from the rule table up to `ceiling`, with the default band.
@@ -327,6 +379,24 @@ impl DecisionHost {
             },
             bands: self.bands.clone(),
             ..ConsolidationDecisions::shipped()?
+        })
+    }
+
+    /// The fast per-image pick (OF-329) for `principal`'s `task`, when
+    /// `[models.decisions.image_pick]` words it. It asks the quick rungs
+    /// only, up to System One, under the host's bands; a pick no rung
+    /// answers in band serves the image in full.
+    #[must_use]
+    pub fn image_pick(&self, principal: EntityId, task: String) -> Option<ImagePick<'_>> {
+        let settings = self.image_pick.as_ref()?;
+        Some(ImagePick {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::SystemOne),
+            bands: self.bands.clone(),
+            wording: settings.wording.clone(),
+            task,
+            budget: settings.budget,
         })
     }
 
@@ -516,7 +586,8 @@ impl SyncServer {
                 models.raw_budget_units,
                 tokio::runtime::Handle::current(),
             )
-            .with_auto_check(models.decisions.auto_check.as_deref(), principal);
+            .with_auto_check(models.decisions.auto_check.as_deref(), principal)
+            .with_image_pick(models.decisions.image_pick.as_ref());
         self
     }
 
@@ -535,6 +606,47 @@ impl SyncServer {
             settings.facet.clone(),
         ))
     }
+}
+
+/// Keeps the host's person row on the newest accepted Coach revision: it
+/// re-reads after each committed change, and every sweep for an accept whose
+/// commit sent no change signal. `None` when the recipe names no person
+/// question.
+pub(crate) fn spawn_person_threshold(
+    server: &Arc<SyncServer>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    server.decision_host().person_start?;
+    let weak = Arc::downgrade(server);
+    // Subscribed before the first read, so no change between them is lost.
+    let mut changes = server.vault().subscribe_proactivity_changes();
+    Some(tokio::spawn(async move {
+        loop {
+            let Some(server) = weak.upgrade() else {
+                break;
+            };
+            let ran = tokio::task::spawn_blocking(move || {
+                server
+                    .decision_host()
+                    .refresh_person_threshold(server.vault())
+            })
+            .await;
+            match ran {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(kind = ?error.kind(), "the person threshold refresh failed; it runs again on the next change");
+                }
+                Err(error) => tracing::warn!(%error, "the person threshold refresh stopped"),
+            }
+            tokio::select! {
+                () = tokio::time::sleep(PERSON_THRESHOLD_SWEEP) => {}
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }))
 }
 
 fn pin(rung: DecisionRung, model: &str, version: &str) -> ProviderPin {

@@ -4,12 +4,15 @@
 //! checked inside the vault: an invented example of the failure (a short
 //! general note and a made-up conversation that fails the same way), and,
 //! for a skill or prompt heal, the shadow result of the instruction it would
-//! add, replayed against the real failure. The host's model drafts and
+//! add, replayed against the real failure. Each candidate the deployment's
+//! publisher supplied, pinned by the operator, is replayed against the same
+//! failure beside it. The host's model drafts and
 //! replays with no tools; every judgment (the failure's class, does a replay
 //! fail the same way, did the candidate fix it, may the example leave) is a
 //! typed question on the host's decision ladder. The export doors in
 //! `failure_signals` decide what leaves, and the case's work row keeps each
 //! verdict here after the export queue drains.
+use std::cell::OnceCell;
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
@@ -42,6 +45,8 @@ const WORK: SideTable<EntityId, CodeFixWork, Named> =
     SideTable::new(&side_table::FAILURE_SIGNALS_CODE_FIX_WORK);
 /// Blocked reports one job carries.
 const JOB_REPORTS: usize = 8;
+/// Most work rows one owner read returns.
+pub const MAX_CODE_FIX_WORK: usize = 256;
 /// Most bytes of one report's detail, one message, or one other text a
 /// question's state carries.
 const DETAIL_BYTES: usize = 1024;
@@ -91,8 +96,9 @@ pub struct CodeFixSettled {
     pub failure_class: FailureClassV1,
     /// The invented example's verdict.
     pub example: CodeFixVerdict,
-    /// The candidate's shadow replay, for a skill or prompt heal.
-    pub candidate: Option<CandidateRun>,
+    /// Each candidate's shadow replay: the Coach's own for a skill or prompt
+    /// heal first, then each publisher candidate.
+    pub candidates: Vec<CandidateRun>,
 }
 
 /// One candidate's shadow replay: its outcome and its export's verdict.
@@ -128,6 +134,16 @@ pub struct CodeFixDraft {
     pub fix: Option<String>,
 }
 
+/// A candidate fix the deployment's publisher supplied and its operator
+/// pinned: an instruction the replay adds to the failing agent's own. It is
+/// tried in the vault only; nothing installs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublisherCandidate {
+    /// The token its result exports under, naming the pinned artifact.
+    pub id: String,
+    pub instruction: String,
+}
+
 /// The host's models, inside the vault's boundary.
 pub trait CodeFixHost {
     /// The Coach's draft for `job`; `Ok(None)` when it drafted nothing usable.
@@ -135,6 +151,10 @@ pub trait CodeFixHost {
     /// One turn of the failing agent with no tools, so nothing it says can
     /// act: `system`, then `conversation`. `Ok(None)` when no model runs it.
     fn reply(&self, system: &str, conversation: &[InventedMessage]) -> Result<Option<String>>;
+    /// The publisher's pinned candidates, each replayed against every case.
+    fn publisher_candidates(&self) -> &[PublisherCandidate] {
+        &[]
+    }
 }
 
 /// The host's decision ladder for the code-fix checks: the principal the
@@ -222,8 +242,11 @@ struct CoachReplay<'a> {
     host: &'a dyn CodeFixHost,
     decisions: &'a CodeFixDecisions<'a>,
     evidence: &'a [EntityId],
-    /// The candidate's id and the instruction it adds.
-    candidate: Option<(String, String)>,
+    /// Each candidate's id and the instruction it adds.
+    candidates: Vec<(String, String)>,
+    /// The real failing call and the agent's reply to it, once a replay
+    /// reproduced the failure; `None` when it did not, or could not run.
+    baseline: OnceCell<Option<(Vec<InventedMessage>, String)>>,
 }
 
 impl CoachReplay<'_> {
@@ -267,6 +290,23 @@ impl CoachReplay<'_> {
             }]
         })
     }
+
+    /// The real failing call replayed once for every candidate. A failure the
+    /// replay does not reproduce cannot say whether a candidate fixed it.
+    fn baseline(&self) -> Result<Option<&(Vec<InventedMessage>, String)>> {
+        if let Some(baseline) = self.baseline.get() {
+            return Ok(baseline.as_ref());
+        }
+        let ran = match self.real_conversation() {
+            None => None,
+            Some(conversation) => self
+                .host
+                .reply(&self.job.source.instructions, &conversation)?
+                .filter(|before| self.fails(None, &conversation, before) == Some(true))
+                .map(|before| (conversation, before)),
+        };
+        Ok(self.baseline.get_or_init(|| ran).as_ref())
+    }
 }
 
 impl CodeFixReplay for CoachReplay<'_> {
@@ -296,36 +336,25 @@ impl CodeFixReplay for CoachReplay<'_> {
     }
 
     fn shadow_replay(&self, _case: &HealerCase, candidate_id: &str) -> Result<ShadowRun> {
-        let Some((id, fix)) = &self.candidate else {
+        let Some((_, fix)) = self.candidates.iter().find(|(id, _)| id == candidate_id) else {
             return Ok(ShadowRun::Unavailable);
         };
-        let Some(conversation) = self.real_conversation() else {
+        let Some((conversation, before)) = self.baseline()? else {
             return Ok(ShadowRun::Unavailable);
         };
-        if id != candidate_id {
-            return Ok(ShadowRun::Unavailable);
-        }
         let instructions = &self.job.source.instructions;
-        // The baseline first: a failure the replay does not reproduce cannot
-        // say whether the candidate fixed it.
-        let Some(before) = self.host.reply(instructions, &conversation)? else {
-            return Ok(ShadowRun::Unavailable);
-        };
-        if self.fails(None, &conversation, &before) != Some(true) {
-            return Ok(ShadowRun::Unavailable);
-        }
         let system = [instructions.as_str(), fix.as_str()]
             .into_iter()
             .filter(|text| !text.trim().is_empty())
             .collect::<Vec<_>>()
             .join("\n\n");
-        let Some(after) = self.host.reply(&system, &conversation)? else {
+        let Some(after) = self.host.reply(&system, conversation)? else {
             return Ok(ShadowRun::Unavailable);
         };
         let state = json!({
             "failure": self.failure_state(None),
-            "conversation": conversation_state(&conversation),
-            "before": clip(&before, TEXT_BYTES),
+            "conversation": conversation_state(conversation),
+            "before": clip(before, TEXT_BYTES),
             "after": clip(&after, TEXT_BYTES),
         });
         Ok(
@@ -423,6 +452,25 @@ pub(super) fn wake_in_txn(
 }
 
 impl Vault {
+    /// The Coach's code-fix work for the owner, newest queued first, at most
+    /// `limit` (capped at [`MAX_CODE_FIX_WORK`]): each case's heal and, once
+    /// its run settled, the failure's class, the invented example's verdict
+    /// and each candidate's shadow result. No text of the failure is in it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn code_fix_work(&self, limit: usize) -> Result<Vec<CodeFixWork>> {
+        let txn = self.store.env.read_txn()?;
+        let mut rows: Vec<CodeFixWork> = WORK
+            .iter_from(&self.store, &txn, &[])?
+            .map(|row| row.map(|(_, work)| work))
+            .collect::<Result<_>>()?;
+        rows.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
+        rows.truncate(limit.min(MAX_CODE_FIX_WORK));
+        Ok(rows)
+    }
+
     /// The Coach's code-fix run for one case, under its leased
     /// `coach.code_fix` attempt: the failure's class, the Coach's draft, the
     /// invented example through its export door, and the candidate's shadow
@@ -479,7 +527,7 @@ impl Vault {
             at: now,
             failure_class,
             example: CodeFixVerdict::Withheld { reason },
-            candidate: None,
+            candidates: Vec::new(),
         };
         if !self.config.failure_signals.exports() {
             return Ok(withheld(
@@ -542,71 +590,87 @@ impl Vault {
             source,
             reports,
         };
-        let Some(draft) = host.draft(&job)? else {
-            return Ok(withheld(failure_class, CodeFixWithheld::NotDrafted));
-        };
-        let candidate = match route {
-            HealRoute::SkillEdit | HealRoute::PromptInject => draft
+        let draft = host.draft(&job)?;
+        let own = match (route, &draft) {
+            (HealRoute::SkillEdit | HealRoute::PromptInject, Some(draft)) => draft
                 .fix
+                .clone()
                 .filter(|fix| !fix.trim().is_empty())
                 .map(|fix| (format!("coach.{}", route.as_str()), fix)),
-            HealRoute::Environment | HealRoute::Person => None,
+            _ => None,
         };
+        // A publisher candidate needs no draft of the Coach's: it is replayed
+        // against the real failure whatever the heal's route.
+        let candidates: Vec<(String, String)> = own
+            .into_iter()
+            .chain(
+                host.publisher_candidates()
+                    .iter()
+                    .map(|candidate| (candidate.id.clone(), candidate.instruction.clone())),
+            )
+            .collect();
+        if draft.is_none() && candidates.is_empty() {
+            return Ok(withheld(failure_class, CodeFixWithheld::NotDrafted));
+        }
         let replay = CoachReplay {
             job: &job,
             host,
             decisions,
             evidence: &evidence,
-            candidate,
+            candidates,
+            baseline: OnceCell::new(),
         };
         let scrubber = CoachScrubber {
             decisions,
             evidence: &evidence,
         };
-        let example = self.prepare_invented_example(
-            case_ref,
-            InventedExampleDraft {
-                failure_class,
-                note: draft.note,
-                conversation: draft.conversation,
+        let example = match draft {
+            Some(draft) => self.prepare_invented_example(
+                case_ref,
+                InventedExampleDraft {
+                    failure_class,
+                    note: draft.note,
+                    conversation: draft.conversation,
+                },
+                &replay,
+                &scrubber,
+            )?,
+            None => CodeFixVerdict::Withheld {
+                reason: CodeFixWithheld::NotDrafted,
             },
-            &replay,
-            &scrubber,
-        )?;
-        let candidate = match &replay.candidate {
-            None => None,
-            Some((candidate_id, _)) => {
-                let shadow = replay.shadow_replay(&case, candidate_id)?;
-                let outcome = match shadow {
-                    ShadowRun::Fixed => Some(FixOutcome::Fixed),
-                    ShadowRun::NotFixed => Some(FixOutcome::NotFixed),
-                    ShadowRun::Unavailable => None,
-                };
-                let example_id = match &example {
-                    CodeFixVerdict::Queued { id } => Some(id.clone()),
-                    CodeFixVerdict::Withheld { .. } => None,
-                };
-                let export = self.record_candidate_fix_result(
-                    case_ref,
-                    CandidateFix {
-                        candidate_id: candidate_id.clone(),
-                        example_id,
-                        failure_class,
-                    },
-                    &Ran(shadow),
-                )?;
-                Some(CandidateRun {
-                    candidate_id: candidate_id.clone(),
-                    outcome,
-                    export,
-                })
-            }
         };
+        let example_id = match &example {
+            CodeFixVerdict::Queued { id } => Some(id.clone()),
+            CodeFixVerdict::Withheld { .. } => None,
+        };
+        let mut candidates = Vec::with_capacity(replay.candidates.len());
+        for (candidate_id, _) in &replay.candidates {
+            let shadow = replay.shadow_replay(&case, candidate_id)?;
+            let outcome = match shadow {
+                ShadowRun::Fixed => Some(FixOutcome::Fixed),
+                ShadowRun::NotFixed => Some(FixOutcome::NotFixed),
+                ShadowRun::Unavailable => None,
+            };
+            let export = self.record_candidate_fix_result(
+                case_ref,
+                CandidateFix {
+                    candidate_id: candidate_id.clone(),
+                    example_id: example_id.clone(),
+                    failure_class,
+                },
+                &Ran(shadow),
+            )?;
+            candidates.push(CandidateRun {
+                candidate_id: candidate_id.clone(),
+                outcome,
+                export,
+            });
+        }
         Ok(CodeFixSettled {
             at: now,
             failure_class,
             example,
-            candidate,
+            candidates,
         })
     }
 }
