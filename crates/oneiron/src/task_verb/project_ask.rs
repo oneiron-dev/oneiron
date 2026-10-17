@@ -1,6 +1,9 @@
 //! Asks addressed to a project, over the ordinary TASK ask (ARCH-0067: a
 //! proposal on a project's task goes to that project's lead and its board at
 //! once; the first answer lands).
+use std::collections::BTreeSet;
+
+use super::ask_effect::AskEffect;
 use super::ask_record;
 use super::ask_types::*;
 use super::create_validation::consult_refusal;
@@ -14,23 +17,27 @@ impl Memory<'_> {
     /// the project's folded authority and read again in the admission
     /// transaction, which mints the TASKs and appends the ask to the
     /// project's list. The caller names no recipient; a changed leader or
-    /// board between the two reads refuses, and the caller asks again.
+    /// board between the two reads refuses, and the caller asks again. An
+    /// ask the approval mode holds joins the list as the owner's approval
+    /// releases it, after the same read.
     pub fn tasks_ask_project(
         &self,
         task: EntityId,
         input: &TaskAskSpec,
     ) -> MemoryResult<TaskAskReceipt> {
-        self.tasks_ask_project_with(task, input, |_, _| Ok(()))
+        self.tasks_ask_project_with(task, input, None)
     }
 
-    /// [`Self::tasks_ask_project`] with `effect` composed into the same
-    /// admission transaction, after the ask joins the project's list. A
-    /// replay has already committed it and does not run it twice.
+    /// [`Self::tasks_ask_project`], routing a skill tradeoff's question with
+    /// the ask when `tradeoff` names one. The ask joins the project's list
+    /// (and routes) in its admission transaction, or, when the approval mode
+    /// holds it, as the owner's approval releases it. A replay has already
+    /// done both and does not do them twice.
     pub(super) fn tasks_ask_project_with(
         &self,
         task: EntityId,
         input: &TaskAskSpec,
-        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+        tradeoff: Option<super::project_tradeoff::ProjectTradeoffRoute>,
     ) -> MemoryResult<TaskAskReceipt> {
         if input.who.is_some() {
             return Err(MemoryError::bad_request(
@@ -45,16 +52,38 @@ impl Memory<'_> {
         let mut spec = input.clone();
         spec.who = Some(TaskAskTarget::People(holders.clone()));
         spec.intent_key = format!("project.ask/{}/{}", task.to_hex(), input.intent_key);
-        self.tasks_ask_with_txn_effect(&spec, |txn, ask| {
-            let (current, people) = vault.project_ask_route_in_txn(txn, task)?;
-            if current != project || people != holders {
-                return Err(MemoryError::bad_request(
-                    "the project's leader or board changed; ask again",
-                ));
-            }
-            vault.append_project_ask_in_txn(txn, &ProjectAsk { project, task, ask })?;
-            effect(txn, ask)
-        })
+        self.tasks_ask_composed(
+            &spec,
+            Some(AskEffect::Project {
+                project,
+                task,
+                holders,
+                tradeoff,
+            }),
+        )
+    }
+
+    /// A project ask's effect: the project's leader and board are still the
+    /// ones the ask was addressed to, read in the writer, and the ask joins
+    /// the project's list. A changed leader or board refuses, and the
+    /// caller asks again.
+    pub(super) fn project_ask_effect_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ask: EntityId,
+        project: EntityId,
+        task: EntityId,
+        holders: &BTreeSet<EntityId>,
+    ) -> MemoryResult<()> {
+        let vault = self.vault();
+        let (current, people) = vault.project_ask_route_in_txn(txn, task)?;
+        if current != project || &people != holders {
+            return Err(MemoryError::bad_request(
+                "the project's leader or board changed; ask again",
+            ));
+        }
+        vault.append_project_ask_in_txn(txn, &ProjectAsk { project, task, ask })?;
+        Ok(())
     }
 
     /// The asks on a project's list this actor asked or answers, each with
