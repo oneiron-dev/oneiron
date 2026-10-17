@@ -359,9 +359,11 @@ pub(crate) fn destroy_world_keys_in_txn(
         return Ok(None);
     }
     let is_world = store
-        .port_entity_raw(wtxn, &target)?
-        .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
-        == Some(ENTITY_TYPE_WORLD);
+        .port_entity_with_raw(wtxn, &target, |raw| {
+            Ok(EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD))
+        })?
+        .unwrap_or(false);
     let rows = world_pad_rows_in_txn(store, wtxn, target)?;
     let fact = HexId(target);
     let existing = DESTROYED.get(store, wtxn, &fact)?;

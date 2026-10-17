@@ -715,7 +715,9 @@ A candidate is an instruction your publisher ships and you install and pin. The 
 each failure in the vault with the candidate added to the failing agent's instructions, and only
 the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
 fetches or installs it. A file that no longer matches its pin stops the server at start. At most
-8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
+8 candidates, 16 KiB each. A newly pinned candidate is also tried once on each past failure that
+still stands: after the server starts, the Coach works through its earlier code-fix work a few
+failures at a time.
 `GET /v1/owner/coach/code-fixes?limit=<n>` lists the Coach's code-fix work, newest first: each
 failure case's heal route (`case`), or a blocked report's when the agent's run has no failed case
 (`blocked_report`), its class, the invented example's verdict and each candidate's fixed or
@@ -761,7 +763,13 @@ windows again.
 newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
 `{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
 `consecutive` positive labels and one negative, a `t2` detector of that family asks with the
-labeled findings.
+labeled findings. For a `t3` detector, the next pass registers a T2 of the family: it grades each
+window's runs one by one, shown the labeled findings' run facts, beside the `t3`, which keeps
+running. A new label or a reworded detector registers a new revision, which grades windows again.
+When a shipped closed-form T1 detector reproduces every label (today `retrieval.miss.v1` for
+`retrieval_miss`: a confirmed window holds a miss, a rejected one holds none), the revision is
+graduated and its T2 stops running; the T1 already runs in the Coach's nightly tier-1 sweep.
+`GET /v1/owner/self-heal/minted` lists each family's registration and what graduated it.
 
 ## Answer the decision ladder's asks
 

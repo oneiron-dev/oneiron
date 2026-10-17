@@ -24,6 +24,9 @@ use crate::task_verb::{
 use crate::temporal::TimeRange;
 use crate::{Vault, WriteActor};
 
+/// The most bytes a spawn's intent key holds: its dedupe key's tail.
+pub(super) const SPAWN_INTENT_KEY_MAX_BYTES: usize = 256;
+
 fn invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
         "code-mode spawn requires its bound parent attempt",
@@ -88,6 +91,20 @@ impl<'a> HostSelfDispatcher<'a> {
             return Err(invalid());
         }
         dispatcher.agent_lease = Some(binding);
+        Ok(dispatcher)
+    }
+
+    /// A host action for a live agent run (OF-181): the run's leased try,
+    /// read live, under the action's own run reference, so the action's
+    /// replay and provenance stay its own.
+    pub(crate) fn for_action_attempt(
+        vault: &'a Vault,
+        actor: WriteActor,
+        action_ref: String,
+        leased: &AttemptRecord,
+    ) -> Result<Self> {
+        let mut dispatcher = Self::for_leased_agent_attempt(vault, actor, leased)?;
+        dispatcher.run_ref = action_ref;
         Ok(dispatcher)
     }
 
@@ -202,7 +219,7 @@ impl<'a> HostSelfDispatcher<'a> {
         if agent_dispatch_actor(&input)? != self.actor {
             return Err(invalid());
         }
-        if call.intent_key.trim().is_empty() || call.intent_key.len() > 256 {
+        if call.intent_key.trim().is_empty() || call.intent_key.len() > SPAWN_INTENT_KEY_MAX_BYTES {
             return Err(invalid());
         }
         let now = crate::unix_seconds_now();
@@ -446,6 +463,9 @@ impl<'a> HostSelfDispatcher<'a> {
                     observed = observed.max(generation);
                 }
             }
+            // A Changed this run resumed from is kept on its own cursor (OF-533).
+            observed =
+                crate::code_run::observe_wait_change(vault, run_id, handle.group_ref, observed)?;
             crate::task_verb::ack_option_void_generation(vault, handle.group_ref, observed)?;
         }
         Ok(match memory.tasks_wait_observing(handle, None, observed) {

@@ -12,8 +12,9 @@
 //! grounded a belief, else `skip`. A NOTE's kind, privacy and write policy
 //! stay as born; the review never re-kinds one.
 //!
-//! A sealed scratchpad, whose kind extracts after the seal, is read once it
-//! is sealed (ARCH-0032 #scratchpad-marks): its `scratch` lines are blanked
+//! A NOTE whose kind extracts after the seal is read once it is sealed (the
+//! one NOTE seal, `note/lifecycle.rs`). A sealed scratchpad is read through
+//! its marks (ARCH-0032 #scratchpad-marks): its `scratch` lines are blanked
 //! before the model reads it, each `keep` line is asked for, and every other
 //! line is the model's to decide.
 
@@ -114,8 +115,8 @@ impl ConsolidationExecutor<'_> {
             now_ms: ctx.now_ms,
         };
         // A kind whose extraction default is Allowed is read. An AfterSeal
-        // kind is read once sealed, and only a scratchpad has a seal yet. A
-        // diary stays private strategy, and a Disabled kind is never read.
+        // kind is read once its NOTE is sealed. A diary stays private
+        // strategy, and a Disabled kind is never read.
         let kinds = ctx.vault.note_kind_descriptors()?;
         let of = |default: ExtractionDefault| -> BTreeSet<String> {
             kinds
@@ -313,9 +314,10 @@ impl ConsolidationExecutor<'_> {
 }
 
 /// The NOTEs on `page` the review reads: live and readable by the Dreamer,
-/// of an Allowed kind or a sealed scratchpad of an AfterSeal kind, changed
-/// since their last review, and with a birth facet and one project for their
-/// beliefs. Anything else is skipped, never widened.
+/// of an Allowed kind or a sealed NOTE of an AfterSeal kind (a sealed pad
+/// read through its line marks), changed since their last review, and with a
+/// birth facet and one project for their beliefs. Anything else is skipped,
+/// never widened.
 fn readable_notes(
     vault: &Vault,
     read: &ScopedRead<'_>,
@@ -342,10 +344,14 @@ fn readable_notes(
         let (markdown, sealed_pad) = if allowed.contains(kind_name.as_ref()) {
             (decoded.markdown.clone(), None)
         } else if after_seal.contains(kind_name.as_ref())
-            && vault.scratchpad_sealed_in_txn(&txn, *id)?
+            && crate::note::note_sealed_in_txn(&vault.store, &txn, *id)?
         {
-            let (text, keep) = crate::context_board::sealed_pad_review_text(&decoded.markdown);
-            (text, Some(keep))
+            if vault.scratchpad_sealed_in_txn(&txn, *id)? {
+                let (text, keep) = crate::context_board::sealed_pad_review_text(&decoded.markdown);
+                (text, Some(keep))
+            } else {
+                (decoded.markdown.clone(), None)
+            }
         } else {
             continue;
         };
@@ -488,5 +494,6 @@ fn note_candidate(
             end: run.now_ms,
         },
         learned_at: run.now_ms,
+        decisions: Vec::new(),
     })
 }

@@ -421,7 +421,7 @@ pub(crate) fn machine_claim_read_admitted(
             if let Value::Binary(bytes) = value
                 && let Ok(raw_id) = bytes.as_slice().try_into()
                 && let Ok(actor) = EntityId::from_bytes(raw_id)
-                && EntityStoreRead::port_entity_with_raw(store, txn, &actor, |_| Ok(()))?.is_none()
+                && !EntityStoreRead::port_entity_present(store, txn, &actor)?
                 && entries.iter().any(|(key, value)| {
                     key.as_str() == Some("actor_class")
                         && value.as_u64() == Some(EdgeActorClass::System as u64)

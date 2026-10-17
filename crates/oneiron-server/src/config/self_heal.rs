@@ -5,7 +5,10 @@
 //! wording, so none runs until the owner writes one.
 //!
 //! - `t3` judges each completed window of runs at once; its findings are the
-//!   ones the owner labels.
+//!   ones the owner labels. Once `consecutive` positive and one negative are
+//!   labeled, the pass registers a T2 of the family that also grades each
+//!   window, shown the labeled findings, until a shipped closed-form T1
+//!   reproduces every label; the `t3` keeps running.
 //! - `t2` asks per run and raises on `consecutive` positive runs in a row.
 //!   Once the owner has labeled `consecutive` positive and one negative `t3`
 //!   finding of the same family, the labeled findings go with each question.
@@ -40,7 +43,8 @@ pub struct DetectorConfig {
     /// How a positive is told from a negative.
     pub rubric: String,
     /// Runs a window needs, and for `t2` the positive runs in a row that
-    /// raise; for `t2` it is also how many labeled positives teach it.
+    /// raise; for `t2` and `t3` it is also how many labeled positives teach
+    /// a T2.
     pub consecutive: usize,
     /// For `t2` and `t3`, the length of one window; for `session`, how long
     /// a conversation stays quiet before it is judged.
