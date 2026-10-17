@@ -18,8 +18,8 @@ use oneiron::llm::decision::{
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
-    EntityId, Error, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef,
-    ResponseFormat, TierPrecedence, Vault,
+    EntityId, Error, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, ModelLocality,
+    ModelTierRef, ResponseFormat, TierPrecedence, Vault,
 };
 use serde_json::{Value, json};
 
@@ -296,6 +296,13 @@ impl DecisionModel for BigModel {
 
     fn reads_audio(&self) -> bool {
         self.hears_audio()
+    }
+
+    /// The seat routes to a third party's model.
+    fn leaves_host(&self) -> bool {
+        self.models
+            .seat(self.role)
+            .is_some_and(|seat| seat.locality == ModelLocality::ThirdParty)
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {

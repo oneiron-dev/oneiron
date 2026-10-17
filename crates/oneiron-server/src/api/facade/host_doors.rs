@@ -52,10 +52,14 @@ pub(crate) use super::graph_ask_doors::*;
 pub(crate) use super::share_doors::*;
 // The role-holder decision-ask doors (OF-493), likewise.
 pub(crate) use super::decision_ask_doors::*;
+// The vault shape's apply door (ARCH-0070), likewise.
+pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+// The owner's root wave door (OF-427), likewise.
+pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
 pub(crate) use super::widen_proposal_doors::*;
 // The app's policy-action doors (OF-181), likewise.
@@ -489,13 +493,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.members.accept"
         | "vault.members.decline"
         | "vault.members.withdraw_invitation"
+        | "vault.members.invitation_slip"
         | "vault.shared.object"
         | "vault.shared.withdraw_objection"
         | "vault.shared.started"
         | "vault.shared.matured"
         | "vault.shared.erase_ask"
         | "vault.shared.erase_asks"
-        | "vault.shared.close_erase_ask" => {
+        | "vault.shared.close_erase_ask"
+        | "vault.records.erase_preview"
+        | "vault.records.erase_confirm" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),

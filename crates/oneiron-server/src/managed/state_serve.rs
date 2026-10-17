@@ -657,6 +657,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // tells its workers to stop.
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
+    // The Dreamer's passes are admitted like a served write, and refused
+    // until the managed state below exists.
+    let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
+    ai.bind_pass_admission({
+        let gate = Arc::clone(&reap_gate);
+        Arc::new(move || {
+            gate.get()?
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
     let sync_server = Arc::new(sync_server);
     // The skill-edit gate's replay judge, on the ladder just built (OF-495).
     crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
@@ -693,6 +705,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         Arc::clone(&sync_server),
         ledger,
     ));
+    let _ = reap_gate.set(Arc::clone(&state));
 
     spawn_sigterm_shutdown(shutdown.clone())?;
     // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
@@ -705,6 +718,35 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             move || state.admit_http_mutation().ok()
         })
         .await?;
+    // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
+    // unless `--no-hooks`: each pass admitted like a served write. The sandbox
+    // loads before ready, as plain serve loads it, so no verb waits on it.
+    let (hooks_stop, hooks_stopped) = watch::channel(false);
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    let fact_hooks = if config.hooks {
+        let state = Arc::clone(&state);
+        crate::commands::spawn_fact_hooks(
+            &sync_server,
+            Arc::new(move || {
+                state
+                    .admit_http_mutation()
+                    .ok()
+                    .map(|admission| Box::new(admission) as Box<dyn Send>)
+            }),
+            hooks_stopped,
+        )
+        .await
+    } else {
+        None
+    };
+    #[cfg(not(feature = "code-sandbox-wasmtime"))]
+    let fact_hooks: Option<tokio::task::JoinHandle<()>> = {
+        drop(hooks_stopped);
+        None
+    };
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
+    }
 
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
@@ -795,8 +837,6 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             })
         },
     );
-    // The nightly Coach jobs that need the host's model or rules (OF-420).
-    let coach_host = crate::ai_host::coach_host::spawn(&sync_server);
     // The ladder's workers plain serve runs. Wire health and the standing
     // pump pass under the same admission.
     let admitted = || -> crate::server::HousekeepingAdmission {
@@ -808,6 +848,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 .map(|admission| Box::new(admission) as Box<dyn Send>)
         })
     };
+    // The nightly Coach jobs that need the host's model or rules (OF-420).
+    let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
     // Due standing questions are answered through the ladder (OF-506).
@@ -815,16 +857,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
     }
     // Uncertain identities are decided, or asked of the person (OF-123).
-    ladder_workers.push(crate::ai_host::identity::spawn(&sync_server));
+    ladder_workers.push(crate::ai_host::identity::spawn(&sync_server, admitted()));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     ladder_workers.push(crate::ai_host::coach_heal::spawn(
         &sync_server,
         config.failure_signals.publisher_candidates()?,
+        admitted(),
     ));
     // The owner's model-graded detectors read the retrieval telemetry (OF-418).
     ladder_workers.extend(crate::ai_host::self_heal_detectors::spawn(
         &sync_server,
         &config.self_heal,
+        admitted(),
     ));
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
@@ -863,6 +907,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     for worker in ladder_workers {
         worker.abort();
         let _ = worker.await;
+    }
+    // A hook pass in flight commits or fails whole before the runner stops.
+    let _ = hooks_stop.send(true);
+    if let Some(fact_hooks) = fact_hooks {
+        let _ = fact_hooks.await;
     }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;

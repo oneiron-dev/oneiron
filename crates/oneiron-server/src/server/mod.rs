@@ -20,6 +20,7 @@ mod resident_pump;
 mod run_host_door;
 mod space_move;
 mod tagging;
+mod wave_door;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
@@ -30,11 +31,10 @@ pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub use self::oversight::OversightStartError;
 pub use self::read_shape::RetrievalQueryCheck;
 pub(crate) use self::read_shape::{QueryDoor, query_caller};
-pub(crate) use self::reader_runner::{
-    READER_CHILD_READ_ONLY, ReaderRunner, ReaderSeats, run_launch_scope,
-};
+pub(crate) use self::reader_runner::{READER_CHILD_READ_ONLY, ReaderRunner, ReaderSeats};
 pub(crate) use self::recall::blocking;
 pub(crate) use self::run_host_door::answer_as_agent;
+pub(crate) use self::wave_door::{wave_plan, wave_receipt};
 
 #[cfg(test)]
 mod housekeeping_tests;

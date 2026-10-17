@@ -117,7 +117,11 @@ default, or `none`; OpenAI-compatible providers only), `capabilities` (`streamin
 `reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
 WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
 the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
-`reasoning` unless the list is written out),
+`reasoning` unless the list is written out), `model_capabilities` (one wire
+model's own list in place of `capabilities`, keyed by the model's name, so
+two models on one provider can differ: `model_capabilities = { "gpt-audio" =
+["streaming", "audio_input"] }`; the Big rung hears a clip only on a model
+whose list has `audio_input`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
@@ -481,6 +485,49 @@ summary. A mark that fails its pass keeps why and waits for the next
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
 
+### Reader children, summaries and fold receipts
+
+A run reads a result too big for its window with reader children
+(ARCH-0079 #reader-forks). `can({read})` answers what a child may take: the
+children's cutoff, the meter they spend on (`scope` with what the run's spend
+scope may still spend, or `host`), the active window of the code-mode seat's
+model in tokens (from the model's described context; 32768 when none is
+described) and the memory one child may hold
+(`[limits] code_result_session_memory_bytes` shared by the children one run
+may have running, at 32 MiB each). `self.spawn` queues one child over one
+range, and `tasks.wait` waits on them. Children run on the vault's reader
+runner, never inside a step. A paid or attempt-scoped run's children spend
+under its spend scope. An `execute_code` run's children, and those of a
+resident run with no spend scope, spend on the host's code-mode meter
+(`budget_units`), the one the run's own model calls take, with no per-run
+cap: one run's children can exhaust it for every code-mode run. Past
+`[limits] code_reader_backlog` queued children (default 256) the row asks
+once, on its crossing, and keeps queueing; it never refuses.
+
+`summarize(r, {effort, group, defer})` is one model call over a result and
+the results after it, made as a reader job of the run on the same seat and
+spend. It is memoised by its members' occurrences and the recipe, so the same
+call answers the same summary, and it is a result of the run's children,
+read and described as their findings are. A withheld member is refused
+before anything is sent. A group whose text passes half the window settles
+`group_exceeds_window` with its tokens and the window; the caller splits it.
+
+The bundled `readAll(r, {ask})` helper is code over those verbs: chunks of
+half the child window (`chunks(r, {tokens})`), one child each, a wait,
+findings deduped by the ranges they cite, staged summaries, and one stored
+fold. `diff(a, b)` is the other bundled helper. Neither is an engine verb,
+and both state their bounds in their reply.
+
+A fold stored with `store(value, name, {receipt})` keeps a receipt beside its
+binding, written in the same checkpoint transaction: the source and range,
+each child it names with its state, the ranges read and unread, the children
+that stopped short and why, the cutoff, the recipe, the summary tree and every
+occurrence whose taint the folded body inherits. The card says what was read,
+so a partial fold is never presented as complete. A whole-vault export keeps
+each receipt with its run; a withheld folded result exports only the
+receipt's refs. An import restores a receipt only when its folded result came
+back with it.
+
 ### Type check (shadow mode)
 
 Each generated program can be type-checked before it runs, against the same
@@ -518,6 +565,34 @@ tsc-rs cannot finish, a busy one included. A step's report names the checker
 whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
+
+### Planned spawns (`[models.planner]`)
+
+An agent run the server leases can ask for help with
+`self.agents.spawn({need, ...})` and have the vault's planner pick the shape:
+the model, the pattern and the width. Its leader calls
+(`self.leader.advice`, `self.leader.pattern`) read the same planner. Each
+seat joins a model this host serves to the AGENT_DEF that runs on it:
+
+```toml
+[models.planner]
+top = 3                      # optional; shapes the leader's advice returns by default
+
+[[models.planner.seats]]
+model = "anthropic/claude-sonnet-5-5@1"  # an engine model ID, one seat per model
+agent = "sys.team_lead"                  # a seeded definition's logical ID, or an AGENT_DEF hex ID
+```
+
+The planned child runs the chosen seat's definition, its type placed on the
+need's text. On a host with a model manifest it is born on the chosen seat's
+model; its effort follows the seat's own ladder. If the host cannot seat that
+model (it is not in the catalog, or its description or route does not fit the
+run), the child's birth fails. It is never moved to another model. The pick
+and the placement go through the host's decision ladder (section 13), each on
+its own 10-second clock. A seat whose definition this vault does not hold is
+skipped, with a log line. With no seat, the server lends no planner: a spawn
+that names an `agent` runs it directly, and a planned spawn or a leader call
+answers `planner_unbound`.
 
 ## 7. Raw calls
 
@@ -869,9 +944,12 @@ The verbs, each the owner's and checked against the vault's inference policy:
   `{"kind": "image" | "audio", "media_type": ..., "data": "<base64>"}`. The
   answer is `{"model", "parts", "usage"}`.
 - `POST /v1/ai/video` answers `202` with a job ticket; `GET
-  /v1/ai/video/{job}` polls it (a finished job answers with its clip, once)
-  and `DELETE` stops it. A job's permit is held while it renders and settled
-  when it ends.
+  /v1/ai/video/{job}` polls it, and `DELETE` stops it or drops it once it
+  ended. A job's permit is held while it renders and settled when it ends.
+  The server keeps each job in the vault: a restart loses none (the next
+  poll takes a running job up again on a fresh permit, and sends nothing
+  again), and a finished job answers with its clip on every poll, a lost
+  reply's included, until it is deleted.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
@@ -1366,6 +1444,10 @@ version = "2026-10"            # the revision the rung's pin names
 wording = "You answer one typed question about the state you are given."
 reply = "json"                 # or "lines"
 budget_units = 50000           # its own meter; models.raw_budget_units when unset
+
+[models.decisions.booking_parse]
+role = "checker"        # the cheap seat a booking page's free text is parsed on
+max_input_bytes = 4096  # the longest text one parse reads (the default and the most)
 ```
 
 The Big rung asks each question as one model call on that seat. The call is
@@ -1376,6 +1458,18 @@ one JSON object `{"answer", "probability"}`, or two lines `answer:` and
 `probability:`. A reply that names nothing the question takes, or no
 probability from 0 to 1, abstains, and the ladder moves on. The rung takes
 noul, choice and score questions, not boxes.
+
+A booking page's free-text constraint ("tuesday afternoons, not before 2")
+is parsed on the `booking_parse` seat, then solved like an object. The parse
+asks the ladder whether the text is a scheduling preference at all, with the
+seat's read first, and a text that is not one is refused. Then one extraction
+call returns the constraint object and, when the text names one, the visitor's
+timezone. The sentence never reaches the slot oracle. Each call is admitted as
+a call of the seat's role against the vault's live model policy. An
+authenticated caller's parse is paid on its principal's line. An anonymous
+visitor's parse is paid on the owner's line, since the owner publishes the
+page. Without the row, free text is refused, and a constraint object still
+works.
 
 The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The

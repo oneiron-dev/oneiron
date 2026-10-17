@@ -16,18 +16,18 @@ side_tables! {
     /// Resumable partial-result hold for one gracefully stopped spawn (OF-541). Key: id16.
     AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
-    AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson;
+    AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson Authored;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
     AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson;
     /// Pending context-widen proposal record, keyed by a hash of the dedupe key or full intent. Key:
     /// hash32.
-    AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson;
+    AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson Authored;
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw;
     /// Dedupe index from a caller-supplied dedupe key to the workflow root attempt id. Key: hash32.
     AGENT_WORKFLOW_DEDUPE: VaultMeta b"agent.workflow.dedupe.v1\0" Raw;
     /// Durable saved-composition record for one inert multi-step workflow wrapper attempt. Key: id16.
-    AGENT_WORKFLOW_RECORD: VaultMeta b"agent.workflow.record.v1\0" LegacyJson;
+    AGENT_WORKFLOW_RECORD: VaultMeta b"agent.workflow.record.v1\0" LegacyJson Authored;
     /// Binds a captured-source ASSET id back to the child agent it was birthed for. Key: id16.
     AGENT_DEF_BIRTH_ASSET_BINDING: VaultMeta b"agent_def/birth-asset-binding/v1\0" Raw;
     /// Which asset entity currently holds custody of a birthed agent's captured source. Key: id16.
@@ -366,7 +366,7 @@ side_tables! {
     /// appends (JSON). Key: id16(run).
     CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
-    CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw;
+    CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw Engine;
     /// The secret scan's hit in one raw-output body (its reason string), keyed by the same
     /// content handle; absent for a body it found nothing in. Key: string.
     CODE_RUN_RAW_OUTPUT_SECRET: VaultMeta b"code_run:raw_output:secret:v1:" Raw;
@@ -375,6 +375,10 @@ side_tables! {
     CODE_RUN_RAW_OUTPUT_TAINT: VaultMeta b"code_run:raw_output:taint:v1:" Raw;
     /// A code run's raw output bytes, keyed by their deterministic content handle. Key: string.
     CODE_RUN_RAW_OUTPUT: VaultMeta b"code_run:raw_output:v1:" Raw;
+    /// A code run's fold receipt (ARCH-0079 #reader-forks): the source and range a fold read,
+    /// the jobs it named, the ranges read, unread and read short, its cutoff, recipe, summary
+    /// tree and taint dependencies (JSON). Key: id16(owner run) + id16(folded occurrence).
+    CODE_RUN_READER_FOLD: VaultMeta b"code_run:reader_fold:v1:" Raw;
     /// The index rows of a code run's reader children, by a one-byte tag: `c` id16(parent) +
     /// be64(ordinal) + id16(task) (children in spawn order), `f` id16(parent) + handle -> id16(task)
     /// (findings), `q` be64(enqueued ms) + id16(task) (the queue), `w` id16(task) + id16(set)
@@ -391,6 +395,9 @@ side_tables! {
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw;
+    /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
+    /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
+    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
     CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw;
@@ -494,7 +501,7 @@ side_tables! {
     COMPACTION_OUTPUT_SUMMARY: VaultMeta b"context:summary:v1:" Raw;
     /// One actor-private versioned board block (actor, section-name length+bytes, block ref) appended
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
-    CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson;
+    CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored;
     /// Session scratchpad pointers: the `scratchpad` NOTE each (actor, session) writes (tag 1), the
     /// actor's one unsealed pad (tag 2) and each sealed pad (tag 3). Key: u8 tag + id16 [+ string].
     CONTEXT_BOARD_SCRATCHPAD: VaultMeta b"context_board.scratchpad.v1:" Named;

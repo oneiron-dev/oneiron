@@ -285,6 +285,28 @@ pub fn task_create_spec(
         None => spec,
     })
 }
+/// `tasks.wave` (OF-427, ARCH-0068 RC5): an epic TASK cut into a wave of
+/// TASKs by a planner agent, queued as one planning attempt. Who asks, and
+/// the lease the wave runs under, are the host's, never request text.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWaveRequest {
+    /// The epic TASK the wave realizes.
+    pub epic_task_ref: String,
+    /// The dispatchable agent definition that cuts the epic.
+    pub planner_ref: String,
+    pub objective: String,
+    /// The planner's own constraints, passed to it as they are.
+    #[serde(default)]
+    pub constraints: serde_json::Value,
+}
+/// The planning attempt a `tasks.wave` queued, or the one an identical
+/// request already queued.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TaskWaveReceipt {
+    pub attempt_ref: String,
+    pub state: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BoardRefreshRequest {
@@ -359,6 +381,7 @@ pub use super::sdk_embedding_space::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
 pub use super::sdk_legal_hold::*;
+pub use super::sdk_record_erase::*;
 pub use super::sdk_self::*;
 pub use super::sdk_share::*;
 pub use super::sdk_shared::*;

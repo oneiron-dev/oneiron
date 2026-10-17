@@ -25,7 +25,14 @@ pub enum ContextDefault {
     OwnerOnly,
     RelationshipScoped,
     VaultReadable,
+    /// Out of default context, not private: ordinary retrieval never returns
+    /// it, and an explicit read admits it to every reader its policy admits.
+    ExplicitOnly,
 }
+
+/// A reviewer's preserved dissent (OF-352): readable on an explicit read,
+/// kept out of default context and out of extraction.
+pub const DISSENT_NOTE_KIND: &str = "opinion/dissent";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionDefault {
@@ -98,6 +105,13 @@ const SHIPPED: &[(
         "opinion/take",
         ExtractionDefault::Allowed,
         ContextDefault::RelationshipScoped,
+        RetentionDefault::Durable,
+        None,
+    ),
+    (
+        DISSENT_NOTE_KIND,
+        ExtractionDefault::Disabled,
+        ContextDefault::ExplicitOnly,
         RetentionDefault::Durable,
         None,
     ),
@@ -224,6 +238,22 @@ pub(crate) fn validate_registered_kind(
     let body = super::decode_note_body_using(bytes, NoteKind::wire)?;
     let kind = body.kind.as_str();
     context_in_txn(store, txn, kind.as_ref()).map(|_| ())
+}
+
+/// `kind`'s descriptor inside the caller's read: a registered descriptor
+/// first, as [`Vault::note_kind_descriptors`] resolves it, then the shipped
+/// one. `None` for a kind neither names.
+pub(crate) fn descriptor_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    kind: &str,
+) -> Result<Option<NoteKindDescriptor>> {
+    if let Some(descriptor) = NOTE_KIND.get(store, txn, &kind.to_owned())? {
+        return Ok(Some(descriptor));
+    }
+    Ok(shipped()
+        .into_iter()
+        .find(|descriptor| descriptor.kind == kind))
 }
 
 pub(super) fn context_in_txn(

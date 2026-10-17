@@ -291,6 +291,18 @@ service = "oneiron.device-keys" # Apple keychain service; ONEIRON_KEYSTORE_SERVI
 
 Without a keystore, serve still runs, and only the world-key doors refuse.
 
+### Maximum tier
+
+`maximum_tier = true` (written by `oneiron init --maximum-tier`) creates the vault
+with every LMDB page sealed under a key derived from its vault key (OF-570). It is
+slower: point reads about 20x, scans about 12x. The tier is chosen when the vault
+is created; serve refuses the key over a plain vault. A new sealed vault's key is
+wrapped to this keystore, or, with no keystore, to the password `init --secret-file`
+reads. The wraps are mirrored to `.<vault dir>.page-seal` beside the vault, which
+serve unlocks with this keystore before the open, or with the password the service
+manager's credential store holds as `vault_password`. `GET /v1/owner/vault-key`
+reports `pages`: `sealed` or `plain`.
+
 ## Linear mirror host bridge (opt-in)
 
 The server starts a mirror pass only when both

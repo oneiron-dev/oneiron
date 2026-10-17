@@ -15,7 +15,7 @@ use crate::federation::{
     SharedEraseAsk, SharedInvitation,
 };
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
-use crate::task_verb::sdk::{SharedActRequest, SharedVaultRequest};
+use crate::task_verb::sdk::{InvitationSlip, SharedActRequest, SharedVaultRequest};
 use crate::{EntityId, Vault};
 
 /// One of the caller's own invitations, by the id its `MemberInvited`
@@ -95,6 +95,54 @@ pub fn withdraw_shared_invitation_as(
     let member = EntityId::from_hex(&input.member)
         .map_err(|_| MemoryError::bad_request("member is not an entity id"))?;
     Ok(vault.withdraw_shared_invitation(admin, input.vault_id, member, &input.invitation)?)
+}
+
+/// `vault.members.invitation_slip`'s input: the invitee's PERSON id, hex,
+/// their pending invitation, and the public key (64 hex) they generated on
+/// their own device.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InvitationSlipRequest {
+    pub vault_id: u64,
+    pub member: String,
+    pub invitation: String,
+    pub holder_key: String,
+}
+
+/// `vault.members.invitation_slip` on a server: an `add_member` holder mints
+/// a pending invitation's slip under the host's own `issuer`.
+pub fn mint_invitation_slip_as(
+    vault: &Vault,
+    admin: &AuthenticatedOwner,
+    issuer: &HostSlipIssuer,
+    input: InvitationSlipRequest,
+) -> MemoryResult<InvitationSlip> {
+    let member = EntityId::from_hex(&input.member)
+        .map_err(|_| MemoryError::bad_request("member is not an entity id"))?;
+    let key = holder_key(&input.holder_key)?;
+    let slip = vault.mint_invitation_slip(
+        admin,
+        input.vault_id,
+        member,
+        &input.invitation,
+        issuer,
+        key,
+    )?;
+    InvitationSlip::from_slip(slip)
+}
+
+/// `vault.members.invitation_slip` on an embedded handle: refused, because
+/// the slip is signed with a host key no embedded vault holds.
+pub fn mint_invitation_slip_embedded(
+    memory: &Memory<'_>,
+    _input: InvitationSlipRequest,
+) -> MemoryResult<InvitationSlip> {
+    let _admin = memory.embedded_owner("vault.members.invitation_slip")?;
+    Err(MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "vault.members.invitation_slip signs the invitee's slip with the host's own key; an embedded vault holds none",
+        &["Call it through a remote client of the server that hosts the shared vault."],
+    ))
 }
 
 /// `vault.shared.object`: a holder of the act's objector role objects inside
@@ -199,7 +247,7 @@ pub struct GuestSlipMinted {
     pub expires_at: u64,
 }
 
-fn holder_key(hex: &str) -> MemoryResult<[u8; 32]> {
+pub(super) fn holder_key(hex: &str) -> MemoryResult<[u8; 32]> {
     let refused = || MemoryError::bad_request("holder_key is not 32 bytes of hex");
     if hex.len() != 64 {
         return Err(refused());
