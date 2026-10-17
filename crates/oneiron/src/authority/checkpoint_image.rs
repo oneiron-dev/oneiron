@@ -507,7 +507,7 @@ impl Vault {
                 "a local sequence floor decides a covered authority row",
             ));
         }
-        let peers = crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
+        let peers = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
         let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
         let capture = super::fold_resume::FoldCapture::for_image(frontier.clone());
         let (consent, local) = super::fold_engine::own_log_inputs(posture, pin.as_ref());
