@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 320 code-mode rows (302 host rows, 18 run rows), 1097 declarations.
+// Census: 320 code-mode rows (302 host rows, 18 run rows), 1098 declarations.
 // Replies: 259 fully typed, 47 typed down to an opaque serde_json::Value leaf, 13 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -768,7 +768,8 @@ declare namespace Sdk {
   type AiOptionsRequest = { operation?: string | null; inputs?: string[] };
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
-  type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown> };
+  type AiVoice = { kind: "stock"; name: string } | { kind: "bank"; voice_id: string; include_generated?: boolean };
+  type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null };
   type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown };
   type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage };
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
@@ -1131,7 +1132,7 @@ declare const ai: {
   video: ((input: Sdk.AiCallRequest) => Promise<Sdk.AiVideoTicket | StoredResult>) & {
     /** Stops a video job at its provider. */
     cancel(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoCancelled | StoredResult>;
-    /** Where a video job stands; a finished one answers with its clip, once. */
+    /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
     poll(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoJob | StoredResult>;
   };
 };

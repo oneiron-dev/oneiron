@@ -1,11 +1,11 @@
 declare const ai: {
-  embed(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
-  image(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  embed(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[]; voice?: object | object | null }): Promise<unknown>;
+  image(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[]; voice?: object | object | null }): Promise<unknown>;
   options(input: { inputs?: string[]; operation?: string | null }): Promise<unknown>;
-  speech(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
-  transcribe(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  speech(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[]; voice?: object | object | null }): Promise<unknown>;
+  transcribe(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[]; voice?: object | object | null }): Promise<unknown>;
   verdict(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; deadline_ms?: number | null; evidence?: string[]; image?: string | null; locate?: boolean; misses?: number; options?: string[]; question: string; reversibility?: "reversible_read" | "outbound_effect"; routine?: boolean; state?: unknown; until_ms?: number | null }): Promise<unknown>;
-  video: ((input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }) => Promise<unknown>) & {
+  video: ((input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[]; voice?: object | object | null }) => Promise<unknown>) & {
     cancel(input: { job: string }): Promise<unknown>;
     poll(input: { job: string }): Promise<unknown>;
   };

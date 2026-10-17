@@ -113,6 +113,29 @@ for row in ROWS:
     pointers = row['prose_links']
     if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*(\[[a-z_][a-z0-9_]*=[a-z0-9_]+\])?|[a-z_][a-z0-9_]*))+', p) for p in pointers):
         raise ValueError(f'{row["name"]}: prose_links are distinct JSON pointers of field names, `*` and `*[key=value]`')
+# OF-246: `binding.generic` marks a row every typed layer still reaches over
+# the generic agent-verb door with its whole input (the remote client, UniFFI,
+# napi and the Python native module). Its `args` spell only the positional
+# parameters of the package handle's method (`index.ts`, `__init__.py`): each
+# names its Rust `type`, read through the type inventory, and the input `field`
+# it fills (its own name when absent; `$` is the whole input). An `Option<T>`
+# parameter may be left out; a `default` is the string one left out sends. No
+# typed projection reads such a binding, so it moves off the row into
+# `handle_args` here.
+for row in ROWS:
+    binding = row.get('binding')
+    if not binding or not binding.get('generic'): continue
+    args = binding.get('args')
+    if set(binding) != {'generic', 'args'} or row.get('context', 'memory') != 'memory' or 'uniffi' in row or not isinstance(args, list):
+        raise ValueError(f'{row["name"]}: a generic binding is a memory row\'s `generic` and `args`, with no uniffi signature')
+    for a in args:
+        if not (isinstance(a, dict) and {'name', 'type'} <= set(a) <= {'name', 'type', 'field', 'default'}
+                and re.fullmatch(r'[a-z_][a-z0-9_]*', a['name']) and isinstance(a['type'], str)
+                and ('default' not in a or isinstance(a['default'], str) and not a['type'].startswith('Option<'))):
+            raise ValueError(f'{row["name"]}: a generic binding arg names its parameter and Rust type, and may name its field and a string default of a type that is no Option')
+        if a.get('field') == '$' and (len(args) != 1 or a['type'] != row['input'] or 'default' in a):
+            raise ValueError(f'{row["name"]}: a whole-input parameter is the row\'s only one, typed as its input')
+    row['handle_args'] = row.pop('binding')['args']
 # A callable row's `description` is its one line, said once: the MCP tool
 # description, the JSDoc of each TypeScript method and the docstring of each
 # Python one. A run row carries none: its key set is fixed above.
@@ -135,7 +158,12 @@ INVENTORY = Inventory(ROOT, FACADE_ROWS)
 LONG_SIGNATURE = 'expect(clippy::too_many_arguments, reason = "one parameter per SDK argument of the verb")'
 def long_signature(params):
     return f'#[{LONG_SIGNATURE}] ' if params > 7 else ''
+# OF-495: the Rust primitives a row may name bare; no crate path prefixes them.
+RUST_PRIMITIVES = frozenset({'bool', 'char', 'String', 'f32', 'f64', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize',
+                             'i8', 'i16', 'i32', 'i64', 'i128', 'isize', '()'})
 def rust_type(value):
+    'A row type as a crate outside the engine names it: a primitive as is, an engine path under `oneiron::`, any other from the SDK module.'
+    if value in RUST_PRIMITIVES: return value
     return value.replace('crate::', 'oneiron::') if value.startswith('crate::') else 'oneiron::task_verb::sdk::' + value
 
 SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_off_runtime_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
@@ -167,6 +195,10 @@ ARGUMENTS = {
     'query_affect': {'rust': 'Option<oneiron::task_verb::sdk::QueryAffect>', 'napi': 'Option<NapiQueryAffect>', 'native_ts': 'QueryAffect | undefined', 'py': 'dict[str, Any] | None', 'stub': 'QueryAffect | None', 'native_py': 'Option<&str>', 'json': True,
         'napi_convert': 'let {name} = {name}.map(query_affect_to_engine);', 'py_convert': 'let {name}: Option<oneiron::task_verb::sdk::QueryAffect> = {name}.map(|value| decode(value, "recall query affect")).transpose()?;', 'field': '{name}'},
     'ref': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'str | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
+    # OF-237: the receipt kinds a read lists, as `ReceiptKind` names them; none
+    # is the gate decision ledger.
+    'kinds': {'rust': '&[String]', 'napi': 'Option<Vec<String>>', 'native_ts': 'string[] | undefined', 'py': 'list[str] | None', 'stub': 'list[str] | None', 'native_py': 'Option<Vec<String>>',
+        'napi_convert': 'let {name} = {name}.unwrap_or_default();', 'py_convert': 'let {name} = {name}.unwrap_or_default();', 'borrow': '&', 'field': '{name}.to_vec()'},
     'json': {'napi': 'String', 'native_ts': 'string', 'py': 'dict[str, Any]', 'native_py': '&str', 'json': True},
 }
 RESULTS = {
@@ -347,33 +379,38 @@ def ts_facade(row):
         body = f'this.#client.{method}(' + ', '.join(arguments) + ')'
     return binding['docs']['ts'], ', '.join(declaration), output, body
 
-# A facade row with no typed binding takes the generic agent-verb door; these
-# are the argument shapes its handle method spells out. Any other row takes its
-# whole input. Every result type is the generated one.
-TS_SHAPES = {
-    'wait': ('handle: TaskAskHandle, stepKey = "sdk.wait"', '{handle, step_key: stepKey}'),
-    'tasks.answer': ('handle: TaskAskHandle, word: TaskAskWord', '{handle, word}'),
-    'tasks.outcomes': ('handle: TaskAskHandle', 'handle'),
-    'vault.rooms.list': ('', '{}'),
-    'vault.rooms.messages': ('roomRef: string, after?: string, limit?: number', '{room_ref: roomRef, after, limit}'),
-    'vault.rooms.find': ('roomRef: string, after?: string, limit?: number', '{room_ref: roomRef, after, limit}'),
-    'vault.rooms.render': ('roomRef: string', '{room_ref: roomRef}'),
-    'vault.rooms.get': ('roomRef: string, turnRef: string', '{room_ref: roomRef, turn_ref: turnRef}'),
-    'vault.rooms.trunk': ('roomRef: string, turnRef: string', '{room_ref: roomRef, turn_ref: turnRef}'),
-    'vault.rooms.claim': ('roomRef: string, turnRef: string', '{room_ref: roomRef, turn_ref: turnRef}'),
-}
-PY_SHAPES = {
-    'wait': ('handle, step_key="sdk.wait"', 'handle: Facade.TaskAskHandle, step_key: str = "sdk.wait"', '{"handle": handle, "step_key": step_key}'),
-    'tasks.answer': ('handle, word', 'handle: Facade.TaskAskHandle, word: Facade.TaskAskWord', '{"handle": handle, "word": word}'),
-    'tasks.outcomes': ('handle', 'handle: Facade.TaskAskHandle', 'handle'),
-    'vault.rooms.list': ('', '', '{}'),
-    'vault.rooms.messages': ('room_ref, after=None, limit=None', 'room_ref: str, after: str | None = None, limit: int | None = None', '{"room_ref": room_ref, "after": after, "limit": limit}'),
-    'vault.rooms.find': ('room_ref, after=None, limit=None', 'room_ref: str, after: str | None = None, limit: int | None = None', '{"room_ref": room_ref, "after": after, "limit": limit}'),
-    'vault.rooms.render': ('room_ref', 'room_ref: str', '{"room_ref": room_ref}'),
-    'vault.rooms.get': ('room_ref, turn_ref', 'room_ref: str, turn_ref: str', '{"room_ref": room_ref, "turn_ref": turn_ref}'),
-    'vault.rooms.trunk': ('room_ref, turn_ref', 'room_ref: str, turn_ref: str', '{"room_ref": room_ref, "turn_ref": turn_ref}'),
-    'vault.rooms.claim': ('room_ref, turn_ref', 'room_ref: str, turn_ref: str', '{"room_ref": room_ref, "turn_ref": turn_ref}'),
-}
+# A facade row with no typed binding takes the generic agent-verb door. Its
+# handle method takes the positional parameters its generic binding spells
+# (`handle_args`), or else its whole input. Every type is the generated one,
+# or the package's own declaration of it.
+def ts_handle_shape(row):
+    'A generic-door verb\'s TypeScript parameters and the input they send.'
+    if 'handle_args' not in row: return ts_input(row), 'input'
+    params, fields = [], []
+    for a in row['handle_args']:
+        name, field, kind = js_method(a['name']), a.get('field', a['name']), a['type']
+        if 'default' in a: params.append(f'{name} = {json.dumps(a["default"])}')
+        elif kind.startswith('Option<'): params.append(f'{name}?: {boundary_type(kind[len("Option<"):-1], "ts")}')
+        else: params.append(f'{name}: {boundary_type(kind, "ts")}')
+        if field == '$': return ', '.join(params), name
+        fields.append(name if field == name else f'{field}: {name}')
+    return ', '.join(params), '{' + ', '.join(fields) + '}'
+
+def py_handle_shape(row):
+    'A generic-door verb\'s Python parameters, those parameters as the stub types them, and the input they send.'
+    if 'handle_args' not in row:
+        empty = row['input'] == 'EmptyRequest'
+        return ('spec=None' if empty else 'spec', f'spec: {INVENTORY.py_type(row["input"])}' + (' | None = None' if empty else ''),
+                '{} if spec is None else spec' if empty else 'spec')
+    params, typed, fields = [], [], []
+    for a in row['handle_args']:
+        name, field, kind = a['name'], a.get('field', a['name']), a['type']
+        default = json.dumps(a['default']) if 'default' in a else 'None' if kind.startswith('Option<') else None
+        params.append(name + (f'={default}' if default else ''))
+        typed.append(f'{name}: {INVENTORY.py_type(kind)}' + (f' = {default}' if default else ''))
+        if field == '$': return ', '.join(params), ', '.join(typed), name
+        fields.append(f'{json.dumps(field)}: {name}')
+    return ', '.join(params), ', '.join(typed), '{' + ', '.join(fields) + '}'
 
 def ts_handle_verb(row):
     'A facade verb on the generic door: its doc, parameters, result type and body.'
@@ -385,7 +422,7 @@ def ts_handle_verb(row):
                 '{who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; '
                 f'return this.#client.{method}(input) as TaskAskReceipt }}')
         return ts_doc(row), params, 'TaskAskReceipt', body
-    params, value = TS_SHAPES.get(row['name'], (ts_input(row), 'input'))
+    params, value = ts_handle_shape(row)
     output = INVENTORY.ts_type(row['output'])
     return ts_doc(row), params, output, f'this.#client.{method}({value}) as {output}'
 
@@ -485,9 +522,7 @@ def python_handle_verb(row, stub=False, name=None):
                 '            who = {"people": [spec_or_who]} if isinstance(spec_or_who, str) else {"people": list(spec_or_who)} if isinstance(spec_or_who, (set, list, tuple)) else spec_or_who\n'
                 '            input = {"who": who, "what": what, "until": until, "default": default}\n'
                 f'        return json.loads(_translate(lambda: self._client.{method}(json.dumps(input))))\n')
-    empty = row['input'] == 'EmptyRequest'
-    whole = ('spec=None' if empty else 'spec', f'spec: {INVENTORY.py_type(row["input"])}' + (' | None = None' if empty else ''), '{} if spec is None else spec' if empty else 'spec')
-    params, typed, value = PY_SHAPES.get(row['name'], whole)
+    params, typed, value = py_handle_shape(row)
     if stub: return f'    def {name}(self' + (', ' + typed if typed else '') + f') -> {output}:' + ('\n' + py_doc(row) if py_doc(row) else ' ...\n')
     return f'    def {name}(self' + (', ' + params if params else '') + '):\n' + py_doc(row) + f'        return json.loads(_translate(lambda: self._client.{method}(json.dumps({value}))))\n'
 
@@ -1424,6 +1459,7 @@ UNIFFI_ARGUMENTS = {
     'format': ('Option<String>', '{name}.as_deref()'),
     'as_of': ('Option<u64>', '{name}'),
     'deadline_ms': ('Option<u64>', '{name}'),
+    'kinds': ('Option<Vec<String>>', '{name}.as_deref().unwrap_or_default()'),
 }
 
 def uniffi_record(value, records):

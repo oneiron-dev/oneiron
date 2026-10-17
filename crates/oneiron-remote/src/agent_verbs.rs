@@ -1341,14 +1341,16 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.export", value)
     }
-    /// Lists governance receipts, newest first.
+    /// Lists governance receipts, newest first: the gate decision ledger, or
+    /// the receipts of the named kinds.
     pub fn vault_receipts(
         &self,
         limit: usize,
+        kinds: &[String],
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
         let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
             limit: Some(limit),
-            ..Default::default()
+            kinds: kinds.to_vec(),
         };
         oneiron::memory::caps::check_limit(
             input

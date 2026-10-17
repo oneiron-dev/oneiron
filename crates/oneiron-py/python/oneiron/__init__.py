@@ -637,9 +637,9 @@ class Oneiron:
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def __call__(self, limit: int = 100) -> list[dict[str, Any]]:
-            """Governance receipts, newest first."""
-            return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[dict[str, Any]]:
+            """Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds."""
+            return json.loads(_translate(lambda: self._client.vault_receipts(limit, kinds)))
         def get(self, spec):
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
@@ -1487,7 +1487,7 @@ class Oneiron:
             """Starts a video render as a provider job and answers with its ticket."""
             return json.loads(_translate(lambda: self._client.ai_video(json.dumps(spec))))
         def poll(self, spec):
-            """Where a video job stands; a finished one answers with its clip, once."""
+            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
             return json.loads(_translate(lambda: self._client.ai_video_poll(json.dumps(spec))))
         def cancel(self, spec):
             """Stops a video job at its provider."""
