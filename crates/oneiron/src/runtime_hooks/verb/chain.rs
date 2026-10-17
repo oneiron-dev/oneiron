@@ -739,7 +739,7 @@ impl<'c> Chain<'c> {
             return Err(ask::used_error());
         }
         for run in &self.runs {
-            store::RECEIPTS.put(&vault.store, txn, &run.key, &self.receipt(run))?;
+            store::RECEIPTS.put(vault, txn, &run.key, &self.receipt(run))?;
         }
         for (id, row, chain) in &self.blocks {
             if block::put_new_block_in_txn(vault, txn, *id, row)? {
@@ -753,7 +753,7 @@ impl<'c> Chain<'c> {
             if let Some(id) = proposal {
                 lineage::put_in_txn(vault, txn, id.as_bytes(), &intent.lineage)?;
             }
-            store::INTENTS.put(&vault.store, txn, key, intent)?;
+            store::INTENTS.put(vault, txn, key, intent)?;
         }
         Ok(())
     }

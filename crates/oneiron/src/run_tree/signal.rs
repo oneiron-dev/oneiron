@@ -7,6 +7,7 @@ use crate::attempt_queue::{
     AttemptId, AttemptState, CancelRequestOutcome, CancelStanding, LandingTrigger,
     RequestAttemptCancel,
 };
+use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::error::{Error, Result};
 
 use super::RunTreeAdapter;
@@ -173,7 +174,11 @@ impl RunTreeAdapter<'_> {
             return Err(Error::InvalidConfig("ask branch lease mismatch".into()));
         }
         if let Some(existing) = record.asks.iter().find(|ask| ask.handle == handle) {
-            if existing.questions != questions {
+            // The held questions are as the side-row wall stored them: a
+            // secret it lifted reads as its handle there (OF-067).
+            if existing.questions != questions
+                && !admitted_from(&named_tree(&existing.questions)?, &named_tree(&questions)?)?
+            {
                 return Err(Error::InvalidConfig("ask handle reused".into()));
             }
             return Ok(existing.clone());
@@ -187,7 +192,7 @@ impl RunTreeAdapter<'_> {
             answers: Vec::new(),
         };
         record.asks.push(ask.clone());
-        self.save(&mut txn, &record)?;
+        self.save(&mut txn, &mut record)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         Ok(ask)
@@ -305,7 +310,7 @@ impl RunTreeAdapter<'_> {
             state: RunSignalState::Pending,
         };
         record.signals.push(signal.clone());
-        self.save(&mut txn, &record)?;
+        self.save(&mut txn, &mut record)?;
         txn.commit()?;
         // In sync builds this wakes a subscribed local caller; foreign hosts
         // without that path use the durable peek handle instead.
@@ -451,7 +456,7 @@ impl RunTreeAdapter<'_> {
             .iter()
             .any(|signal| signal.state != RunSignalState::Pending)
         {
-            self.save(&mut txn, &record)?;
+            self.save(&mut txn, &mut record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
         }
@@ -501,7 +506,7 @@ impl RunTreeAdapter<'_> {
         signal.state = RunSignalState::Settled;
         let receipt = signal.clone();
         if changed {
-            self.save(&mut txn, &record)?;
+            self.save(&mut txn, &mut record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
         }
@@ -511,9 +516,9 @@ impl RunTreeAdapter<'_> {
     fn save(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        record: &crate::attempt_queue::AttemptRecord,
+        record: &mut crate::attempt_queue::AttemptRecord,
     ) -> Result<()> {
-        let raw = crate::attempt_queue::encode_signal_record(record)?;
+        let raw = crate::attempt_queue::encode_signal_record(self.vault, txn, record)?;
         self.vault
             .store
             .attempt_records

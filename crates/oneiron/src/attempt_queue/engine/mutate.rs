@@ -9,7 +9,7 @@ use crate::attempt_queue::cancel::{
     force_cancel_record, validate_force_authority,
 };
 use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, decode_record, encode_record, lease_expired, ready_at, ready_key,
+    DedupeIndexKeys, decode_record, lease_expired, ready_at, ready_key,
     waiting_on_backoff,
 };
 use crate::attempt_queue::telemetry::{emit_attempt_queue_cleanup_span, invalid_transition};
@@ -97,7 +97,7 @@ impl AttemptQueue<'_> {
         validate_transition_lease(&source, &input.lease_owner, input.attempt_count, "retry")?;
         validate_optional_failure_reason(input.last_error.as_deref())?;
 
-        let next = AttemptRecord {
+        let mut next = AttemptRecord {
             id: match id {
                 Some(id) => id,
                 None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
@@ -178,7 +178,7 @@ impl AttemptQueue<'_> {
         {
             return Err(Error::InvariantViolation("attempt id collision"));
         }
-        let encoded_source = encode_record(&source)?;
+        let encoded_source = self.encode_in_txn(wtxn, &mut source)?;
         self.store
             .attempt_records
             .put(wtxn, source.id.as_bytes(), &encoded_source)?;
@@ -190,7 +190,7 @@ impl AttemptQueue<'_> {
             &source,
             &input.lease_owner,
         )?;
-        let encoded_next = encode_record(&next)?;
+        let encoded_next = self.encode_in_txn(wtxn, &mut next)?;
         self.store
             .attempt_records
             .put(wtxn, next.id.as_bytes(), &encoded_next)?;
@@ -397,7 +397,7 @@ impl AttemptQueue<'_> {
             },
         };
 
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
@@ -457,7 +457,7 @@ impl AttemptQueue<'_> {
             )));
         }
         record.manifest.push(entry);
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(txn, &mut record)?;
         self.store
             .attempt_records
             .put(txn, record.id.as_bytes(), &encoded)?;
@@ -490,7 +490,7 @@ impl AttemptQueue<'_> {
         record.scheduled_at = None;
         record.backoff_until = None;
         record.updated_at = now;
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
@@ -585,7 +585,7 @@ impl AttemptQueue<'_> {
                         record.backoff_until = None;
                         record.last_error = Some(RETRY_REASON_LEASE_TIMEOUT.to_owned());
                         record.updated_at = input.now;
-                        let encoded = encode_record(&record)?;
+                        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
                         self.store.attempt_records.put(
                             &mut wtxn,
                             record.id.as_bytes(),
@@ -623,7 +623,7 @@ impl AttemptQueue<'_> {
                             Some(RETRY_REASON_LEASE_TIMEOUT.to_owned()),
                             input.now,
                         )?;
-                        let encoded = encode_record(&record)?;
+                        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
                         self.store.attempt_records.put(
                             &mut wtxn,
                             record.id.as_bytes(),
