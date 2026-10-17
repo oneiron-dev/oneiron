@@ -151,6 +151,22 @@ impl OneironClient {
         })
     }
 
+    /// An embedded handle over a vault this process already opened at
+    /// `path` with `Vault::open_owned`, such as the one an embedded
+    /// `oneiron-server` serves: the handle shares that vault and never
+    /// opens the path again. `options` are what [`Self::open`] would be
+    /// given for this vault; a later `open` of the path in this process
+    /// joins the same vault when it names the same options.
+    pub fn attach(
+        path: &Path,
+        vault: std::sync::Arc<oneiron::Vault>,
+        options: &OpenOptions,
+    ) -> Result<Self, MemoryError> {
+        Ok(Self {
+            backend: Backend::Embedded(EmbeddedClient::attach(path, vault, options)?),
+        })
+    }
+
     /// Binds a remote `oneiron-server` through the facade projection.
     ///
     /// `key` is the credential [`OneironClient::pair`] returned. This call

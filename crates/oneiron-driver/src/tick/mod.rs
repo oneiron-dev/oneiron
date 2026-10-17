@@ -30,7 +30,7 @@ mod timer;
 
 pub use self::hybrid::HybridTick;
 pub use self::model::{
-    CommitmentDeadline, DeadlineSource, HintSignal, Tick, TickSource, WakeSignal,
+    ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, Tick, TickSource, WakeSignal,
 };
 pub(crate) use self::model::{SessionHintCarrier, SessionHintStamp};
 pub use self::policy::{IdleSample, WakePolicyTicks};
