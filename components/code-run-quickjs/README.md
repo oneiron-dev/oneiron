@@ -109,8 +109,9 @@ by the ranges they cite, staged `summarize` groups) and stores the fold as
 it again with the same arguments until `done`. `diff(a, b, {by?, from?,
 name?})` (`diff.js`) states its algorithm: by lines, Myers' O(ND) inside
 lockstep 4096-line windows, by bytes 64 KiB blocks; hunk text past 1 MiB is
-stored as a result made from both sides. Every default and bound either
-helper keeps is one named top-level const in its file.
+stored as a result made from both sides. Every default, bound and end
+condition either helper keeps is one named top-level const or policy
+function in its file.
 Foreign guests have no `self` object. Their `propose.file(...)` and
 `propose.claim(...)` produce typed proposal deltas, not committed writes.
 Only workspace/output file paths are proposal targets; upload and skill files
