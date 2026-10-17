@@ -63790,7 +63790,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/auth/binding_admission.rs",
-     "purpose": "Consume holder proofs at the network door, once per request or upgrade",
+     "purpose": "Consume holder proofs at the network door, once per request or upgrade, and stop serving a shared vault its…",
      "surface": {
       "crate-vis": 1
      }
