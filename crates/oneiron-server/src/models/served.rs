@@ -1,6 +1,7 @@
 //! Which model actually answered: the receipt field a ladder fills in.
 // The ladder stamps the engine's key for the rungs that failed before an
 // answer. Each of them was already charged on its own permit.
+use oneiron::LlmUsage;
 use oneiron::llm::FAILED_RUNGS_KEY;
 use serde_json::{Map, Value as JsonValue};
 
@@ -32,7 +33,7 @@ pub(super) fn served_receipt(
 ) -> JsonValue {
     let reported = raw_provider.get(SERVED_MODEL_KEY).cloned();
     let mut receipt = Map::new();
-    receipt.insert("provider".into(), provider.into());
+    receipt.insert(LlmUsage::SERVED_PROVIDER_KEY.into(), provider.into());
     receipt.insert("requested_model".into(), requested.into());
     receipt.insert("rung".into(), rung.into());
     receipt.insert(FAILED_RUNGS_KEY.into(), failed_rungs.into());

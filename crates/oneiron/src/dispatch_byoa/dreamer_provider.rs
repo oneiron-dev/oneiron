@@ -119,9 +119,7 @@ pub fn register_official_dreamer_providers(
         }
         let adapter = official
             .adapter_for_route(seat.spec.route)
-            .ok_or_else(|| {
-                ByoaError::UnknownSeatAdapter(seat.spec.route.as_str().to_owned())
-            })?;
+            .ok_or_else(|| ByoaError::UnknownSeatAdapter(seat.spec.route.as_str().to_owned()))?;
         registry.register(Arc::new(OfficialSeatDreamerProvider {
             adapter,
             seat: seat.spec,
