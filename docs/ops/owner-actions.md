@@ -795,7 +795,13 @@ windows again.
 newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
 `{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
 `consecutive` positive labels and one negative, a `t2` detector of that family asks with the
-labeled findings.
+labeled findings. For a `t3` detector, the next pass registers a T2 of the family: it grades each
+window's runs one by one, shown the labeled findings' run facts, beside the `t3`, which keeps
+running. A new label or a reworded detector registers a new revision, which grades windows again.
+When a shipped closed-form T1 detector reproduces every label (today `retrieval.miss.v1` for
+`retrieval_miss`: a confirmed window holds a miss, a rejected one holds none), the revision is
+graduated and its T2 stops running; the T1 already runs in the Coach's nightly tier-1 sweep.
+`GET /v1/owner/self-heal/minted` lists each family's registration and what graduated it.
 
 ## Answer the decision ladder's asks
 
