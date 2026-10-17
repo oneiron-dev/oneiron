@@ -34,14 +34,18 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 #   collides with a global that the other code-mode declarations name.
 # - REVISION_ALGORITHM: the revision's digest and form, `sha256:<64 hex>` of
 #   the UTF-8 text. Python's standard library has SHA-256; it has no BLAKE3.
-# - REPLY: what a verb call resolves with in code mode. The guest's verb door
-#   decodes the host's whole reply (components/code-run-quickjs/bootstrap.js,
-#   `verb`), and the host writes it as `{output}`, `{denied, reasonCodes}`,
-#   `{failed, error?}` (`error` only for a code in wire.rs `GUEST_FAILURE_CODES`)
-#   or, for a call that parks and every call past a park,
-#   `{waitId}`, with `budget` added inside a wake pass (wire.rs `reply_body`,
-#   `SelfDispatchResponse::guest_json`). `StoredResult` is runtime.d.ts's card,
-#   which stands in for an output past 512 KiB of JSON.
+# - REPLY: what a verb call resolves with in code mode, and what it throws.
+#   The host writes `{output}`, `{denied, reasonCodes}`, `{failed, error?}`
+#   (`error` only for a code in wire.rs `GUEST_FAILURE_CODES`) or, for a call
+#   that parks and every call past a park, `{waitId}`, with `budget` added
+#   inside a wake pass (wire.rs `reply_body`, `SelfDispatchResponse::guest_json`).
+#   The guest's verb import takes `output` alone (code_sandbox/wasmtime_runtime/
+#   typed.rs, `self.verbs.call`), and bootstrap.js `verb` resolves with it
+#   decoded: the row's output, or `StoredResult`, runtime.d.ts's card, in its
+#   place past 512 KiB of JSON (wire.rs `fit_reply`). A refusal throws its
+#   whole JSON text (typed.rs `State::call`), a reply with no `output` throws
+#   `missing_host_response_field` (typed.rs `field`), and `budget` never
+#   reaches the guest.
 # - COORDINATION: the rows code mode answers with the run's own coordination
 #   reply, not the row's output (wire.rs `self_call`). Their reply is
 #   `unknown`, and so is a run row's output when the table does not name it.
@@ -57,11 +61,14 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 #   `connector.call`, so it resolves with that row's reply.
 NAMESPACE = 'Sdk'
 REVISION_ALGORITHM = 'sha256'
-REPLY = ('type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } '
-         '| { waitId: string }) & { budget?: {budget} };')
-REPLY_DOC = ('/** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, '
-             'the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */')
-BUDGET = 'crate::dreamer_wake::legibility::BudgetLegibilityEnvelope'
+REPLY = 'Promise<{output} | StoredResult>'
+REPLY_DOC = (
+    'Every verb call resolves with its row\'s output itself, or with a `StoredResult` card in its place past 512 KiB of JSON.',
+    'A refused call throws a string, the refusal\'s JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,',
+    '`reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).',
+    'A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge\'s own',
+    'refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".',
+)
 COORDINATION = ()
 JSDOC = True
 VAULT_HOST = 'VaultHost'
@@ -71,9 +78,9 @@ CONNECTOR_TOOLS = '{{ readonly [name: string]: {{ readonly [tool: string]: (args
 # `self.fold` is the one positional verb (ARCH-0067 #folds), as
 # `code_mode_declarations()` and bootstrap.js take it.
 POSITIONAL = {'self.fold': '(span: readonly [number, number], options?: { note?: string | null })'}
-# Names no reached type may take: the fragment's own reply type, and the global
-# it names from inside the namespace.
-TAKEN = ('Reply', 'StoredResult', VAULT_HOST)
+# Names no reached type may take: the global the fragment names from inside
+# the namespace, and the fragment's own interface.
+TAKEN = ('StoredResult', VAULT_HOST)
 
 
 class Fragment:
@@ -91,7 +98,6 @@ class Fragment:
                 if field not in self.fields(row['input']):
                     raise ValueError(f'{row["name"]}: outputs_by_input names {field}, which its input {row["input"]} does not carry')
                 self.inventory.root_ir(output)
-        self.budget = self.inventory.ts_type(BUDGET, '')
 
     def ts(self, text):
         return self.inventory.ts_type(text, NAMESPACE + '.')
@@ -106,7 +112,8 @@ class Fragment:
         return POSITIONAL.get(row['name']) or f'(input: {self.ts(row["input"])})'
 
     def reply(self, text):
-        return f'Promise<{NAMESPACE}.Reply<{self.ts(text) if text else "unknown"}>>'
+        output = self.ts(text) if text else 'unknown'
+        return 'Promise<unknown>' if output == 'unknown' else REPLY.format(output=output)
 
     def result(self, row):
         if row['name'] in COORDINATION: return 'Promise<unknown>'
@@ -224,9 +231,9 @@ class Fragment:
         out += f'// typed input and reply. `{NAMESPACE}` holds every type they reach; `StoredResult` is\n'
         out += '// runtime.d.ts\'s. The revision, the digest of this text, is\n'
         out += '// `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).\n'
+        out += ''.join('// ' + line + '\n' for line in REPLY_DOC)
         out += ''.join('// ' + line + '\n' for line in self.census())
         out += f'declare namespace {NAMESPACE} {{\n'
-        out += '  ' + REPLY_DOC + '\n  ' + REPLY.replace('{budget}', self.budget) + '\n'
         out += '  ' + VAULT_HOST_DOC + '\n  interface ' + VAULT_HOST + ' {}\n'
         for key in self.inventory.order:
             decl = self.inventory.decls[key]
