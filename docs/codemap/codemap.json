@@ -12286,7 +12286,7 @@
       "enum": 1,
       "fn": 10,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 3
      }
     },
@@ -12408,6 +12408,20 @@
       "enum": 3,
       "fn": 8,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompactHooks"
+     ],
+     "path": "src/compaction/hooks.rs",
+     "purpose": "`host.compact` (ARCH-0080 §5) around one compaction pass",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -18035,6 +18049,16 @@
      "purpose": "Poll disjoint MACRO buckets together, with one wake snapshot and meter",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/hooks.rs",
+     "purpose": "`host.wake` (ARCH-0080 §5) around one wake pass",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -26925,7 +26949,7 @@
       "const": 1,
       "crate-vis": 8,
       "enum": 2,
-      "fn": 18,
+      "fn": 19,
       "struct": 2
      }
     },
@@ -26943,7 +26967,7 @@
      "path": "src/llm/run_admission/declaration.rs",
      "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 15,
       "struct": 4
@@ -27014,17 +27038,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "MediaGate"
+      "MediaGate",
+      "MediaStreamLease"
      ],
      "path": "src/llm/run_admission/media.rs",
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
-      "struct": 1
+      "fn": 13,
+      "struct": 2
      }
     },
     {
@@ -35911,6 +35936,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BudgetHit"
+     ],
+     "path": "src/runtime_hooks/host.rs",
+     "purpose": "`host.budget.hit` (ARCH-0080 §5): a budget line spent under its exhaustion policy",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HookCheck",
       "HookCheckReason",
       "LineageLink"
@@ -35931,9 +35970,9 @@
      "path": "src/runtime_hooks/mod.rs",
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 2,
-      "re-export": 9
+      "re-export": 11
      }
     },
     {
@@ -35968,6 +36007,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HookContractStamp",
+      "HookGoldenDiff",
+      "HookGoldenFingerprint",
+      "HookRegenFailure",
+      "HookRegenFailurePhase",
+      "HookRegenOutcome",
+      "HookRegenRecord",
+      "HookRegenRequest",
+      "HookRegenerator"
+     ],
+     "path": "src/runtime_hooks/regen.rs",
+     "purpose": "Hook regen (ARCH-0080 §8, slice 3): the shape of lens regen (OF-321), with records typed for hooks",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 7,
+      "struct": 6,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -35977,6 +36040,7 @@
      "path": "src/runtime_hooks/replay.rs",
      "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -45612,6 +45676,7 @@
      "notable": [
       "BankBound",
       "BankVoiceBinding",
+      "LeasedAsrStream",
       "MediaAsrAdapter",
       "MediaTtsAdapter",
       "MediaVoiceRoute",
@@ -45620,16 +45685,17 @@
       "VoiceMediaSender",
       "VoiceMediaWork",
       "VoiceMediaWorker",
-      "VoiceRender"
+      "VoiceRender",
+      "VoiceStreamDoor"
      ],
      "path": "src/voice_cascade/media.rs",
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
-      "const": 2,
+      "const": 3,
       "enum": 4,
-      "fn": 11,
-      "struct": 6,
-      "trait": 1
+      "fn": 17,
+      "struct": 7,
+      "trait": 2
      }
     },
     {
@@ -48700,8 +48766,8 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 15,
-     "impl_vault": false,
+     "files": 16,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
@@ -48896,7 +48962,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49470,7 +49536,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 20,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49864,7 +49930,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3010,
+   "source_files": 3014,
    "test_files": 903
   },
   "oneiron-android": {
@@ -65280,7 +65346,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 7,
       "struct": 1
      }
@@ -65297,7 +65363,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 7,
-      "fn": 13,
+      "fn": 14,
       "struct": 3
      }
     },
