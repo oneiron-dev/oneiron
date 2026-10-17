@@ -17,12 +17,13 @@ pub mod pptx;
 
 pub use deck_export::{
     ExportKey, ExportOutcome, ExportProfile, Gate, OracleReceipt, RoundtripReport, StepOutcome,
-    project, roundtrip_check,
+    attach_evidence, project, relationship_changes, roundtrip_check,
 };
 pub use pptx::{
     ApproveScope, AttributionIndex, ChangeKind, Conflict, DeckDiff, DeckFork, DeckNode, DeckOp,
     GeometryProps, Landing, LandingReceipt, LiveDeck, NodeBinding, NodeId, NodeKind, Paragraph,
-    PreflightReport, Run, StampedOp, TextBody, diff, land, preflight,
+    PreflightReport, RelationshipChange, RenderPair, RenderSide, Run, SlideRender, StampedOp,
+    TextBody, diff, land, preflight,
 };
 
 use crate::deck::DeckError;

@@ -9,7 +9,8 @@
 //! its maker.
 
 use super::LiveError;
-use crate::deck::{DeckView, ShapeKind};
+use crate::deck::{DeckView, ShapeKind, ShapeView, TextView};
+use crate::edit::IdMarks;
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -122,6 +123,10 @@ pub struct LiveDeck {
     pub next_node: u64,
     /// Count of operations applied since import; the preflight pins it.
     pub version: u64,
+    /// Native-id allocation history: every slide and shape id the retained
+    /// packages this deck was bound to have held. An export allocates new
+    /// native ids above it, so a removed node's id is never reused.
+    pub id_marks: IdMarks,
 }
 
 impl LiveDeck {
@@ -135,6 +140,7 @@ impl LiveDeck {
             opaque_parts: BTreeMap::new(),
             next_node: 1,
             version: 0,
+            id_marks: IdMarks::of_deck(&view),
         };
         deck.nodes.insert(
             NodeId(0),
@@ -183,13 +189,7 @@ impl LiveDeck {
             for shape in &slide.shapes {
                 let id = deck.mint();
                 ids.push(id);
-                let geometry = GeometryProps {
-                    offset: own(&shape.geometry.offset),
-                    extent: own(&shape.geometry.extent),
-                    rotation: own(&shape.geometry.rotation),
-                    flip_h: own(&shape.geometry.flip_h),
-                    flip_v: own(&shape.geometry.flip_v),
-                };
+                let geometry = geometry_of(shape);
                 deck.nodes.insert(
                     id,
                     DeckNode {
@@ -217,29 +217,7 @@ impl LiveDeck {
                     },
                 );
                 if let Some(text) = &shape.text {
-                    let mut body = TextBody::default();
-                    for paragraph in &text.paragraphs {
-                        let pid = deck.mint();
-                        body.paragraphs.push(Paragraph {
-                            id: pid,
-                            level: paragraph.level.value.unwrap_or(0),
-                            runs: paragraph
-                                .runs
-                                .iter()
-                                .map(|run| Run {
-                                    text: run.text.clone(),
-                                    bold: run.bold.value,
-                                    italic: run.italic.value,
-                                    size: run.size.value,
-                                    latin: run
-                                        .latin
-                                        .value
-                                        .as_ref()
-                                        .map(|font| font.typeface.clone()),
-                                })
-                                .collect(),
-                        });
-                    }
+                    let body = text_body(text, || deck.mint());
                     deck.texts.insert(id, body);
                 }
             }
@@ -273,9 +251,24 @@ impl LiveDeck {
     }
 
     fn mint(&mut self) -> NodeId {
+        while self.nodes.contains_key(&NodeId(self.next_node)) {
+            self.next_node += 1;
+        }
         let id = NodeId(self.next_node);
         self.next_node += 1;
         id
+    }
+
+    /// The identity a creation names, or a fresh mint. A named identity
+    /// already in the tree refuses: identities are never reused.
+    fn take(&mut self, id: Option<NodeId>) -> Result<NodeId, LiveError> {
+        match id {
+            None => Ok(self.mint()),
+            Some(id) if id == NodeId(0) || self.nodes.contains_key(&id) => {
+                Err(LiveError::Invalid("the node identity is taken"))
+            }
+            Some(id) => Ok(id),
+        }
     }
 
     /// Canonical state hash at the current version (export memo-key input).
@@ -325,6 +318,43 @@ impl LiveDeck {
     }
 }
 
+/// A retained shape's own geometry, as the live model holds it.
+pub(crate) fn geometry_of(shape: &ShapeView) -> GeometryProps {
+    GeometryProps {
+        offset: own(&shape.geometry.offset),
+        extent: own(&shape.geometry.extent),
+        rotation: own(&shape.geometry.rotation),
+        flip_h: own(&shape.geometry.flip_h),
+        flip_v: own(&shape.geometry.flip_v),
+    }
+}
+
+/// A retained text body as the live model holds it, paragraph identities
+/// drawn from `mint`.
+pub(crate) fn text_body(text: &TextView, mut mint: impl FnMut() -> NodeId) -> TextBody {
+    TextBody {
+        paragraphs: text
+            .paragraphs
+            .iter()
+            .map(|paragraph| Paragraph {
+                id: mint(),
+                level: paragraph.level.value.unwrap_or(0),
+                runs: paragraph
+                    .runs
+                    .iter()
+                    .map(|run| Run {
+                        text: run.text.clone(),
+                        bold: run.bold.value,
+                        italic: run.italic.value,
+                        size: run.size.value,
+                        latin: run.latin.value.as_ref().map(|font| font.typeface.clone()),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 /// An effective value the target element itself holds; inherited values are
 /// never materialised into the live model.
 fn own<T: Clone>(value: &crate::deck::Value<T>) -> Option<T> {
@@ -336,12 +366,19 @@ fn own<T: Clone>(value: &crate::deck::Value<T>) -> Option<T> {
 }
 
 /// One deck operation. A move keeps the node's identity; a cross-slide move
-/// is reported because it also changes relationship context.
+/// is reported because it also changes relationship context. A creation
+/// names the identity it makes, so replaying it onto another head (a fork's
+/// merge, a concurrent peer) makes the same node; `None` mints one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeckOp {
-    AddSlide,
+    AddSlide {
+        #[serde(default)]
+        id: Option<NodeId>,
+    },
     AddNode {
+        #[serde(default)]
+        id: Option<NodeId>,
         parent: NodeId,
         kind: NodeKind,
         name: Option<String>,
@@ -389,13 +426,31 @@ impl DeckOp {
             | DeckOp::SetText { node, .. }
             | DeckOp::SetRunMarks { node, .. }
             | DeckOp::SetGeometry { node, .. } => Some(*node),
-            DeckOp::AddSlide | DeckOp::ReplaceOpaque { .. } => None,
+            DeckOp::AddSlide { .. } | DeckOp::ReplaceOpaque { .. } => None,
+        }
+    }
+
+    /// The identity a creation names.
+    pub fn created(&self) -> Option<NodeId> {
+        match self {
+            DeckOp::AddSlide { id } | DeckOp::AddNode { id, .. } => *id,
+            _ => None,
+        }
+    }
+
+    /// Name the identity of a creation that names none, from `mint`: what a
+    /// writer records so every replay makes the same node.
+    pub fn name_creation(&mut self, mint: impl FnOnce() -> NodeId) {
+        if let DeckOp::AddSlide { id } | DeckOp::AddNode { id, .. } = self
+            && id.is_none()
+        {
+            *id = Some(mint());
         }
     }
 
     pub fn kind(&self) -> ChangeKind {
         match self {
-            DeckOp::AddSlide | DeckOp::AddNode { .. } | DeckOp::RemoveNode { .. } => {
+            DeckOp::AddSlide { .. } | DeckOp::AddNode { .. } | DeckOp::RemoveNode { .. } => {
                 ChangeKind::Creation
             }
             DeckOp::MoveNode { .. } => ChangeKind::Movement,
@@ -435,8 +490,8 @@ impl LiveDeck {
     /// former subtree).
     pub fn apply(&mut self, stamped: &StampedOp) -> Result<Vec<NodeId>, LiveError> {
         let affected = match &stamped.op {
-            DeckOp::AddSlide => {
-                let id = self.mint();
+            DeckOp::AddSlide { id } => {
+                let id = self.take(*id)?;
                 self.nodes.insert(
                     id,
                     DeckNode {
@@ -457,13 +512,14 @@ impl LiveDeck {
                 vec![id]
             }
             DeckOp::AddNode {
+                id,
                 parent,
                 kind,
                 name,
                 index,
             } => {
                 self.check_parent(*parent, *kind)?;
-                let id = self.mint();
+                let id = self.take(*id)?;
                 self.nodes.insert(
                     id,
                     DeckNode {
@@ -618,13 +674,21 @@ impl AttributionIndex {
         // mints below the deck's high-water mark, in log order.
         let creates = log
             .iter()
-            .filter(|stamped| matches!(stamped.op, DeckOp::AddSlide | DeckOp::AddNode { .. }))
+            .filter(|stamped| {
+                matches!(
+                    stamped.op,
+                    DeckOp::AddSlide { id: None } | DeckOp::AddNode { id: None, .. }
+                )
+            })
             .count() as u64;
         let mut next_mint = deck.next_node.saturating_sub(creates);
         for stamped in log {
             let kind = stamped.op.kind();
             let created = match stamped.op {
-                DeckOp::AddSlide | DeckOp::AddNode { .. } => {
+                DeckOp::AddSlide { id: Some(id) } | DeckOp::AddNode { id: Some(id), .. } => {
+                    Some(id)
+                }
+                DeckOp::AddSlide { id: None } | DeckOp::AddNode { id: None, .. } => {
                     let id = NodeId(next_mint);
                     next_mint += 1;
                     Some(id)
@@ -723,9 +787,16 @@ impl DeckFork {
     }
 }
 
-/// Whether `node`'s own content differs between two states.
+/// Whether `node`'s own content differs between two states. A binding is
+/// retained-package evidence, not content: an export's rebind changes none.
 fn unit_changed(a: &LiveDeck, b: &LiveDeck, node: NodeId) -> bool {
-    a.nodes.get(&node) != b.nodes.get(&node) || a.texts.get(&node) != b.texts.get(&node)
+    let content = |deck: &LiveDeck| {
+        deck.nodes.get(&node).map(|found| DeckNode {
+            binding: None,
+            ..found.clone()
+        })
+    };
+    content(a) != content(b) || a.texts.get(&node) != b.texts.get(&node)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -763,6 +834,55 @@ pub enum Conflict {
     BothReplacedOpaque { part: String },
 }
 
+/// One relationship that differs between the head's export and the merged
+/// candidate's: `before`/`after` are its target, `None` where it is absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelationshipChange {
+    /// The source part (`""` for the package).
+    pub source: String,
+    pub id: String,
+    pub kind: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+/// One slide's render identity: the hash of the slide and every part its
+/// rendering depends on, in one export.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlideRender {
+    pub slide: NodeId,
+    pub part: String,
+    pub fingerprint: [u8; 32],
+}
+
+/// One side of the review render pair, at a named version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderSide {
+    pub version: u64,
+    pub state_hash: [u8; 32],
+    /// The export memo key the render input was projected under.
+    pub export_key: [u8; 32],
+    pub slides: Vec<SlideRender>,
+}
+
+/// The current head and the actual merged candidate, each at a named
+/// version. The pair is stale once the head moves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderPair {
+    pub head: RenderSide,
+    pub candidate: RenderSide,
+    /// Slides whose render identity differs between the two, or that only
+    /// one side holds.
+    pub changed: Vec<NodeId>,
+}
+
+impl RenderPair {
+    /// Whether `head` has moved past the version this pair rendered.
+    pub fn stale(&self, head: &LiveDeck) -> bool {
+        head.version != self.head.version || head.state_hash() != self.head.state_hash
+    }
+}
+
 /// The three-way comparison of base, current head and proposal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeckDiff {
@@ -776,15 +896,23 @@ pub struct DeckDiff {
     pub formatting_changed: Vec<NodeId>,
     pub geometry_changed: Vec<NodeId>,
     pub opaque_changed: Vec<OpaqueChange>,
-    /// Slides the proposal affects, including beyond the edited slide.
+    /// Slides the proposal affects, including beyond the edited slide. Until
+    /// render evidence is attached, any opaque replacement counts every slide;
+    /// [`super::attach_evidence`] narrows it to the slides whose render
+    /// identity the merged candidate changes.
     pub affected_slides: Vec<NodeId>,
     /// Nodes the head changed and the proposal did not: exactly what a
     /// switch would remove from the active head.
     pub head_only: Vec<NodeId>,
     pub conflicts: Vec<Conflict>,
+    /// Relationship additions, removals and changed targets the merged
+    /// candidate's export makes against the head's; empty until attached.
+    pub relationships: Vec<RelationshipChange>,
+    /// The review render pair; `None` until attached.
+    pub renders: Option<RenderPair>,
 }
 
-fn slide_of(deck: &LiveDeck, mut node: NodeId) -> Option<NodeId> {
+pub(crate) fn slide_of(deck: &LiveDeck, mut node: NodeId) -> Option<NodeId> {
     loop {
         let found = deck.nodes.get(&node)?;
         if found.kind == NodeKind::Slide {
@@ -820,6 +948,8 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
         affected_slides: Vec::new(),
         head_only: Vec::new(),
         conflicts: Vec::new(),
+        relationships: Vec::new(),
+        renders: None,
     };
     let mut affected: BTreeSet<NodeId> = BTreeSet::new();
     for id in proposal.nodes.keys() {
@@ -1066,8 +1196,24 @@ pub fn land(
             Vec::new()
         }
         Landing::Switch => {
-            let proposal = fork.candidate()?;
+            let mut proposal = fork.candidate()?;
+            // Bindings and the hashes of opaque parts the proposal left alone
+            // are evidence of the head's retained package, which a landed
+            // export may have moved past the fork's base.
+            for (id, node) in &mut proposal.nodes {
+                if let Some(held) = head.nodes.get(id) {
+                    node.binding = held.binding.clone();
+                }
+            }
+            for (part, hash) in &mut proposal.opaque_parts {
+                if fork.base.opaque_parts.get(part) == Some(hash)
+                    && let Some(held) = head.opaque_parts.get(part)
+                {
+                    *hash = *held;
+                }
+            }
             let (version, next_node) = (head.version, head.next_node);
+            proposal.id_marks.join(&head.id_marks);
             *head = proposal;
             // Identity allocation stays monotonic across the switch.
             head.next_node = head.next_node.max(next_node);

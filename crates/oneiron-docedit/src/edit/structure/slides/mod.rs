@@ -16,6 +16,7 @@
 //! `p:sldIdLst` and of each section's list, and refuses an order that splits
 //! a section or moves sections past each other.
 mod check;
+mod lifecycle;
 #[cfg(test)]
 mod tests;
 
@@ -29,6 +30,7 @@ use crate::ooxml::{Node, PACKAGE_RELATIONSHIPS, XmlTree};
 use crate::retained_opc::{Package, Relationship, rels_name};
 
 pub(super) use check::{duplicated, reordered};
+pub(super) use lifecycle::{add_blank, delete};
 
 const P14: &str = "http://schemas.microsoft.com/office/powerpoint/2010/main";
 const A16: &str = "http://schemas.microsoft.com/office/drawing/2014/main";

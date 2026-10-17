@@ -28,19 +28,7 @@ use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
 
 fn live_error(error: LiveError) -> Error {
-    let reason: &'static str = match error {
-        LiveError::Invalid(reason) => reason,
-        LiveError::UnknownNode => "live deck node not found",
-        LiveError::TreeShape(reason) => reason,
-        LiveError::SelfSettle => "the proposer never settles its own proposal",
-        LiveError::HeadAdvanced => "the deck head advanced since preflight",
-        LiveError::UnboundNodes(_) => "live deck nodes have no retained binding",
-        LiveError::Deck(_) => "the retained deck cannot be read",
-        LiveError::Package(_) => "the retained package refused the operation",
-        LiveError::Edit(_) => "the checked deck edit was refused",
-        LiveError::Encoding(_) => "live deck encoding failed",
-    };
-    super::invalid(reason)
+    crate::office_body::live_refused(error)
 }
 
 /// One deck entity's live body and its stamped operation log.
