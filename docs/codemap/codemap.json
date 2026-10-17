@@ -973,21 +973,26 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentSpendCalibration",
+      "DollarBasis",
       "ExpectedSpend",
-      "SpendBasis"
+      "LaunchUsdPrices",
+      "SpendBasis",
+      "UsdPriceTarget",
+      "UsdUnitPrice"
      ],
      "path": "src/agent_dispatch/spend_calibration.rs",
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 4,
-      "struct": 2
+      "enum": 3,
+      "fn": 7,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -28497,7 +28502,7 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 6,
-      "fn": 16,
+      "fn": 17,
       "re-export": 2,
       "struct": 4
      }
@@ -28622,7 +28627,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "re-export": 2,
       "struct": 5
      }
@@ -49916,7 +49921,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "MessageHangs"
@@ -50624,7 +50629,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 2,
       "fn": 6,
       "re-export": 9,
@@ -53574,7 +53579,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 174,
+   "over_bar": 175,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3253,
    "test_files": 902
@@ -70527,6 +70532,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/launch_price.rs",
+     "purpose": "The launch statement's USD quote (OF-532)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -70562,7 +70577,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 19,
       "re-export": 14,
       "struct": 2
@@ -72684,7 +72699,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72819,7 +72834,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 601,
+   "source_files": 602,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -73243,6 +73258,7 @@
       "DocxCellView",
       "DocxMark",
       "DocxRun",
+      "DollarBasis",
       "DoneMeans",
       "EditNoteRequest",
       "EmbeddingSpaceBindRequest",
@@ -73915,7 +73931,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 255,
+      "enum": 256,
       "struct": 648
      }
     },
