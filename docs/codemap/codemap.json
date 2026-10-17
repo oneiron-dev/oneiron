@@ -3806,13 +3806,14 @@
       "SearchEvidence",
       "SelectionReceipt",
       "WeaveInput",
-      "WeaveReceipt"
+      "WeaveReceipt",
+      "WeaveWriter"
      ],
      "path": "src/autoreason_campaign/research.rs",
      "purpose": "The autoresearch loop's record over the existing run tree (OF-351)",
      "surface": {
       "crate-vis": 9,
-      "enum": 5,
+      "enum": 6,
       "fn": 15,
       "re-export": 3,
       "struct": 15
