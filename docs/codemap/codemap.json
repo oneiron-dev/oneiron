@@ -39876,7 +39876,7 @@
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 7,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -39967,6 +39967,20 @@
      "path": "src/skill_attribution/tests/sweep.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LoadedSkillRevision",
+      "ReceiptTrace"
+     ],
+     "path": "src/skill_attribution/trace.rs",
+     "purpose": "What the standing attribution classifier reads about one terminal attempt (ARCH-0056 §5, ARCH-0066 T2): the…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -52067,7 +52081,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52342,7 +52356,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3165,
+   "source_files": 3166,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62805,6 +62819,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/skill_discovery.rs",
+     "purpose": "The Coach's skill discovery (ARCH-0056 §5, ARCH-0066 #coach, OF-420): the standing attribution classifier…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AiHealth",
       "AiStatus",
@@ -70605,7 +70629,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70971,7 +70995,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 565,
+   "source_files": 566,
    "test_files": 182
   },
   "oneiron-spawn": {
