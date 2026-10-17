@@ -66,8 +66,9 @@ struct VerbAsk {
     proceeds: bool,
     /// Settled proceed with a resume target: the drain runs the call.
     ready: bool,
-    /// The drain is running the call: a retry meanwhile waits Pending, in
-    /// any process.
+    /// The drain took the call and has not saved its outcome yet. A retry
+    /// waits on the drain's in-flight hold, not on this mark, which a crash
+    /// can leave set.
     running: bool,
     /// What the drained call returned, for the caller's retry.
     outcome: Option<SavedOutcome>,
@@ -141,14 +142,6 @@ pub(super) fn retry(vault: &Vault, call: &VerbCall, resume: Option<&VerbResume>)
     };
     if row.verb != call.verb || row.actor != call.actor || row.class != call.class {
         return skipped("this invocation belongs to another call");
-    }
-    // The drain runs the call again now, here or in another process: wait
-    // for what it returns.
-    if row.running
-        && row.state == VerbAskState::Open
-        && super::state::draining() != Some(call.invocation)
-    {
-        return Ok(Retry::Stop(pending(call.invocation, row.ask)));
     }
     if row.state == VerbAskState::Consumed {
         return match (&row.outcome, resume) {
