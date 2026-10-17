@@ -131,6 +131,16 @@ pub const HEALTH_ESCALATE_TTL_HOURS: SettingSpec = SettingSpec {
     seed: 24.0,
 };
 
+/// The lowest card impact that still makes a card: struggling 100, off
+/// course 150, concern 200, so a concern always does. A finding below it
+/// writes its DIAGNOSTIC and no card.
+pub const HEALTH_CARD_FLOOR: SettingSpec = SettingSpec {
+    key: "health.card.floor",
+    min: 0.0,
+    max: 200.0,
+    seed: 0.0,
+};
+
 /// How far back one review reads receipts and settled attempts.
 const LOOKBACK_SECS: u64 = 24 * 60 * 60;
 /// Most call receipts one review reads, newest first.
@@ -367,6 +377,7 @@ struct Dials {
     widen_denials: u64,
     cost_spike: f64,
     ttl_secs: u64,
+    card_floor: f64,
 }
 
 /// One review: detect, emit, merge, escalate. Returns the cards it touched.
@@ -386,6 +397,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
             cost_spike: value(&HEALTH_COST_SPIKE)?,
             ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
+            card_floor: value(&HEALTH_CARD_FLOOR)?,
         }
     };
     let since = now.saturating_sub(LOOKBACK_SECS);
@@ -484,6 +496,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     vault.with_write_txn_grouped(|txn| {
         let mut touched = BTreeSet::new();
         for ((finding, diagnostic), route) in findings.iter().zip(&emitted).zip(&routes) {
+            if f64::from(AgentHealthTone::of(finding.signal).impact()) < dials.card_floor {
+                continue;
+            }
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
             let card = merge(card, finding, *diagnostic, route, &owners, now);
