@@ -56993,8 +56993,27 @@
      "purpose": "Gemini wire adapter",
      "surface": {
       "fn": 1,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeminiMediaBackend",
+      "GeminiMediaHttpRequest",
+      "GeminiMediaHttpResponse",
+      "GeminiMediaTransport"
+     ],
+     "path": "src/media.rs",
+     "purpose": "Gemini API media wires for the `ai.*` calls past text",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -57040,11 +57059,18 @@
      "path": "src/wire.rs",
      "purpose": "Gemini generateContent request and response mapping plus status taxonomy",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     }
    ],
    "modules": {
+    "media": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Gemini API media wires for the `ai.*` calls past text"
+    },
     "stream": {
      "files": 1,
      "impl_vault": false,
@@ -57076,7 +57102,7 @@
    },
    "over_bar": 0,
    "purpose": "Gemini wire adapter",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 1
   },
   "oneiron-llm-local": {
@@ -64378,7 +64404,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -66148,6 +66174,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/models/gemini_media.rs",
+     "purpose": "The Gemini API's media leg: one request per call over [`ProviderHttp`], the key in `x-goog-api-key`",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "HostedCloner"
      ],
@@ -66166,7 +66202,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -68086,7 +68122,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68207,7 +68243,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 499,
+   "source_files": 500,
    "test_files": 182
   },
   "oneiron-spawn": {

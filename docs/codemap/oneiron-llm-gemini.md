@@ -11,8 +11,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | s | 1 struct · 1 fn · 1 re-export | GeminiBackend | Gemini wire adapter |
+| `src/lib.rs` | src | s | 1 struct · 1 fn · 2 re-export | GeminiBackend | Gemini wire adapter |
+| `src/media.rs` | src | m | 2 struct · 1 enum · 1 trait · 1 fn · 1 type | GeminiMediaBackend, GeminiMediaHttpRequest, GeminiMediaHttpResponse, GeminiMediaTransport | Gemini API media wires for the `ai.*` calls past text |
 | `src/stream.rs` | src | s | 5 crate-vis | — | Gemini typed stream decoding |
 | `src/tests.rs` | test | s | — | — | Decoder checks over provider-shaped replies |
 | `src/transport.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 type | GeminiFrame, GeminiHttpRequest, GeminiHttpResponse, GeminiTransport | Lease-bearing host transport; no SDK, retries, or call policy |
-| `src/wire.rs` | src | s | 3 crate-vis | — | Gemini generateContent request and response mapping plus status taxonomy |
+| `src/wire.rs` | src | s | 4 crate-vis | — | Gemini generateContent request and response mapping plus status taxonomy |
