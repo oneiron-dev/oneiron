@@ -41,16 +41,20 @@ fn thread_root_in_txn(
     Ok(Some(root))
 }
 
-/// Admits the writer of a live authored append, `record`, before it is
-/// written: a person with room standing writes on, a person new to an
-/// ordinary room joins it by this write, and an agent's append passes as
-/// before. The caller records the fact once the record is written.
+/// Admits the writer of a live authored append, `record`, answering
+/// `reply_to`, before it is written: a person with room standing writes on,
+/// and a person new to an ordinary room joins it by this write. An agent
+/// joins by no write: it stands there and speaks only when it is addressed
+/// on the record it answers, holds that thread's task, or lands an accepted
+/// offer (ARCH-0006a, ruled 2026-09-23). The caller records the fact once
+/// the record is written.
 pub(super) fn admit_append_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     input: &AppendRecord,
     record: EntityId,
     thread: bool,
+    reply_to: Option<EntityId>,
 ) -> Result<Admitted> {
     let branch = thread_root_in_txn(&vault.store, txn, input.parent, record, thread)?;
     crate::workspace_roster::admit_participation_in_txn(
@@ -60,6 +64,7 @@ pub(super) fn admit_append_in_txn(
         branch,
         input.actor,
         JoinCause::Wrote { turn: record },
+        reply_to,
         None,
         vault.store.clock.now_recorded_at(),
     )

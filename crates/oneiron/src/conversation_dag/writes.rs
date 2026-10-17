@@ -338,8 +338,10 @@ pub(crate) fn append_in_txn(
         )?;
     }
     // OF-529: the writer passes the room's participation gate; a person new
-    // to an ordinary room joins it by this write.
-    let joined = super::participation::admit_append_in_txn(vault, txn, input, id, thread)?;
+    // to an ordinary room joins it by this write, and an agent speaks only
+    // when addressed, tasked or offered on what it answers.
+    let joined =
+        super::participation::admit_append_in_txn(vault, txn, input, id, thread, reply_to)?;
     batch.apply(txn)?;
     if let Some(project) = project_scope {
         crate::workspace_roster::settle_leader_chat_record(

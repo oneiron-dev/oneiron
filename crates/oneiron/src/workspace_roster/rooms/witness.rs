@@ -4,10 +4,18 @@ use super::participation::{
     record_addressed_in_txn, thread_root_in_txn,
 };
 use super::*;
+use crate::conversation_dag::QuotedReply;
 use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessTurn};
 use crate::workspace_roster::JoinSubject;
 
+/// A quote rides a thread reply in a project room (OF-460).
+fn quote_outside_thread() -> Error {
+    Error::InvalidConfig("a room quote rides a reply in a project room's thread".into())
+}
+
+/// Returns the turn's proven quote, which the witness mints into the TURN's
+/// first body and write (OF-460).
 #[expect(
     clippy::too_many_arguments,
     reason = "binds the witness transaction to its resolved actor, container and message ids"
@@ -21,9 +29,12 @@ pub(crate) fn admit_witness(
     turn_id: EntityId,
     input: &WitnessTurn,
     messages: &[EntityId],
-) -> Result<()> {
+) -> Result<Option<QuotedReply>> {
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
-        return Ok(());
+        if input.quote.is_some() {
+            return Err(quote_outside_thread());
+        }
+        return Ok(None);
     }
     // OF-529: an agent needs no seat: it stands on a Ready receipt, checked
     // once its thread is known. A person stands on its seat or a live Ready
@@ -117,6 +128,7 @@ pub(crate) fn admit_witness(
         branch,
         crate::WriteActor::new(actor, class),
         JoinCause::Wrote { turn: turn_id },
+        reply_to,
         None,
         now,
     )?;
@@ -159,6 +171,29 @@ pub(crate) fn admit_witness(
         }
         RESPONSE.put(&vault.store, txn, &parent, &turn_id)?;
     }
+    // OF-460: the quote is proven in this write against the reply's own
+    // thread chain, never moved onto the quoted target, so a thread reply
+    // may quote a trunk message. A thread's root, which names its anchor
+    // and answers no turn, continues the anchor. The claim parent above
+    // stays `reply_to`.
+    let quoted = match input.quote {
+        None => None,
+        Some(quote) => {
+            let Some(anchor) = thread_of else {
+                return Err(quote_outside_thread());
+            };
+            let parent = dag_parent_in_txn(vault, txn, anchor, reply_to.unwrap_or(anchor))?;
+            Some(QuotedReply::prove_in_txn(
+                vault,
+                txn,
+                room,
+                parent,
+                crate::WriteActor::new(actor, class),
+                quote,
+                turn_id,
+            )?)
+        }
+    };
     let mut turn = RoomTurn {
         turn_id: turn_id.to_hex(),
         room_id: room.to_hex(),
@@ -202,5 +237,32 @@ pub(crate) fn admit_witness(
         turn_id,
         &turn.addressed_agents,
         now,
-    )
+    )?;
+    Ok(quoted)
+}
+
+/// The record a quoted thread reply's DAG chain continues: the nearest turn
+/// up its room reply chain that the DAG holds as a thread record, or the
+/// thread's trunk `anchor`. Unquoted replies carry no DAG chain, so the
+/// quoted ones chain onto each other, and never onto the quoted target.
+fn dag_parent_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    anchor: EntityId,
+    reply_to: EntityId,
+) -> Result<EntityId> {
+    let mut cursor = reply_to;
+    let mut seen = BTreeSet::new();
+    while cursor != anchor
+        && !crate::conversation_dag::is_thread_record(&vault.store, txn, &cursor)?
+    {
+        if !seen.insert(cursor) || seen.len() > 100_000 {
+            return Err(invalid());
+        }
+        match turn_in(vault, txn, cursor)?.reply_to {
+            Some(parent) => cursor = EntityId::from_hex(&parent)?,
+            None => return Ok(anchor),
+        }
+    }
+    Ok(cursor)
 }

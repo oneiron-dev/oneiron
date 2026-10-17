@@ -157,14 +157,36 @@ pub(super) struct ProvenQuote {
     span: (usize, usize),
 }
 
-/// Proves a quote for `input` without writing: the MESSAGE is live, visible
-/// and in the same room, its owning TURN is readable from the writer's
-/// branch, a PERSON writer is in its audience, and the span is nonempty,
-/// ordered and inside its current text. `citation` is the reply's own id.
+/// [`prove_quote_in_txn`] for an append: its conversation, parent and writer.
 pub(super) fn prove_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     input: &AppendRecord,
+    quote: QuoteSpan,
+    citation: EntityId,
+) -> Result<ProvenQuote> {
+    prove_quote_in_txn(
+        vault,
+        txn,
+        input.conversation,
+        input.parent,
+        input.actor,
+        quote,
+        citation,
+    )
+}
+
+/// Proves a quote without writing: the MESSAGE is live, visible and in
+/// `conversation`, its owning TURN is readable from the branch through
+/// `parent`, a PERSON `actor` is in its audience, and the span is nonempty,
+/// ordered and inside its current text. `citation` is the reply's own id.
+/// Both reply doors call it: the append and a room witness (OF-460).
+pub(super) fn prove_quote_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    conversation: EntityId,
+    parent: Option<EntityId>,
+    actor: WriteActor,
     quote: QuoteSpan,
     citation: EntityId,
 ) -> Result<ProvenQuote> {
@@ -184,21 +206,21 @@ pub(super) fn prove_in_txn(
         return Err(Error::EntityNotFound);
     }
     if crate::conversation::room_message_owner_in(&vault.store, txn, message)?
-        != Some(input.conversation)
+        != Some(conversation)
     {
         return Err(invalid("quoted message belongs to another room"));
     }
     let turn = owning_turn_in(&vault.store, txn, &message)?;
-    require_member(&vault.store, txn, &input.conversation, &turn)?;
-    if !branch_reads_in(&vault.store, txn, input, turn)? {
+    require_member(&vault.store, txn, &conversation, &turn)?;
+    if !branch_reads_in(&vault.store, txn, conversation, parent, turn)? {
         return Err(invalid("quoted message is outside the writer's branch"));
     }
-    if writer_is_person(&vault.store, txn, input.actor)?
+    if writer_is_person(&vault.store, txn, actor)?
         && !crate::conversation::AudienceCache::default().readable(
             vault,
             txn,
             message,
-            &[input.actor.entity_ref()],
+            &[actor.entity_ref()],
         )?
     {
         return Err(invalid("quoted message is outside the writer's audience"));
@@ -289,6 +311,127 @@ pub(super) fn reply_pointer(
     Value::Map(pointer)
 }
 
+/// A quoted room thread reply, proven in the room witness's transaction
+/// before its TURN is minted (OF-460). The witness consumes the selection
+/// here and mints the TURN once, with this anchor, reply pointer, `Parent`
+/// and `RepliesTo` in its first body and write; nothing patches it later.
+/// The thread chain continues `parent`, the reply's own, while the reply
+/// answers the TURN holding the quoted MESSAGE.
+pub(crate) struct QuotedReply {
+    parent: EntityId,
+    actor: WriteActor,
+    revision: String,
+    proven: ProvenQuote,
+}
+
+impl QuotedReply {
+    /// Proves `quote` for the reply `citation` that `actor` writes in
+    /// `conversation` continuing the thread chain at `parent`: the common
+    /// quote proof, and the quoted TURN's revision captured in this
+    /// transaction, as an append captures its reply target's.
+    pub(crate) fn prove_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        conversation: EntityId,
+        parent: EntityId,
+        actor: WriteActor,
+        quote: QuoteSpan,
+        citation: EntityId,
+    ) -> Result<Self> {
+        require_member(&vault.store, txn, &conversation, &parent)?;
+        require_type(&vault.store, txn, &parent, ENTITY_TYPE_TURN)?;
+        let proven =
+            prove_quote_in_txn(vault, txn, conversation, Some(parent), actor, quote, citation)?;
+        let target = require_type(&vault.store, txn, &proven.turn, ENTITY_TYPE_TURN)?;
+        Ok(Self {
+            parent,
+            actor,
+            revision: blake3::hash(&target).to_hex().to_string(),
+            proven,
+        })
+    }
+
+    /// The door-owned fields the reply's first TURN body carries: a thread
+    /// record answering the quoted TURN, its pointer holding the anchor.
+    pub(crate) fn body_fields(&self) -> [(Value, Value); 3] {
+        [
+            (
+                Value::from("dag_kind"),
+                Value::from(super::topology::RecordKind::Thread.as_str()),
+            ),
+            (Value::from("addr"), Value::from("reply")),
+            (
+                Value::from("reply_to"),
+                reply_pointer(self.proven.turn, self.revision.clone(), Some(&self.proven)),
+            ),
+        ]
+    }
+
+    /// Stages the minted reply's `Parent` and `RepliesTo` edges.
+    pub(crate) fn edges<'v>(
+        &self,
+        batch: crate::BatchBuilder<'v>,
+        record: &EntityId,
+        learned_at: u64,
+    ) -> crate::BatchBuilder<'v> {
+        let value = super::writes::value;
+        batch
+            .edge_with_value_fields(record, EdgeKind::Parent, &self.parent, value(learned_at))
+            .edge_with_value_fields(
+                record,
+                EdgeKind::RepliesTo,
+                &self.proven.turn,
+                value(learned_at),
+            )
+    }
+
+    /// Writes a document anchor's citation pin in the minting transaction.
+    pub(crate) fn pin_in_txn(&self, vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+        pin_in_txn(vault, txn, &self.proven, self.actor)
+    }
+
+    /// Refuses unless the stored TURN `body` already carries exactly this
+    /// quote: the same target and anchor and, for a document anchor, a pinned
+    /// quote that is the text the span selects now. A retry never changes a
+    /// stored turn's quote, and never re-pins it.
+    pub(crate) fn require_stored_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        body: &[u8],
+    ) -> Result<()> {
+        let changed = || invalid("a stored turn's quote is immutable");
+        let Some((target, anchor)) = read_pointer(body)? else {
+            return Err(changed());
+        };
+        if target != self.proven.turn || anchor != self.proven.anchor {
+            return Err(changed());
+        }
+        if let QuoteAnchor::Document { message, citation } = anchor {
+            let pin = vault
+                .message_quote_pin_in_txn(txn, &message, &citation)?
+                .ok_or_else(changed)?;
+            let row = require_type(&vault.store, txn, &message, ENTITY_TYPE_MESSAGE)?;
+            let row = crate::entity_doc::resolve_record_body(&vault.store, txn, &message, &row)?;
+            let fields = message_fields(&row)?;
+            let text = field(&fields, "content")
+                .and_then(Value::as_str)
+                .ok_or(Error::CorruptedIndex("message canonical content"))?;
+            if scalar_slice(text, self.proven.span.0, self.proven.span.1).as_deref()
+                != Some(pin.anchor.quote())
+            {
+                return Err(changed());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether a stored TURN body's reply pointer carries a quote.
+pub(crate) fn carries_quote(body: &[u8]) -> Result<bool> {
+    Ok(read_pointer(body)?.is_some())
+}
+
 /// The reply target and quote anchor a TURN body's reply pointer records;
 /// `None` for a body with no quote.
 pub(super) fn read_pointer(body: &[u8]) -> Result<Option<(EntityId, QuoteAnchor)>> {
@@ -336,7 +479,8 @@ pub(super) fn owning_turn_in(
 fn branch_reads_in(
     store: &Store,
     txn: &RoTxn<'_>,
-    input: &AppendRecord,
+    conversation: EntityId,
+    parent: Option<EntityId>,
     turn: EntityId,
 ) -> Result<bool> {
     if !graph::is_thread_record(store, txn, &turn)?
@@ -344,8 +488,8 @@ fn branch_reads_in(
     {
         return Ok(true);
     }
-    Ok(match input.parent {
-        Some(parent) => graph::chain(store, txn, &input.conversation, parent)?.contains(&turn),
+    Ok(match parent {
+        Some(parent) => graph::chain(store, txn, &conversation, parent)?.contains(&turn),
         None => false,
     })
 }

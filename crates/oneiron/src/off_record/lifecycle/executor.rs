@@ -161,6 +161,7 @@ impl OffRecordSession<'_> {
         let turn = crate::memory::WitnessTurn {
             conversation_ref: container.to_hex(),
             turn_ref: None,
+            quote: None,
             messages: vec![crate::memory::WitnessMessage {
                 // HOST-derived when present (ONE-1686): the executor names the
                 // bubble from its run/order identity. Guest callers cannot

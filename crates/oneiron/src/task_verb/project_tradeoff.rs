@@ -186,6 +186,7 @@ impl Memory<'_> {
             self.rooms_speak(&WitnessTurn {
                 conversation_ref: room.to_hex(),
                 turn_ref: Some(reserved.turn.to_hex()),
+                quote: None,
                 messages: vec![WitnessMessage {
                     id: Some(reserved.message.to_hex()),
                     author: if self.actor_class() == EdgeActorClass::Human {
