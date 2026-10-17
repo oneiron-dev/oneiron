@@ -204,6 +204,11 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::room_turns::ROOM_TURNS_MAP),
         )?;
+        // FIX 1794: and every room side row.
+        crate::sync::room_facts::admit_room_fact_map(
+            key,
+            &candidate.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
+        )?;
         // OF-013: every withdrawn cutoff the snapshot holds names its artifact.
         cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
             &candidate.get_map(crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP),
@@ -251,6 +256,10 @@ fn validate_window_update(
             crate::sync::room_turns::admit_room_turn_map(
                 key,
                 &root.get_map(crate::sync::room_turns::ROOM_TURNS_MAP),
+            )?;
+            crate::sync::room_facts::admit_room_fact_map(
+                key,
+                &root.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
             )?;
             cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
                 &root.get_map(crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP),
@@ -332,6 +341,8 @@ fn validate_window_update(
     let custody = ContainerID::new_root(crate::sync::custody::CUSTODY_MAP, ContainerType::Map);
     let room_turns =
         ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
+    let room_facts =
+        ContainerID::new_root(crate::sync::room_facts::ROOM_FACTS_MAP, ContainerType::Map);
     let withdrawn_cutoffs = ContainerID::new_root(
         crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ContainerType::Map,
@@ -351,6 +362,8 @@ fn validate_window_update(
             crate::sync::custody::admit_custody_carrier(vault, key, &map_key, &value)?;
         } else if op.container == room_turns {
             crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
+        } else if op.container == room_facts {
+            crate::sync::room_facts::admit_room_fact_carrier(key, &map_key, &value)?;
         } else if op.container == withdrawn_cutoffs {
             cutoffs.push(
                 crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_carrier(&map_key, &value)?,

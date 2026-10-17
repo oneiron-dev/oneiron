@@ -267,6 +267,10 @@ side_tables! {
     /// Queued tombstone re-assertion for an entity whose local hard-delete residue reappeared in a
     /// window doc. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REASSERT_MARKER: SyncState b"ra:w:" Raw;
+    /// A room's host pin or platform handle this device changed while no open window carried the
+    /// room (FIX 1794), mirrored as the room's window opens. Key: string (the cell's `room_facts`
+    /// map key).
+    SYNC_ROOM_FACT_DIRTY: SyncState b"rfd:" Raw;
     /// A thin-residence item's opened entity blob. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw;
     /// A thin-residence item's opened document state. Key: hex32 (entity id).

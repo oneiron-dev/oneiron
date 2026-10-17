@@ -134,6 +134,9 @@ impl WindowManager {
     /// that reached the doc first, and waits on the lock, finds the mirror's
     /// carrier there and leaves LMDB alone (`carrier_superseded`).
     fn mirror_committed_rows(&self, rows: &BTreeSet<EntityId>, edited: &BTreeSet<EntityId>) {
+        // FIX 1794: a committed room turn's door wrote side rows that ride
+        // its room's, parent's and thread root's windows as well as its own.
+        let carriers = crate::sync::room_facts::committed_carriers(&self.vault, rows);
         for key in self.loaded_keys() {
             let Some(window) = self.window(&key) else {
                 continue;
@@ -153,6 +156,17 @@ impl WindowManager {
                 Err(error) => {
                     tracing::warn!(window = %key, %error, "committed rows not mirrored into the live window");
                 }
+            }
+            if !carriers.is_empty()
+                && key.world().is_none()
+                && let Err(error) = crate::sync::room_facts::mirror_carriers(
+                    &self.vault,
+                    &window.doc,
+                    &carriers,
+                    None,
+                )
+            {
+                tracing::warn!(window = %key, %error, "room side rows not mirrored into the live window");
             }
         }
     }
