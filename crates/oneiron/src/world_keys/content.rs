@@ -18,9 +18,9 @@
 //!   slices of two packets never mix.
 //! - The shelf keeps packets by tag and digest. A reader retires a packet another one
 //!   replaces; a retired packet is purged 30 days later, and a second retire never
-//!   resets that clock (fix 7). Deleting the world purges its packets at once, current
-//!   and retired, on every replica that applies the delete; a packet for a key whose
-//!   pad is not here is refused, so none lands after.
+//!   resets that clock (fix 7). Erasing the world purges its packets at once, current
+//!   and retired, on every replica that applies the erase; a packet for a key whose
+//!   pad is not here is refused, so none lands after. Deleting it purges nothing.
 
 use std::sync::Arc;
 
@@ -721,7 +721,7 @@ impl Vault {
 
     /// Shelves `packet` on this home node, which needs no world key and reads
     /// nothing inside it. Refused when an envelope names another vault, or no key
-    /// whose pad is here carries the packet's tag (a deleted world's included).
+    /// whose pad is here carries the packet's tag (an erased world's included).
     /// Idempotent; also purges packets retired 30 days ago.
     pub fn store_sealed_world_content(
         &self,
