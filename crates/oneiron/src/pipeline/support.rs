@@ -15,6 +15,10 @@ pub(super) fn read_entity_metadata(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityMetadata>> {
+    // A legal hold's use limit denies every ordinary read, the owner's included (OF-470 C6).
+    if crate::store::legal_hold::use_limit_in_txn(store.base(), rtxn, id)?.is_some() {
+        return Ok(None);
+    }
     let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
     if visibility.deleted || visibility.stale {
         return Ok(None);

@@ -239,20 +239,29 @@ impl SyncServer {
     }
 
     /// One pass over each space a kind slot binds to, the text slot's on the
-    /// one-space preset included. Blocking.
+    /// one-space preset included, and each open version move's candidate;
+    /// then the moves' probes are topped up ([`Self::author_space_probes`])
+    /// and each full candidate is checked ([`Self::check_space_moves`]).
+    /// Blocking.
     fn backfill_media_pass(
         &self,
         runtime: &tokio::runtime::Handle,
     ) -> Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)> {
-        let bindings = match self.vault.kind_slot_bindings() {
-            Ok(bindings) => bindings,
-            Err(error) => return vec![(String::new(), Err(error.into()))],
+        let (bindings, moves) = match (self.vault.kind_slot_bindings(), self.vault.space_moves()) {
+            (Ok(bindings), Ok(moves)) => (bindings, moves),
+            (Err(error), _) | (_, Err(error)) => return vec![(String::new(), Err(error.into()))],
         };
-        let spaces: BTreeSet<&str> = InputKind::ALL
+        let mut spaces: BTreeSet<&str> = InputKind::ALL
             .into_iter()
             .filter_map(|kind| bindings.space_for(kind))
             .collect();
-        spaces
+        spaces.extend(
+            moves
+                .iter()
+                .filter(|moving| moving.state == oneiron::embed::SpaceMoveState::Open)
+                .map(|moving| moving.candidate.as_str()),
+        );
+        let mut passes: Vec<_> = spaces
             .into_iter()
             .map(|space| {
                 let pass = self.media_embedder(space).and_then(|embedder| {
@@ -263,7 +272,10 @@ impl SyncServer {
                 });
                 (space.to_owned(), pass)
             })
-            .collect()
+            .collect();
+        self.author_space_probes(runtime, &moves);
+        self.check_space_moves(runtime, &moves, &mut passes);
+        passes
     }
 }
 

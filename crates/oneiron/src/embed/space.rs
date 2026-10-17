@@ -154,7 +154,7 @@ impl EmbeddingSpace {
 
     /// Refuses a `kind` slot binding this space cannot serve: it must accept that input, and
     /// the text slot also needs a text query tower, since text queries enter where text binds.
-    fn admit_binding(&self, kind: InputKind) -> Result<()> {
+    pub(super) fn admit_binding(&self, kind: InputKind) -> Result<()> {
         if !self.accepts.contains(&kind) {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {} does not accept {kind:?} input",
@@ -342,25 +342,26 @@ pub(crate) fn media_text_hash_in_txn(
         .map(|row| row.text_hash))
 }
 
-/// Stages one media vector into `space`: its kind must be one the space accepts and bound to
-/// it, its width the space's own. A text row carries the hash of the text it embeds.
+/// Stages one media vector into `space`: its kind must be one the space accepts and fills
+/// ([`super::space_move::space_fill_kinds_in_txn`]: bound to it, or moving to it), its width
+/// the space's own. A text row carries the hash of the text it embeds.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a staged row names its space, the bindings it is checked against, its entity, kind, text hash and vector"
+    reason = "a staged row names its space, the kinds it fills, its entity, kind, text hash and vector"
 )]
 pub(crate) fn put_media_vector_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     space: &EmbeddingSpace,
-    bindings: &KindSlotBindings,
+    fills: &BTreeSet<InputKind>,
     id: &EntityId,
     kind: InputKind,
     text_hash: Option<[u8; TEXT_HASH_LEN]>,
     vector: &[f32],
 ) -> Result<()> {
-    if bindings.space_for(kind) != Some(space.id.as_str()) {
+    if !fills.contains(&kind) {
         return Err(Error::InvalidConfig(format!(
-            "the {kind:?} slot is not bound to embedding space {}",
+            "the {kind:?} slot neither binds nor moves to embedding space {}",
             space.id
         )));
     }
@@ -392,6 +393,49 @@ pub(crate) fn put_media_vector_in_txn(
         row: encode_vector_row_v1(vector)?,
     };
     MEDIA_VECTOR.put(store, txn, &(space.key(), *id), &row)
+}
+
+/// Binds `kind`'s slot to `space_id`, or returns it to its default when `None`: the vault's
+/// own index for text, nothing for a media kind. The caller has admitted the binding.
+pub(super) fn set_kind_slot_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    kind: InputKind,
+    space_id: Option<&str>,
+) -> Result<()> {
+    match space_id {
+        Some(space_id) => EMBEDDING_SLOT.put(store, txn, &[kind.byte()], &space_id.to_owned()),
+        None => EMBEDDING_SLOT.delete(store, txn, &[kind.byte()]).map(|_| ()),
+    }
+}
+
+/// Drops `space_id`'s rows of `kinds`, and its declaration too once no slot binds it.
+pub(super) fn drop_space_rows_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space_id: &str,
+    kinds: &BTreeSet<InputKind>,
+) -> Result<()> {
+    let key = space_key(space_id);
+    let mut drop = Vec::new();
+    for row in MEDIA_VECTOR.iter_from(store, txn, &key)? {
+        let ((_, id), row) = row?;
+        if kinds.contains(&row.kind) {
+            drop.push(id);
+        }
+    }
+    for id in drop {
+        MEDIA_VECTOR.delete(store, txn, &(key, id))?;
+    }
+    let bindings = kind_slot_bindings_in_txn(store, txn)?;
+    if !InputKind::ALL
+        .iter()
+        .any(|kind| bindings.space_for(*kind) == Some(space_id))
+    {
+        MEDIA_VECTOR.delete_from(store, txn, &key)?;
+        EMBEDDING_SPACE.delete(store, txn, &space_id.to_owned())?;
+    }
+    Ok(())
 }
 
 /// Removes `id`'s text rows from every declared space, as its text-index vector is dropped: a
@@ -610,12 +654,12 @@ impl Vault {
             }
             InputKind::Image | InputKind::Audio => None,
         };
-        let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
+        let fills = super::space_move::space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
         put_media_vector_in_txn(
             &self.store,
             &mut wtxn,
             &space,
-            &bindings,
+            &fills,
             id,
             kind,
             text_hash,
@@ -625,7 +669,8 @@ impl Vault {
         Ok(())
     }
 
-    /// Retires a declared space no slot binds: its rows and its declaration go.
+    /// Retires a declared space no slot binds and no open version move names: its rows and its
+    /// declaration go.
     pub fn retire_embedding_space(&self, space_id: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
@@ -635,6 +680,11 @@ impl Vault {
         {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {space_id} is still bound to a kind slot"
+            )));
+        }
+        if super::space_move::open_move_names_in_txn(&self.store, &wtxn, space_id)? {
+            return Err(Error::InvalidConfig(format!(
+                "an open embedding space move names {space_id}; conclude or abandon it first"
             )));
         }
         MEDIA_VECTOR.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;

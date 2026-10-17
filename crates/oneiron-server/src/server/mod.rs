@@ -16,6 +16,7 @@ mod read_shape;
 mod recall;
 mod recall_rerank;
 mod resident_pump;
+mod space_move;
 mod tagging;
 mod windows;
 

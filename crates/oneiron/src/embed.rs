@@ -4,6 +4,8 @@ mod eligibility;
 mod locality;
 mod media;
 mod space;
+mod space_move;
+mod space_probe;
 mod turn;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
 pub use device::{EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount};
@@ -20,6 +22,15 @@ pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput};
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
     KindSlotBindings,
+};
+pub use space_move::{
+    KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_NOTE_PRODUCER, SPACE_PROBE_DEPTH,
+    SPACE_PROBE_MIN_FAMILIES,
+    SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState, SpaceProbeEncoder, SpaceRef,
+};
+pub use space_probe::{
+    SPACE_PROBE_MAX_TARGETS, SPACE_PROBE_QUERY_MAX_LEN, SPACE_PROBES_PER_KIND, SpaceProbe,
+    SpaceProbeAuthor, SpaceProbeReport,
 };
 pub(crate) use space::{
     delete_media_vectors_in_txn, delete_text_media_vectors_in_txn, embedding_space_in_txn,
