@@ -22,6 +22,7 @@
 use std::sync::Arc;
 
 use oneiron::booking::constraint::BookingDecisions;
+use oneiron::critic::review::{REVIEW_DIAL, ReviewDecisions, ReviewWording};
 use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
@@ -100,6 +101,20 @@ it.";
 /// How long one outcome's attribution may take; an outcome still open then
 /// abstains and attributes to nobody.
 const ATTRIBUTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+/// A critic review's four typed questions, asked after each lens's own
+/// prompt contract: this host's wording.
+const REVIEW_VERDICT_WORDING: &str = "Under this lens, what should happen to the artifact? \
+Answer accept when it stands as it is, revise when it needs changes first, and discard when \
+no change would make it stand.";
+const REVIEW_SEVERITY_WORDING: &str = "Under this lens, how serious is the worst problem it \
+finds? Answer info, low, medium, high or blocking; info when it finds none.";
+const REVIEW_HARD_CHECK_WORDING: &str = "Does the artifact pass this lens's hard check? Yes \
+only when the check's condition holds in full.";
+const REVIEW_OUT_OF_SCOPE_WORDING: &str = "Is this artifact outside what this lens reviews? Yes \
+when the lens's contract does not apply to it, so its answers should not count.";
+/// How long one lens's questions may take; a lens still open then fails the
+/// review, as a failed critic call did.
+const REVIEW_LENS_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -725,6 +740,33 @@ impl DecisionHost {
             wording: ATTRIBUTION_WORDING.to_owned(),
             budget: ATTRIBUTION_BUDGET,
             notes: Some(notes),
+        }
+    }
+
+    /// A critic review's questions through this ladder for `principal`, the
+    /// caller, over `state`, the target as the caller reads it: the engine's
+    /// review dial, this host's bands and wording, one clock per lens, and no
+    /// notes.
+    #[must_use]
+    pub(crate) fn review_decisions<'a>(
+        &'a self,
+        principal: EntityId,
+        state: &'a serde_json::Value,
+    ) -> ReviewDecisions<'a> {
+        ReviewDecisions {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: REVIEW_DIAL,
+            bands: self.bands.clone(),
+            state,
+            budget: REVIEW_LENS_BUDGET,
+            wording: ReviewWording {
+                verdict: REVIEW_VERDICT_WORDING.to_owned(),
+                severity: REVIEW_SEVERITY_WORDING.to_owned(),
+                hard_check: REVIEW_HARD_CHECK_WORDING.to_owned(),
+                out_of_scope: REVIEW_OUT_OF_SCOPE_WORDING.to_owned(),
+            },
+            notes: None,
         }
     }
 
