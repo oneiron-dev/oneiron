@@ -29,13 +29,33 @@ impl Vault {
         Ok(affected.into_iter().collect())
     }
 
+    /// The windows an erase of `id` stages its world's pad tombstones in, one
+    /// per pad's learned month. Read before the purge erases the pads, so the
+    /// door can publish them once it commits (FIX 343). Empty for any id
+    /// that is not a world with pads here.
+    pub(in crate::deletion) fn world_pad_windows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<BTreeSet<String>> {
+        Ok(
+            crate::world_keys::world_pad_learned_at_in_txn(&self.store, txn, *id)?
+                .into_iter()
+                .map(tombstone::window_label_from_timestamp)
+                .collect(),
+        )
+    }
+
     /// Returns whether local state existed, plus the citing NOTE documents
     /// whose pins the erasure rewrote, for the caller's post-commit notice.
+    /// `erase` is set for a hard reason: only an erase destroys a world's
+    /// keys; a soft delete's purge of headerless residue keeps them.
     pub(in crate::deletion) fn purge_entity_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         request_id: Option<&[u8; 16]>,
+        erase: bool,
     ) -> Result<(bool, Vec<EntityId>)> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
@@ -45,13 +65,16 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
-        // A purged world takes its keys with it (fix 7).
-        self.destroy_world_keys_for_delete_in_txn(
-            wtxn,
-            *id,
-            crate::world_keys::WorldKeyDestroyCause::LocalDelete,
-            request_id.copied(),
-        )?;
+        // An erased world takes its keys with it (fix 7); a deleted one
+        // keeps them, so it restores from old bundles.
+        if erase {
+            self.destroy_world_keys_for_delete_in_txn(
+                wtxn,
+                *id,
+                crate::world_keys::WorldKeyDestroyCause::LocalDelete,
+                request_id.copied(),
+            )?;
+        }
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
         // A purged message's turns stop matching its words: read them while
