@@ -1003,7 +1003,7 @@
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
       "crate-vis": 12,
-      "fn": 15
+      "fn": 16
      }
     },
     {
@@ -28103,7 +28103,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 37,
+      "const": 38,
       "fn": 1,
       "struct": 1
      }
@@ -28984,7 +28984,7 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 2,
-      "fn": 19,
+      "fn": 21,
       "struct": 2
      }
     },
@@ -29037,15 +29037,17 @@
       "OfferRouteError",
       "PaidConnector",
       "Payer",
+      "PayerAccount",
+      "PayerPerson",
       "UnitRate"
      ],
      "path": "src/llm/run_admission/host.rs",
      "purpose": "What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's…",
      "surface": {
       "crate-vis": 7,
-      "enum": 5,
-      "fn": 8,
-      "struct": 8
+      "enum": 6,
+      "fn": 9,
+      "struct": 9
      }
     },
     {
@@ -61671,7 +61673,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 1,
-      "fn": 15,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -64882,10 +64884,20 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 22,
       "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/payer_funding.rs",
+     "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -71360,7 +71372,7 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 10,
-      "fn": 19,
+      "fn": 20,
       "re-export": 14,
       "struct": 2
      }
@@ -71415,7 +71427,7 @@
      "path": "src/models/raw.rs",
      "purpose": "The raw `/v1/llm` routes' models and their own meter",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -73245,7 +73257,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73653,7 +73665,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 618,
+   "source_files": 619,
    "test_files": 182
   },
   "oneiron-spawn": {
