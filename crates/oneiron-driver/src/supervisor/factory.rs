@@ -6,7 +6,9 @@ use oneiron::dreamer_consolidation::{
     DREAMER_NARRATIVE_ROLE, PersonAboutExecutor, RoleBackends, RoleCall, ScopeSummaryExecutor,
 };
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
-use oneiron::dreamer_runner::maintenance::{CoachLiveSlice, CoachSkillOptimizer};
+use oneiron::dreamer_runner::maintenance::{
+    CoachLiveSlice, CoachSkillOptimizer, ContributionReplayHost,
+};
 use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
@@ -112,6 +114,17 @@ pub trait PassExecutorFactory {
         _vault: &Vault,
         _guard: &BudgetGuard,
     ) -> Result<Option<SkillOptimizerLoan>> {
+        Ok(None)
+    }
+
+    /// The host's replay capsule for the Coach's contribution checks, asked
+    /// once the pass meter exists. The default has none, and the
+    /// contribution pass measures and records nothing.
+    fn contribution_replay_host(
+        &self,
+        _vault: &Vault,
+        _guard: &BudgetGuard,
+    ) -> Result<Option<Box<dyn ContributionReplayHost + Send + Sync>>> {
         Ok(None)
     }
 

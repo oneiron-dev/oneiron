@@ -140,31 +140,28 @@ A Claude Code or Codex conversation keeps the folder its session ran in (the
 
 ## Size limits
 
-An export's `conversations.json` is read up to 2 GiB unzipped, and one
-conversation in it up to 128 MiB. A folder of session logs is read up to a
-million messages (or 1 GiB of them) in one import. Past one of these limits
-the import stops before it writes anything and says which; import one project
-folder, or one month of sessions, at a time.
+No session log and no export is passed over or refused for its size. Every
+log, the session's own and each subagent's, is read whole, and so is an
+export's `conversations.json`. Only the decoders keep bounds of their own: a
+zipped export unzips its `conversations.json` up to 2 GiB, and one
+conversation of an export, or one line of a log, is parsed up to 128 MiB.
 
-Each session log is read up to 1 GiB. A larger log in a folder is left out,
-unread, and the rest of the folder lands: the report counts it under
-`files.too_large` and names it in `warnings`, and the import still succeeds.
-Importing the folder again once the limit allows that log lands it, and only
-what is new. A larger log named on its own is refused. A queued session is
-read the same way: a log over the limit, the session's own or a subagent's,
-is left out with a `log_too_large` warning in `serve`'s log (its `path`,
-`bytes` and `limit`), the rest of the session lands, and the entry is done.
+An import that holds more than `[limits] import_decoded_messages` (a million
+messages) or `import_decoded_bytes` (1 GiB of them) decoded lands whole all
+the same. The row asks whether everything is okay, and the report names it in
+`warnings` (`"warning": "limit_crossed"`, its `row`, `limit` and `observed`).
+`serve`'s queue lands queued sessions in passes of about that much; a session
+past it lands alone, and its rows ask in `serve`'s log.
 
 ## The report
 
 stdout is one JSON document of counts: per conversation (its source id, kind,
 `new`, `skipped`, `changed`, `refused`, `not_kept`), totals, `files` (`read`;
 `passed`: other `.jsonl` files under the path, such as a workflow journal;
-`too_large`: session logs left out; `hard_linked`: session logs with another
-name, a hard link that may point outside the folder, never read), and
-`warnings`: one per log left out (`"warning": "log_too_large"`, its `path`,
-`bytes` and the `limit`), plus one `"warning": "hard_linked"` with the count of
-hard-linked logs, which it does not name, and
+`hard_linked`: session logs with another name, a hard link that may point
+outside the folder, never read), and `warnings`: one per `[limits]` row the
+import crossed (`"warning": "limit_crossed"`), plus one `"warning":
+"hard_linked"` with the count of hard-linked logs, which it does not name, and
 `review`, where the claims drawn from this import wait (below; `null` for a
 dry run and for an import that landed nothing). It never holds message text
 or titles. `--dry-run` prints the same counts and
@@ -234,11 +231,24 @@ folder brings, and its rescans make the edits that follow the files. The notes
 stay yours to read, title and edit, and your edits are yours. Note titles are
 per author, so a folder note may share a title with a note you wrote.
 
-A PDF lands as the text of its pages, titled by its file name, up to 16 MiB of
-file and the 1 MiB a note holds. Only the text layer is read: a scanned PDF
-reads as blank, and an encrypted or unreadable one is passed over and counted
-(`unreadable_pdf`). A PDF whose bytes change while its text does not keeps its
-note as it is.
+A PDF lands as the text of its pages, titled by its file name, whatever its
+size or page count. Only the text layer is read: a scanned PDF reads as blank,
+and an encrypted or unreadable one is passed over and counted
+(`unreadable_pdf`). A page whose content decodes past 8 MiB (the decoder's
+bound) is left out and the rest lands (`partly_read_pdf`). A PDF whose bytes
+change while its text does not keeps its note as it is.
+
+No file is passed over for its size. Text past the 1 MiB a note holds lands in
+parts, cut at a line break where one is near: the file's own note holds the
+first, and each next part is a note of its own (`<path>#part2`, titled
+`<title> (part 2)`, and so on), of the same kind, linked to the first. A
+markdown file's frontmatter stays in its first part, and each part's
+`[[links]]` are those in its own text. When the file shrinks, the parts its
+text no longer reaches are retracted. A folder whose notes hold more text than
+`[limits] import_folder_text_bytes` (256 MiB), or more notes than
+`import_folder_notes` (100,000), is read and imported whole all the same: the
+row asks whether everything is okay, and stdout names it in `warnings`
+(`"warning": "limit_crossed"`).
 
 Nothing is ever written to the folder: it feeds the vault, it is not the vault.
 A folder that is missing retracts nothing. A folder whose last file you

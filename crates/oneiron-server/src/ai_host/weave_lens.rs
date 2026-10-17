@@ -25,7 +25,7 @@ use oneiron::lens::{GeneratedUiSurfaceCapabilities, LensFrameCard};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
-    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
+    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, ProducerRows,
 };
 use oneiron::{
     BudgetExhaustionPolicy, ContentPart, EdgeActorClass, EntityId, LlmCapability, LlmError,
@@ -66,23 +66,30 @@ impl WeaveLensCaller {
         self.auth().locality()
     }
 
-    /// Runs `read` on the caller's own handle, reading at `reads_at`. The
+    /// Runs `read` on the caller's own handle, reading at `reads_at` and
+    /// listing in `producers` the rows its reads derive the lens from. The
     /// owner proof is revalidated at each read.
     fn read<T>(
         &self,
         vault: &Vault,
         reads_at: CallerLocality,
+        producers: &ProducerRows,
         read: impl FnOnce(&Memory<'_>, Option<&AuthenticatedOwner>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
         match self {
             Self::Credential { auth, actor, class } => read(
-                &crate::api::credential_memory(vault, Some(auth), *actor, *class).at(reads_at),
+                &crate::api::credential_memory(vault, Some(auth), *actor, *class)
+                    .at(reads_at)
+                    .listing_producers(producers),
                 None,
             ),
             Self::Owner { owner, .. } => {
                 let actor = owner.revalidate(vault)?;
                 read(
-                    &vault.memory(actor, EdgeActorClass::Human).at(reads_at),
+                    &vault
+                        .memory(actor, EdgeActorClass::Human)
+                        .at(reads_at)
+                        .listing_producers(producers),
                     Some(owner),
                 )
             }
@@ -130,6 +137,29 @@ pub(crate) async fn render_live_weave_lens(
     server: &Arc<SyncServer>,
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
+) -> MemoryResult<LensFrameCard> {
+    render_live_weave_lens_listing(server, caller, request)
+        .await
+        .0
+}
+
+/// [`render_live_weave_lens`], beside the rows its report reads listed:
+/// every read the lens rendered from, a reread's with them.
+pub(crate) async fn render_live_weave_lens_listing(
+    server: &Arc<SyncServer>,
+    caller: WeaveLensCaller,
+    request: WeaveReportRequest,
+) -> (MemoryResult<LensFrameCard>, Vec<EntityId>) {
+    let producers = Arc::new(ProducerRows::default());
+    let answer = render_listing(server, caller, request, &producers).await;
+    (answer, producers.take())
+}
+
+async fn render_listing(
+    server: &Arc<SyncServer>,
+    caller: WeaveLensCaller,
+    request: WeaveReportRequest,
+    producers: &Arc<ProducerRows>,
 ) -> MemoryResult<LensFrameCard> {
     let vault = Arc::clone(server.vault());
     let runtime = server.ai.model_runtime();
@@ -183,7 +213,7 @@ pub(crate) async fn render_live_weave_lens(
         } else {
             CallerLocality::OffDevice
         };
-    let (first, actor) = prepare_live(&vault, &caller, &request, reads_at).await?;
+    let (first, actor) = prepare_live(&vault, &caller, &request, reads_at, producers).await?;
     // The caller's own line pays for every step, as a chat turn's does.
     let settings = server.ai.chat_settings();
     let run_id = format!(
@@ -204,7 +234,11 @@ pub(crate) async fn render_live_weave_lens(
     for _ in 0..=WEAVE_LIVE_LENS_REREADS {
         let live = match next.take() {
             Some(live) => live,
-            None => prepare_live(&vault, &caller, &request, reads_at).await?.0,
+            None => {
+                prepare_live(&vault, &caller, &request, reads_at, producers)
+                    .await?
+                    .0
+            }
         };
         let mut step = live_weave_lens_request(
             &vault,
@@ -252,14 +286,15 @@ pub(crate) async fn render_live_weave_lens(
             }
         };
         let hosted = {
-            let (vault, caller, request, model) = (
+            let (vault, caller, request, model, producers) = (
                 Arc::clone(&vault),
                 caller.clone(),
                 request.clone(),
                 model.clone(),
+                Arc::clone(producers),
             );
             tokio::task::spawn_blocking(move || {
-                caller.read(&vault, reads_at, |memory, owner| {
+                caller.read(&vault, reads_at, &producers, |memory, owner| {
                     memory.weave_lens_finish_framed(owner, &request, live, &answer, model.as_str())
                 })
             })
@@ -291,12 +326,13 @@ async fn prepare_live(
     caller: &WeaveLensCaller,
     request: &WeaveReportRequest,
     reads_at: CallerLocality,
+    producers: &Arc<ProducerRows>,
 ) -> MemoryResult<(WeaveLiveLens, WriteActor)> {
     let (live, actor) = {
         let vault = Arc::clone(vault);
-        let (caller, request) = (caller.clone(), request.clone());
+        let (caller, request, producers) = (caller.clone(), request.clone(), Arc::clone(producers));
         tokio::task::spawn_blocking(move || {
-            caller.read(&vault, reads_at, |memory, owner| {
+            caller.read(&vault, reads_at, &producers, |memory, owner| {
                 let live = memory.weave_lens_prepare(owner, &request)?;
                 Ok((live, WriteActor::new(memory.actor(), memory.actor_class())))
             })

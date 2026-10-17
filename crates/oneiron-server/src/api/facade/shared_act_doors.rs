@@ -162,20 +162,35 @@ pub(crate) async fn vault_shared_propose_remove_owner(
 }
 
 /// `vault.shared.execute`: a live Owner runs a matured act, with the host's
-/// slip issuer.
+/// slip issuer. Beside it, the rows it was derived from
+/// ([`sdk::execute_shared_act_listing`]): `None` for an export-first
+/// removal, whose receipt no list covers. A refusal before the act runs
+/// lists no row.
 pub(crate) async fn vault_shared_execute(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedActRequest,
-) -> MemoryResult<SharedActExecuted> {
+) -> (
+    MemoryResult<SharedActExecuted>,
+    Option<Vec<oneiron::EntityId>>,
+) {
     const VERB: &str = "vault.shared.execute";
-    let executor = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
+    let executor = match person(server, auth, VERB) {
+        Ok(executor) => executor,
+        Err(refusal) => return (Err(refusal), Some(Vec::new())),
+    };
+    let ran = off_runtime(server, VERB, move |server| {
         with_slips(server, VERB, |slips| {
-            sdk::execute_shared_act(server.vault(), &executor, Some(slips), input)
+            Ok(sdk::execute_shared_act_listing(
+                server.vault(),
+                &executor,
+                Some(slips),
+                input,
+            ))
         })
     })
-    .await
+    .await;
+    ran.unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())))
 }
 
 /// `vault.shared.receipt`: a receipt its reader was told about.

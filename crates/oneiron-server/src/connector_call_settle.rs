@@ -11,7 +11,9 @@
 //! caller that reads the settled wait later), and only then acknowledged, so
 //! the engine keeps the row until that reply has committed. A crash in
 //! between leaves a settled row, whose next pass delivers its receipt with no
-//! reply body (`result_not_retained`); nothing is resent to rebuild one.
+//! reply body (`result_not_retained`); nothing is resent to rebuild one. The
+//! acknowledgement keeps who called it, so `connector.call_status` serves the
+//! settled wait to that caller and the owner alone (FIX 2279).
 //!
 //! A call still held, or a send the ledger retries, stays pending. Each such
 //! resume runs the call's gate again, so a call that stays held is retried
@@ -145,7 +147,9 @@ fn settle_connector_calls(
         let reply = serde_json::to_value(&reply)
             .map_err(|_| IntentLedgerError::InvalidRecord("connector call reply"))?;
         deliveries.deliver(call.call_ref, &reply, now_ms())?;
-        vault.ack_connector_call_delivery(&call.call_ref)?;
+        // Its caller stays bound once the row goes, so `connector.call_status`
+        // reads the settled wait for that caller and the owner alone.
+        vault.ack_connector_call_delivery_keeping_caller(&call.call_ref)?;
         backoffs.0.remove(&call.call_ref);
         settled += 1;
     }

@@ -23,7 +23,7 @@ use oneiron::task_verb::sdk::{
     SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal, off_runtime_listing, refused};
 use super::shared_act_doors::person;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -49,18 +49,26 @@ fn require_slip_invitation(auth: &CoreAuth, verb: &str, invitation: &str) -> Mem
 
 /// `vault.records.erase_preview`: what erasing one record takes, read under
 /// the caller's own person proof; the engine's deletion authority decides.
+/// Beside it, the rows the preview was derived from.
 pub(crate) async fn vault_records_erase_preview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: RecordEraseRequest,
-) -> MemoryResult<RecordErasePreview> {
+) -> Listed<RecordErasePreview> {
     const VERB: &str = "vault.records.erase_preview";
-    let caller = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        let memory = server.vault().memory(
-            caller.revalidate_person(server.vault())?,
-            EdgeActorClass::Human,
-        );
+    let caller = match person(server, auth, VERB) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    off_runtime_listing(VERB, move |producers| {
+        let memory = server
+            .vault()
+            .memory(
+                caller.revalidate_person(server.vault())?,
+                EdgeActorClass::Human,
+            )
+            .listing_producers(producers);
         sdk::preview_record_erase(&memory, input)
     })
     .await
@@ -68,19 +76,27 @@ pub(crate) async fn vault_records_erase_preview(
 
 /// `vault.records.erase_confirm`: the caller's own erase of the record they
 /// previewed. Their proof starts a held record's `erase` act, which
-/// `vault.shared.execute` carries out after its veto window.
+/// `vault.shared.execute` carries out after its veto window. Beside it, the
+/// rows the preview it confirms was derived from.
 pub(crate) async fn vault_records_erase_confirm(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: RecordEraseConfirmRequest,
-) -> MemoryResult<RecordEraseOutcome> {
+) -> Listed<RecordEraseOutcome> {
     const VERB: &str = "vault.records.erase_confirm";
-    let caller = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        let memory = server.vault().memory(
-            caller.revalidate_person(server.vault())?,
-            EdgeActorClass::Human,
-        );
+    let caller = match person(server, auth, VERB) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    off_runtime_listing(VERB, move |producers| {
+        let memory = server
+            .vault()
+            .memory(
+                caller.revalidate_person(server.vault())?,
+                EdgeActorClass::Human,
+            )
+            .listing_producers(producers);
         sdk::confirm_record_erase(&memory, &caller, input)
     })
     .await

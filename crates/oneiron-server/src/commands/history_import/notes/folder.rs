@@ -24,7 +24,8 @@ use oneiron::note::{
 };
 use serde::Serialize;
 
-use super::{MAX_FOLDER_BYTES, NoteCounts, TitleCounts};
+use super::super::ImportWarning;
+use super::{NoteCounts, TitleCounts};
 use crate::cli::{ImportFolderAttachArgs, ImportFolderCommand};
 use crate::config::{ServeConfig, resolve_serve_config};
 use crate::server::SyncServer;
@@ -39,6 +40,9 @@ struct Rescanned {
     report: Option<FolderRescanReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// The `[limits]` rows the folder's read crossed; it was read whole.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<ImportWarning>,
 }
 
 #[derive(Serialize)]
@@ -162,7 +166,23 @@ fn rescan_all(vault: &oneiron::Vault) -> anyhow::Result<()> {
     let owner = crate::owner::local_owner(vault)?;
     for source in &sources {
         match rescan(vault, &owner, source) {
-            Ok(report) => {
+            Ok((report, warnings)) => {
+                for warning in &warnings {
+                    if let ImportWarning::LimitCrossed {
+                        row,
+                        limit,
+                        observed,
+                    } = warning
+                    {
+                        tracing::warn!(
+                            folder = %source.folder,
+                            row = *row,
+                            limit = *limit,
+                            observed = *observed,
+                            "folder source read past a [limits] row; read whole, and the row asks"
+                        );
+                    }
+                }
                 let moved = report.landed
                     + report.superseded
                     + report.proposed
@@ -196,24 +216,26 @@ fn rescanned(
     owner: &AuthenticatedOwner,
     source: &FolderSource,
 ) -> Rescanned {
-    let (report, error) = match rescan(vault, owner, source) {
-        Ok(report) => (Some(report), None),
-        Err(error) => (None, Some(format!("{error:#}"))),
+    let (report, warnings, error) = match rescan(vault, owner, source) {
+        Ok((report, warnings)) => (Some(report), warnings, None),
+        Err(error) => (None, Vec::new(), Some(format!("{error:#}"))),
     };
     Rescanned {
         folder: source.folder.clone(),
         report,
         error,
+        warnings,
     }
 }
 
 /// One rescan: the folder read as `import notes` reads it, the files the
-/// source includes, each against the vault and the ledger.
+/// source includes, each against the vault and the ledger; and the
+/// `[limits]` rows the read crossed.
 fn rescan(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
     source: &FolderSource,
-) -> anyhow::Result<FolderRescanReport> {
+) -> anyhow::Result<(FolderRescanReport, Vec<ImportWarning>)> {
     let folder = Path::new(&source.folder);
     // An unmounted or moved folder retracts nothing.
     anyhow::ensure!(
@@ -222,8 +244,10 @@ fn rescan(
         source.folder
     );
     let mut counts = NoteCounts::default();
-    let mut notes = super::read_folder(folder, &mut counts, MAX_FOLDER_BYTES)?;
-    notes.retain(|note| included(&source.include, &note.path));
+    let mut notes = super::read_folder(folder, &mut counts)?;
+    let warnings = super::crossed_rows(vault, &counts);
+    // A part goes with its file.
+    notes.retain(|note| included(&source.include, note.file()));
     let raw_hashes = notes
         .iter()
         .filter_map(|note| Some((note.path.clone(), note.raw_hash.clone()?)))
@@ -233,13 +257,19 @@ fn rescan(
         .iter()
         .map(|note| note.path.as_str())
         .collect::<HashSet<_>>();
-    // Only a file that is gone retracts: one the read passed over (too large,
-    // blank, hard-linked) is still there.
+    // Only a file that is gone retracts: one the read passed over (blank,
+    // hard-linked, unreadable) is still there. A continuation part names its
+    // file in its path; it retracts too when that file was read and its text
+    // no longer reaches the part.
     let missing = ledger
         .iter()
         .filter(|file| file.state != FolderFileState::Retracted)
         .filter(|file| !seen.contains(file.path.as_str()))
-        .filter(|file| std::fs::symlink_metadata(folder.join(&file.path)).is_err())
+        .filter(|file| {
+            let read_from = super::file_of(&file.path);
+            (read_from != file.path && seen.contains(read_from))
+                || std::fs::symlink_metadata(folder.join(read_from)).is_err()
+        })
         .map(|file| file.path.clone())
         .collect::<Vec<_>>();
     // A folder emptied of its last file retracts that file too (ARCH-0027).
@@ -290,7 +320,7 @@ fn rescan(
             markdown,
         });
     }
-    Ok(vault.rescan_folder_source(
+    let report = vault.rescan_folder_source(
         owner,
         FolderRescan {
             folder: source.folder.clone(),
@@ -300,7 +330,8 @@ fn rescan(
             missing,
             raw_hashes,
         },
-    )?)
+    )?;
+    Ok((report, warnings))
 }
 
 /// `path` as a source names it: canonical, a folder, UTF-8.
