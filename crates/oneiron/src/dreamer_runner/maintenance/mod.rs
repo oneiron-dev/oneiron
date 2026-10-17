@@ -31,6 +31,7 @@ pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
+mod room_upkeep;
 pub mod seal_checks;
 pub mod stewardship;
 #[cfg(test)]
@@ -196,6 +197,9 @@ pub(crate) fn execute(
         }
         calibration_asks::COACH_CALIBRATION_ASKS_FACET => {
             calibration_asks::run(ctx.vault)?;
+        }
+        coach::COACH_ROOM_UPKEEP_FACET => {
+            room_upkeep::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         _ => return Err(invalid()),
     }

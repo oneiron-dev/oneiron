@@ -1311,6 +1311,13 @@ then runs before the run's next step. Refusals carry these codes:
 - 409 `code_run_busy`: the run stayed mid-step or mid-action for those 5 seconds. Retry.
 - 409 `live_run_attached`: another credential is attached to this lease.
 
+An MCP client runs these actions with the `invoke_action` tool, on either MCP endpoint. Its
+arguments are `verb`, `args`, `idempotencyKey` and `liveRun`, the same fields as the HTTP body,
+and it names the handle on every call. It runs as the connector's own credential, so attach over
+HTTP with that credential, both calls on this device or both off it. A connector bound to a list
+of verbs needs both `invoke_action` and the verb on it. A connector narrowed to one world or facet
+is refused. A refusal's MCP error kind is its code above.
+
 A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
 `POST /v1/owner/weave/lens` return, for your credential:
 - `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
