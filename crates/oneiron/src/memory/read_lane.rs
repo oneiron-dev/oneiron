@@ -41,6 +41,17 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// The key every read verb on this handle reads under: its proof's, its
+    /// locality's and its room turn's. A verb hook a call fires reads
+    /// through it, capped by the hook's grant (ARCH-0080 §3).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_lane`] refuses.
+    pub fn read_key(&self) -> MemoryResult<ScopedReadActorKey> {
+        self.in_room_turn(self.actor_read_key()?)
+    }
+
     /// The bound actor's own read, without a bound room turn's ceiling: what
     /// its grants alone admit. A room read checks it beside membership; it
     /// never serves a row inside a turn.

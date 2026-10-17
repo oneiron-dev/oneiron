@@ -298,9 +298,23 @@ impl MemoryError {
 impl MemoryError {
     /// A verb hook's stop as the refusal a caller reads: a skip is the
     /// `INVALID_STATE` family with the hook's reason, an ask is
-    /// `PENDING_ASK`, a hidden result is `FORBIDDEN`. The typed stop rides in
+    /// `PENDING_ASK`, a hidden result is `FORBIDDEN`. A call settlement
+    /// already ran is `INVALID_STATE` at a door that cannot answer with its
+    /// result, and its own code when it failed. The typed stop rides in
     /// `hook`.
     fn verb_hook(stop: VerbHookStop) -> Self {
+        if let VerbHookStop::CompletedWithError { code, message, .. } = &stop {
+            return Self {
+                hook: Some(Box::new(stop.clone())),
+                ..Self::new(
+                    code,
+                    message.clone(),
+                    &[
+                        "This invocation already ran once its hook's ask was answered; call again with a new invocation.",
+                    ],
+                )
+            };
+        }
         let (code, suggestion) = match &stop {
             VerbHookStop::Skipped { .. } => (
                 MEMORY_CODE_INVALID_STATE,
@@ -313,6 +327,10 @@ impl MemoryError {
             VerbHookStop::Hidden { .. } => (
                 MEMORY_CODE_FORBIDDEN,
                 "A blocking verb hook failed, so this result stays hidden; retry later or ask the vault owner.",
+            ),
+            VerbHookStop::Completed { .. } | VerbHookStop::CompletedWithError { .. } => (
+                MEMORY_CODE_INVALID_STATE,
+                "This invocation already ran once its hook's ask was answered; its result rides in `hook`.",
             ),
         };
         Self {

@@ -1,12 +1,13 @@
 //! What a vault holds in memory for verb hooks: the process switch, the
-//! cached binding list, the sandbox, the loaded bodies and the invocations in
-//! flight. Nothing here is stored.
+//! cached binding list, the sandbox, the loaded bodies, the invocations in
+//! flight and the ids the doors claimed for their clients. Nothing here is
+//! stored.
 
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
 use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
@@ -27,6 +28,7 @@ thread_local! {
 }
 
 type InFlight = Arc<Mutex<HashMap<InvocationId, EntityId>>>;
+type Claims = Arc<Mutex<HashMap<InvocationId, Arc<ClaimSlot>>>>;
 
 /// The vault's verb-hook state.
 #[derive(Default)]
@@ -40,6 +42,8 @@ pub(crate) struct VerbHookState {
     bodies: Mutex<HashMap<String, Arc<str>>>,
     /// Invocations whose chain is running, with the actor that holds each.
     in_flight: InFlight,
+    /// Client-named invocations a door is serving, each with its call.
+    claims: Claims,
     /// The process's one sandbox: the host's, when it installed one before
     /// the first hooked call, else built on that call.
     runtime: OnceLock<std::result::Result<Arc<dyn HookBodyRuntime>, String>>,
@@ -175,7 +179,11 @@ impl VerbHookState {
         runtime.map(|runtime| runtime.as_deref().map_err(String::as_str))
     }
 
-    /// Marks `invocation` in flight for `actor`.
+    /// Marks `invocation` in flight for `actor`. The same actor's id in
+    /// flight is a nested boundary of one call: a concurrent request naming
+    /// it never reaches here, since each door that takes a client's id claims
+    /// it first ([`Vault::claim_invocation`]), and an id the engine mints is
+    /// its own.
     pub(super) fn enter(&self, invocation: InvocationId, actor: EntityId) -> Entered {
         let mut set = self
             .in_flight
@@ -192,6 +200,92 @@ impl VerbHookState {
                 }))
             }
         }
+    }
+}
+
+/// What a door saved of a call its client named: its reply's status and
+/// body, sent again to a duplicate of the call. The engine never reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InvocationOutcome {
+    pub status: u16,
+    pub body: serde_json::Value,
+}
+
+/// One claimed invocation: the call it names, and its reply once it ends.
+struct ClaimSlot {
+    /// BLAKE3 of the call: its caller and its canonical body.
+    body: [u8; 32],
+    /// `None` while the call runs; `Some(None)` once it ended with no reply
+    /// to share.
+    ended: Mutex<Option<Option<InvocationOutcome>>>,
+    woken: Condvar,
+}
+
+impl ClaimSlot {
+    /// Ends the call once, with `outcome`, and wakes every waiter.
+    fn end(&self, outcome: Option<InvocationOutcome>) {
+        let mut ended = self.ended.lock().unwrap_or_else(PoisonError::into_inner);
+        if ended.is_none() {
+            *ended = Some(outcome);
+        }
+        drop(ended);
+        self.woken.notify_all();
+    }
+}
+
+/// How a request naming an invocation meets the door's claims.
+pub enum InvocationEntry {
+    /// No request holds the id: this one runs the call.
+    Claimed(InvocationClaim),
+    /// Another request runs the same call: wait for its reply.
+    Busy(InvocationWait),
+    /// Another request holds the id for a different call.
+    Conflict,
+}
+
+/// Holds a client-named invocation for the request that runs it, until
+/// dropped. A drop without [`Self::finish`] tells each waiter the call left
+/// no reply.
+pub struct InvocationClaim {
+    claims: Claims,
+    invocation: InvocationId,
+    slot: Arc<ClaimSlot>,
+}
+
+impl InvocationClaim {
+    /// Saves the reply the door is about to send, a refusal included, and
+    /// wakes every request waiting on it.
+    pub fn finish(self, outcome: InvocationOutcome) {
+        self.slot.end(Some(outcome));
+    }
+}
+
+impl Drop for InvocationClaim {
+    fn drop(&mut self) {
+        self.claims
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.invocation);
+        self.slot.end(None);
+    }
+}
+
+/// A request waiting on another's run of the same call.
+pub struct InvocationWait(Arc<ClaimSlot>);
+
+impl InvocationWait {
+    /// The first call's reply, once it ends within `deadline`, blocking until
+    /// then. `None` when the deadline passes first, or the call ended with no
+    /// reply to share.
+    #[must_use]
+    pub fn outcome(self, deadline: Duration) -> Option<InvocationOutcome> {
+        let ended = self.0.ended.lock().unwrap_or_else(PoisonError::into_inner);
+        let (ended, _) = self
+            .0
+            .woken
+            .wait_timeout_while(ended, deadline, |ended| ended.is_none())
+            .unwrap_or_else(PoisonError::into_inner);
+        ended.clone().flatten()
     }
 }
 
@@ -244,6 +338,35 @@ impl Vault {
     /// has built its own, this does nothing.
     pub fn install_hook_runtime(&self, runtime: Arc<dyn HookBodyRuntime>) {
         let _ = self.verb_hook_state.runtime.set(Ok(runtime));
+    }
+
+    /// Claims `invocation`, which a client named, for the request that
+    /// carries it. `body` is the BLAKE3 of the call: its caller and its
+    /// canonical args. A door claims once, at its outermost point, and holds
+    /// the claim until it replies: the vault's in-flight set cannot tell a
+    /// concurrent request from a nested boundary, so the doors close it.
+    #[must_use]
+    pub fn claim_invocation(&self, invocation: InvocationId, body: [u8; 32]) -> InvocationEntry {
+        let claims = &self.verb_hook_state.claims;
+        let mut held = claims.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(slot) = held.get(&invocation) {
+            return if slot.body == body {
+                InvocationEntry::Busy(InvocationWait(Arc::clone(slot)))
+            } else {
+                InvocationEntry::Conflict
+            };
+        }
+        let slot = Arc::new(ClaimSlot {
+            body,
+            ended: Mutex::new(None),
+            woken: Condvar::new(),
+        });
+        held.insert(invocation, Arc::clone(&slot));
+        InvocationEntry::Claimed(InvocationClaim {
+            claims: Arc::clone(claims),
+            invocation,
+            slot,
+        })
     }
 
     /// Tells the verb hooks a binding or the switch changed, so the next

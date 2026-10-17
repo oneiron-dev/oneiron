@@ -429,7 +429,20 @@ pub struct Memory<'v> {
     /// The off-record session the host's request named
     /// (`in_off_record_session`): context, not authority.
     pub(super) off_record_session: Option<String>,
+    /// A host bound this surface for a caller its credential admitted
+    /// (`for_credential`); only that host verifies the credential again.
+    pub(super) credential: bool,
+    /// The door's own admission of a hook's rewritten args
+    /// (`with_rewrite_admit`).
+    pub(super) rewrite_admit: Option<RewriteAdmit>,
 }
+
+/// A door's admission of a verb hook's rewritten args, run on the verb's name
+/// and the new args after the row's own input check, as if the caller sent
+/// them (ARCH-0080 §3). The reason refuses the rewrite.
+pub type RewriteAdmit = std::sync::Arc<
+    dyn Fn(&str, &serde_json::Value) -> std::result::Result<(), String> + Send + Sync,
+>;
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
 /// surface's claim doors stamp in place of the caller's declared source.
@@ -501,6 +514,8 @@ impl Vault {
             invocation: None,
             task_host: None,
             off_record_session: None,
+            credential: false,
+            rewrite_admit: None,
         }
     }
 
@@ -536,6 +551,8 @@ impl Vault {
             invocation: None,
             task_host: None,
             off_record_session: None,
+            credential: false,
+            rewrite_admit: None,
         }
     }
 }
@@ -580,6 +597,8 @@ impl<'v> Memory<'v> {
                 invocation: self.invocation,
                 task_host: self.task_host.clone(),
                 off_record_session: self.off_record_session.clone(),
+                credential: self.credential,
+                rewrite_admit: self.rewrite_admit.clone(),
             },
         })
     }
@@ -657,6 +676,30 @@ impl Memory<'_> {
     #[must_use]
     pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
         self.invocation
+    }
+
+    /// Marks this surface as a caller's whose credential this host admitted.
+    /// It grants and narrows nothing: a verb hook's ask on its call saves no
+    /// way to run the call without the caller, so only the caller's retry,
+    /// which the host verifies again, resumes it (ARCH-0080 §3 Ask).
+    #[must_use]
+    pub fn for_credential(mut self) -> Self {
+        self.credential = true;
+        self
+    }
+
+    /// Binds the door's admission of a hook's rewritten args: a rewrite the
+    /// door would refuse from the caller is refused from a hook too. A room
+    /// turn opened on this surface keeps it.
+    #[must_use]
+    pub fn with_rewrite_admit(mut self, admit: RewriteAdmit) -> Self {
+        self.rewrite_admit = Some(admit);
+        self
+    }
+
+    /// The door's admission of rewritten args a host bound, if any.
+    pub(crate) fn rewrite_admit(&self) -> Option<&RewriteAdmit> {
+        self.rewrite_admit.as_ref()
     }
 
     /// Binds the running agent attempt whose TASK creates this surface makes
@@ -780,6 +823,43 @@ impl Memory<'_> {
     /// The room turn this handle is bound to, if any.
     pub(crate) fn room_turn(&self) -> Option<&crate::claim::RoomTurnCeiling> {
         self.room_turn.as_ref()
+    }
+
+    /// The sitting and the room turn's room a host bound, when nothing else
+    /// on this surface is something a resumed call could not rebuild: no
+    /// credential or read proof, on this device, a room's own turn rather
+    /// than a thread's, and no owner authorship, host origin, machine signer,
+    /// producer list, birth position, TASK host, off-record session or door
+    /// rewrite admission. A verb hook's ask saves
+    /// them, so settlement runs the call again as this caller (ARCH-0080 §3
+    /// Ask); `None` resumes only on the caller's retry.
+    pub(crate) fn resume_bounds(
+        &self,
+    ) -> Option<(
+        Option<crate::session_lifecycle::SessionKey>,
+        Option<EntityId>,
+    )> {
+        let plain = !self.credential
+            && self.read_proof.is_none()
+            && self.locality == crate::claim::CallerLocality::OnDevice
+            && self
+                .room_turn
+                .as_ref()
+                .is_none_or(|turn| turn.branch.is_none())
+            && self.owner_authorship.is_none()
+            && self.host_origin.is_none()
+            && self.machine_signer.is_none()
+            && self.producers.is_none()
+            && self.birth_position == crate::federation::record_scope::BirthPosition::default()
+            && self.task_host.is_none()
+            && self.off_record_session.is_none()
+            && self.rewrite_admit.is_none();
+        plain.then(|| {
+            (
+                self.session_key,
+                self.room_turn.as_ref().map(|turn| turn.room),
+            )
+        })
     }
 
     /// The bound actor entity id.

@@ -157,7 +157,7 @@ pub(crate) fn eligible_room_speaker_in(
 }
 
 /// The project a project home room belongs to; `None` for any other room.
-fn room_project_in(
+pub(crate) fn room_project_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,

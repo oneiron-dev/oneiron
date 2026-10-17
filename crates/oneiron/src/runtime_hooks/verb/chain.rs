@@ -3,6 +3,7 @@
 //! a chain's receipts, blocks and intents once it resolves, even when a Skip
 //! or an Ask stops the verb.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -16,14 +17,14 @@ use crate::runtime_hooks::lineage::{self, LineageLink};
 use crate::runtime_hooks::outcome::{BlockRequest, HookOutcome};
 use crate::runtime_hooks::runner::{Verdict, block_id, bounded, judge};
 use crate::runtime_hooks::store::{self, HookIntent, HookIntentState, HookRunState, RunKey};
-use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read};
+use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::state::{Carry, Entered, HookDepth, depth};
 use super::{
-    InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, ask, redact,
-    served,
+    InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume, ask,
+    redact, served,
 };
 
 /// Receipts the input's tail carries.
@@ -40,7 +41,7 @@ type Stopped<T> = std::result::Result<T, VerbHookStop>;
 /// Whether a verb hook may run on `verb`: no when hooks are off or
 /// suppressed, at hook depth 1, or when no binding's verb glob takes it. The
 /// cached binding list answers; one that does not read answers yes, so the
-/// chain reports the error.
+/// chain reports the error. Scope is not read here: a scoped binding may run.
 pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
     let state = &vault.verb_hook_state;
     if state.suppressed() || depth() > 0 {
@@ -61,20 +62,22 @@ pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
 /// The pre chain of `call`. It passes through with hooks off or suppressed,
 /// at hook depth 1, inside the same actor's call of this invocation, without
 /// the sandbox, and when no binding matches; the cached binding list keeps
-/// that last case free of reads.
+/// that last case free of reads. `resume` is how settlement could run the
+/// call again without its caller: an ask saves it.
 pub(super) fn pre(
     vault: &Vault,
     call: VerbCall,
     args: Value,
     check: VerbArgsCheck<'_>,
+    resume: Option<&VerbResume>,
 ) -> Result<Stopped<VerbHookPre>> {
     let state = &vault.verb_hook_state;
     if state.suppressed() || depth() > 0 {
         return through(call, args);
     }
     let bindings = state.bindings(vault)?;
-    let hooks = matching(&bindings.verb, HookPhase::Pre, &call);
-    if hooks.is_empty() && matching(&bindings.verb, HookPhase::Post, &call).is_empty() {
+    let hooks = matching(vault, &bindings.verb, HookPhase::Pre, &call)?;
+    if hooks.is_empty() && matching(vault, &bindings.verb, HookPhase::Post, &call)?.is_empty() {
         return through(call, args);
     }
     let Some(runtime) = state.runtime() else {
@@ -96,13 +99,14 @@ pub(super) fn pre(
         }));
     }
     let _depth = HookDepth::enter();
-    let (start, args) = match ask::retry(vault, &call)? {
-        ask::Retry::Fresh => (0, args),
+    let (start, args, token) = match ask::retry(vault, &call, resume)? {
+        ask::Retry::Fresh => (0, args, None),
         ask::Retry::Stop(stop) => return Ok(Err(stop)),
         ask::Retry::Resume {
             binding,
             position,
             args,
+            token,
         } => (
             hooks
                 .iter()
@@ -110,10 +114,11 @@ pub(super) fn pre(
                 .unwrap_or(position)
                 .saturating_add(1),
             args,
+            Some(token),
         ),
     };
     let ended = Chain::new(vault, &call, HookPhase::Pre, runtime, carry.now)
-        .pre(&hooks, start, args, check)?;
+        .pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
         call,
         args,
@@ -133,7 +138,7 @@ pub(super) fn post(vault: &Vault, pre: VerbHookPre, result: Value) -> Result<Sto
         return Ok(Ok(result));
     }
     let bindings = state.bindings(vault)?;
-    let hooks = matching(&bindings.verb, HookPhase::Post, &call);
+    let hooks = matching(vault, &bindings.verb, HookPhase::Post, &call)?;
     if hooks.is_empty() {
         return Ok(Ok(result));
     }
@@ -156,33 +161,45 @@ fn through(call: VerbCall, args: Value) -> Result<Stopped<VerbHookPre>> {
     }))
 }
 
+/// The bindings that take `call` in `phase`. A storage error reading a
+/// scope fails the chain, as other binding reads do.
 fn matching<'b>(
+    vault: &Vault,
     bindings: &'b [(EntityId, PackHookBinding)],
     phase: HookPhase,
     call: &VerbCall,
-) -> Vec<Hook<'b>> {
-    bindings
-        .iter()
-        .filter(|(_, binding)| takes(&binding.selector, phase, call))
-        .map(|(id, binding)| (*id, binding))
-        .collect()
+) -> Result<Vec<Hook<'b>>> {
+    let mut hooks = Vec::new();
+    for (id, binding) in bindings {
+        if takes(vault, &binding.selector, phase, call)? {
+            hooks.push((*id, binding));
+        }
+    }
+    Ok(hooks)
 }
 
 /// Whether `selector` takes `call` in `phase`: a verb glob, the class, and a
-/// scope the call's scope is, or sits under (`<scope>/…`).
-fn takes(selector: &HookSelector, phase: HookPhase, call: &VerbCall) -> bool {
-    selector.phase == phase
-        && selector
+/// scope that holds the call's ([`scope::call_within`]). The scope is read
+/// last, so an unscoped binding reads nothing.
+fn takes(
+    vault: &Vault,
+    selector: &HookSelector,
+    phase: HookPhase,
+    call: &VerbCall,
+) -> Result<bool> {
+    if selector.phase != phase
+        || !selector
             .verbs
             .iter()
             .any(|glob| filter::glob_match(glob, &call.verb))
-        && (selector.actors.is_empty() || selector.actors.contains(&call.class))
-        && selector.scope.as_deref().is_none_or(|scope| {
-            call.scope.as_deref().is_some_and(|own| {
-                own.strip_prefix(scope)
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-            })
-        })
+        || !(selector.actors.is_empty() || selector.actors.contains(&call.class))
+    {
+        return Ok(false);
+    }
+    match selector.scope.as_deref() {
+        None => Ok(true),
+        Some(wanted) => scope::call_within(vault, wanted, call),
+    }
 }
 
 /// One chain: its call and phase, and what its runs leave to commit.
@@ -198,6 +215,10 @@ struct Chain<'c> {
     blocks: Vec<(EntityId, HookBlock, Vec<LineageLink>)>,
     /// Queued outcomes, each with the proposal it lands, if any.
     intents: Vec<(RunKey, HookIntent, Option<EntityId>)>,
+    /// The proceed answer a resumed pre chain uses up in its commit.
+    token: Option<ask::AskToken>,
+    /// Set when that answer was used meanwhile: nothing committed.
+    used: Cell<bool>,
 }
 
 /// One run, as its receipt tells it.
@@ -266,19 +287,36 @@ impl<'c> Chain<'c> {
             runs: Vec::new(),
             blocks: Vec::new(),
             intents: Vec::new(),
+            token: None,
+            used: Cell::new(false),
         }
     }
 
     /// Runs the pre-hooks from `start`. Rewrites chain; the first Skip or
     /// Ask ends the chain. A failed blocking hook sends a write to an ask and
-    /// hides a read.
+    /// hides a read. A chain resumed on `token` checks the saved args again
+    /// first, as the caller's own may be checked under other authority now,
+    /// and uses the answer up in its commit; `resume` goes with a later ask.
     fn pre(
         mut self,
         hooks: &[Hook<'c>],
         start: usize,
         mut args: Value,
         check: VerbArgsCheck<'_>,
+        token: Option<ask::AskToken>,
+        resume: Option<&VerbResume>,
     ) -> Result<Stopped<Value>> {
+        if let Some(token) = &token
+            && let Err(reason) = check(&args)
+        {
+            let stop = VerbHookStop::Skipped {
+                hook: token.hook.clone(),
+                reason: bounded(&format!("the saved args are refused now: {reason}")),
+            };
+            self.token = Some(token.clone());
+            return self.end_pre(Err(stop));
+        }
+        self.token = token;
         for (index, &(id, binding)) in hooks.iter().enumerate().skip(start) {
             let stop = match self.run(id, binding, &args, None, Some(check))? {
                 Some(HookOutcome::Rewrite { args: next }) => {
@@ -303,7 +341,7 @@ impl<'c> Chain<'c> {
                             self.call.verb
                         )
                     };
-                    match self.ask(index, (id, binding), &args, &label)? {
+                    match self.ask(index, (id, binding), &args, &label, resume)? {
                         Ok(pending) => return Ok(Err(pending)),
                         Err(refusal) => self.ask_refused(binding, &refusal),
                     }
@@ -323,7 +361,7 @@ impl<'c> Chain<'c> {
                             hook_name(binding),
                             self.call.verb
                         );
-                        match self.ask(index, (id, binding), &args, &label)? {
+                        match self.ask(index, (id, binding), &args, &label, resume)? {
                             Ok(pending) => return Ok(Err(pending)),
                             Err(refusal) => {
                                 self.fail_safe("skipped");
@@ -340,12 +378,33 @@ impl<'c> Chain<'c> {
                 None => None,
             };
             if let Some(stop) = stop {
-                self.commit()?;
-                return Ok(Err(stop));
+                return self.end_pre(Err(stop));
             }
         }
-        self.commit()?;
-        Ok(Ok(args))
+        self.end_pre(Ok(args))
+    }
+
+    /// Commits the pre chain's rows and ends it with `ended`. A resumed
+    /// chain whose answer another try used meanwhile commits nothing and
+    /// ends Skipped.
+    fn end_pre(&self, ended: Stopped<Value>) -> Result<Stopped<Value>> {
+        match self.commit() {
+            Ok(()) => Ok(ended),
+            Err(_) if self.used.get() => Ok(Err(self.used_stop())),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The Skipped a resumed chain ends with when its answer was used.
+    fn used_stop(&self) -> VerbHookStop {
+        VerbHookStop::Skipped {
+            hook: self
+                .token
+                .as_ref()
+                .map(|token| token.hook.clone())
+                .unwrap_or_default(),
+            reason: ask::USED.to_owned(),
+        }
     }
 
     /// Runs the post-hooks over the caller's view of `result`. Redacts
@@ -393,12 +452,21 @@ impl<'c> Chain<'c> {
         let key = run_key(self.call.invocation, id, self.phase);
         let input = self.input(id, binding, args, result)?;
         // The caller's lane, narrowed to the hook's grant: its reader's lane
-        // when that is someone else, and its predicates and worlds.
+        // when that is someone else, and its predicates and worlds. A caller
+        // whose door carried its key reads under it; a host's own call reads
+        // as its actor.
         let grant = grant::effective_grant(self.vault, id, binding)?;
         let caller = self
             .vault
             .memory(self.call.actor, filter::edge_class(self.call.class));
-        let lane = caller.read_lane(ClaimReadStatus::Recorded).ok();
+        let lane = match &self.call.reader {
+            Some(key) => Some(
+                self.vault
+                    .scoped_read(key.clone())
+                    .with_claim_status(ClaimReadStatus::Recorded),
+            ),
+            None => caller.read_lane(ClaimReadStatus::Recorded).ok(),
+        };
         let reader = (grant.reader != self.call.actor).then(|| {
             self.vault
                 .memory(grant.reader, filter::edge_class(grant.reader_class))
@@ -587,23 +655,31 @@ impl<'c> Chain<'c> {
     }
 
     /// Opens the asking hook's ask; on success the chain's rows commit with
-    /// the saved call.
+    /// the saved call and its `resume` target, and a resumed chain's old
+    /// answer is used up first in the same write. When that answer was used
+    /// meanwhile, nothing commits and the stop is the used Skip.
     fn ask(
         &self,
         index: usize,
         hook: Hook<'c>,
         args: &Value,
         label: &str,
+        resume: Option<&VerbResume>,
     ) -> Result<std::result::Result<VerbHookStop, String>> {
-        ask::open(
+        let opened = ask::open(
             self.vault,
             self.call,
             hook,
             index,
             args,
             label,
+            resume,
             &|txn: &mut heed::RwTxn<'_>| self.write_in_txn(txn),
-        )
+        );
+        if self.used.get() {
+            return Ok(Ok(self.used_stop()));
+        }
+        opened
     }
 
     /// An Ask outcome whose ask did not open is a failed run: a blocking hook
@@ -641,8 +717,10 @@ impl<'c> Chain<'c> {
         }
     }
 
+    /// Commits the chain's rows. A resumed chain commits even with no run
+    /// after the asking hook: its write uses the answer up.
     fn commit(&self) -> Result<()> {
-        if self.runs.is_empty() {
+        if self.runs.is_empty() && self.token.is_none() {
             return Ok(());
         }
         self.vault
@@ -650,9 +728,16 @@ impl<'c> Chain<'c> {
     }
 
     /// The chain's receipts, blocks and intents. A retried call writes each
-    /// block and intent once.
+    /// block and intent once. A resumed chain uses its answer up first; one
+    /// another try used fails the write, so none of it commits.
     fn write_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         let vault = self.vault;
+        if let Some(token) = &self.token
+            && !ask::consume_in_txn(vault, txn, token)?
+        {
+            self.used.set(true);
+            return Err(ask::used_error());
+        }
         for run in &self.runs {
             store::RECEIPTS.put(&vault.store, txn, &run.key, &self.receipt(run))?;
         }
