@@ -716,15 +716,20 @@ impl PipelineBuilder<'_> {
             // one. No multiplier applies here: the pack's assembly applies
             // those once. Every other row keeps its place and score.
             {
-                let policy = crate::context_pack::source_ranking::SourceRankingPolicy::default();
-                let body =
-                    |id: &crate::EntityId| claim_gate.decisions.get(id).and_then(Option::as_ref);
-                crate::context_pack::source_ranking::clamp_order(&mut scores, &policy, |row| {
-                    body(&row.id)
+                use crate::context_pack::source_ranking::{
+                    SourceRankingPolicy, clamp_order_by, clamp_scores, question_key,
+                };
+                let policy = SourceRankingPolicy::default();
+                clamp_order_by(&mut scores, &policy, |row| {
+                    let body = claim_gate.decisions.get(&row.id)?.as_ref()?;
+                    Some((body.source?, question_key(body)?))
                 })?;
-                let bodies: Vec<_> = scores.iter().map(|row| body(&row.id)).collect();
+                let bodies: Vec<_> = scores
+                    .iter()
+                    .map(|row| claim_gate.decisions.get(&row.id).and_then(Option::as_ref))
+                    .collect();
                 let mut ranked: Vec<f32> = scores.iter().map(|row| row.score).collect();
-                crate::context_pack::source_ranking::clamp_scores(&bodies, &mut ranked, &policy)?;
+                clamp_scores(&bodies, &mut ranked, &policy)?;
                 for (row, score) in scores.iter_mut().zip(ranked) {
                     row.score = score;
                 }
