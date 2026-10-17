@@ -70,8 +70,8 @@ pub(super) struct LiveMirror {
 
 impl WindowManager {
     /// Queues `rows`, just committed here, for the loaded windows that hold
-    /// them, and starts the mirror thread on first use. `edited` rows came
-    /// from a local write, whose bytes replace the carrier a doc holds.
+    /// them, and starts the mirror thread on first use. When `edited`, a
+    /// local write made them, and their bytes replace the carrier a doc holds.
     pub(crate) fn note_committed_rows(self: &Arc<Self>, rows: BTreeSet<EntityId>, edited: bool) {
         if rows.is_empty() {
             return;
