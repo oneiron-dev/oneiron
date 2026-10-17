@@ -16120,13 +16120,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -16183,7 +16183,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "QuoteAnchor",
@@ -16192,7 +16192,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 30,
       "enum": 1,
       "struct": 1
      }
@@ -44484,10 +44484,10 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -44500,6 +44500,20 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealedBundleRelay"
+     ],
+     "path": "src/sync/client/residence/bundle.rs",
+     "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -45324,7 +45338,7 @@
       "const": 2,
       "crate-vis": 7,
       "fn": 13,
-      "re-export": 6,
+      "re-export": 9,
       "struct": 2
      }
     },
@@ -45353,6 +45367,37 @@
      "surface": {
       "const": 2,
       "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealedBundleEntry",
+      "SealedBundleObject",
+      "SealedBundleStage"
+     ],
+     "path": "src/sync/residence/bundle.rs",
+     "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 12,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealedBundleTake",
+      "SealedKitRestore"
+     ],
+     "path": "src/sync/residence/bundle_payload.rs",
+     "purpose": "What the vault's sealed cloud bundle carries (FIX 922 PR 2): the base section and each cloud-bound world's…",
+     "surface": {
+      "fn": 3,
       "struct": 2
      }
     },
@@ -50518,7 +50563,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2,
       "struct": 1
      }
@@ -51083,16 +51128,17 @@
       "OfferCard",
       "OfferDraft",
       "OfferState",
+      "OfferVoteTally",
       "OffersPage",
       "OffersRequest"
      ],
      "path": "src/workspace_roster/rooms/offers.rs",
      "purpose": "Offer cards (OF-530): an agent asks to join a room or one of its threads by a card, never by a turn…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 3,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -51273,7 +51319,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "OpenedBundleSection",
@@ -51289,7 +51335,8 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "const": 3,
-      "fn": 33,
+      "crate-vis": 6,
+      "fn": 34,
       "struct": 8
      }
     },
@@ -51322,6 +51369,7 @@
      "path": "src/world_keys/content_window.rs",
      "purpose": "The window side of sealed world content: what a reader seals from a private world's window, and how a reader…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 8
      }
@@ -53783,7 +53831,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 161,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53960,7 +54008,7 @@
     "world_keys": {
      "files": 21,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     },
@@ -53972,9 +54020,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 180,
+   "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3277,
+   "source_files": 3280,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74085,6 +74133,7 @@
       "OfferSettlement",
       "OfferState",
       "OfferVoteRequest",
+      "OfferVoteTally",
       "OffersPage",
       "OffersRequest",
       "OfficeBodyArtifactRequest",
@@ -74635,7 +74684,7 @@
      "purpose": "—",
      "surface": {
       "enum": 300,
-      "struct": 781
+      "struct": 782
      }
     },
     {
