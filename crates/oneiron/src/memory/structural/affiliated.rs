@@ -201,3 +201,54 @@ impl Memory<'_> {
         })
     }
 }
+
+/// Appends one private diary NOTE authored by `agent`, inside the caller's
+/// write transaction (OF-530: a declined offer card lands in the agent's own
+/// diary). It runs the typed content program [`Memory::author_note`] runs for
+/// a diary, `NoteKind::Diary` under `NoteScope::ActorPrivate { owner_ref }`
+/// with `owner_ref` the agent: the agent authors it and owns it, the NOTE
+/// links `About` its owner, and the actor content writer checks the agent's
+/// standing at each effect. Only offer settlement calls it.
+pub(crate) fn append_agent_diary_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    agent: WriteActor,
+    markdown: String,
+    at: u64,
+) -> crate::error::Result<crate::EntityId> {
+    let owner_ref = agent.entity_ref();
+    let raw = vault
+        .get_raw_in(txn, &owner_ref)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(crate::error::Error::CorruptedIndex("diary owner header"))?;
+    crate::provenance::validate_actor_class(header.entity_type, agent.actor_class())?;
+    let body = encode_note_body(&NoteBody {
+        kind: NoteKind::Diary,
+        author_ref: owner_ref,
+        markdown,
+        source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
+    })?;
+    let note_id = vault.store.clock.entity_id()?;
+    let occurred = TimeRange { start: at, end: at };
+    let mut content = crate::federation::ActorContentTxn::new(vault, txn, agent)?;
+    content.apply_batch(
+        vault
+            .batch_in()
+            .put_authored_note(&note_id, &owner_ref, occurred, at, &body)
+            .edge(
+                &note_id,
+                EdgeKind::AuthoredBy,
+                &owner_ref,
+                registered_edge_weight(EdgeKind::AuthoredBy),
+            )
+            .edge(
+                &note_id,
+                EdgeKind::About,
+                &owner_ref,
+                registered_edge_weight(EdgeKind::About),
+            ),
+    )?;
+    content.finish()?;
+    Ok(note_id)
+}

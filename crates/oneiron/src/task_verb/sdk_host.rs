@@ -370,7 +370,9 @@ pub struct AiVerdictRequest {
     /// An image the question reads, by its view handle (`<asset>@<hash>`):
     /// a screenshot, as an evidence ref. Read under the caller's own scoped
     /// read; the question names it as `image`. An image call starts at the
-    /// Local-vision rung.
+    /// Local-vision rung. In a code run, a `blake3:` ref names a screenshot
+    /// the run's browser holds, read from that browser as an evidence ref on
+    /// the run.
     #[serde(default)]
     pub image: Option<String>,
     /// Find the question's target in `image`: a Box answer (none when the
