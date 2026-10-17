@@ -15,7 +15,7 @@ use super::{
     OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
     OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, OfficeRecalcZone,
     ProposalSettleRequest, ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp,
-    XlsxPreview, XlsxStyle,
+    XlsxPreview, XlsxStyle, XlsxTable,
 };
 use crate::batch::secret_scan::LiftedKeys;
 use crate::edge::EdgeActorClass;
@@ -270,6 +270,8 @@ pub struct XlsxSheetView {
     pub name: String,
     pub cells: Vec<BodyCell>,
     pub locked: Vec<XlsxArea>,
+    /// Its tables, each with its header and totals rows.
+    pub tables: Vec<XlsxTable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -335,6 +337,7 @@ impl From<XlsxBody> for XlsxBodyView {
                     name: sheet.name,
                     cells: sheet.cells.into_values().collect(),
                     locked: sheet.locked,
+                    tables: sheet.tables,
                 })
                 .collect(),
             names: body.names.into_values().collect(),

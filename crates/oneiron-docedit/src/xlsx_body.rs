@@ -1,7 +1,7 @@
 //! The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by
 //! sheet and address"). A read feeds the import: each worksheet's cells with
-//! their values, formulas and formats, the defined names and the workbook's
-//! cell formats. The projection writes a body's changes into the imported
+//! their values, formulas and formats and its tables, the defined names and
+//! the workbook's cell formats. The projection writes a body's changes into the imported
 //! package, rebuilding only the rows and names it touches, and writes every
 //! formula without a cached value; the engine then recalculates the package,
 //! or [`mark_full_calc`] has the opening application do it. A sheet layout
@@ -19,8 +19,8 @@ use crate::ooxml::{
 };
 use crate::retained_opc::{self, Limits, Package};
 use crate::xlfn::{storage_form, ui_form};
-use crate::xlsx_shift::shift_formula;
 pub use crate::xlsx_shift::{SheetFate, XlsxAxis, XlsxAxisEdit, retarget_sheets, shift_axis};
+use crate::xlsx_shift::{drop_table_columns, shift_formula};
 use crate::xlsx_styles::write_formats;
 pub use crate::xlsx_styles::{
     XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat, check_format,
@@ -41,6 +41,8 @@ const WORKSHEET_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
 const WORKSHEET_KIND: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
+const EXTENDED_PROPERTIES: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
 /// The elements whose text is a formula: cells, rules and validations,
 /// chart ranges, table columns.
 const FORMULA_ELEMENTS: &[&str] = &[
@@ -84,6 +86,7 @@ pub struct XlsxSheet {
     /// Ranges the body may not write, stored cell or not: array formula and
     /// data table ranges, and table header and totals rows.
     pub locked: Vec<XlsxArea>,
+    pub tables: Vec<XlsxTable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -179,6 +182,143 @@ impl XlsxArea {
         }
         format!("{first}:{}", a1(self.last.0, self.last.1))
     }
+}
+
+/// A table on a worksheet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct XlsxTable {
+    /// The name formulas call it by (its `displayName`).
+    pub name: String,
+    /// Its range's 1-based `(column, row)` corners, header and totals rows
+    /// included.
+    pub first: (u32, u32),
+    pub last: (u32, u32),
+    /// Its header rows at the top of the range (0 or 1) and totals rows at
+    /// the bottom.
+    pub header_rows: u32,
+    pub totals_rows: u32,
+    /// Its columns' names, left to right.
+    pub columns: Vec<String>,
+    /// A worksheet table. A query or XML-mapped table takes its columns from
+    /// its source, so no column edit goes inside it.
+    pub worksheet: bool,
+}
+
+/// A table after a row or column edit to its sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XlsxTableShift {
+    pub table: XlsxTable,
+    /// The names of the columns the edit deleted from it.
+    pub deleted: Vec<String>,
+    /// The columns the edit inserted inside it: each one's sheet column and
+    /// name.
+    pub inserted: Vec<(u32, String)>,
+}
+
+impl XlsxTable {
+    /// The table after `edit`, as Excel moves it: a column edit inside its
+    /// range adds or removes its columns, an inserted one taking the first
+    /// free `ColumnN` name, and one at or past either edge only moves it.
+    /// `None` when the edit deletes all of it.
+    #[must_use]
+    pub fn shifted(&self, edit: &XlsxAxisEdit) -> Option<XlsxTableShift> {
+        let (first, last) = edit.area(self.first, self.last)?;
+        let mut table = Self {
+            first,
+            last,
+            ..self.clone()
+        };
+        let (mut deleted, mut inserted) = (Vec::new(), Vec::new());
+        // A table whose columns do not match its range refuses at export.
+        let matched = self.columns.len() == (self.last.0 - self.first.0 + 1) as usize;
+        if let Some(at) = column_span(self.first.0, self.last.0, edit).filter(|_| matched) {
+            if edit.delete {
+                deleted = table.columns.drain(at).collect();
+            } else {
+                let names = free_column_names(&self.columns, edit.count);
+                for (offset, name) in names.iter().enumerate() {
+                    table.columns.insert(at.start + offset, name.clone());
+                }
+                inserted = (edit.at..).zip(names).collect();
+            }
+        }
+        Some(XlsxTableShift {
+            table,
+            deleted,
+            inserted,
+        })
+    }
+
+    /// The row its header is on, when it has one.
+    #[must_use]
+    pub fn header_row(&self) -> Option<u32> {
+        (self.header_rows > 0).then_some(self.first.1)
+    }
+}
+
+/// Where in a table spanning columns `left..=right` a column edit goes in or
+/// deletes from, as indices into its columns; `None` when the edit only
+/// moves the table or deletes all of it.
+fn column_span(left: u32, right: u32, edit: &XlsxAxisEdit) -> Option<std::ops::Range<usize>> {
+    if edit.axis != XlsxAxis::Column {
+        return None;
+    }
+    if edit.delete {
+        let (low, high) = (edit.at.max(left), (edit.at + edit.count - 1).min(right));
+        if low > high || (low == left && high == right) {
+            return None;
+        }
+        return Some((low - left) as usize..(high - left + 1) as usize);
+    }
+    if edit.at <= left || edit.at > right {
+        return None;
+    }
+    let at = (edit.at - left) as usize;
+    Some(at..at)
+}
+
+/// `count` names for new table columns, as Excel gives them: `Column1`,
+/// `Column2` and on, past those `taken` (without case).
+fn free_column_names(taken: &[String], count: u32) -> Vec<String> {
+    let mut held: HashSet<String> = taken.iter().map(|name| name.to_lowercase()).collect();
+    let mut names = Vec::with_capacity(count as usize);
+    let mut n = 0;
+    while names.len() < count as usize {
+        n += 1;
+        let name = format!("Column{n}");
+        if held.insert(name.to_lowercase()) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// `formula` after a row or column edit to worksheet `sheet`: its references
+/// moved by [`shift_axis`], then its structured references to the columns
+/// the edit deleted from a table rewritten as Excel does, a reference to a
+/// deleted column reading `#REF!` and a column span shrinking. `dropped`
+/// holds each table that lost columns, as it was before the edit, with the
+/// names it lost. `None` when nothing changed.
+#[must_use]
+pub fn shift_axis_formula(
+    formula: &str,
+    home: Option<&str>,
+    sheet: &str,
+    edit: &XlsxAxisEdit,
+    dropped: &[(XlsxTable, Vec<String>)],
+) -> Option<String> {
+    let mut out = shift_axis(formula, home, sheet, edit);
+    for (table, deleted) in dropped {
+        if let Some(next) = drop_table_columns(
+            out.as_deref().unwrap_or(formula),
+            &table.name,
+            &table.columns,
+            deleted,
+        ) {
+            out = Some(next);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -279,6 +419,7 @@ pub fn read_xlsx_cells(bytes: &[u8], limits: Limits) -> Result<XlsxBook> {
                 name: name.clone(),
                 cells,
                 locked,
+                tables: book.tables(part)?,
             });
         }
     }
@@ -945,27 +1086,13 @@ impl Book {
                 None => group.complete = false,
             }
         }
-        for rel in self
-            .package
-            .relationships(part)?
-            .iter()
-            .filter(|rel| !rel.external && rel.kind.ends_with("/table"))
-        {
-            let table = parse(&self.package, &rel.target)?;
-            table
-                .root(SML, "table")
-                .map_err(|_| refused("an unreadable table part"))?;
-            let node = &table.nodes[0];
-            let range = node
-                .attr("ref")
-                .and_then(|reference| XlsxArea::parse(reference, XlsxLock::TableRow))
-                .ok_or(refused("a table has no range"))?;
-            let count = |name: &str, default: u32| {
-                node.attr(name)
-                    .and_then(|count| count.trim().parse::<u32>().ok())
-                    .unwrap_or(default)
+        for table in self.tables(part)? {
+            let range = XlsxArea {
+                first: table.first,
+                last: table.last,
+                lock: XlsxLock::TableRow,
             };
-            let (header, totals) = (count("headerRowCount", 1), count("totalsRowCount", 0));
+            let (header, totals) = (table.header_rows, table.totals_rows);
             if header > 0 {
                 areas.push(XlsxArea {
                     last: (range.last.0, (range.first.1 + header - 1).min(range.last.1)),
@@ -991,6 +1118,56 @@ impl Book {
             }
         }
         Ok((cells, areas, groups))
+    }
+
+    /// A worksheet's tables.
+    fn tables(&self, part: &str) -> Result<Vec<XlsxTable>> {
+        let mut tables = Vec::new();
+        for rel in self
+            .package
+            .relationships(part)?
+            .iter()
+            .filter(|rel| !rel.external && rel.kind.ends_with("/table"))
+        {
+            let table = parse(&self.package, &rel.target)?;
+            table
+                .root(SML, "table")
+                .map_err(|_| refused("an unreadable table part"))?;
+            let node = &table.nodes[0];
+            let range = node
+                .attr("ref")
+                .and_then(|reference| XlsxArea::parse(reference, XlsxLock::TableRow))
+                .ok_or(refused("a table has no range"))?;
+            let count = |name: &str, default: u32| {
+                node.attr(name)
+                    .and_then(|count| count.trim().parse::<u32>().ok())
+                    .unwrap_or(default)
+            };
+            let columns = match table.child(0, SML, "tableColumns")? {
+                Some((list, _)) => table
+                    .children(list)
+                    .filter(|(_, node)| node.is(SML, "tableColumn"))
+                    .map(|(_, node)| node.attr("name").unwrap_or_default().to_owned())
+                    .collect(),
+                None => Vec::new(),
+            };
+            tables.push(XlsxTable {
+                name: node
+                    .attr("displayName")
+                    .or_else(|| node.attr("name"))
+                    .unwrap_or_default()
+                    .to_owned(),
+                first: range.first,
+                last: range.last,
+                header_rows: count("headerRowCount", 1),
+                totals_rows: count("totalsRowCount", 0),
+                columns,
+                worksheet: node
+                    .attr("tableType")
+                    .is_none_or(|kind| kind == "worksheet"),
+            });
+        }
+        Ok(tables)
     }
 
     /// Write a sheet layout: rename, reorder, add and delete worksheets in the
@@ -1210,7 +1387,7 @@ impl Book {
                 }
                 kept_names += 1;
                 if !name.empty
-                    && let Some(text) = retarget_sheets(&name.text, &fate)
+                    && let Some(text) = retarget_sheets(&name.text, &self.order, &fate)
                 {
                     name_edits.push((name.content.clone(), escape_text(&text).into_bytes()));
                 }
@@ -1269,12 +1446,51 @@ impl Book {
                 })
                 .map(str::to_owned)
                 .collect();
+            let order = self.order.clone();
             for part in parts {
-                self.rewrite_formulas(&part, &|text: &str| retarget_sheets(text, &fate))?;
+                self.rewrite_formulas(&part, &|text: &str| retarget_sheets(text, &order, &fate))?;
             }
+        }
+        if layout.iter().map(|(_, name)| name).ne(self.order.iter()) {
+            self.drop_part_titles()?;
         }
         self.order = layout.into_iter().map(|(_, name)| name).collect();
         self.worksheets = worksheets;
+        Ok(())
+    }
+
+    /// Drop the sheet titles and their heading counts from the extended
+    /// properties (`TitlesOfParts` and `HeadingPairs` in docProps/app.xml),
+    /// which a sheet layout change leaves naming the old sheets. Both are
+    /// optional, and the opening application writes them again on save.
+    fn drop_part_titles(&mut self) -> Result<()> {
+        let Some(part) = self
+            .package
+            .relationships("")?
+            .into_iter()
+            .find(|rel| !rel.external && rel.kind.ends_with("/extended-properties"))
+            .map(|rel| rel.target)
+        else {
+            return Ok(());
+        };
+        let Some(bytes) = self.package.part(&part)? else {
+            return Ok(());
+        };
+        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let edits: Vec<_> = tree
+            .children(0)
+            .filter(|(_, node)| {
+                node.namespace == EXTENDED_PROPERTIES
+                    && matches!(node.name.as_str(), "TitlesOfParts" | "HeadingPairs")
+            })
+            .map(|(_, node)| (node.span.clone(), Vec::new()))
+            .collect();
+        if edits.is_empty() {
+            return Ok(());
+        }
+        let value = splice(&bytes, edits)
+            .map_err(|_| refused("the extended properties could not be rewritten"))?;
+        self.package.replace_xml_part(&part, value)?;
         Ok(())
     }
 
@@ -1405,6 +1621,16 @@ impl Book {
                 parts.push(rel.target);
             }
         }
+        // The tables that lose columns, as they were, for the structured
+        // references that name them.
+        let dropped: Vec<(XlsxTable, Vec<String>)> = self
+            .tables(&part)?
+            .into_iter()
+            .filter_map(|table| {
+                let deleted = table.shifted(edit)?.deleted;
+                (!deleted.is_empty()).then_some((table, deleted))
+            })
+            .collect();
         let mut headers = Vec::new();
         for table in &tables {
             headers.extend(self.move_table_columns(sheet, table, edit)?);
@@ -1412,8 +1638,20 @@ impl Book {
         for target in &parts {
             self.move_coordinates(target, edit)?;
         }
-        // An inserted table column's header cell holds its name.
+        // An inserted table column's header cell holds its name, in the
+        // format of the header cell to its left.
         if !headers.is_empty() {
+            let (cells, _, _) = self.sheet(&part)?;
+            let left: HashMap<u32, Option<u32>> = cells
+                .iter()
+                .filter(|cell| cell.col + 1 == edit.at)
+                .map(|cell| (cell.row, cell.style))
+                .collect();
+            for header in &mut headers {
+                if let XlsxChange::Cell { row, style, .. } = header {
+                    *style = left.get(&*row).copied().flatten();
+                }
+            }
             let mut rows: BTreeMap<u32, BTreeMap<u32, &XlsxChange>> = BTreeMap::new();
             for header in &headers {
                 if let XlsxChange::Cell { col, row, .. } = header {
@@ -1447,7 +1685,7 @@ impl Book {
         homes.push((self.part.clone(), None));
         for (part, home) in homes {
             self.rewrite_formulas(&part, &|text: &str| {
-                shift_axis(text, home.as_deref(), sheet, edit)
+                shift_axis_formula(text, home.as_deref(), sheet, edit, &dropped)
             })?;
         }
         Ok(())
@@ -1730,21 +1968,9 @@ impl Book {
         else {
             return Ok(Vec::new());
         };
-        let (left, right) = (range.first.0, range.last.0);
-        let end = edit.at + edit.count - 1;
         // The place in the table the columns go in at or are deleted from.
-        let at = if edit.delete {
-            let (low, high) = (edit.at.max(left), end.min(right));
-            if low > high || (low == left && high == right) {
-                return Ok(Vec::new());
-            }
-            (low - left) as usize..(high - left + 1) as usize
-        } else {
-            if edit.at <= left || edit.at > right {
-                return Ok(Vec::new());
-            }
-            let at = (edit.at - left) as usize;
-            at..at
+        let Some(at) = column_span(range.first.0, range.last.0, edit) else {
+            return Ok(Vec::new());
         };
         if root
             .attr("tableType")
@@ -1760,7 +1986,7 @@ impl Book {
             .filter(|(_, node)| node.is(SML, "tableColumn"))
             .map(|(_, node)| node)
             .collect();
-        if columns.len() != (right - left + 1) as usize {
+        if columns.len() != (range.last.0 - range.first.0 + 1) as usize {
             return Err(refused("a table's columns do not match its range"));
         }
         let mut edits = Vec::new();
@@ -1771,10 +1997,10 @@ impl Book {
             }
             columns.len() - at.len()
         } else {
-            let mut names: HashSet<String> = columns
+            let taken: Vec<String> = columns
                 .iter()
                 .filter_map(|column| column.attr("name"))
-                .map(str::to_lowercase)
+                .map(str::to_owned)
                 .collect();
             let mut id = columns
                 .iter()
@@ -1788,15 +2014,7 @@ impl Book {
                 .unwrap_or(1)
                 > 0;
             let mut added = String::new();
-            let mut n = 0;
-            for col in edit.at..=end {
-                let name = loop {
-                    n += 1;
-                    let name = format!("Column{n}");
-                    if names.insert(name.to_lowercase()) {
-                        break name;
-                    }
-                };
+            for (col, name) in (edit.at..).zip(free_column_names(&taken, edit.count)) {
                 id += 1;
                 added.push_str(&format!(
                     "<{element} id=\"{id}\" name=\"{}\"/>",
@@ -2187,10 +2405,13 @@ fn cell_ref(text: &str) -> Option<(u32, u32)> {
     (col <= MAX_COLUMN && (1..=MAX_ROW).contains(&row)).then_some((col, row))
 }
 
-/// A range attribute (`B2:D9`, `B2`) after a row or column edit: `Some(None)`
-/// when the edit deletes it, `None` when it does not read as a range.
+/// A range attribute (`B2:D9`, `B2`, the whole columns `A:C` or rows `2:5`)
+/// after a row or column edit: `Some(None)` when the edit deletes it, `None`
+/// when it does not read as a range.
 fn moved_area(reference: &str, edit: &XlsxAxisEdit) -> Option<Option<String>> {
-    let area = XlsxArea::parse(reference, XlsxLock::Unsupported)?;
+    let Some(area) = XlsxArea::parse(reference, XlsxLock::Unsupported) else {
+        return moved_lines(reference, edit);
+    };
     Some(edit.area(area.first, area.last).map(|(first, last)| {
         XlsxArea {
             first,
@@ -2199,6 +2420,55 @@ fn moved_area(reference: &str, edit: &XlsxAxisEdit) -> Option<Option<String>> {
         }
         .reference()
     }))
+}
+
+/// Whole columns (`A:C`, `$B:$B`) or whole rows (`2:5`) after a row or
+/// column edit, written as they were: an edit along the other axis leaves
+/// them, and one along theirs moves or shrinks them. `Some(None)` when the
+/// edit deletes them all, `None` when the reference is neither.
+fn moved_lines(reference: &str, edit: &XlsxAxisEdit) -> Option<Option<String>> {
+    let side = |text: &str| -> Option<(bool, XlsxAxis, u32)> {
+        let (fixed, rest) = match text.trim().strip_prefix('$') {
+            Some(rest) => (true, rest),
+            None => (false, text.trim()),
+        };
+        if !rest.is_empty() && rest.len() <= 3 && rest.bytes().all(|b| b.is_ascii_uppercase()) {
+            let col = rest
+                .bytes()
+                .fold(0u32, |sum, byte| sum * 26 + u32::from(byte - b'A' + 1));
+            return (col <= MAX_COLUMN).then_some((fixed, XlsxAxis::Column, col));
+        }
+        if rest.starts_with('0') || !rest.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let row = rest.parse::<u32>().ok()?;
+        (1..=MAX_ROW)
+            .contains(&row)
+            .then_some((fixed, XlsxAxis::Row, row))
+    };
+    let (first, last) = reference.split_once(':')?;
+    let ((first_fixed, axis, a), (last_fixed, other, b)) = (side(first)?, side(last)?);
+    if axis != other {
+        return None;
+    }
+    if axis != edit.axis {
+        return Some(Some(reference.to_owned()));
+    }
+    let write = |fixed: bool, at: u32| {
+        let dollar = if fixed { "$" } else { "" };
+        match axis {
+            // The column's letters: its row-1 cell without the `1`.
+            XlsxAxis::Column => {
+                let cell = a1(at, 1);
+                format!("{dollar}{}", &cell[..cell.len() - 1])
+            }
+            XlsxAxis::Row => format!("{dollar}{at}"),
+        }
+    };
+    Some(
+        edit.range(a.min(b), a.max(b))
+            .map(|(low, high)| format!("{}:{}", write(first_fixed, low), write(last_fixed, high))),
+    )
 }
 
 /// A space-separated range list after a row or column edit, without what it
