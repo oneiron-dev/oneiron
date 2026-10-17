@@ -3,6 +3,7 @@
 use crate::claim::ClaimApprovalStatus;
 use crate::edge::EdgeKind;
 use crate::error::ErrorKind;
+use crate::gate::record_references::admit_prose_links;
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
     NormalizedIngestClaim,
@@ -15,6 +16,13 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 use super::{AdmitImportedClaimInput, EntityRefReceipt, registered_edge_weight};
+
+/// A NOTE's one prose slot, as [`Memory::author_note`]'s prose check reads it.
+#[derive(serde::Serialize)]
+struct NoteProse<'a> {
+    markdown: &'a str,
+}
+
 impl Memory<'_> {
     // ── B2 migrator write-verb group ────────────────────────────────────
 
@@ -78,6 +86,18 @@ impl Memory<'_> {
     /// Diary requests are actor-private and owner-only to write. A scope/kind
     /// mismatch or a foreign owner is refused before any row is staged.
     pub fn author_note(&self, envelope: &NoteWriteEnvelope) -> MemoryResult<EntityRefReceipt> {
+        // OF-063 prose links (FIX 1228): the one engine write every take,
+        // dissent and diary entry passes through reads its markdown for links
+        // its writer cannot resolve, once per write, whatever door it came
+        // through. Receipt-only, before the content writer opens.
+        admit_prose_links(
+            self,
+            "memory.author_note",
+            &NoteProse {
+                markdown: &envelope.markdown,
+            },
+            &["/markdown"],
+        )?;
         let (target_id, link, target_must_be_claim) = match (&envelope.kind, envelope.scope) {
             (NoteKind::OpinionTake, NoteScope::About(TakeTarget::Subject(id))) => {
                 (id, EdgeKind::About, false)

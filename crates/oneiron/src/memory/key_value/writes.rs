@@ -4,6 +4,7 @@
 use super::*;
 use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::entity_id::derived_domains::KEY_VALUE;
+use crate::gate::record_references::admit_prose_links;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 use std::sync::atomic::Ordering;
@@ -15,6 +16,10 @@ impl Memory<'_> {
     /// Retries with the same request_id are accepted only while that exact
     /// revision is still current; a replay never resurrects a deleted value.
     pub fn key_value_put(&self, input: &KeyValuePut) -> MemoryResult<KeyValuePutReceipt> {
+        // OF-063 prose links (FIX 1228): the value's text is read for links
+        // its writer cannot resolve, once per write, whatever door it came
+        // through. Receipt-only, before the writer opens.
+        admit_prose_links(self, "vault.kv.put", input, &["/value"])?;
         let address = KeyValueAddress {
             namespace: input.namespace.clone(),
             key: input.key.clone(),

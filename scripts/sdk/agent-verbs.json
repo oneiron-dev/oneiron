@@ -103,7 +103,6 @@
     {
       "name": "self.memory.diary",
       "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
-      "prose_links": ["/content"],
       "input": "DiaryEntryRequest",
       "output": "crate::task_verb::sdk::DiaryEntryReceipt",
       "call": "crate::task_verb::sdk::self_memory_diary_write(memory, input)?",
@@ -799,7 +798,6 @@
     {
       "name": "vault.kv.put",
       "description": "Synchronous gated write of one key; a write that needs review fails without changing the key.",
-      "prose_links": ["/value"],
       "input": "crate::memory::KeyValuePut",
       "output": "crate::memory::KeyValuePutReceipt",
       "call": "memory.key_value_put(&input)?",
