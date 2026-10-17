@@ -10,6 +10,9 @@ use crate::error::Result;
 
 const MATURED_PREFIX: &[u8] = b"shared-act:matured:v1:";
 
+/// Waiting acts beside their row keys.
+type WaitingActs = Vec<(Vec<u8>, PendingAuthorityAct)>;
+
 /// Durable, recipient-specific notice that a waiting act has matured: its
 /// window passed on the store clock with no live objection, so a live Owner
 /// may now execute it. A zero-wait act was told at its start instead.
@@ -32,30 +35,28 @@ impl Vault {
     /// it gets one durable [`PendingActMatured`] notice. Answers the number of
     /// notices written; running it again writes none, and an Owner who joins
     /// after an act matured is told on the next pass.
+    ///
+    /// A read pass goes first: a vault with no waiting act whose deadline has
+    /// come on the store clock opens no writer.
     pub fn notify_matured_shared_acts(&self) -> Result<usize> {
-        let mut txn = self.store.env.write_txn()?;
-        let Some(creation) = self.shared_vault_creation_in_txn(&txn)? else {
-            return Ok(0);
-        };
-        if self.shared_vault_deletion_in_txn(&txn)?.is_some() {
-            return Ok(0);
-        }
-        let mut waiting = Vec::new();
-        for row in self.store.vault_meta.prefix_iter(&txn, ACT_PREFIX)? {
-            let (k, raw) = row?;
-            let record: PendingAuthorityAct = decode(&raw)?;
-            if record.execution.is_none()
-                && record.deadline > record.started_at
-                && record.vault_id == creation.vault_id
-            {
-                waiting.push((k.to_vec(), record));
+        {
+            let txn = self.store.env.read_txn()?;
+            let now = self.store.clock.now_recorded_at();
+            let due = self
+                .waiting_shared_acts_in_txn(&txn)?
+                .is_some_and(|(_, waiting)| {
+                    waiting.iter().any(|(_, record)| record.deadline <= now)
+                });
+            if !due {
+                return Ok(0);
             }
         }
-        if waiting.is_empty() {
+        let mut txn = self.store.env.write_txn()?;
+        let Some((vault_id, waiting)) = self.waiting_shared_acts_in_txn(&txn)? else {
             return Ok(0);
-        }
+        };
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
-        let holders = self.live_act_holders(&txn, creation.vault_id, now)?;
+        let holders = self.live_act_holders(&txn, vault_id, now)?;
         let mut written = 0;
         for (k, mut record) in waiting {
             if !record.completed {
@@ -95,6 +96,33 @@ impl Vault {
         }
         txn.commit()?;
         Ok(written)
+    }
+
+    /// The shared vault's id and its waiting acts (unexecuted, with a window)
+    /// with their row keys; `None` outside a live shared vault or when none
+    /// waits.
+    fn waiting_shared_acts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<(u64, WaitingActs)>> {
+        let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
+            return Ok(None);
+        };
+        if self.shared_vault_deletion_in_txn(txn)?.is_some() {
+            return Ok(None);
+        }
+        let mut waiting = Vec::new();
+        for row in self.store.vault_meta.prefix_iter(txn, ACT_PREFIX)? {
+            let (k, raw) = row?;
+            let record: PendingAuthorityAct = decode(&raw)?;
+            if record.execution.is_none()
+                && record.deadline > record.started_at
+                && record.vault_id == creation.vault_id
+            {
+                waiting.push((k.to_vec(), record));
+            }
+        }
+        Ok((!waiting.is_empty()).then_some((creation.vault_id, waiting)))
     }
     /// The reader's own matured-act notices for `vault_id`.
     pub fn pending_act_matured_events(
