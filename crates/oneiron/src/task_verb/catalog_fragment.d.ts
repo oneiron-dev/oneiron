@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 264 code-mode rows (247 host rows, 17 run rows), 784 declarations.
-// Replies: 198 fully typed, 36 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
-// Opaque serde_json::Value leaves: 51; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 266 code-mode rows (249 host rows, 17 run rows), 788 declarations.
+// Replies: 200 fully typed, 36 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Opaque serde_json::Value leaves: 52; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) & { budget?: BudgetLegibilityEnvelope };
@@ -577,6 +577,9 @@ declare namespace Sdk {
   type TurnActionRequest = { turn_id: string };
   type TurnAction = "continue" | "retry";
   type TurnActionReceipt = { action: TurnAction; turn_id: string; message_id: string; attempt_id: string };
+  type MessageReactionExternal = { connector: string; id: string; origin?: string | null };
+  type MessageReactionRequest = { message: string; by: string; glyph: string; occurred_at?: number | null; remove?: boolean; external?: MessageReactionExternal | null };
+  type MessageReactionReceipt = { id: string; event: string };
   type RoomHostRequest = { room_ref: string; session_ref?: string | null };
   type HostPinKind = "pinned" | "handed_off";
   type HostPin = { agent: EntityId; by: EntityId; kind: HostPinKind; at: number };
@@ -747,6 +750,7 @@ declare namespace Sdk {
   type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string; record?: RecordRef | null };
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
+  type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
   type BlobArtifactInput = { id?: string | null; name: string; media_type: string; occurred_at: number; learned_at?: number | null };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
   type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null };
@@ -1007,6 +1011,8 @@ declare const vault: {
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.Reply<Sdk.BlobVersionView>>;
     /** What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made. */
     born_from(input: Sdk.BornFromRequest): Promise<Sdk.Reply<Sdk.BornFromView>>;
+    /** Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run. */
+    create(input: Sdk.ArtifactCreateRequest): Promise<Sdk.Reply<Sdk.ArtifactView | null>>;
     /** Drops one waiting artifact proposal, once. */
     discard(input: Sdk.ProposalSettleRequest): Promise<Sdk.Reply<Sdk.DiscardedProposal>>;
     /** One artifact version's export file, with the born-with text the caller chose and a share receipt listing it. */
@@ -1213,6 +1219,10 @@ declare const vault: {
     remove(input: Sdk.SharedMemberRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
     /** An Admin with the add_member power takes back a pending invitation. */
     withdraw_invitation(input: Sdk.SharedInvitationWithdrawRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+  };
+  messages: {
+    /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
+    react(input: Sdk.MessageReactionRequest): Promise<Sdk.Reply<Sdk.MessageReactionReceipt>>;
   };
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
   neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.NeighborHit[]>>>;

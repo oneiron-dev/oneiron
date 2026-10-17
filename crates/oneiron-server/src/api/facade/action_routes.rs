@@ -13,6 +13,10 @@
 //! direct `/v1/core/facade/<row>` call meets, so neither caller holds through
 //! an action any authority the row's own call lacks.
 //!
+//! A REST route whose write is a verb-table row runs it here too, through
+//! [`execute_facade_row`], when the credential binds an action at all
+//! ([`action_bound`]): its button and an agent's call meet one executor.
+//!
 //! A memory run row (`vault.search`, `vault.claims.put`,
 //! `vault.claims.supersede`, `vault.edges.put`) has no facade route; the
 //! registry runs it as the typed call a code run makes. It meets the scope
@@ -29,14 +33,20 @@ use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::claim::ScopedReadActorKey;
-use oneiron::code_run::actions::{ActionArgument, ActionHostBinding, AgentActionCall};
-use oneiron::code_run::{
-    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
+use oneiron::code_run::actions::{
+    ActionArgument, ActionDispatch, ActionHostBinding, AgentActionCall,
 };
-use oneiron::lens::{LensPrincipalBinding, SelfUiActionId};
-use oneiron::memory::{HostWriteOrigin, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL};
+use oneiron::code_run::{
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+    SelfDispatchOutcome, SelfEffect,
+};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::lens::{LensPrincipalBinding, LensText, SelfUiActionId};
+use oneiron::memory::{
+    HostWriteOrigin, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MemoryError,
+};
 use oneiron::task_verb::sdk::{AgentVerb, RunVerb};
-use oneiron::{EdgeActorClass, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde::Deserialize;
 use tower::ServiceExt;
 
@@ -103,20 +113,75 @@ async fn invoke(
             ["List the app's actions at GET /v1/core/actions."],
         )
     })?;
-    let (actor, class) = facade_actor(&auth)?;
-    let unbound = || {
+    // A credential that names no principal meets the facade's own refusal.
+    facade_actor(&auth)?;
+    let bound = action_bound(&server, &auth)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],
         )
+    })?;
+    let call = AgentActionCall {
+        verb_id,
+        args: request.args,
+        idempotency_key: request.idempotency_key,
     };
-    let proof = auth.verified_slip().ok_or_else(unbound)?;
-    let key = server
-        .vault
-        .credential_read_key(proof)
-        .map_err(engine)?
-        .ok_or_else(unbound)?
-        .at(auth.locality());
+    let dispatch = execute(&server, headers, extensions, bound, call).await?;
+    Ok(Json(serde_json::json!({
+        "outcome": dispatch.outcome_value().map_err(engine)?,
+        "readReceipt": dispatch.read_receipt,
+    })))
+}
+
+/// What one action runs under: the credential's principal and class, its
+/// read key at the caller's locality, and the owner's proof when the
+/// credential carries one.
+pub(crate) struct ActionBound {
+    actor: EntityId,
+    class: EdgeActorClass,
+    key: oneiron::claim::ScopedReadActorKey,
+    owner: Option<AuthenticatedOwner>,
+}
+
+/// What `auth` binds an action to. `None`: the credential names no
+/// principal, or presents no verified slip with read authority, so no
+/// action runs under it.
+pub(crate) fn action_bound(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<Option<ActionBound>, FacadeApiError> {
+    let Ok((actor, class)) = facade_actor(auth) else {
+        return Ok(None);
+    };
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(None);
+    };
+    let Some(key) = server.vault.credential_read_key(proof).map_err(engine)? else {
+        return Ok(None);
+    };
+    Ok(Some(ActionBound {
+        actor,
+        class,
+        key: key.at(auth.locality()),
+        owner: owner_authorship(auth, server)?,
+    }))
+}
+
+/// Runs `call` from the app's table under `bound`, its verb-table rows
+/// through their own routes under this request's headers and connection.
+async fn execute(
+    server: &Arc<SyncServer>,
+    headers: HeaderMap,
+    extensions: Extensions,
+    bound: ActionBound,
+    call: AgentActionCall,
+) -> Result<ActionDispatch, FacadeApiError> {
+    let ActionBound {
+        actor,
+        class,
+        key,
+        owner,
+    } = bound;
     let principal = match class {
         EdgeActorClass::Agent => {
             LensPrincipalBinding::agent_task(actor.to_hex(), key.clone(), vec![key.clone()])
@@ -124,17 +189,11 @@ async fn invoke(
         _ => LensPrincipalBinding::human_view(actor.to_hex(), key.clone(), vec![key.clone()]),
     }
     .map_err(engine)?;
-    let owner = owner_authorship(&auth, &server)?;
     let door: Arc<dyn AgentVerbDoor> =
-        Arc::new(FacadeRowDoor::new(&server, headers, extensions, key));
-    let call = AgentActionCall {
-        verb_id,
-        args: request.args,
-        idempotency_key: request.idempotency_key,
-    };
+        Arc::new(FacadeRowDoor::new(server, headers, extensions, key));
     let executor = app()?;
     let vault = Arc::clone(&server.vault);
-    let dispatch = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let binding = ActionHostBinding {
             verb_door: Some(door),
             owner: owner.as_ref(),
@@ -149,11 +208,69 @@ async fn invoke(
     })
     .await
     .map_err(|_| internal())?
-    .map_err(engine)?;
-    Ok(Json(serde_json::json!({
-        "outcome": dispatch.outcome_value().map_err(engine)?,
-        "readReceipt": dispatch.read_receipt,
-    })))
+    .map_err(engine)
+}
+
+/// Runs verb-table row `row` on `input` as one action under `bound`, as
+/// `POST /v1/core/actions/<row>` runs it: the REST route whose write is the
+/// row calls this. The row's JSON output; a refusal keeps its code.
+pub(crate) async fn execute_facade_row<T: serde::Serialize>(
+    server: &Arc<SyncServer>,
+    headers: HeaderMap,
+    extensions: Extensions,
+    bound: ActionBound,
+    row: AgentVerb,
+    input: &T,
+    idempotency_key: String,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let text = serde_json::to_string(input).map_err(|_| internal())?;
+    let call = AgentActionCall {
+        verb_id: SelfUiActionId::new(row.as_str()).map_err(engine)?,
+        args: vec![ActionArgument::Text(LensText::new(text).map_err(engine)?)],
+        idempotency_key,
+    };
+    match execute(server, headers, extensions, bound, call)
+        .await?
+        .outcome
+    {
+        SelfDispatchOutcome::AgentVerb(answer) => Ok(answer.output),
+        SelfDispatchOutcome::Denied(denied) => {
+            Err(MemoryError::new(&denied.outcome, "the action was refused", &[]).into())
+        }
+        SelfDispatchOutcome::Failed(failed) => {
+            Err(MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[]).into())
+        }
+        _ => Err(internal()),
+    }
+}
+
+/// The action key of a REST write: the request's `Idempotency-Key`, bound to
+/// the credential that sent it and to `row`, so a retry replays its action;
+/// with none, a fresh key, as an unkeyed request is a fresh write.
+pub(crate) fn rest_action_key(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    headers: &HeaderMap,
+    row: AgentVerb,
+) -> Result<String, FacadeApiError> {
+    let Some(sent) = headers.get(crate::idempotency::IDEMPOTENCY_KEY_HEADER) else {
+        return Ok(format!(
+            "rest:{}:{}",
+            row.as_str(),
+            server.vault.new_entity_id().map_err(engine)?.to_hex()
+        ));
+    };
+    let principal = auth.idempotency_principal();
+    let mut hasher = blake3::Hasher::new();
+    for part in [principal.as_bytes(), sent.as_bytes()] {
+        hasher.update(&(part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    Ok(format!(
+        "rest:{}:{}",
+        row.as_str(),
+        hasher.finalize().to_hex()
+    ))
 }
 
 fn app() -> Result<&'static SharedActionExecutor, FacadeApiError> {

@@ -750,6 +750,11 @@ export_facade! {
     let output = client.vault_conversations_turn_retry(&input)?;
     crate::codec::lift_record("vault.conversations.turn.retry", &output)
 };
+"vault.messages.react" => fn vault_messages_react(&self, input: MessageReactionRequest) -> MessageReactionReceipt = |client| {
+    let input: oneiron::reaction::MessageReactionRequest = crate::codec::lower_record("vault.messages.react", input)?;
+    let output = client.vault_messages_react(&input)?;
+    crate::codec::lift_record("vault.messages.react", &output)
+};
 "vault.rooms.host" => fn vault_rooms_host(&self, input: RoomHostRequest) -> RoomStanding = |client| {
     let input: oneiron::task_verb::sdk::RoomHostRequest = crate::codec::lower_record("vault.rooms.host", input)?;
     let output = client.vault_rooms_host(&input)?;
@@ -989,6 +994,11 @@ export_facade! {
     let input: oneiron::memory::AdmitImportedClaimInput = input.lower()?;
     let output = client.vault_claims_admit(&input)?;
     Lift::lift(output)
+};
+"vault.artifacts.create" => fn vault_artifacts_create(&self, input: ArtifactCreateRequest) -> Option<ArtifactView> = |client| {
+    let input: oneiron::blob_artifact::ArtifactCreateRequest = crate::codec::lower_record("vault.artifacts.create", input)?;
+    let output = client.vault_artifacts_create(&input)?;
+    crate::codec::lift_record("vault.artifacts.create", &output)
 };
 "vault.artifacts.put" => fn vault_artifacts_put(&self, input: BlobArtifactInput) -> EntityRefReceipt = |client| {
     let input: oneiron::memory::BlobArtifactInput = input.lower()?;
