@@ -43927,6 +43927,7 @@
       "Materializer",
       "ObserverAState",
       "OriginMark",
+      "OutboundAttachment",
       "OutboundSink"
      ],
      "path": "src/sync/bridge/observers.rs",
@@ -43935,7 +43936,7 @@
       "const": 1,
       "crate-vis": 12,
       "fn": 13,
-      "struct": 5,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -44280,7 +44281,7 @@
      "purpose": "Handshake: run loop, connect_and_sync, overflow check, resync markers",
      "surface": {
       "crate-vis": 5,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -67734,7 +67735,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 12,
       "re-export": 20,
       "struct": 1
@@ -67752,13 +67753,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/credential_file.rs",
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -68165,6 +68166,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeviceSyncConfig"
+     ],
+     "path": "src/config/device_sync.rs",
+     "purpose": "`[device_sync]`: the home this machine keeps its vault in sync with",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -68369,8 +68383,8 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 1,
-      "mod": 13,
-      "re-export": 23
+      "mod": 14,
+      "re-export": 24
      }
     },
     {
@@ -68839,6 +68853,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync.rs",
+     "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69281,7 +69305,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -72464,7 +72488,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72539,6 +72563,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
+    },
+    "device_sync": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
      "files": 2,
@@ -72788,7 +72819,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 599,
+   "source_files": 601,
    "test_files": 182
   },
   "oneiron-spawn": {
