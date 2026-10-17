@@ -179,10 +179,13 @@ covers every row code mode serves, at its SDK path, and lays the verbs out as
 `code_mode_declarations` does. Each row has its typed input and its typed
 reply: `Sdk.Reply<T>`, the `{output}` envelope a code-mode call resolves with.
 Every type the rows reach is written out once in the `Sdk` namespace, nested
-types included. A run row's reply is `Sdk.Reply<unknown>`, because the table
-names no output for it. The coordination rows `ask` and `wait` resolve with
-`unknown`, because code mode answers them with the run's own reply, not the
-row's output. The fragment's revision is `CATALOG_FRAGMENT_REVISION` in
+types included. A row's reply is its `output`, or `Sdk.Reply<unknown>` when
+the table names none. `outputs_by_input` maps an input field (its wire name)
+to the reply code mode answers when that field is present
+(`describe({fold})`, `tasks.update({resultRef})`): the fragment declares one
+overload per field, most specific first, then the row's own; no host door
+answers those inputs, so the other projections read `output` alone. The
+fragment's revision is `CATALOG_FRAGMENT_REVISION` in
 `catalog_fragment_revision.rs`: `sha256:` and the hex digest of the text, for
 the executor to restate after compaction. The engine reads both through
 `task_verb::sdk::code_mode_catalog_fragment()`, and `--check` flags either

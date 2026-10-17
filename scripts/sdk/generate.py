@@ -22,8 +22,22 @@ if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): ra
 # is the type its reply carries, which only the catalog fragment reads.
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
 for row in RUN_ROWS:
-    if set(row) - {'output'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
-        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect and output, and nothing else')
+    if set(row) - {'output', 'outputs_by_input'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output and per-input outputs, and nothing else')
+# `outputs_by_input` maps an input field, by its wire name, to the reply code
+# mode answers when that field is present and not null (`describe({fold})`
+# answers the fold, `tasks.update({resultRef})` the reader's report). Each type
+# is a Rust path read through the same type inventory as `output`, which stays
+# the reply to every other input. Only the catalog fragment reads it: the run
+# answers these inputs itself (wire.rs `self_call`) and every host door refuses
+# them, so the facade, MCP and binding projections keep the row's `output`.
+for row in MANIFEST['verbs']:
+    if 'outputs_by_input' not in row: continue
+    by_input = row['outputs_by_input']
+    if 'output' not in row or not isinstance(by_input, dict) or not by_input or not all(
+            isinstance(field, str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', field) and isinstance(output, str) and output.strip()
+            for field, output in by_input.items()):
+        raise ValueError(f'{row["name"]}: outputs_by_input maps input field names to non-empty output types, beside the row\'s own output')
 # ARCH-0028: the MCP tool list and the code-mode method table ARE the verb table,
 # so a row carries no opt-out. A row's tool takes its whole typed input as `spec`
 # unless it names a projection, and refuses a world/facet-narrowed connector
