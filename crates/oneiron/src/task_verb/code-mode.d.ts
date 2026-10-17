@@ -49,6 +49,9 @@ declare namespace self {
     zoom(input: { height: number; image: string; scale?: number | null; width: number; x: number; y: number }): Promise<unknown>;
   };
   const compact: (input: { note?: string | null }) => Promise<unknown>;
+  const decisions: {
+    asks(input: object): Promise<unknown>;
+  };
   const desktop: {
     batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
@@ -175,6 +178,12 @@ declare const vault: {
     turn: {
       continue(input: { turn_id: string }): Promise<unknown>;
       retry(input: { turn_id: string }): Promise<unknown>;
+    };
+  };
+  decisions: {
+    asks: {
+      answer(input: { answer: unknown; seq: number }): Promise<unknown>;
+      climb(input: { seq: number }): Promise<unknown>;
     };
   };
   delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;

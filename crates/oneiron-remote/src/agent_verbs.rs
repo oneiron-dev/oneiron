@@ -544,6 +544,15 @@ impl OneironClient {
                 "vault.questions.answers" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::questions::AnswerRecord>,
                 >(client, verb, &input),
+                "vault.decisions.asks.answer" => remote_agent_verb_output::<
+                    oneiron::llm::decision::DecisionAsk,
+                >(client, verb, &input),
+                "vault.decisions.asks.climb" => remote_agent_verb_output::<
+                    Option<oneiron::llm::decision::ResolvedRole>,
+                >(client, verb, &input),
+                "self.decisions.asks" => remote_agent_verb_output::<
+                    Vec<oneiron::llm::decision::DecisionAsk>,
+                >(client, verb, &input),
                 "connector.list" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::ConnectorEntry>,
                 >(client, verb, &input),
@@ -2715,6 +2724,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.questions.answers", value)
+    }
+    pub fn vault_decisions_asks_answer(
+        &self,
+        input: &oneiron::receipt::DecisionAskAnswerRequest,
+    ) -> Result<oneiron::llm::decision::DecisionAsk, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.asks.answer", value)
+    }
+    pub fn vault_decisions_asks_climb(
+        &self,
+        input: &oneiron::receipt::DecisionAskClimbRequest,
+    ) -> Result<Option<oneiron::llm::decision::ResolvedRole>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.asks.climb", value)
+    }
+    pub fn self_decisions_asks(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::llm::decision::DecisionAsk>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.decisions.asks", value)
     }
     pub fn connector_list(
         &self,

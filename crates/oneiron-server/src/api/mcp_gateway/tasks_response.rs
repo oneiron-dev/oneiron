@@ -904,6 +904,9 @@ fn mcp_agent_verb_input(
         "vault.questions.pause" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.read" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.answers" => a.spec.clone().ok_or_else(invalid),
+        "vault.decisions.asks.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.decisions.asks.climb" => a.spec.clone().ok_or_else(invalid),
+        "self.decisions.asks" => a.spec.clone().ok_or_else(invalid),
         "connector.list" => a.spec.clone().ok_or_else(invalid),
         "connector.status" => a.spec.clone().ok_or_else(invalid),
         "vault.commit" => a.spec.clone().ok_or_else(invalid),
@@ -1507,6 +1510,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.questions.answers" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.decisions.asks.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.decisions.asks.climb" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.decisions.asks" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "connector.list" => {
@@ -3567,6 +3579,44 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_questions_answers(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.decisions.asks.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.decisions.asks.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::DecisionAskAnswerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_decisions_asks_answer(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.decisions.asks.climb" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.decisions.asks.climb", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::DecisionAskClimbRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_decisions_asks_climb(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.decisions.asks" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.decisions.asks", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_decisions_asks(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }

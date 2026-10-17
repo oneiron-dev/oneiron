@@ -256,6 +256,9 @@ class Oneiron:
         @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs":
             return Oneiron._SelfSkillsVerbs(self._client)
+        @property
+        def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
+            return Oneiron._SelfDecisionsVerbs(self._client)
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -325,6 +328,11 @@ class Oneiron:
         def callables(self, spec=None):
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
             return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps({} if spec is None else spec))))
+    class _SelfDecisionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def asks(self, spec=None):
+            return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
     class _VaultVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -432,6 +440,9 @@ class Oneiron:
         @property
         def questions(self) -> "Oneiron._VaultQuestionsVerbs":
             return Oneiron._VaultQuestionsVerbs(self._client)
+        @property
+        def decisions(self) -> "Oneiron._VaultDecisionsVerbs":
+            return Oneiron._VaultDecisionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
             """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
@@ -1004,6 +1015,19 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
         def answers(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
+    class _VaultDecisionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def asks(self) -> "Oneiron._VaultDecisionsAsksVerbs":
+            return Oneiron._VaultDecisionsAsksVerbs(self._client)
+    class _VaultDecisionsAsksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_decisions_asks_answer(json.dumps(spec))))
+        def climb(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_decisions_asks_climb(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
