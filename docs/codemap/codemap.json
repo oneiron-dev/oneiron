@@ -18052,7 +18052,7 @@
      "path": "src/dreamer_consolidation/revert.rs",
      "purpose": "The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1,
       "struct": 4
