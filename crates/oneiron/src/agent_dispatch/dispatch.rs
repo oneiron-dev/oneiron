@@ -476,12 +476,16 @@ impl<'a> AgentDispatcher<'a> {
                     })?;
                 plan.asked.type_ref.clone()
             }
+            // Inside the write transaction no model call may run: the
+            // placement skill's rule rung reads alone. A host that wants its
+            // rungs to place does so before dispatch (`place_spawn_type`).
             None => super::task_type_tree::place_in_tree(
                 &tree,
                 spawn.type_ref.as_ref(),
                 None,
                 None,
                 Some(project_ref),
+                None,
             ),
         };
 

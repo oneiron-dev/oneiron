@@ -1,6 +1,6 @@
 //! The Local-vision seat as the decision ladder's Local rung (OF-329 over
 //! OF-600): the small vision model bound as `[models.roles.local_vision]`
-//! answers a Box question over a call's images ("where is `mug` in
+//! answers a Box or Point question over a call's images ("where is `mug` in
 //! `camera`?"), and a routine driver step's Choice or yes/no question over a
 //! screenshot (OF-523, the CUA-S1 pattern: "which of these do I click?",
 //! "did the form send?"). [`LocalVisionModel::rung`] wraps it with
@@ -11,7 +11,8 @@
 //! image, downscaled to the ladder's long edge, after a line with the
 //! reference its state field holds, then the question and the state as JSON,
 //! under a schema shaped as System One's answer for the contract: a Box
-//! (`{"box": {top, bottom, left, right} | null, "confidence"}`), a Choice
+//! (`{"box": {top, bottom, left, right} | null, "confidence"}`; a Point is
+//! that box's centre), a Choice
 //! (`{"choice": <one option>, "confidence"}`) or a yes/no (`{"p_yes"}`). A
 //! Score, or a call with no image, abstains, so the ladder takes it on. An
 //! answer outside the schema is refused whole, never read as an absent
@@ -167,13 +168,17 @@ impl DecisionModel for LocalVisionModel {
         true
     }
 
+    fn image_edge(&self) -> Option<u32> {
+        Some(DECISION_IMAGE_EDGE)
+    }
+
     /// Blocks on the server's runtime until the seat answers, so it runs on
     /// a blocking thread, never on one of that runtime's workers. The call
     /// waits no longer than the decision's work time.
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         let schema = match &call.question.contract {
             _ if call.images.is_empty() => None,
-            AnswerContract::Box => Some(box_schema()),
+            AnswerContract::Box | AnswerContract::Point => Some(box_schema()),
             AnswerContract::Choice { options } => Some(choice_schema(options)),
             AnswerContract::Noul => Some(noul_schema()),
             AnswerContract::Score { .. } => None,
@@ -224,6 +229,14 @@ impl DecisionModel for LocalVisionModel {
             .collect::<String>();
         match &call.question.contract {
             AnswerContract::Box => box_answer(&text),
+            // No point wire: the seat answers a box, and its centre is the point.
+            AnswerContract::Point => box_answer(&text).map(|decision| ProviderDecision {
+                answer: match decision.answer {
+                    DecisionAnswer::Box(found) => DecisionAnswer::Point(found.map(ImageBox::point)),
+                    other => other,
+                },
+                ..decision
+            }),
             AnswerContract::Choice { options } => choice_answer(&text, options),
             AnswerContract::Noul => noul_answer(&text),
             AnswerContract::Score { .. } => None,

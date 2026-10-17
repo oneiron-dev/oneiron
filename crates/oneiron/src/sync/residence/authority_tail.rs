@@ -7,6 +7,11 @@
 //! itself. The whole log is kept for now (identity, tiered authority history),
 //! so the hot tail is everything the home holds; a checkpoint and a cold
 //! archive come with L02's checkpoint v2.
+//!
+//! The append half runs the other way: the home names, on the tail's last
+//! page, the entries the machine holds that it lacks, and the machine sends
+//! them back through the same door, so an entry an opened machine wrote
+//! reaches the home without the window it rides.
 
 use std::collections::BTreeSet;
 
@@ -64,22 +69,7 @@ pub fn authority_tail_for(
     held: &BTreeSet<AuthorityEntryHash>,
     limit: usize,
 ) -> Result<Vec<Vec<u8>>> {
-    {
-        let txn = vault.store.env.read_txn()?;
-        let fold = vault.authority_fold_readonly_in_txn(&txn)?;
-        let mine = match peer {
-            PeerMachine::Proven { machine, key } => {
-                fold.machine_proof_key(machine) == Some(key)
-                    && fold.trusted_machine(machine).is_some()
-            }
-            PeerMachine::Unknown => false,
-        };
-        if !mine {
-            return Err(Error::sync_protocol(
-                SyncProtocolValidation::DocumentAdmissionDenied,
-            ));
-        }
-    }
+    require_owner_machine(vault, peer)?;
     let limit = limit.clamp(1, AUTHORITY_TAIL_PAGE_MAX);
     let mut page = Vec::new();
     for bytes in vault.export_signed_authority_history()? {
@@ -92,4 +82,71 @@ pub fn authority_tail_for(
         }
     }
     Ok(page)
+}
+
+/// Whether `peer` is a machine of the owner's whose proof stands here on the
+/// key it proved.
+fn owner_machine(vault: &Vault, peer: PeerMachine) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+    Ok(match peer {
+        PeerMachine::Proven { machine, key } => {
+            fold.machine_proof_key(machine) == Some(key) && fold.trusted_machine(machine).is_some()
+        }
+        PeerMachine::Unknown => false,
+    })
+}
+
+/// Refuses every peer but a machine of the owner's ([`owner_machine`]).
+fn require_owner_machine(vault: &Vault, peer: PeerMachine) -> Result<()> {
+    if !owner_machine(vault, peer)? {
+        return Err(Error::sync_protocol(
+            SyncProtocolValidation::DocumentAdmissionDenied,
+        ));
+    }
+    Ok(())
+}
+
+/// The entries of `offered` this home does not hold: what the machine that
+/// named them should append. The caller has already admitted the machine.
+///
+/// # Errors
+///
+/// A row that does not decode; storage errors.
+pub fn authority_wanted(
+    vault: &Vault,
+    offered: &BTreeSet<AuthorityEntryHash>,
+) -> Result<Vec<AuthorityEntryHash>> {
+    let held = held_authority_entries(vault)?;
+    Ok(offered.difference(&held).copied().collect())
+}
+
+/// Imports the signed entries a machine of the owner's appends, at most
+/// [`AUTHORITY_TAIL_PAGE_MAX`], through the signed-history door: every
+/// signature, parent and standing is checked and the log refolds here, so
+/// nothing the machine asserts is trusted beyond the signed bytes. Each
+/// entry's parents are held here or earlier in `entries`. Returns how many
+/// rows the import wrote, or `None` for a peer that is not a machine of the
+/// owner's.
+///
+/// # Errors
+///
+/// An oversized page; an entry or history the door refuses; storage errors.
+pub fn authority_append_for(
+    vault: &Vault,
+    peer: PeerMachine,
+    entries: &[Vec<u8>],
+) -> Result<Option<usize>> {
+    if !owner_machine(vault, peer)? {
+        return Ok(None);
+    }
+    if entries.len() > AUTHORITY_TAIL_PAGE_MAX {
+        return Err(Error::sync_protocol(
+            SyncProtocolValidation::DocumentAdmissionDenied,
+        ));
+    }
+    if entries.is_empty() {
+        return Ok(Some(0));
+    }
+    Ok(Some(vault.import_signed_authority_history(entries)?.len()))
 }

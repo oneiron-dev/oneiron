@@ -127,8 +127,8 @@ pub(super) fn fold_as_install(
 
 /// A once fold as this install reads it: its stale-roster window, and the
 /// pin while the fold holds its root (the pinned anchor signed that id here).
-pub(super) fn install_view(
-    entries: &[AuthorityLogEntry],
+pub(super) fn install_view<E: std::borrow::Borrow<AuthorityLogEntry>>(
+    entries: &[E],
     once: AuthorityFold,
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
@@ -168,29 +168,41 @@ pub(super) fn stale_chains(fold: &AuthorityFold) -> BTreeSet<(crate::EntityId, M
 
 /// The heads, scope heads and next sequences of an install's fold.
 pub(super) fn finish_install_fold(entries: &[AuthorityLogEntry], fold: &mut AuthorityFold) {
+    let rows: Vec<_> = entries
+        .iter()
+        .map(|entry| super::fold_resume::RowMeta::of(authority_entry_hash(entry).ok(), entry))
+        .collect();
+    finish_install_fold_of(&rows, fold);
+}
+
+/// [`finish_install_fold`] over the rows' metadata, all it reads of them.
+pub(super) fn finish_install_fold_of(
+    rows: &[super::fold_resume::RowMeta<'_>],
+    fold: &mut AuthorityFold,
+) {
     (fold.append_heads, fold.anchor_heads) = super::world_privacy::main_log_heads(
-        entries,
+        rows,
         &fold.valid_entries,
         &fold.anchor_entries,
         fold.pinned_root.map(|pin| pin.anchor_key),
     );
-    for entry in entries {
+    for row in rows {
         // Advance beyond even a signed rejected local entry. A new local write
         // never reuses a sequence, though independently received siblings may.
         fold.append_sequences
-            .entry(entry.signer.public_key.clone())
-            .and_modify(|seq| *seq = (*seq).max(entry.seq))
-            .or_insert(entry.seq);
-        if let Some(world) = super::world_privacy::side_world(&entry.op)
-            && let Ok(hash) = authority_entry_hash(entry)
+            .entry(row.signer.clone())
+            .and_modify(|seq| *seq = (*seq).max(row.seq))
+            .or_insert(row.seq);
+        if let Some(world) = row.world
+            && let Some(hash) = row.hash
             && fold.valid_entries.contains(&hash)
         {
             let head = fold
                 .scope_heads
-                .entry((entry.signer.public_key.clone(), world))
-                .or_insert((entry.seq, hash));
-            if entry.seq > head.0 {
-                *head = (entry.seq, hash);
+                .entry((row.signer.clone(), world))
+                .or_insert((row.seq, hash));
+            if row.seq > head.0 {
+                *head = (row.seq, hash);
             }
         }
     }

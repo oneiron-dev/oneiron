@@ -51,6 +51,9 @@ pub enum ManagedError {
     #[error("--keystore-dir must be an absolute path")]
     RelativeKeystoreDir,
 
+    #[error("--{flag} must be an absolute path")]
+    RelativeRecipientFile { flag: &'static str },
+
     #[error("--artifact-http-socket must be an absolute path")]
     RelativeArtifactSocket,
 
@@ -141,6 +144,12 @@ pub struct ManagedArgs {
     /// Where this install keeps its this-device-only key slots, a place the
     /// supervisor chose. Without it managed mode installs no keystore.
     pub keystore_dir: Option<PathBuf>,
+    /// The node's managed escrow recipient's public key file
+    /// (`--escrow-recipient-file`).
+    pub escrow_recipient: Option<PathBuf>,
+    /// The owner's break-glass recipient's public key file
+    /// (`--break-glass-recipient-file`).
+    pub break_glass_recipient: Option<PathBuf>,
     /// The artifact origin's socket (`--artifact-http-socket`), when the
     /// supervisor gave the vault one.
     pub artifact_socket: Option<PathBuf>,
@@ -234,6 +243,8 @@ impl ManagedArgs {
             credentials_fd,
             vsock_guest: args.vsock_guest,
             keystore_dir: args.keystore_dir.clone(),
+            escrow_recipient: args.escrow_recipient_file.clone(),
+            break_glass_recipient: args.break_glass_recipient_file.clone(),
             artifact_socket: args.artifact_http_socket.clone(),
             artifact_domains: args
                 .artifact_domains
@@ -261,6 +272,14 @@ impl ManagedArgs {
             .is_some_and(std::path::Path::is_relative)
         {
             return Err(ManagedError::RelativeKeystoreDir);
+        }
+        for (flag, path) in [
+            ("escrow-recipient-file", &managed.escrow_recipient),
+            ("break-glass-recipient-file", &managed.break_glass_recipient),
+        ] {
+            if path.as_deref().is_some_and(std::path::Path::is_relative) {
+                return Err(ManagedError::RelativeRecipientFile { flag });
+            }
         }
         // Non-negative is not enough. Both descriptors are adopted by owners
         // that close what they hold — `read_managed_credentials` and
@@ -486,6 +505,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "keystore-dir",
         |args| args.keystore_dir.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "escrow-recipient-file",
+        |args| args.escrow_recipient_file.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "break-glass-recipient-file",
+        |args| args.break_glass_recipient_file.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.
