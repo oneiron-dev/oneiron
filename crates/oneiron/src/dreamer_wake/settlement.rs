@@ -20,7 +20,7 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 
 use super::driver::DreamerWakeDriver;
-use super::types::{LandingRequest, ProgressKind};
+use super::types::{DreamerAttemptExecutor, LandingRequest, ProgressKind};
 
 impl DreamerWakeDriver<'_> {
     pub(super) fn milestone_claim(
@@ -180,11 +180,19 @@ impl DreamerWakeDriver<'_> {
         Ok(spent_units)
     }
 
-    pub(super) fn complete_attempt(
+    /// Completes a try whose execution finished. A TASK's Done is judged by
+    /// `exec`'s host first, as the resident pump judges its runs' (OF-533).
+    pub(super) async fn complete_attempt<E: DreamerAttemptExecutor + ?Sized>(
         &mut self,
+        exec: &E,
         admitted: &DreamerAdmittedAttempt,
         now: u64,
     ) -> Result<()> {
+        let judged =
+            match crate::task_verb::runner_done_question(self.vault, admitted.status.attempt.id)? {
+                Some(question) => exec.judge_done(question).await,
+                None => None,
+            };
         let input = CompleteDreamerAttempt {
             id: admitted.status.attempt.id,
             lease_owner: admitted
@@ -199,10 +207,10 @@ impl DreamerWakeDriver<'_> {
         #[cfg(feature = "sync")]
         if let Some(lane) = &mut self.progress {
             self.store
-                .complete_with_progress(input, &mut lane.producer, lane.ephemeral)?;
+                .complete_with_progress(input, judged, &mut lane.producer, lane.ephemeral)?;
             return Ok(());
         }
-        self.store.complete(input)?;
+        self.store.complete_judged(input, judged)?;
         Ok(())
     }
 

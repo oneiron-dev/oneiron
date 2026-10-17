@@ -12,6 +12,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
+use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::write_envelope::WriteEnvelope;
 
 use super::deadline::WakePassDeadline;
@@ -265,6 +266,13 @@ pub trait DreamerAttemptExecutor {
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution>;
+
+    /// The host's answer to a completed TASK try's "Done means met?"
+    /// (OF-533), asked once the try's result is attached and outside any
+    /// transaction. `None` judges nothing, so a briefed TASK's Done asks up.
+    async fn judge_done(&self, _question: RunnerDoneQuestion) -> Option<RunnerDoneAnswer> {
+        None
+    }
 }
 
 /// Durable milestone authorship for driver-written Started/Done milestones.
