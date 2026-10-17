@@ -266,7 +266,7 @@ export interface FacadeResults {
   "vault.shared.receipt": Facade.SharedActExecutionReceipt;
   "vault.shared.outcomes": Facade.SharedActOutcome[];
   "vault.shared.deletion": Facade.SharedVaultDeletion | null;
-  "vault.members.add": Facade.SharedActExecutionReceipt;
+  "vault.members.add": Facade.SharedMemberInvited;
   "vault.members.change": Facade.SharedActExecutionReceipt;
   "vault.members.remove": Facade.SharedActExecutionReceipt;
   "vault.members.leave": Facade.SharedActExecutionReceipt;
@@ -490,7 +490,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.shared.receipt": { description: "One shared-act or membership receipt its reader was told about, by id.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.shared.outcomes": { description: "The reader's own outcome notices for a shared vault.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.shared.deletion": { description: "The executed delete-the-vault act, if any.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.members.add": { description: "An Admin invites a live person into a shared vault at a non-root role; they join when they accept.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.members.add": { description: "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.members.change": { description: "An Admin assigns another non-root role to a member who is not an Owner.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.members.remove": { description: "An Admin removes one member from a shared vault.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.members.leave": { description: "A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -873,7 +873,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         close_erase_ask: (input: Facade.SharedEraseAskCloseRequest, options?: O): FacadeReturns<"vault.shared.close_erase_ask">[K] => invoke("vault.shared.close_erase_ask", input, options, newInvocation()),
       },
       members: {
-        /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
+        /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
         add: (input: Facade.SharedMemberAddRequest, options?: O): FacadeReturns<"vault.members.add">[K] => invoke("vault.members.add", input, options, newInvocation()),
         /** An Admin assigns another non-root role to a member who is not an Owner. */
         change: (input: Facade.SharedMemberRoleRequest, options?: O): FacadeReturns<"vault.members.change">[K] => invoke("vault.members.change", input, options, newInvocation()),

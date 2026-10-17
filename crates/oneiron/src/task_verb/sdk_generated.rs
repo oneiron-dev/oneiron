@@ -4431,10 +4431,11 @@ pub fn vault_shared_deletion(
 pub fn vault_members_add(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::SharedMemberAddRequest,
-) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+) -> MemoryResult<crate::task_verb::sdk::SharedMemberInvited> {
     crate::task_verb::sdk::add_shared_member_as(
         memory.vault(),
         &memory.embedded_owner("vault.members.add")?,
+        None,
         input,
     )
 }
