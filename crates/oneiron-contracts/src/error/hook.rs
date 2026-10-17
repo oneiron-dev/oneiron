@@ -23,11 +23,15 @@ pub enum VerbHookStop {
         result: serde_json::Value,
     },
     /// The ask was answered proceed and settlement ran the call once, which
-    /// failed: its error's code and message.
+    /// failed, or refused it before it ran (a credential that no longer
+    /// holds): its error's code and message, and the refusal's receipt
+    /// (`call:<32hex>`) when it left one.
     CompletedWithError {
         invocation: String,
         code: String,
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt_ref: Option<String>,
     },
 }
 
@@ -50,6 +54,7 @@ impl std::fmt::Display for VerbHookStop {
                 invocation,
                 code,
                 message,
+                ..
             } => write!(
                 f,
                 "invocation {invocation} ran once its hook's ask was answered and failed: {code}: {message}"

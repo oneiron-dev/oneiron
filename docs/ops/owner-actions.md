@@ -845,6 +845,24 @@ to trust a backup on, and a backup's own head is never trusted. Where no vault i
 configured path, the restore makes it there, unlocks its key the same way and wraps it to this
 install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
 
+A managed vault's escrow capsules live in the registry, one report per recipient (`managed` or
+`break-glass`). One of them opens a backup even when the backup is older than its wrap:
+
+```sh
+oneiron restore BACKUP --unlock escrow --capsule vault-key-escrow-managed.<fp>.json \
+  --secret-file recipient.secret --trust signer.json
+```
+
+The report is the registry's JSON row as the node spooled it. Unknown fields, another
+`schema_version` or `report_type`, and a `vault_id` or `key_commitment` other than the backup's
+(`--inspect` prints both) are refused before the secret is read. The recipient's secret comes from
+stdin, an owner-only `--secret-file` or the recovery box, never the command line: a 32-byte seed,
+or the key's 96 bytes of seeds (ML-KEM-1024's 64, then X25519's 32), raw, hex or base64url. A
+released recipient is never reused, and the restore says so on stderr. Retire it yourself: seal the
+vault key to a new recipient (`oneiron vault-key add-escrow`, or the managed node's fresh one at its
+next start), `oneiron vault-key remove escrow:<label>` if the restored vault still carries it, and
+have the registry delete its capsules.
+
 ### Maximum tier
 
 `oneiron init --maximum-tier` creates a vault whose every LMDB page is sealed under a key derived
@@ -856,13 +874,21 @@ in `.<vault dir>.page-seal`, owner-only and never in a backup, so the pages unlo
 opens. With no keystore, serve unlocks them with the password the service manager's credential store
 holds as `vault_password`. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On
 another device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device
---unlock password`; `oneiron vault-key prf-input NAME` gives a passkey's input before the vault
-opens. A credential whose wrap was removed or replaced opens nothing, even if an interrupted change
+--unlock password` (or `passkey`, `escrow`, or `kit` with the world kit's pieces); `oneiron
+vault-key prf-input NAME` gives a passkey's input before the vault opens. A credential whose wrap was removed or replaced opens nothing, even if an interrupted change
 left it in the mirror; the next open with a current one repairs the mirror. Where the mirror is but
 the vault's data is not, init, serve and restore refuse: move the mirror away to create a new vault,
 since it may be the only copy of that vault's wraps. A restore makes a plain vault, so it is refused
 over a sealed one; restore to another `--vault-path`. Body files, `.lines`, LFS staging and lock
 files stay outside the tier.
+
+A managed vault is plain unless its supervisor passes `--maximum-tier` when the vault is created.
+Its pages then seal under the data key the supervisor delivers at every start, with a fresh vault
+id and incarnation, and the mirror beside the data directory is written at the first open, before
+any wrap: the next start reopens from its id and incarnation with the delivered key, which must be
+the one the mirror's commitment names. A sealed managed vault reopens that way with or without the
+flag; a plain one stays plain. The managed and break-glass escrow wraps join the mirror as they are
+sealed, so a restore elsewhere unlocks the pages with either.
 
 ## The world recovery kit
 
@@ -901,12 +927,17 @@ world's settings. A kit opened with one piece and the passphrase is not verified
 pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
 A kit this vault still lists as pending is refused: `confirm` it instead.
 
-On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
-`status` prints:
+On a new host, the kit also opens a backup through the `world-kit` wrap, and a sealed vault's
+pages through the same wrap in its mirror. `--vault-id` is the id `status` prints, the id the kit
+is bound to; it is never read from the vault or its mirror:
 
 ```sh
 oneiron restore BACKUP --unlock kit --vault-id <hex> --piece piece-1.txt --piece piece-2.txt --trust signer.json
+oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt --piece piece-2.txt
 ```
+
+With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
+with any other unlock, it refuses `--piece` and `--vault-id`.
 
 ## Contact disclosure
 

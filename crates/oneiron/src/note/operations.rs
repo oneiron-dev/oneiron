@@ -240,7 +240,7 @@ impl Memory<'_> {
         if SYNC_DS_E.contains(&self.vault().store, txn, &HexId(note))? {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
         }
-        self.vault().refuse_sealed_pad_in_txn(txn, note)?;
+        super::lifecycle::refuse_sealed_note_in_txn(&self.vault().store, txn, note)?;
         self.vault().authorize_shared_note_write_in_txn(
             txn,
             note,

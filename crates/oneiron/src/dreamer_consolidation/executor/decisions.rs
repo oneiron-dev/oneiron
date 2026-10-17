@@ -189,7 +189,7 @@ impl ConsolidationExecutor<'_> {
             .iter()
             .map(|question| {
                 Ok(vault
-                    .decision_ask_for(question, principal, evidence, to)?
+                    .decision_ask_for(question, principal, evidence, to, None)?
                     .filter(holds))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -267,7 +267,7 @@ impl ConsolidationExecutor<'_> {
                 None if went_up(&decision)
                     && decision.human_ask != Some(HumanAskReason::Deadline) =>
                 {
-                    vault.decision_ask_for(question, principal, evidence, to)?
+                    vault.decision_ask_for(question, principal, evidence, to, None)?
                 }
                 None => None,
             };

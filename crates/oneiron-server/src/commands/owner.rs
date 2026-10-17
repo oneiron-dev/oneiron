@@ -272,6 +272,25 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;
     let unlock = vault_key::HostUnlock::read(&args, backup)?;
+    let restored = restore_unlocked(&args, &config, backup, keystore, &unlock);
+    // A registry capsule's recipient secret was released into this process,
+    // whether or not the restore went through (CROSS-ARCH-0022
+    // #ov-custody-backend).
+    if let Some(note) = unlock.released_note() {
+        eprintln!("{note}");
+    }
+    restored
+}
+
+/// The restore once its unlock is read: a new vault where none is, else a
+/// rehearsal or a restore over the vault.
+fn restore_unlocked(
+    args: &RestoreArgs,
+    config: &ServeConfig,
+    backup: &Path,
+    keystore: Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
+    unlock: &vault_key::HostUnlock,
+) -> anyhow::Result<()> {
     let pins = args
         .trust
         .as_deref()
@@ -279,10 +298,10 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         .transpose()?;
     if !args.rehearse && !config.vault_path.join("data.mdb").exists() {
         return emit(&vault_key::restore_fresh(
-            backup, &config, keystore, &unlock, pins,
+            backup, config, keystore, unlock, pins,
         )?);
     }
-    let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), &unlock, pins)?;
+    let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
         let mut source =
@@ -293,16 +312,16 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         let scratch = args.scratch.as_deref();
         return emit(&match key {
             Some(key) => {
-                backup::rehearse_keyed(backup, vault_config(&config), scratch, &source, key)?
+                backup::rehearse_keyed(backup, vault_config(config), scratch, &source, key)?
             }
-            None => backup::rehearse(backup, vault_config(&config), scratch, &source)?,
+            None => backup::rehearse(backup, vault_config(config), scratch, &source)?,
         });
     }
     emit(&match key {
         Some(key) => {
-            backup::restore_over_keyed(backup, &config.vault_path, vault_config(&config), key)?
+            backup::restore_over_keyed(backup, &config.vault_path, vault_config(config), key)?
         }
-        None => backup::restore_over(backup, &config.vault_path, vault_config(&config), keystore)?,
+        None => backup::restore_over(backup, &config.vault_path, vault_config(config), keystore)?,
     })
 }
 
