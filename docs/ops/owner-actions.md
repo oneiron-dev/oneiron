@@ -1074,9 +1074,10 @@ whatever the fit says.
 
 A row applies to the vault, to one project, or to one task type (a type row matches its node at
 any tree version). A read takes the narrowest pin (project, then type, then vault). Without a
-pin, it takes the vault's fit once the fit has runs of its own. Failing that, it takes the
-narrowest seed, then the catalog seed. The catalog keeps each knob's bounds; a value outside
-them is refused.
+pin, it takes the project's seed, then the type's: those are your word for that scope alone,
+so a fit learned across the whole vault does not override them. Failing that, it takes the
+vault's fit once the fit has runs of its own, then the vault's seed (the fit's own prior), then
+the catalog seed. The catalog keeps each knob's bounds; a value outside them is refused.
 
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows

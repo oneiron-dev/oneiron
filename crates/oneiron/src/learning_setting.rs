@@ -426,8 +426,12 @@ pub(crate) fn setting_value_in_txn(
 
 /// The value in force for `spec` where `project` and `type_ref` apply: the
 /// narrowest pin (the project's, then the type's, then the vault's), else the
-/// vault-scope fit once it has own runs, else the narrowest seed in the same
-/// order, else the catalog seed. With neither named it is [`setting_value`].
+/// narrower seed (the project's, then the type's), else the vault-scope fit
+/// once it has own runs, else the vault's seed, else the catalog seed. The
+/// vault's seed is the vault fit's own prior, so the fit outranks it; a
+/// project or type seed is the owner's word for that scope alone, which no
+/// fit learned from the whole vault overrides. With neither named it is
+/// [`setting_value`].
 ///
 /// # Errors
 ///
@@ -461,6 +465,11 @@ pub(crate) fn setting_value_scoped_in_txn(
             return Ok(value);
         }
     }
+    for scope in scopes.iter().filter(|scope| **scope != SettingScope::Vault) {
+        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Seed, scope)? {
+            return Ok(value);
+        }
+    }
     if let Some(fit) =
         crate::learning::project::SETTING_FIT.get(store, txn, &spec.key.to_owned())?
         && fit.runs > 0.0
@@ -469,12 +478,8 @@ pub(crate) fn setting_value_scoped_in_txn(
         // A fit never leaves the catalog's bounds, so it never widens a floor.
         return Ok(fit.value.clamp(spec.min, spec.max));
     }
-    for scope in &scopes {
-        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Seed, scope)? {
-            return Ok(value);
-        }
-    }
-    Ok(spec.seed)
+    let seed = scoped_row_value(store, txn, spec, SettingMode::Seed, &SettingScope::Vault)?;
+    Ok(seed.unwrap_or(spec.seed))
 }
 
 /// Every owner row as stored, in key order: its scope, the row, and the
