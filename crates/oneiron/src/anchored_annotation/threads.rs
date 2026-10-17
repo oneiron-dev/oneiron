@@ -12,12 +12,18 @@ use super::model::{
     ThreadState,
 };
 use crate::Vault;
+use crate::agent_dispatch::{
+    AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+};
 use crate::claim::{ClaimBody, ClaimSubject};
+use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::habit::TaskRole;
-use crate::registry::{ArtifactFamilyKindId, ENTITY_TYPE_TASK, artifact_family_kind_of};
+use crate::registry::{
+    ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK, artifact_family_kind_of,
+};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 
@@ -272,8 +278,11 @@ impl Vault {
     ///
     /// Writes a productivity `TASK` entity, a durable `annotation.brief` claim
     /// linking the thread to that task with the anchor payload, and — when an
-    /// assignee is supplied — an `AssignedTo` edge. Returns the assembled brief
-    /// carrying the anchor, the thread transcript, and the `artifact@version`.
+    /// assignee is supplied — an `AssignedTo` edge. An agent-definition
+    /// assignee realizes the TASK: its attempt is dispatched in the same
+    /// transaction, briefed with the transcript. A person, or no assignee,
+    /// gets no attempt. Returns the assembled brief carrying the anchor, the
+    /// thread transcript, and the `artifact@version`.
     ///
     /// The transcript snapshot taken at assignment time is persisted IN the
     /// brief claim value, so the handed-off brief is stable: comments appended
@@ -338,6 +347,38 @@ impl Vault {
                 );
             }
             batch.apply(wtxn)?;
+            if let Some(agent) = assignee
+                && self.get_entity_type_in_txn(&*wtxn, &agent)? == Some(ENTITY_TYPE_AGENT_DEF)
+            {
+                let mut briefing = format!(
+                    "Annotation thread {} on artifact {}@{} was assigned to you as {brief_ref}. The thread:\n{thread_text}",
+                    thread_id.to_hex(),
+                    artifact_id.to_hex(),
+                    thread.anchor.version,
+                );
+                briefing.truncate(briefing.floor_char_boundary(CONTEXT_SPEC_MAX_TEXT_BYTES));
+                // The brief claim above is in this transaction, so dispatch's
+                // annotation hold sees it and parks the attempt while the
+                // thread is unattached.
+                AgentDispatcher::new(self).dispatch_for_task_in_txn(
+                    wtxn,
+                    task_id,
+                    DispatchAgent {
+                        target: AgentDispatchTarget::Custom(agent),
+                        parent_attempt: None,
+                        dedupe_key: Some(format!("task:{}", task_id.to_hex())),
+                        run_id: None,
+                        now: learned_at,
+                    },
+                    AgentSpawnContext {
+                        context_spec: Some(ContextSpec {
+                            briefing: Some(briefing),
+                            ..ContextSpec::default()
+                        }),
+                        ..AgentSpawnContext::default()
+                    },
+                )?;
+            }
             let artifact_version = thread.anchor.version;
             Ok(TaskBrief {
                 brief_ref,
