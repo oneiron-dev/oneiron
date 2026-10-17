@@ -139,7 +139,9 @@ pub(crate) fn record_verified_in_txn(
             sources: Vec::new(),
         });
     if observations.predicate != body.predicate {
-        return Err(Error::InvalidClaimBody("consolidation strength identity changed"));
+        return Err(Error::InvalidClaimBody(
+            "consolidation strength identity changed",
+        ));
     }
     for (source, hash, is_claim) in evidence.signal_sources() {
         if observations
@@ -149,7 +151,8 @@ pub(crate) fn record_verified_in_txn(
         {
             continue;
         }
-        let raw = vault.store
+        let raw = vault
+            .store
             .port_entity_raw(txn, &source)?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw)
@@ -170,7 +173,9 @@ pub(crate) fn record_verified_in_txn(
         });
         observations.last_activity_ms = observations.last_activity_ms.max(now_ms);
     }
-    observations.sources.sort_by_key(|row| (row.source, row.hash));
+    observations
+        .sources
+        .sort_by_key(|row| (row.source, row.hash));
     OBSERVATIONS.put(&vault.store, txn, &claim, &observations)
 }
 
@@ -182,8 +187,8 @@ pub(crate) fn restored_in_txn(
     claim: &EntityId,
 ) -> Result<()> {
     if let Some(mut observations) = OBSERVATIONS.get(&vault.store, txn, claim)? {
-        observations.last_activity_ms = crate::ports::recorded_at_in_txn(&vault.store, txn)?
-            .saturating_mul(1_000);
+        observations.last_activity_ms =
+            crate::ports::recorded_at_in_txn(&vault.store, txn)?.saturating_mul(1_000);
         OBSERVATIONS.put(&vault.store, txn, claim, &observations)?;
     }
     Ok(())
@@ -236,9 +241,10 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
             let mut current = true;
             for source in &observations.sources {
                 let raw = read.entity_raw_live_in(txn, &source.source)?;
-                if raw.as_ref().is_none_or(|raw| {
-                    *blake3::hash(raw).as_bytes() != source.revision
-                }) {
+                if raw
+                    .as_ref()
+                    .is_none_or(|raw| *blake3::hash(raw).as_bytes() != source.revision)
+                {
                     current = false;
                     break;
                 }
@@ -246,10 +252,14 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
             if !current || observations.sources.is_empty() {
                 continue;
             }
-            let diversity: BTreeSet<_> = observations.sources.iter()
+            let diversity: BTreeSet<_> = observations
+                .sources
+                .iter()
                 .filter_map(|source| source.diversity.as_ref())
                 .collect();
-            let latest = observations.sources.iter()
+            let latest = observations
+                .sources
+                .iter()
                 .map(|source| source.learned_at_ms)
                 .max()
                 .unwrap_or_default();
@@ -292,5 +302,7 @@ fn read_key(actor: WriteActor) -> Result<ScopedReadActorKey> {
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
     )
-    .ok_or(Error::InvalidClaimBody("invalid consolidation strength reader"))
+    .ok_or(Error::InvalidClaimBody(
+        "invalid consolidation strength reader",
+    ))
 }

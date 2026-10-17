@@ -101,6 +101,8 @@ impl Vault {
                             .symlink_target
                             .ok_or(Error::CorruptedIndex("symlink target missing"))?
                             .into_bytes(),
+                        // Snapshot custody kept its bytes out of the fork.
+                        StoredRepoSnapshotEntryKind::Withheld => continue,
                     };
                     if files.insert(entry.path, bytes).is_some() {
                         return Err(Error::CorruptedIndex("duplicate fork path"));

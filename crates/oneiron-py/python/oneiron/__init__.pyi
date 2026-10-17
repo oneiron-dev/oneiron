@@ -66,6 +66,13 @@ class RecallScope(TypedDict):
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
 
+class RecallMedia(TypedDict):
+    """A recall's media query (OF-370): bytes the server embeds into one declared space."""
+    space: str
+    mime: str
+    bytes_b64: str
+    kinds: NotRequired[list[Literal["text", "image", "audio"]]]
+
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -326,7 +333,7 @@ class Oneiron:
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
-        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> MemoryPack: ...
+        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None) -> MemoryPack: ...
         def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         @property
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs": ...
@@ -367,11 +374,15 @@ class Oneiron:
         @property
         def artifacts(self) -> "Oneiron._VaultArtifactsVerbs": ...
         @property
+        def code(self) -> "Oneiron._VaultCodeVerbs": ...
+        @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs": ...
         @property
         def projects(self) -> "Oneiron._VaultProjectsVerbs": ...
         @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs": ...
+        @property
+        def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
         @property
@@ -507,8 +518,8 @@ class Oneiron:
         def close_erase_ask(self, spec: Facade.SharedEraseAskCloseRequest) -> Facade.SharedEraseAsk:
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
     class _VaultMembersVerbs:
-        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept."""
+        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:
@@ -632,12 +643,17 @@ class Oneiron:
         def keep(self, request: Facade.ProposalSettleRequest) -> Facade.KeptProposal: ...
         def discard(self, request: Facade.ProposalSettleRequest) -> Facade.DiscardedProposal: ...
         def undo(self, request: Facade.ProposalSettleRequest) -> Facade.UndoneKeep: ...
+        def create(self, spec: Facade.ArtifactCreateRequest) -> Facade.ArtifactView | None:
+            """Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run."""
         def put(self, input: Facade.BlobArtifactInput) -> Facade.EntityRefReceipt:
             """Registers one blob artifact; its bytes ride vault.artifacts.append."""
         def append(self, input: Facade.AppendBlobVersionRequest) -> Facade.BlobVersionView:
             """Appends one version of bytes to a blob artifact's append-only chain."""
         def read(self, input: Facade.ReadBlobVersionRequest) -> Facade.BlobContent | None:
             """Reads one version of a blob artifact's bytes."""
+    class _VaultCodeVerbs:
+        def diff(self, request: Facade.CodeDiffRequest) -> Facade.CodeDiffView | None: ...
+        def blame(self, request: Facade.CodeStateRequest) -> Facade.CodeBlameView | None: ...
     class _VaultRoomsVerbs:
         def list(self) -> list[Facade.RoomEntry]:
             """The caller's rooms its own grants admit; inside a room turn, only that room."""
@@ -711,6 +727,9 @@ class Oneiron:
             """Queues generation that resumes an incomplete assistant reply from exactly its saved text."""
         def retry(self, spec: Facade.TurnActionRequest) -> Facade.TurnActionReceipt:
             """Queues a new answer to the user turn an assistant turn answered; the old reply stays."""
+    class _VaultMessagesVerbs:
+        def react(self, spec: Facade.MessageReactionRequest) -> Facade.MessageReactionReceipt:
+            """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
     class _VaultCompanionsVerbs:
         @property
         def sharing(self) -> "Oneiron._VaultCompanionsSharingVerbs": ...
@@ -773,6 +792,8 @@ class Oneiron:
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
+        def wave(self, spec: Facade.TaskWaveRequest) -> Facade.TaskWaveReceipt:
+            """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
         def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
             """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:

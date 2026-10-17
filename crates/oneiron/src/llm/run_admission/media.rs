@@ -52,6 +52,16 @@ impl MediaGate {
             self.run.refuse(Some(model), Some(lease), reason);
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        // A call the backend's own preflight refuses (a key its custody door
+        // would refuse) is refused before its permit starts, so it costs
+        // nothing and the permit stays usable. A media call may send several
+        // requests (an embed's parts, a job's polls), so it binds no wire
+        // digest: its route and offer bind it.
+        if let Err(error) = self.inner.preflight(request) {
+            self.run
+                .refuse(Some(model), Some(lease), RunDenied::BackendRefused);
+            return Err(error);
+        }
         let digest = request
             .canonical_hash_hex()
             .map_err(|_| FatalLlmError::InvalidRequest)?;
@@ -67,7 +77,7 @@ impl MediaGate {
                 lease: lease.clone(),
                 model: request.model.clone(),
                 digest,
-                broker_isolation: None,
+                broker_isolation: self.inner.broker_isolation(),
             }),
         })
     }
@@ -92,6 +102,16 @@ impl MediaGate {
         let job = self.inner.submit(request, lease).await;
         opened.finish(None, job.is_ok());
         job
+    }
+
+    /// Takes up a job that an earlier run's submit started, as a restart
+    /// leaves one: starts this permit under the checks a submit takes, and
+    /// sends nothing, so the job's polls and its cancel ride this permit.
+    /// Its dispatch receipt stands for the job going on here.
+    pub fn resume(&self, request: &MediaRequest, lease: &BudgetLease) -> LlmResult<()> {
+        let mut opened = self.open(request, lease)?;
+        opened.finish(None, true);
+        Ok(())
     }
 
     /// Where the job a submit through this gate started stands.
@@ -148,6 +168,12 @@ impl MediaGate {
             self.run.refuse(Some(model), Some(&lease), reason);
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        // As a call's: the backend's preflight before the stream starts.
+        if let Err(error) = self.inner.preflight(request) {
+            self.run
+                .refuse(Some(model), Some(&lease), RunDenied::BackendRefused);
+            return Err(error);
+        }
         let digest = request
             .canonical_hash_hex()
             .map_err(|_| FatalLlmError::InvalidRequest)?;
@@ -166,7 +192,7 @@ impl MediaGate {
                 lease: lease.clone(),
                 model: request.model.clone(),
                 digest,
-                broker_isolation: None,
+                broker_isolation: self.inner.broker_isolation(),
             }),
             lease,
             permit: Some(permit),

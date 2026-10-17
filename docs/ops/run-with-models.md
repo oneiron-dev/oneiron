@@ -117,7 +117,11 @@ default, or `none`; OpenAI-compatible providers only), `capabilities` (`streamin
 `reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
 WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
 the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
-`reasoning` unless the list is written out),
+`reasoning` unless the list is written out), `model_capabilities` (one wire
+model's own list in place of `capabilities`, keyed by the model's name, so
+two models on one provider can differ: `model_capabilities = { "gpt-audio" =
+["streaming", "audio_input"] }`; the Big rung hears a clip only on a model
+whose list has `audio_input`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
@@ -529,6 +533,30 @@ whose answer or failure it holds. When no checker loads, code mode runs unchecke
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
 
+### Planned spawns (`[models.planner]`)
+
+An agent run the server leases can ask for help with
+`self.agents.spawn({need, ...})` and have the vault's planner pick the shape:
+the model, the pattern and the width. Its leader calls
+(`self.leader.advice`, `self.leader.pattern`) read the same planner. Each
+seat joins a model this host serves to the AGENT_DEF that runs on it:
+
+```toml
+[models.planner]
+top = 3                      # optional; shapes the leader's advice returns by default
+
+[[models.planner.seats]]
+model = "anthropic/claude-sonnet-5-5@1"  # an engine model ID, one seat per model
+agent = "sys.team_lead"                  # a seeded definition's logical ID, or an AGENT_DEF hex ID
+```
+
+The planned child runs the chosen seat's definition, its type placed on the
+need's text. The pick and the placement go through the host's decision
+ladder (section 13), each on its own 10-second clock. A seat whose
+definition this vault does not hold is skipped, with a log line. With no
+seat, the server lends no planner: a spawn that names an `agent` runs it
+directly, and a planned spawn or a leader call answers `planner_unbound`.
+
 ## 7. Raw calls
 
 With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
@@ -879,9 +907,12 @@ The verbs, each the owner's and checked against the vault's inference policy:
   `{"kind": "image" | "audio", "media_type": ..., "data": "<base64>"}`. The
   answer is `{"model", "parts", "usage"}`.
 - `POST /v1/ai/video` answers `202` with a job ticket; `GET
-  /v1/ai/video/{job}` polls it (a finished job answers with its clip, once)
-  and `DELETE` stops it. A job's permit is held while it renders and settled
-  when it ends.
+  /v1/ai/video/{job}` polls it, and `DELETE` stops it or drops it once it
+  ended. A job's permit is held while it renders and settled when it ends.
+  The server keeps each job in the vault: a restart loses none (the next
+  poll takes a running job up again on a fresh permit, and sends nothing
+  again), and a finished job answers with its clip on every poll, a lost
+  reply's included, until it is deleted.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
@@ -1058,9 +1089,17 @@ language_hints = ["ja", "en"]   # the default; config replaces it
   reply.
 - At 10 minutes of audio the socket ends, and the next one opens on a fresh
   lease. Words finalized before the switch stay in the utterance still open.
-- A live failure ends the call. A failure here means the socket fails or
-  closes early, Soniox reports an error, or more than 4 MiB queues. Nothing
-  falls back to batch transcription.
+- A socket that drops is reconnected once, on a fresh lease. A drop means
+  the socket fails or closes early, or Soniox reports error 408, 500, 502,
+  503 or 504. The words already final stay in the utterance still open, and
+  audio not yet sent goes to the new socket. A cut whose `<fin>` never came
+  is answered with the words already final. Words Soniox had heard but not
+  made final are lost. A second drop before the new socket answers fails
+  the hearing.
+- A live failure ends the call. A failure here means a drop that the
+  reconnect did not clear, any other Soniox error, a frame that does not
+  parse, or more than 4 MiB queued. Nothing falls back to batch
+  transcription.
 
 ### Lazy images and `ask_image`
 

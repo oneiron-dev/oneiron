@@ -285,6 +285,28 @@ pub fn task_create_spec(
         None => spec,
     })
 }
+/// `tasks.wave` (OF-427, ARCH-0068 RC5): an epic TASK cut into a wave of
+/// TASKs by a planner agent, queued as one planning attempt. Who asks, and
+/// the lease the wave runs under, are the host's, never request text.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWaveRequest {
+    /// The epic TASK the wave realizes.
+    pub epic_task_ref: String,
+    /// The dispatchable agent definition that cuts the epic.
+    pub planner_ref: String,
+    pub objective: String,
+    /// The planner's own constraints, passed to it as they are.
+    #[serde(default)]
+    pub constraints: serde_json::Value,
+}
+/// The planning attempt a `tasks.wave` queued, or the one an identical
+/// request already queued.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TaskWaveReceipt {
+    pub attempt_ref: String,
+    pub state: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BoardRefreshRequest {
@@ -336,10 +358,18 @@ pub struct RecallRequest {
     /// takes the vault's call-mode deadline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline_ms: Option<u64>,
+    /// A media query (OF-370): bytes the host embeds into one declared space
+    /// through the `ai.embed` rung that space's id names, searched as that
+    /// space's list beside the query's. A host that serves no such rung
+    /// refuses the recall with `MODEL_UNAVAILABLE`; it never recalls without
+    /// the media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<crate::code_run::vault_read::ContextPackMediaQuery>,
 }
 
 pub use super::recall_door::{
-    RecallDoor, recall_at_door, recall_at_door_seeded, recall_with_vector,
+    RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
+    recall_with_vector,
 };
 pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,

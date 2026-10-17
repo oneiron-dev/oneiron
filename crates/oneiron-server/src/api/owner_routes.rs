@@ -39,7 +39,6 @@ use crate::owner::{
 use crate::server::SyncServer;
 mod commitment_routes;
 mod concern_routes;
-mod widen_proposal_routes;
 mod conflict_routes;
 mod cooperative_deletion_routes;
 mod decision_ask_routes;
@@ -62,6 +61,7 @@ mod skill_judge_routes;
 mod space_posting_routes;
 mod vault_key_routes;
 mod weave_routes;
+mod widen_proposal_routes;
 mod wire_health_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
