@@ -47,7 +47,7 @@ one.
 
 ## Which verbs cross typed, and which cross `WireJson`
 
-Every facade row crosses typed. A row whose engine type has a hand-written
+Every facade row crosses typed, but for the `WireJson` rows named below. A row whose engine type has a hand-written
 record in `src/dto.rs` crosses through it; every other row crosses through the
 records and enums `scripts/sdk/generate.py` writes into
 `src/facade_types_generated.rs` from the facade type inventory
@@ -60,7 +60,7 @@ boundary through that shape, so the engine type's own serde validates every
 input. An input with no fields is no argument (`vaultRoomsList()`). There is
 no generic `call(name, json)`.
 
-- **Hand-written records in and out (24):** `vault.witness`,
+- **Hand-written records in and out (27):** `vault.witness`,
   `vault.claims.upsert`, `vault.recall`, `vault.receipts`,
   `vault.rooms.speak`, `vault.commit`, `vault.remember`,
   `vault.claims.retract`, `vault.forget`, `vault.claims.list`,
@@ -68,13 +68,14 @@ no generic `call(name, json)`.
   `vault.hydrate`, `vault.get`, `vault.search.bm25`, `vault.neighbors`,
   `vault.structural.put`, `vault.habits.checkin`, `vault.claims.admit`,
   `vault.artifacts.put`, `vault.artifacts.append`, `vault.artifacts.read`,
-  `connector.outbound.schedule`.
+  `vault.consolidation.enqueue`, `vault.consolidation.status`,
+  `vault.claims.seed`, `connector.outbound.schedule`.
 - **Typed arguments, generated result (3):** `cancel(taskRef:)`,
   `describe(taskRef:)`, `vaultExport(format:)`.
 - **Generated input, hand-written result (2):** `vault.notes.create`,
   `vault.notes.from_entity` (both return `EntityRefReceipt`).
-- **Generated in and out:** every other facade row, host doors included (141
-  of the 170 facade rows on this table). The generated files are the
+- **Generated in and out:** every other facade row, host doors included (162
+  of the 202 facade rows on this table). The generated files are the
   authoritative list; each method is named for its row (`vault.kv.get` is
   `vaultKvGet(input:)` over the `KeyValueAddress` record).
 - **`WireJson`** stays only where UniFFI cannot say the shape, as a field
@@ -83,20 +84,21 @@ no generic `call(name, json)`.
   others `generate.py` lists), and the two recursive types, `LensNode` at
   `GeneratedLens.root` and `RunTreeNode` at `RunTree.roots` (a record cannot
   hold itself). A row whose type the inventory
-  could not read would cross as `WireJson` whole; on this table there is
-  none. The generated file's header carries the census.
+  could not read crosses as `WireJson` whole on that side: on this table the
+  eight `vault.embedding_spaces.*` rows that return `EmbeddingSpacesView`
+  (and `declare`'s input), since the inventory cannot read
+  `EmbeddingSpace.evidence`. The generated file's header carries the census.
 - Where a generated type would take a hand-written record's name it is
   prefixed `Wire` (`WireClaimView`, `WireEntityView`, ...): the same engine
   type, carried at its wire widths.
-- **Definition-only (3):** `vault.consolidation.enqueue`,
-  `vault.consolidation.status`, `vault.claims.seed` keep their typed
-  signatures and fail closed with `INVALID_STATE` until the table gives them
-  callable rows.
+- **Definition-only:** none. Every exported row is callable; the generator
+  refuses a definition row a UniFFI signature.
 
 `vault.recall` takes `effort` (`light` … `max`, or `call`: light effort under
 a hard deadline) and `deadlineMs`. Embedded, `high`/`xhigh`/`max` return the
 engine's `LEASE_REQUIRED`: this client mints no lease. `MemoryPack` carries
-items with provenance, `reactions` and `citedMessages`, scope honesty with
+items with provenance, `reactions` and `citedMessages` (each with its typed
+`record` ref), scope honesty with
 `censusCapped`, retrieval accounting, `packVersion` (always
 `HEAD_MEMORY_PACK_SCHEMA_VERSION`) and the read's `narrowing` receipt. The
 read verbs return `{value, narrowing}`. Blob content crosses as bytes; an

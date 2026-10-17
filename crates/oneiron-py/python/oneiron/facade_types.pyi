@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 217 facade rows, 740 declarations.
-Inputs: 186 of 217 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 174 of 217 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 222 facade rows, 764 declarations.
+Inputs: 191 of 222 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 179 of 222 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
 """
 
@@ -288,6 +288,122 @@ class PeoplePage(TypedDict):
     more: int
 class PersonRequest(TypedDict):
     pr: str
+class EmptyRequest(TypedDict):
+    ...
+ShapeCeiling = Literal["auto", "proposed"]
+class ShapeTargetWorld(TypedDict):
+    kind: Literal["world"]
+    name: str
+class ShapeTargetPack(TypedDict):
+    kind: Literal["pack"]
+    name: str
+class ShapeTargetActor(TypedDict):
+    kind: Literal["actor"]
+    agent_id: str
+class ShapeTargetSkill(TypedDict):
+    kind: Literal["skill"]
+    skill_id: str
+class ShapeTargetChannel(TypedDict):
+    kind: Literal["channel"]
+    channel: str
+    address: str
+class ShapeTargetGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+class ShapeTargetSync(TypedDict):
+    kind: Literal["sync"]
+    entity_kind: str
+ShapeTarget = ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+class ShapeRowWorld(TypedDict):
+    kind: Literal["world"]
+    name: str
+class ShapeRowPack(TypedDict):
+    kind: Literal["pack"]
+    name: str
+    version: NotRequired[str | None]
+class ShapeRowActor(TypedDict):
+    kind: Literal["actor"]
+    agent_id: str
+    ceiling: ShapeCeiling
+    enabled: NotRequired[bool]
+class ShapeRowSkill(TypedDict):
+    kind: Literal["skill"]
+    skill_id: str
+    version: NotRequired[str | None]
+class ShapeRowChannel(TypedDict):
+    kind: Literal["channel"]
+    channel: str
+    address: str
+class ShapeRowGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+class ShapeRowSync(TypedDict):
+    kind: Literal["sync"]
+    entity_kind: str
+    on_wire: bool
+class ShapeRowRetire(TypedDict):
+    kind: Literal["retire"]
+    target: ShapeTarget
+ShapeRow = ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+class ShapeSeed(TypedDict):
+    rows: list[ShapeRow]
+class StoredShapeSeed(TypedDict):
+    id: str
+    revision: int
+    parent: NotRequired[str | None]
+    author: str
+    written_at: int
+    seed: ShapeSeed
+ShapeChange = Literal["create", "update", "retire"]
+ShapeItemClass = Literal["receipted", "widening", "authority"]
+ShapePlanItem = TypedDict("ShapePlanItem", {"seq": int, "target": ShapeTarget, "change": ShapeChange, "class": ShapeItemClass, "before": NotRequired[ShapeRow | None], "after": NotRequired[ShapeRow | None], "door": NotRequired[str | None]})
+class ShapeItemStatePending(TypedDict):
+    state: Literal["pending"]
+class ShapeItemStateLanded(TypedDict):
+    state: Literal["landed"]
+    at: int
+    receipt: str
+class ShapeItemStateProposed(TypedDict):
+    state: Literal["proposed"]
+class ShapeItemStateCeremony(TypedDict):
+    state: Literal["ceremony"]
+class ShapeItemStateNoDoor(TypedDict):
+    state: Literal["no_door"]
+class ShapeItemStateRefused(TypedDict):
+    state: Literal["refused"]
+    reason: str
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+class ShapeApplyItem(TypedDict):
+    item: ShapePlanItem
+    state: ShapeItemState
+class ShapeApplyReceipt(TypedDict):
+    frontier: str
+    seed_id: str
+    author: str
+    started_at: int
+    items: list[ShapeApplyItem]
+    done: bool
+class ShapeRead(TypedDict):
+    seed: NotRequired[StoredShapeSeed | None]
+    live: ShapeSeed
+    applies: list[ShapeApplyReceipt]
+class ShapePlanRequest(TypedDict):
+    seed: NotRequired[ShapeSeed | None]
+class ShapePlanSummary(TypedDict):
+    changes: int
+    needs_word: int
+    ceremonies: int
+    no_door: int
+class ShapePlan(TypedDict):
+    seed_id: NotRequired[str | None]
+    seed: ShapeSeed
+    frontier: str
+    items: list[ShapePlanItem]
+    undeclared: list[ShapeRow]
+    summary: ShapePlanSummary
+class ShapeApplyRequest(TypedDict):
+    plan: ShapePlan
+    approve: NotRequired[list[int]]
 class MentionProvenance(TypedDict):
     turn: str
     message: str
@@ -549,6 +665,7 @@ class MemoryProvenance(TypedDict):
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
+    record: NotRequired[RecordRef | None]
 class MemoryItem(TypedDict):
     short_id: str
     source_revision_ref: NotRequired[str | None]
@@ -1451,8 +1568,6 @@ class SharedActOutcome(TypedDict):
     recipient: str
     change: SharedVaultChange
     completed_at: int
-class EmptyRequest(TypedDict):
-    ...
 class SharedVaultDeletion(TypedDict):
     vault_id: int
     act_id: str
@@ -1575,6 +1690,44 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+class RecordEraseRequest(TypedDict):
+    record: EntityId
+class EraseShare(TypedDict):
+    grant: str
+    recipient: str
+class EraseHeldBytes(TypedDict):
+    content_hash: str
+    other_holders: list[str]
+class EraseLfsChunk(TypedDict):
+    chunk_hash: str
+    other_owners: list[str]
+class RecordErasePreview(TypedDict):
+    record: str
+    shared_with: list[EraseShare]
+    held_bytes: list[EraseHeldBytes]
+    lfs_chunks: list[EraseLfsChunk]
+    same_bytes: list[str]
+    remote_copies_may_remain: bool
+    preview_digest: str
+class RecordEraseConfirmRequest(TypedDict):
+    record: EntityId
+    preview_digest: str
+    also_same_bytes: NotRequired[bool]
+class DeleteReceipt(TypedDict):
+    existed: bool
+    reason: str
+    receipt_ref: NotRequired[str | None]
+class EraseSameBytesRow(TypedDict):
+    record: str
+    outcome: str
+    receipt: NotRequired[DeleteReceipt | None]
+    reason: NotRequired[str | None]
+    act_id: NotRequired[str | None]
+    error: NotRequired[str | None]
+class RecordEraseOutcome(TypedDict):
+    first: DeleteReceipt
+    first_act: NotRequired[str | None]
+    same_bytes: list[EraseSameBytesRow]
 class AuthorityHandoffAlarmAck(TypedDict):
     by: str
     at: int
@@ -3515,10 +3668,6 @@ SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "po
 class SafeDeleteRequest(TypedDict):
     entity_ref: str
     reason: SafeDeleteReason
-class DeleteReceipt(TypedDict):
-    existed: bool
-    reason: str
-    receipt_ref: NotRequired[str | None]
 class ReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 class PendingWrite(TypedDict):

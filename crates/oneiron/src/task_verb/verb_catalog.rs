@@ -17,6 +17,9 @@ pub enum AgentVerb {
     SelfInboxConcernMove,
     VaultPeopleList,
     VaultPeopleGet,
+    VaultShapeRead,
+    VaultShapePlan,
+    VaultShapeApply,
     SelfMessage,
     SelfGrantsAsk,
     SelfMemoryDiaryQuery,
@@ -73,6 +76,8 @@ pub enum AgentVerb {
     VaultSharedCloseEraseAsk,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
+    VaultRecordsErasePreview,
+    VaultRecordsEraseConfirm,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -276,6 +281,9 @@ impl AgentVerb {
         Self::SelfInboxConcernMove,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
+        Self::VaultShapeRead,
+        Self::VaultShapePlan,
+        Self::VaultShapeApply,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
         Self::SelfMemoryDiaryQuery,
@@ -332,6 +340,8 @@ impl AgentVerb {
         Self::VaultSharedCloseEraseAsk,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
+        Self::VaultRecordsErasePreview,
+        Self::VaultRecordsEraseConfirm,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -538,6 +548,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => "self.inbox.concern.move",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
+            Self::VaultShapeRead => "vault.shape.read",
+            Self::VaultShapePlan => "vault.shape.plan",
+            Self::VaultShapeApply => "vault.shape.apply",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
@@ -594,6 +607,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
+            Self::VaultRecordsErasePreview => "vault.records.erase_preview",
+            Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -800,6 +815,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -856,6 +874,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1066,6 +1086,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -1122,6 +1145,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1361,6 +1386,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -1413,6 +1441,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1604,6 +1634,7 @@ impl AgentVerb {
                 | Self::SelfInboxMark
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::Cancel
@@ -1637,6 +1668,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -1779,6 +1812,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultShapeRead => &["spec"],
+            Self::VaultShapePlan => &["spec"],
+            Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
@@ -1835,6 +1871,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultRecordsErasePreview => &["spec"],
+            Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2039,6 +2077,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultShapeRead => &["spec"],
+            Self::VaultShapePlan => &["spec"],
+            Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
@@ -2095,6 +2136,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultRecordsErasePreview => &["spec"],
+            Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2320,6 +2363,15 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => "",
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
+            Self::VaultShapeRead => {
+                "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."
+            }
+            Self::VaultShapePlan => {
+                "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."
+            }
+            Self::VaultShapeApply => {
+                "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."
+            }
             Self::SelfMessage => {
                 "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
             }
@@ -2476,6 +2528,12 @@ impl AgentVerb {
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
             }
+            Self::VaultRecordsErasePreview => {
+                "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
+            }
+            Self::VaultRecordsEraseConfirm => {
+                "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."
+            }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."
             }
@@ -2567,7 +2625,7 @@ impl AgentVerb {
                 "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."
             }
             Self::VaultLensesList => {
-                "One page of the vault's lens proposals, each with its slot state from the owner's current selection."
+                "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
             Self::VaultLensesDefault => {
                 "Composes the default vault lens from the named sources, read under the caller's own scope."

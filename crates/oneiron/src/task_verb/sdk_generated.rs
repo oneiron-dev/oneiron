@@ -84,6 +84,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::PersonRequest>(),
             ),
             (
+                "vault.shape.read",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.shape.plan",
+                crate::code_run::vault_read::request_schema::<crate::vault_shape::ShapePlanRequest>(
+                ),
+            ),
+            (
+                "vault.shape.apply",
+                crate::code_run::vault_read::request_schema::<crate::vault_shape::ShapeApplyRequest>(
+                ),
+            ),
+            (
                 "self.message",
                 crate::code_run::vault_read::request_schema::<crate::memory::MessagePersonRequest>(
                 ),
@@ -360,6 +374,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.guests.mint_slip",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestSlipMintRequest,
+                >(),
+            ),
+            (
+                "vault.records.erase_preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RecordEraseRequest,
+                >(),
+            ),
+            (
+                "vault.records.erase_confirm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RecordEraseConfirmRequest,
                 >(),
             ),
             (
@@ -1431,6 +1457,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.shape.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shape.plan" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shape.apply" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.message" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1832,6 +1879,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.guests.mint_slip" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.records.erase_preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.records.erase_confirm" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2928,6 +2989,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.people.get" => {
             let _input: crate::memory::PersonRequest = decode(value.clone())?;
         }
+        "vault.shape.read" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.shape.plan" => {
+            let _input: crate::vault_shape::ShapePlanRequest = decode(value.clone())?;
+        }
+        "vault.shape.apply" => {
+            let _input: crate::vault_shape::ShapeApplyRequest = decode(value.clone())?;
+        }
         "self.message" => {
             let _input: crate::memory::MessagePersonRequest = decode(value.clone())?;
         }
@@ -3112,6 +3182,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.guests.mint_slip" => {
             let _input: crate::task_verb::sdk::GuestSlipMintRequest = decode(value.clone())?;
+        }
+        "vault.records.erase_preview" => {
+            let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
+        }
+        "vault.records.erase_confirm" => {
+            let _input: crate::task_verb::sdk::RecordEraseConfirmRequest = decode(value.clone())?;
         }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -3739,6 +3815,9 @@ pub fn invoke(
         "self.inbox.concern.move" => encode(self_inbox_concern_move(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
+        "vault.shape.read" => encode(vault_shape_read(memory, decode(value)?)?),
+        "vault.shape.plan" => encode(vault_shape_plan(memory, decode(value)?)?),
+        "vault.shape.apply" => encode(vault_shape_apply(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
         "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
@@ -3807,6 +3886,12 @@ pub fn invoke(
         }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
+        "vault.records.erase_preview" => {
+            encode(vault_records_erase_preview(memory, decode(value)?)?)
+        }
+        "vault.records.erase_confirm" => {
+            encode(vault_records_erase_confirm(memory, decode(value)?)?)
+        }
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -4320,6 +4405,24 @@ pub fn vault_people_get(
 ) -> MemoryResult<crate::context_board::PersonRow> {
     memory.people_get(&input)
 }
+pub fn vault_shape_read(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::vault_shape::ShapeRead> {
+    memory.shape_read()
+}
+pub fn vault_shape_plan(
+    memory: &Memory<'_>,
+    input: crate::vault_shape::ShapePlanRequest,
+) -> MemoryResult<crate::vault_shape::ShapePlan> {
+    memory.shape_plan(&input)
+}
+pub fn vault_shape_apply(
+    memory: &Memory<'_>,
+    input: crate::vault_shape::ShapeApplyRequest,
+) -> MemoryResult<crate::vault_shape::ShapeApplyReceipt> {
+    memory.shape_apply(&input)
+}
 pub fn self_message(
     memory: &Memory<'_>,
     input: crate::memory::MessagePersonRequest,
@@ -4811,6 +4914,18 @@ pub fn vault_guests_mint_slip(
     input: crate::task_verb::sdk::GuestSlipMintRequest,
 ) -> MemoryResult<crate::task_verb::sdk::GuestSlipMinted> {
     crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)
+}
+pub fn vault_records_erase_preview(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RecordEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::RecordErasePreview> {
+    crate::task_verb::sdk::preview_record_erase(memory, input)
+}
+pub fn vault_records_erase_confirm(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RecordEraseConfirmRequest,
+) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
+    crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
 }
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,

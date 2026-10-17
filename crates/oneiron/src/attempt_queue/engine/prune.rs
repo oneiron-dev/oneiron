@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, decode_record, encode_record, legacy_dedupe_index_key, ready_at, ready_key,
+    DedupeIndexKeys, decode_record, legacy_dedupe_index_key, ready_at, ready_key,
 };
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptId, AttemptRecord};
@@ -167,9 +167,10 @@ impl AttemptQueue<'_> {
     ) -> Result<()> {
         row.retry_of = parent;
         row.folded_retries = row.folded_retries.saturating_add(folded);
+        let encoded = self.encode_in_txn(wtxn, &mut row)?;
         self.store
             .attempt_records
-            .put(wtxn, row.id.as_bytes(), &encode_record(&row)?)?;
+            .put(wtxn, row.id.as_bytes(), &encoded)?;
         Ok(())
     }
 
