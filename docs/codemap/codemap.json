@@ -64009,7 +64009,7 @@
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
