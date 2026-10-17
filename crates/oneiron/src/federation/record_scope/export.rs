@@ -29,7 +29,7 @@ impl Vault {
         let mut out = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             let (id, raw) = row?;
-            if withheld(&id)? || crate::ports::withdrawn_in_txn(&self.store, &txn, &id)? {
+            if withheld(&id)? || !crate::ports::raw_readable_in_txn(&self.store, &txn, &id, &raw)? {
                 continue;
             }
             let h =

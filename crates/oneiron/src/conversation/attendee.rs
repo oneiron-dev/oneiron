@@ -363,12 +363,9 @@ impl Vault {
             ContainerAttendee::Speaker {
                 session_key,
                 speaker_key,
-            } => self.attendee_identity_in_txn(
-                &txn,
-                session_key,
-                speaker_key,
-                fact.roster_revision,
-            )?,
+            } => {
+                self.attendee_identity_in_txn(&txn, session_key, speaker_key, fact.roster_revision)?
+            }
         };
         Ok(Some(ContainerAttendeeEntry {
             entry_ref,

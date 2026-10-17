@@ -715,6 +715,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shares_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shares.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shares.revoke", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shares_view(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shares.view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shares.view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_hooks_replay(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.hooks.replay")?;
         let output = py
@@ -1204,6 +1218,48 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "ai.verdict")?;
         let output = py
             .detach(|| self.inner.agent_verb("ai.verdict", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_graph_ask(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.graph.ask")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.graph.ask", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_edit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.edit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.edit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_pause(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.pause")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.pause", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_answers(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.answers")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.answers", input))
             .map_err(raise)?;
         encode(&output)
     }
