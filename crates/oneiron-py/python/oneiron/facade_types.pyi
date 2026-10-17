@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 249 facade rows, 868 declarations.
-Inputs: 208 of 249 fully typed, 40 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 202 of 249 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 64; unread shapes: 1.
+Census: 255 facade rows, 936 declarations.
+Inputs: 211 of 255 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 207 of 255 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -614,12 +614,400 @@ class TaskWaveRequest(TypedDict):
 class TaskWaveReceipt(TypedDict):
     attempt_ref: str
     state: str
+class AttemptHandle(TypedDict):
+    task_ref: EntityId
+    attempt_ref: str
+    attempt_count: int
+    node_ref: NotRequired[EntityId | None]
+class TaskHandleProposed(TypedDict):
+    kind: Literal["proposed"]
+    proposal_ref: EntityId
+class TaskHandleTask(TypedDict):
+    kind: Literal["task"]
+    task_ref: EntityId
+class TaskHandleAttempt(AttemptHandle):
+    kind: Literal["attempt"]
+class TaskHandleAsk(TypedDict):
+    kind: Literal["ask"]
+    group_ref: EntityId
+TaskHandle = TaskHandleProposed | TaskHandleTask | TaskHandleAttempt | TaskHandleAsk
+class ConsultPayloadRefClaim(TypedDict):
+    claim: EntityId
+class ConsultPayloadRefTurn(TypedDict):
+    turn: EntityId
+ConsultPayloadRef = ConsultPayloadRefClaim | ConsultPayloadRefTurn
+class TaskAskElectoratePeople(TypedDict):
+    people: list[EntityId]
+TaskAskElectorate = Literal["any"] | TaskAskElectoratePeople
+TaskAskOptionId = str
+class TaskAskDecideAllBody(TypedDict):
+    of: TaskAskElectorate
+    answer: TaskAskOptionId
+class TaskAskDecideAll(TypedDict):
+    all: TaskAskDecideAllBody
+class TaskAskDecideAtLeastBody(TypedDict):
+    count: int
+    of: TaskAskElectorate
+    answer: TaskAskOptionId
+class TaskAskDecideAtLeast(TypedDict):
+    at_least: TaskAskDecideAtLeastBody
+TaskAskDecide = Literal["first"] | TaskAskDecideAll | TaskAskDecideAtLeast
+TaskAskDefault = Literal["proceed", "hold", "ask_me"]
+TaskAskSurface = Literal["card", "none"]
+class TaskAskClass(TypedDict):
+    key: str
+    version: int
+    governance: bool
+    deadline_seconds: int
+    allowed_recipients: list[EntityId]
+    required_people: list[EntityId]
+    minimum_responses: int
+    required_sources: list[ConsultPayloadRef]
+    decision: NotRequired[TaskAskDecide | None]
+    disclosure: dict[str, list[ConsultPayloadRef]]
+    fallback: list[TaskAskDefault]
+    guest_fact_limit: NotRequired[int | None]
+    soft_confirm_surface: NotRequired[TaskAskSurface | None]
+    remind: list[int]
+AskAuthorityScopeWire = TypedDict("AskAuthorityScopeWire", {"class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": bool})
+AskAuthorityScope = AskAuthorityScopeWire
+class TaskAskGuest(TypedDict):
+    companion_ref: EntityId
+    disclosure_grant_ref: str
+class TaskAskTargetAuthority(TypedDict):
+    authority: AskAuthorityScope
+class TaskAskTargetResponder(TypedDict):
+    responder: TaskAssignee
+class TaskAskTargetPeople(TypedDict):
+    people: list[EntityId]
+class TaskAskTargetGuests(TypedDict):
+    guests: dict[str, TaskAskGuest]
+TaskAskTarget = TaskAskTargetAuthority | TaskAskTargetResponder | TaskAskTargetPeople | TaskAskTargetGuests
+class OutcomeSourceClaim(TypedDict):
+    kind: Literal["claim"]
+    predicate: str
+class OutcomeSourceEdge(TypedDict):
+    kind: Literal["edge"]
+    relation: str
+class OutcomeSourceStage(TypedDict):
+    kind: Literal["stage"]
+    campaign: str
+class OutcomeSourceEvent(TypedDict):
+    kind: Literal["event"]
+    predicate: str
+OutcomeSource = OutcomeSourceClaim | OutcomeSourceEdge | OutcomeSourceStage | OutcomeSourceEvent
+class OutcomeBinding(TypedDict):
+    source: OutcomeSource
+    horizon: int
+    mapping: dict[str, bool]
+    noise_weight: float
+    linked_by: NotRequired[str | None]
+DecisionRung = Literal["rule", "local", "system_one", "escalation", "big", "human"]
+class TaskAskLadderPrediction(TypedDict):
+    option: TaskAskOptionId
+    rung: DecisionRung
+    probability: NotRequired[float | None]
+class TaskAskQuestion(TypedDict):
+    reference: ConsultPayloadRef
+    revision: int
+    options: dict[str, str]
+    context_refs: list[ConsultPayloadRef]
+    label: NotRequired[str | None]
+    outcome_binding: NotRequired[OutcomeBinding | None]
+    ladder_answer: NotRequired[TaskAskLadderPrediction | None]
+    class_key: NotRequired[str | None]
+    commitment: NotRequired[bool]
+class TaskAskNeed(TypedDict):
+    count: int
+    of: NotRequired[TaskAskElectorate]
+TaskAskProvisional = Literal["inform"]
+TaskAskBranch = Literal["hold", "proceed"]
+class TaskAskDisagree(TypedDict):
+    branch: TaskAskBranch
+    surface: TaskAskSurface
+TaskAskSpec = TypedDict("TaskAskSpec", {"intent_key": str, "task_ref": NotRequired[EntityId | None], "class": NotRequired[TaskAskClass | None], "who": NotRequired[TaskAskTarget | None], "what": TaskAskQuestion, "until": NotRequired[int | None], "default": NotRequired[TaskAskDefault], "need": NotRequired[TaskAskNeed], "decide": NotRequired[TaskAskDecide | None], "provisional": NotRequired[TaskAskProvisional], "on_disagree": NotRequired[TaskAskDisagree], "remind": NotRequired[list[int] | None]})
+class TypeRef(TypedDict):
+    node_id: EntityId
+    tree_version: int
+Care = Literal["light", "medium", "high", "xhigh", "max"]
+class BriefIntent(TypedDict):
+    need: str
+    care: NotRequired[Care | None]
+class SpawnPins(TypedDict):
+    model: NotRequired[str | None]
+    width: NotRequired[int | None]
+    pattern: NotRequired[str | None]
+    budget: NotRequired[int | None]
+class BriefConstraints(TypedDict):
+    notes: NotRequired[list[str]]
+    policy_refs: NotRequired[list[EntityId]]
+    budget_ref: NotRequired[EntityId | None]
+    deadline: NotRequired[int | None]
+    pins: NotRequired[SpawnPins]
+class PinnedPack(TypedDict):
+    pack_ref: EntityId
+    context_version: NotRequired[int | None]
+    retrieval_run_id: NotRequired[EntityId | None]
+    digest: str
+class PinnedRef(TypedDict):
+    target: EntityId
+    frontier: NotRequired[list[int] | None]
+    digest: str
+class BriefContext(TypedDict):
+    pack: NotRequired[PinnedPack | None]
+    read_first: NotRequired[list[PinnedRef]]
+class Criterion(TypedDict):
+    text: str
+    evidence_ref: NotRequired[EntityId | None]
+class DoneMeans(TypedDict):
+    question: str
+    yes_if_all: NotRequired[list[Criterion]]
+    no_if_any: NotRequired[list[Criterion]]
+    outcome_binding: NotRequired[OutcomeBinding | None]
+EscalationTrigger = Literal["blocked", "criteria_unmet", "scope_widen", "spend_over", "deadline", "brief_revised", "retry_requested"]
+Reversibility = Literal["reversible_read", "outbound_effect"]
+class EscalationRule(TypedDict):
+    to: TaskAskTarget
+    triggers: NotRequired[list[EscalationTrigger]]
+    default: NotRequired[TaskAskDefault]
+    until: NotRequired[int | None]
+    reversibility: Reversibility
+    question_ref: NotRequired[ConsultPayloadRef | None]
+class ComposerStamp(TypedDict):
+    seat: str
+    one_liner_digest: str
+    lens_refs: NotRequired[list[EntityId]]
+    at: int
+class QueueTaskBrief(TypedDict):
+    schema: int
+    type_ref: TypeRef
+    objective: str
+    intent: BriefIntent
+    constraints: NotRequired[BriefConstraints]
+    context: NotRequired[BriefContext]
+    success: DoneMeans
+    settled: NotRequired[list[EntityId]]
+    escalation: EscalationRule
+    project_ref: NotRequired[EntityId | None]
+    composed: NotRequired[ComposerStamp | None]
+class TaskReportBodyProgressBody(TypedDict):
+    evidence_refs: NotRequired[list[EntityId]]
+    renew_lease: NotRequired[bool]
+class TaskReportBodyProgress(TypedDict):
+    progress: TaskReportBodyProgressBody
+class TaskReportBodyBlockedBody(TypedDict):
+    on: NotRequired[list[TaskHandle]]
+    note: NotRequired[str | None]
+    ask: NotRequired[TaskAskSpec | None]
+class TaskReportBodyBlocked(TypedDict):
+    blocked: TaskReportBodyBlockedBody
+class TaskReportBodyDoneBody(TypedDict):
+    result_ref: EntityId
+    confession: NotRequired[str | None]
+class TaskReportBodyDone(TypedDict):
+    done: TaskReportBodyDoneBody
+class TaskReportBodyFailedBody(TypedDict):
+    error: str
+    retryable: bool
+    result_ref: NotRequired[EntityId | None]
+class TaskReportBodyFailed(TypedDict):
+    failed: TaskReportBodyFailedBody
+class TaskReportBodyReleaseBody(TypedDict):
+    reason: str
+class TaskReportBodyRelease(TypedDict):
+    release: TaskReportBodyReleaseBody
+class TaskReportBodyBrief(TypedDict):
+    brief: QueueTaskBrief
+TaskReportBody = Literal["ack"] | TaskReportBodyProgress | TaskReportBodyBlocked | TaskReportBodyDone | TaskReportBodyFailed | TaskReportBodyRelease | TaskReportBodyBrief
 class TaskUpdateRequest(TypedDict):
     task_ref: str
     resultRef: NotRequired[str | None]
+    report: NotRequired[TaskReportBody | None]
+    report_key: NotRequired[str | None]
+    attempt: NotRequired[AttemptHandle | None]
+class TaskAskHandle(TypedDict):
+    group_ref: EntityId
+class TaskPhaseProposed(TypedDict):
+    phase: Literal["proposed"]
+    pending: bool
+class TaskPhaseRejected(TypedDict):
+    phase: Literal["rejected"]
+class TaskPhaseQueued(TypedDict):
+    phase: Literal["queued"]
+class TaskPhaseWorking(TypedDict):
+    phase: Literal["working"]
+    started_at: int
+class TaskPhaseBlocked(TypedDict):
+    phase: Literal["blocked"]
+    since: int
+    on: list[EntityId]
+class TaskPhaseInterrupted(TypedDict):
+    phase: Literal["interrupted"]
+class TaskPhaseTerminal(TypedDict):
+    phase: Literal["terminal"]
+    disposition: TaskTerminalDisposition
+class TaskPhaseAsked(TypedDict):
+    phase: Literal["asked"]
+    settled: bool
+TaskPhase = TaskPhaseProposed | TaskPhaseRejected | TaskPhaseQueued | TaskPhaseWorking | TaskPhaseBlocked | TaskPhaseInterrupted | TaskPhaseTerminal | TaskPhaseAsked
+class BriefStamp(TypedDict):
+    rev: int
+    digest: str
+    type_ref: TypeRef
+class AttemptView(TypedDict):
+    attempt_ref: str
+    state: str
+    attempt_count: int
+    yours: bool
+    claimed_at: NotRequired[int | None]
+    backoff_until: NotRequired[int | None]
+TaskAskHoldReason = Literal["NoLiveRoute"]
+TaskAskEffectAuthorization = Literal["not_evaluated_by_ask"]
+class TaskAskCoverage(TypedDict):
+    met: bool
+    required: int
+    responded: list[EntityId]
+    unknown: list[EntityId]
+    unmet_people: list[EntityId]
+class TaskAskAnswer(TypedDict):
+    task_ref: EntityId
+    actor_ref: EntityId
+    result_ref: EntityId
+    word_ref: EntityId
+    task_record: RecordRef
+    actor_record: RecordRef
+    result_record: RecordRef
+    word_record: RecordRef
+class TaskAskDecisionFirst(TypedDict):
+    first: TaskAskAnswer
+class TaskAskDecisionAnswer(TypedDict):
+    answer: TaskAskOptionId
+TaskAskDecision = Literal["collected", "no", "conflict", "unknown"] | TaskAskDecisionFirst | TaskAskDecisionAnswer
+class TaskAskFallback(TypedDict):
+    branch: TaskAskDefault
+    surface: TaskAskSurface
+TaskAskConfirmationDecision = Literal["approve", "reject"]
+class TaskAskConfirmation(TypedDict):
+    revision: int
+    companion_answer_ref: EntityId
+    decision: TaskAskConfirmationDecision
+class TaskAskWord(TypedDict):
+    result_ref: EntityId
+    option: NotRequired[TaskAskOptionId | None]
+    inform_for: NotRequired[EntityId | None]
+    companion_for: NotRequired[EntityId | None]
+    confirmation: NotRequired[TaskAskConfirmation | None]
+    provenance_refs: NotRequired[list[ConsultPayloadRef]]
+TaskAskSource = Literal["human", "foreign_stated", "companion", "inform", "executor"]
+TaskAskEvidenceReason = Literal["counted", "companion_hint", "inform", "human_dominates", "executor", "superseded", "outside_electorate", "missing_source", "late"]
+class TaskAskEvidence(TypedDict):
+    answer: TaskAskAnswer
+    word: TaskAskWord
+    source: TaskAskSource
+    person_ref: EntityId
+    order: int
+    reason: TaskAskEvidenceReason
+    ladder_changed: NotRequired[bool | None]
+    soft_confirm: NotRequired[bool]
+    delegation_grant_ref: NotRequired[str | None]
+TaskAskSettlementReason = Literal["first_word", "all_responded", "deadline", "stale"]
+class TaskAskSettlement(TypedDict):
+    group_ref: EntityId
+    reference: EntityId
+    revision: int
+    at: int
+    cutoff_order: int
+    reason: TaskAskSettlementReason
+    requested: TaskAskSpec
+    effective: TaskAskSpec
+    base_policy_version: int
+    electorate: list[EntityId]
+    question_digest: list[int]
+    unmet_sources: list[ConsultPayloadRef]
+    outcome_answer_ref: NotRequired[EntityId | None]
+    policy_surface: TaskAskSurface
+    link_result_proof: NotRequired[list[int] | None]
+class TaskAskResult(TypedDict):
+    effect_authorization: TaskAskEffectAuthorization
+    coverage: TaskAskCoverage
+    decision: TaskAskDecision
+    fallback: NotRequired[TaskAskFallback | None]
+    evidence: list[TaskAskEvidence]
+    settlement: TaskAskSettlement
+class TaskAskStatusPendingBody(TypedDict):
+    hold: NotRequired[TaskAskHoldReason | None]
+class TaskAskStatusPending(TypedDict):
+    Pending: TaskAskStatusPendingBody
+class TaskAskStatusChangedBody(TypedDict):
+    voided: list[EntityId]
+    generation: int
+class TaskAskStatusChanged(TypedDict):
+    Changed: TaskAskStatusChangedBody
+class TaskAskStatusSettled(TypedDict):
+    Settled: TaskAskResult
+TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled
+class TaskStatusView(TypedDict):
+    handle: TaskHandle
+    task_ref: NotRequired[EntityId | None]
+    phase: TaskPhase
+    brief_current: NotRequired[BriefStamp | None]
+    brief_running: NotRequired[BriefStamp | None]
+    attempt: NotRequired[AttemptView | None]
+    pending: bool
+    asks: list[tuple[TaskAskHandle, TaskAskStatus]]
+    last_receipt: NotRequired[str | None]
+    observed: str
+class TaskOutcomeProposed(TypedDict):
+    kind: Literal["proposed"]
+    decision_ref: NotRequired[str | None]
+    reason_codes: list[str]
+class TaskOutcomeCreated(TypedDict):
+    kind: Literal["created"]
+    route: NotRequired[TaskRouteOutcome | None]
+class TaskOutcomeAccepted(TypedDict):
+    kind: Literal["accepted"]
+    attempt: NotRequired[AttemptHandle | None]
+class TaskOutcomeHeldByOther(TypedDict):
+    kind: Literal["held_by_other"]
+    since: int
+class TaskOutcomeAskedUp(TypedDict):
+    kind: Literal["asked_up"]
+    ask: TaskAskHandle
+class TaskOutcomeReported(TypedDict):
+    kind: Literal["reported"]
+    phase: TaskPhase
+class TaskOutcomeSnapshot(TaskStatusView):
+    kind: Literal["snapshot"]
+class TaskOutcomeUnchanged(TypedDict):
+    kind: Literal["unchanged"]
+class TaskOutcomeStaleFence(TypedDict):
+    kind: Literal["stale_fence"]
+class TaskOutcomeWrongNode(TypedDict):
+    kind: Literal["wrong_node"]
+class TaskOutcomeRejected(TypedDict):
+    kind: Literal["rejected"]
+    decision_ref: NotRequired[str | None]
+TaskOutcome = TaskOutcomeProposed | TaskOutcomeCreated | TaskOutcomeAccepted | TaskOutcomeHeldByOther | TaskOutcomeAskedUp | TaskOutcomeReported | TaskOutcomeSnapshot | TaskOutcomeUnchanged | TaskOutcomeStaleFence | TaskOutcomeWrongNode | TaskOutcomeRejected
+class TaskLifecycleRecord(TypedDict):
+    call: str
+    outcome: str
+    occurred_at: int
+    actor: EntityId
+    on_behalf_of: NotRequired[str | None]
+    job_ref: NotRequired[str | None]
+    trigger_ref: NotRequired[str | None]
+    fields: dict[str, str]
+class TaskCallReceipt(TypedDict):
+    handle: TaskHandle
+    related: list[TaskHandle]
+    outcome: TaskOutcome
+    receipt_ref: NotRequired[str | None]
+    lifecycle: NotRequired[TaskLifecycleRecord | None]
+    idempotent_replay: bool
 class TaskUpdateReceipt(TypedDict):
     task_ref: EntityId
     acked: bool
+    report: NotRequired[TaskCallReceipt | None]
 class QuoteSpan(TypedDict):
     message: EntityId
     start: int
@@ -2123,6 +2511,23 @@ class RevealProvenance(TypedDict):
     kind: str
     masked_at: int
 RevealHandleCard = TypedDict("RevealHandleCard", {"handle": str, "label": str, "class": str, "status": str, "band": str, "provenance": NotRequired[RevealProvenance | None], "reveal": str, "grant_ref": NotRequired[str | None], "refusal": NotRequired[str | None]})
+class SecretUseRequest(TypedDict):
+    handle: str
+    operation: str
+    arguments: NotRequired[Any]
+SecretUseStatus = Literal["answered", "failed", "withheld"]
+class SecretUseRecord(TypedDict):
+    handle: str
+    generation: int
+    effector: str
+    operation: str
+    decision: str
+    used_at: int
+class SecretUseAnswer(TypedDict):
+    status: SecretUseStatus
+    result: NotRequired[Any | None]
+    failure: NotRequired[str | None]
+    receipt: SecretUseRecord
 BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]
@@ -2479,101 +2884,6 @@ class UndoneKeep(TypedDict):
     undo: KeepUndo
     version: ArtifactVersionView
     reattached: int
-class ConsultPayloadRefClaim(TypedDict):
-    claim: EntityId
-class ConsultPayloadRefTurn(TypedDict):
-    turn: EntityId
-ConsultPayloadRef = ConsultPayloadRefClaim | ConsultPayloadRefTurn
-class TaskAskElectoratePeople(TypedDict):
-    people: list[EntityId]
-TaskAskElectorate = Literal["any"] | TaskAskElectoratePeople
-TaskAskOptionId = str
-class TaskAskDecideAllBody(TypedDict):
-    of: TaskAskElectorate
-    answer: TaskAskOptionId
-class TaskAskDecideAll(TypedDict):
-    all: TaskAskDecideAllBody
-class TaskAskDecideAtLeastBody(TypedDict):
-    count: int
-    of: TaskAskElectorate
-    answer: TaskAskOptionId
-class TaskAskDecideAtLeast(TypedDict):
-    at_least: TaskAskDecideAtLeastBody
-TaskAskDecide = Literal["first"] | TaskAskDecideAll | TaskAskDecideAtLeast
-TaskAskDefault = Literal["proceed", "hold", "ask_me"]
-TaskAskSurface = Literal["card", "none"]
-class TaskAskClass(TypedDict):
-    key: str
-    version: int
-    governance: bool
-    deadline_seconds: int
-    allowed_recipients: list[EntityId]
-    required_people: list[EntityId]
-    minimum_responses: int
-    required_sources: list[ConsultPayloadRef]
-    decision: NotRequired[TaskAskDecide | None]
-    disclosure: dict[str, list[ConsultPayloadRef]]
-    fallback: list[TaskAskDefault]
-    guest_fact_limit: NotRequired[int | None]
-    soft_confirm_surface: NotRequired[TaskAskSurface | None]
-    remind: list[int]
-AskAuthorityScopeWire = TypedDict("AskAuthorityScopeWire", {"class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": bool})
-AskAuthorityScope = AskAuthorityScopeWire
-class TaskAskGuest(TypedDict):
-    companion_ref: EntityId
-    disclosure_grant_ref: str
-class TaskAskTargetAuthority(TypedDict):
-    authority: AskAuthorityScope
-class TaskAskTargetResponder(TypedDict):
-    responder: TaskAssignee
-class TaskAskTargetPeople(TypedDict):
-    people: list[EntityId]
-class TaskAskTargetGuests(TypedDict):
-    guests: dict[str, TaskAskGuest]
-TaskAskTarget = TaskAskTargetAuthority | TaskAskTargetResponder | TaskAskTargetPeople | TaskAskTargetGuests
-class OutcomeSourceClaim(TypedDict):
-    kind: Literal["claim"]
-    predicate: str
-class OutcomeSourceEdge(TypedDict):
-    kind: Literal["edge"]
-    relation: str
-class OutcomeSourceStage(TypedDict):
-    kind: Literal["stage"]
-    campaign: str
-class OutcomeSourceEvent(TypedDict):
-    kind: Literal["event"]
-    predicate: str
-OutcomeSource = OutcomeSourceClaim | OutcomeSourceEdge | OutcomeSourceStage | OutcomeSourceEvent
-class OutcomeBinding(TypedDict):
-    source: OutcomeSource
-    horizon: int
-    mapping: dict[str, bool]
-    noise_weight: float
-    linked_by: NotRequired[str | None]
-DecisionRung = Literal["rule", "local", "system_one", "escalation", "big", "human"]
-class TaskAskLadderPrediction(TypedDict):
-    option: TaskAskOptionId
-    rung: DecisionRung
-    probability: NotRequired[float | None]
-class TaskAskQuestion(TypedDict):
-    reference: ConsultPayloadRef
-    revision: int
-    options: dict[str, str]
-    context_refs: list[ConsultPayloadRef]
-    label: NotRequired[str | None]
-    outcome_binding: NotRequired[OutcomeBinding | None]
-    ladder_answer: NotRequired[TaskAskLadderPrediction | None]
-    class_key: NotRequired[str | None]
-    commitment: NotRequired[bool]
-class TaskAskNeed(TypedDict):
-    count: int
-    of: NotRequired[TaskAskElectorate]
-TaskAskProvisional = Literal["inform"]
-TaskAskBranch = Literal["hold", "proceed"]
-class TaskAskDisagree(TypedDict):
-    branch: TaskAskBranch
-    surface: TaskAskSurface
-TaskAskSpec = TypedDict("TaskAskSpec", {"intent_key": str, "task_ref": NotRequired[EntityId | None], "class": NotRequired[TaskAskClass | None], "who": NotRequired[TaskAskTarget | None], "what": TaskAskQuestion, "until": NotRequired[int | None], "default": NotRequired[TaskAskDefault], "need": NotRequired[TaskAskNeed], "decide": NotRequired[TaskAskDecide | None], "provisional": NotRequired[TaskAskProvisional], "on_disagree": NotRequired[TaskAskDisagree], "remind": NotRequired[list[int] | None]})
 class TaskCanAskRequest(TypedDict):
     ask: TaskAskSpec
 class TaskAskPreflightRecipient(TypedDict):
@@ -2583,20 +2893,6 @@ class TaskAskPreflightRecipient(TypedDict):
     word_required: bool
 class TaskAskPreflight(TypedDict):
     recipients: list[TaskAskPreflightRecipient]
-class TaskAskHandle(TypedDict):
-    group_ref: EntityId
-TaskAskConfirmationDecision = Literal["approve", "reject"]
-class TaskAskConfirmation(TypedDict):
-    revision: int
-    companion_answer_ref: EntityId
-    decision: TaskAskConfirmationDecision
-class TaskAskWord(TypedDict):
-    result_ref: EntityId
-    option: NotRequired[TaskAskOptionId | None]
-    inform_for: NotRequired[EntityId | None]
-    companion_for: NotRequired[EntityId | None]
-    confirmation: NotRequired[TaskAskConfirmation | None]
-    provenance_refs: NotRequired[list[ConsultPayloadRef]]
 TaskAskPersonKind = Literal["word", "companion", "default", "unknown"]
 class TaskAskPersonEvidence(TypedDict):
     who: EntityId
@@ -2610,7 +2906,6 @@ class TaskAskShort(TypedDict):
     until: NotRequired[int | None]
     default: NotRequired[TaskAskDefault]
 TaskAskRequest = TaskAskSpec | TaskAskShort
-TaskAskHoldReason = Literal["NoLiveRoute"]
 class PeerCount(TypedDict):
     peer: EntityId
     count: int
@@ -2660,66 +2955,6 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-TaskAskEffectAuthorization = Literal["not_evaluated_by_ask"]
-class TaskAskCoverage(TypedDict):
-    met: bool
-    required: int
-    responded: list[EntityId]
-    unknown: list[EntityId]
-    unmet_people: list[EntityId]
-class TaskAskAnswer(TypedDict):
-    task_ref: EntityId
-    actor_ref: EntityId
-    result_ref: EntityId
-    word_ref: EntityId
-    task_record: RecordRef
-    actor_record: RecordRef
-    result_record: RecordRef
-    word_record: RecordRef
-class TaskAskDecisionFirst(TypedDict):
-    first: TaskAskAnswer
-class TaskAskDecisionAnswer(TypedDict):
-    answer: TaskAskOptionId
-TaskAskDecision = Literal["collected", "no", "conflict", "unknown"] | TaskAskDecisionFirst | TaskAskDecisionAnswer
-class TaskAskFallback(TypedDict):
-    branch: TaskAskDefault
-    surface: TaskAskSurface
-TaskAskSource = Literal["human", "foreign_stated", "companion", "inform", "executor"]
-TaskAskEvidenceReason = Literal["counted", "companion_hint", "inform", "human_dominates", "executor", "superseded", "outside_electorate", "missing_source", "late"]
-class TaskAskEvidence(TypedDict):
-    answer: TaskAskAnswer
-    word: TaskAskWord
-    source: TaskAskSource
-    person_ref: EntityId
-    order: int
-    reason: TaskAskEvidenceReason
-    ladder_changed: NotRequired[bool | None]
-    soft_confirm: NotRequired[bool]
-    delegation_grant_ref: NotRequired[str | None]
-TaskAskSettlementReason = Literal["first_word", "all_responded", "deadline", "stale"]
-class TaskAskSettlement(TypedDict):
-    group_ref: EntityId
-    reference: EntityId
-    revision: int
-    at: int
-    cutoff_order: int
-    reason: TaskAskSettlementReason
-    requested: TaskAskSpec
-    effective: TaskAskSpec
-    base_policy_version: int
-    electorate: list[EntityId]
-    question_digest: list[int]
-    unmet_sources: list[ConsultPayloadRef]
-    outcome_answer_ref: NotRequired[EntityId | None]
-    policy_surface: TaskAskSurface
-    link_result_proof: NotRequired[list[int] | None]
-class TaskAskResult(TypedDict):
-    effect_authorization: TaskAskEffectAuthorization
-    coverage: TaskAskCoverage
-    decision: TaskAskDecision
-    fallback: NotRequired[TaskAskFallback | None]
-    evidence: list[TaskAskEvidence]
-    settlement: TaskAskSettlement
 SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
@@ -4161,13 +4396,91 @@ class XlsxBodyView(TypedDict):
     sheets: list[XlsxSheetView]
     names: list[BodyName]
     styles: list[XlsxStyle]
+NodeId = int
+NodeKind = Literal["root", "slide", "group", "shape", "picture", "graphic_frame", "connector"]
+class GeometryProps(TypedDict):
+    offset: NotRequired[tuple[int, int] | None]
+    extent: NotRequired[tuple[int, int] | None]
+    rotation: NotRequired[int | None]
+    flip_h: NotRequired[bool | None]
+    flip_v: NotRequired[bool | None]
+Preset = Literal["rect", "round_rect", "ellipse", "triangle", "right_arrow"]
+Digest = str
+StepAssetKind = Literal["factual", "illustration"]
+class AssetRef(TypedDict):
+    artifact: str
+    version: int
+    hash: Digest
+    kind: StepAssetKind
+    description: str
+ChartKind = Literal["bar", "line", "pie"]
+class ChartSeries(TypedDict):
+    name: str
+    values: list[float | None]
+ConnectorPreset = Literal["straight", "elbow", "curved"]
+class ConnectorEnd(TypedDict):
+    node: NodeId
+    site: int
+class NodePayloadPictureBody(TypedDict):
+    image: AssetRef
+class NodePayloadPicture(TypedDict):
+    picture: NodePayloadPictureBody
+class NodePayloadTableBody(TypedDict):
+    header: list[str]
+    rows: list[list[str | None]]
+class NodePayloadTable(TypedDict):
+    table: NodePayloadTableBody
+class NodePayloadChartBody(TypedDict):
+    family: ChartKind
+    categories: list[str]
+    series: list[ChartSeries]
+class NodePayloadChart(TypedDict):
+    chart: NodePayloadChartBody
+class NodePayloadConnectorBody(TypedDict):
+    preset: ConnectorPreset
+    start: NotRequired[ConnectorEnd | None]
+    end: NotRequired[ConnectorEnd | None]
+class NodePayloadConnector(TypedDict):
+    connector: NodePayloadConnectorBody
+NodePayload = NodePayloadPicture | NodePayloadTable | NodePayloadChart | NodePayloadConnector
+class Run(TypedDict):
+    text: str
+    bold: NotRequired[bool | None]
+    italic: NotRequired[bool | None]
+    size: NotRequired[int | None]
+    latin: NotRequired[str | None]
+class Paragraph(TypedDict):
+    id: NodeId
+    level: int
+    runs: list[Run]
+class TextBody(TypedDict):
+    paragraphs: list[Paragraph]
+class DeckNodeView(TypedDict):
+    id: NodeId
+    kind: NodeKind
+    parent: NotRequired[NodeId | None]
+    name: NotRequired[str | None]
+    imported: bool
+    geometry: GeometryProps
+    placeholder: NotRequired[tuple[str, int] | None]
+    preset: NotRequired[Preset | None]
+    payload: NotRequired[NodePayload | None]
+    text: NotRequired[TextBody | None]
+    made_by: NotRequired[str | None]
+class DeckBodyView(TypedDict):
+    frontier: list[int]
+    version: int
+    nodes: list[DeckNodeView]
 class OfficeBodyViewDocx(TypedDict):
     format: Literal["docx"]
     body: DocxBodyView
 class OfficeBodyViewXlsx(TypedDict):
     format: Literal["xlsx"]
     body: XlsxBodyView
-OfficeBodyView = OfficeBodyViewDocx | OfficeBodyViewXlsx
+class OfficeBodyViewPptx(TypedDict):
+    format: Literal["pptx"]
+    body: DeckBodyView
+OfficeBodyView = OfficeBodyViewDocx | OfficeBodyViewXlsx | OfficeBodyViewPptx
 class TextCommitReceipt(TypedDict):
     document: str
     peer: int
@@ -4233,13 +4546,63 @@ class XlsxBodyOpDeleteName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
 XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName
+class DeckOpAddSlideBody(TypedDict):
+    id: NotRequired[NodeId | None]
+class DeckOpAddSlide(TypedDict):
+    add_slide: DeckOpAddSlideBody
+class DeckOpAddNodeBody(TypedDict):
+    id: NotRequired[NodeId | None]
+    parent: NodeId
+    kind: NodeKind
+    name: NotRequired[str | None]
+    index: NotRequired[int | None]
+    preset: NotRequired[Preset | None]
+    payload: NotRequired[NodePayload | None]
+class DeckOpAddNode(TypedDict):
+    add_node: DeckOpAddNodeBody
+class DeckOpRemoveNodeBody(TypedDict):
+    node: NodeId
+class DeckOpRemoveNode(TypedDict):
+    remove_node: DeckOpRemoveNodeBody
+class DeckOpMoveNodeBody(TypedDict):
+    node: NodeId
+    new_parent: NodeId
+    index: int
+class DeckOpMoveNode(TypedDict):
+    move_node: DeckOpMoveNodeBody
+class DeckOpSetTextBody(TypedDict):
+    node: NodeId
+    body: TextBody
+class DeckOpSetText(TypedDict):
+    set_text: DeckOpSetTextBody
+class DeckOpSetRunMarksBody(TypedDict):
+    node: NodeId
+    paragraph: NodeId
+    runs: list[Run]
+class DeckOpSetRunMarks(TypedDict):
+    set_run_marks: DeckOpSetRunMarksBody
+class DeckOpSetGeometryBody(TypedDict):
+    node: NodeId
+    geometry: GeometryProps
+class DeckOpSetGeometry(TypedDict):
+    set_geometry: DeckOpSetGeometryBody
+class DeckOpReplaceOpaqueBody(TypedDict):
+    part: str
+    expected: list[int]
+    replacement: list[int]
+class DeckOpReplaceOpaque(TypedDict):
+    replace_opaque: DeckOpReplaceOpaqueBody
+DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpReplaceOpaque
 class OfficeBodyOpsDocx(TypedDict):
     format: Literal["docx"]
     ops: list[DocxBodyOp]
 class OfficeBodyOpsXlsx(TypedDict):
     format: Literal["xlsx"]
     ops: list[XlsxBodyOp]
-OfficeBodyOps = OfficeBodyOpsDocx | OfficeBodyOpsXlsx
+class OfficeBodyOpsPptx(TypedDict):
+    format: Literal["pptx"]
+    ops: list[DeckOp]
+OfficeBodyOps = OfficeBodyOpsDocx | OfficeBodyOpsXlsx | OfficeBodyOpsPptx
 class OfficeBodyEditRequest(TypedDict):
     artifact_ref: str
     base: NotRequired[list[int] | None]
@@ -4343,6 +4706,141 @@ class XlsxPreview(TypedDict):
     frontier: list[int]
     book: XlsxBook
     recalc: NotRequired[str | None]
+class NodeMove(TypedDict):
+    node: NodeId
+    old_parent: NotRequired[NodeId | None]
+    new_parent: NotRequired[NodeId | None]
+    old_index: NotRequired[int | None]
+    new_index: NotRequired[int | None]
+    cross_slide: bool
+class OpaqueChange(TypedDict):
+    part: str
+    base: NotRequired[list[int] | None]
+    proposal: NotRequired[list[int] | None]
+class ConflictBothMovedBody(TypedDict):
+    node: NodeId
+class ConflictBothMoved(TypedDict):
+    both_moved: ConflictBothMovedBody
+class ConflictDeletedVsEditedBody(TypedDict):
+    node: NodeId
+    deleted_by_head: bool
+class ConflictDeletedVsEdited(TypedDict):
+    deleted_vs_edited: ConflictDeletedVsEditedBody
+class ConflictTextVsTextBody(TypedDict):
+    node: NodeId
+class ConflictTextVsText(TypedDict):
+    text_vs_text: ConflictTextVsTextBody
+class ConflictGeometryVsReparentBody(TypedDict):
+    node: NodeId
+class ConflictGeometryVsReparent(TypedDict):
+    geometry_vs_reparent: ConflictGeometryVsReparentBody
+class ConflictBothReplacedOpaqueBody(TypedDict):
+    part: str
+class ConflictBothReplacedOpaque(TypedDict):
+    both_replaced_opaque: ConflictBothReplacedOpaqueBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque
+class RelationshipChange(TypedDict):
+    source: str
+    id: str
+    kind: str
+    before: NotRequired[str | None]
+    after: NotRequired[str | None]
+class SlideRender(TypedDict):
+    slide: NodeId
+    part: str
+    fingerprint: list[int]
+class RenderSide(TypedDict):
+    version: int
+    state_hash: list[int]
+    export_key: list[int]
+    slides: list[SlideRender]
+class RenderPair(TypedDict):
+    head: RenderSide
+    candidate: RenderSide
+    changed: list[NodeId]
+class DeckDiff(TypedDict):
+    base_version: int
+    head_version: int
+    proposal_version: int
+    added: list[NodeId]
+    removed: list[NodeId]
+    moved: list[NodeMove]
+    text_changed: list[NodeId]
+    formatting_changed: list[NodeId]
+    geometry_changed: list[NodeId]
+    opaque_changed: list[OpaqueChange]
+    affected_slides: list[NodeId]
+    head_only: list[NodeId]
+    conflicts: list[Conflict]
+    relationships: list[RelationshipChange]
+    renders: NotRequired[RenderPair | None]
+class DeckReviewView(TypedDict):
+    head: list[int]
+    head_version: int
+    ok: bool
+    diff: DeckDiff
+    replay_refusals: list[str]
+    stale_units: list[NodeId]
+    evidence_refusal: NotRequired[str | None]
+class ApproveScopeThisActor(TypedDict):
+    this_actor: str
+class ApproveScopeThisRunAndChildren(TypedDict):
+    this_run_and_children: str
+class ApproveScopeOneItem(TypedDict):
+    one_item: str
+ApproveScope = ApproveScopeThisActor | ApproveScopeThisRunAndChildren | ApproveScopeOneItem
+Landing = Literal["merge", "switch"]
+class DeckForkMergeRequest(TypedDict):
+    artifact_ref: str
+    fork_ref: str
+    reviewed_head: list[int]
+    scope: NotRequired[ApproveScope | None]
+    landing: NotRequired[Landing | None]
+    made_by: NotRequired[Any | None]
+class LandingReceipt(TypedDict):
+    proposal: str
+    proposer: str
+    settler: str
+    scope: ApproveScope
+    landing: Landing
+    automatic: bool
+    reviewed_version: int
+    landed_version: int
+    affected: list[NodeId]
+    switched_away: list[NodeId]
+class DeckExportRequest(TypedDict):
+    artifact_ref: str
+    run_ref: str
+    made_by: NotRequired[Any | None]
+class DeckExportView(TypedDict):
+    frontier: list[int]
+    profile: str
+    projector: str
+    authoritative: bool
+    noop: bool
+    changed_parts: list[str]
+    record: NotRequired[OfficeBodyExportRecord | None]
+class DeckGateRequest(TypedDict):
+    profile: NotRequired[str | None]
+class StepOutcomeFailed(TypedDict):
+    failed: str
+class StepOutcomeInconclusive(TypedDict):
+    inconclusive: str
+StepOutcome = Literal["passed", "not_run"] | StepOutcomeFailed | StepOutcomeInconclusive
+class OracleReceipt(TypedDict):
+    profile: str
+    powerpoint_version: str
+    macos_version: str
+    font_versions: list[str]
+    steps: list[StepOutcome]
+    clean: bool
+class DeckGateView(TypedDict):
+    profile: str
+    projector: str
+    open: bool
+    receipt: NotRequired[OracleReceipt | None]
+class DeckOracleRequest(TypedDict):
+    receipt: OracleReceipt
 class AppendBlobVersionRequest(TypedDict):
     artifact_ref: str
     content_base64: str

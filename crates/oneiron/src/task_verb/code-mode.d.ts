@@ -129,6 +129,7 @@ declare namespace self {
     start(input: { intentKey: string; members: { agent: string; briefing?: string | null; intentKey: string }[]; pattern: string; tournament?: string | null }): Promise<unknown>;
   };
   const unfold: (input: { fold: string }) => Promise<unknown>;
+  const use: (input: { arguments?: unknown; handle: string; operation: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
 declare function summarize(input: { ref: string; effort?: "low" | "medium" | "high"; group?: string[]; defer?: true }): Promise<unknown>;
@@ -137,7 +138,7 @@ declare const tasks: {
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
-  update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
+  update(input: { attempt?: object | null; report?: "ack" | object | object | object | object | object | object | null; report_key?: string | null; resultRef?: string | null; task_ref: string }): Promise<unknown>;
   wait(input: { all?: boolean | null; n_of?: number | null; step_key: string; tasks: string[]; until?: number | null }): Promise<unknown>;
   wave(input: { constraints?: unknown; epic_task_ref: string; objective: string; planner_ref: string }): Promise<unknown>;
 };
@@ -146,12 +147,19 @@ declare const vault: {
     append(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
     body: {
       commits(input: { artifact_ref: string }): Promise<unknown>;
-      edit(input: { artifact_ref: string; base?: number[] | null; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
+      deck: {
+        export(input: { artifact_ref: string; run_ref: string; made_by?: unknown }): Promise<unknown>;
+        gate(input: { profile?: string | null }): Promise<unknown>;
+        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: object | null; landing?: "merge" | "switch" | null; made_by?: unknown }): Promise<unknown>;
+        oracle(input: { receipt: object }): Promise<unknown>;
+        review(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
+      };
+      edit(input: { artifact_ref: string; base?: number[] | null; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] } | { format: "pptx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
       export(input: { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown }): Promise<unknown>;
       fork: {
         diff(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
         discard(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
-        edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
+        edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] } | { format: "pptx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
         merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[] }): Promise<unknown>;
         open(input: { artifact_ref: string; run_root_ref?: string | null }): Promise<unknown>;
       };

@@ -50,19 +50,24 @@ const LEASE_OWNER_DOMAIN: &[u8] = b"oneiron.tasks.lease_owner.v1";
 impl Memory<'_> {
     /// The one task-domain door. The actor is this surface's, verified per
     /// call exactly as every facade verifies it; `via` carries a host's
-    /// lease, which the actor alone cannot prove.
+    /// lease, which the actor alone cannot prove. Its surface questions go
+    /// through the decision path a host bound
+    /// ([`Memory::with_task_decisions`]), if any.
     pub fn tasks_highway(&self, via: TaskVia, call: TaskCall) -> MemoryResult<TaskCallReceipt> {
-        self.tasks_highway_with_decisions(via, call, None)
+        self.tasks_highway_with_decisions(via, call, self.task_decisions())
     }
 
-    /// [`Self::tasks_highway`] under a host's decision path. With `None`,
-    /// every surface question asks up, so a person is asked.
+    /// [`Self::tasks_highway`] under a host's decision path. An explicit
+    /// path overrides the one bound on this surface; with `None` the bound
+    /// one is used, and only when neither exists does every surface question
+    /// ask up, so a person is asked.
     pub fn tasks_highway_with_decisions(
         &self,
         via: TaskVia,
         call: TaskCall,
         decisions: Option<&TaskDecisions<'_>>,
     ) -> MemoryResult<TaskCallReceipt> {
+        let decisions = decisions.or_else(|| self.task_decisions());
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         match call {
             TaskCall::Post(post) => self.highway_post(&via, post, decisions),

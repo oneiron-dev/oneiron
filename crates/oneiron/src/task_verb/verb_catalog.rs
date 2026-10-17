@@ -118,6 +118,7 @@ pub enum AgentVerb {
     Reveal,
     RevealWait,
     RevealDescribe,
+    SelfUse,
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
@@ -279,6 +280,11 @@ pub enum AgentVerb {
     VaultArtifactsBodyForkDiscard,
     VaultArtifactsBodyExport,
     VaultArtifactsBodyPreview,
+    VaultArtifactsBodyDeckReview,
+    VaultArtifactsBodyDeckMerge,
+    VaultArtifactsBodyDeckExport,
+    VaultArtifactsBodyDeckGate,
+    VaultArtifactsBodyDeckOracle,
     VaultArtifactsAppend,
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
@@ -410,6 +416,7 @@ impl AgentVerb {
         Self::Reveal,
         Self::RevealWait,
         Self::RevealDescribe,
+        Self::SelfUse,
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
@@ -571,6 +578,11 @@ impl AgentVerb {
         Self::VaultArtifactsBodyForkDiscard,
         Self::VaultArtifactsBodyExport,
         Self::VaultArtifactsBodyPreview,
+        Self::VaultArtifactsBodyDeckReview,
+        Self::VaultArtifactsBodyDeckMerge,
+        Self::VaultArtifactsBodyDeckExport,
+        Self::VaultArtifactsBodyDeckGate,
+        Self::VaultArtifactsBodyDeckOracle,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
@@ -709,6 +721,7 @@ impl AgentVerb {
             Self::Reveal => "reveal",
             Self::RevealWait => "reveal.wait",
             Self::RevealDescribe => "reveal.describe",
+            Self::SelfUse => "self.use",
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
@@ -870,6 +883,11 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiscard => "vault.artifacts.body.fork.discard",
             Self::VaultArtifactsBodyExport => "vault.artifacts.body.export",
             Self::VaultArtifactsBodyPreview => "vault.artifacts.body.preview",
+            Self::VaultArtifactsBodyDeckReview => "vault.artifacts.body.deck.review",
+            Self::VaultArtifactsBodyDeckMerge => "vault.artifacts.body.deck.merge",
+            Self::VaultArtifactsBodyDeckExport => "vault.artifacts.body.deck.export",
+            Self::VaultArtifactsBodyDeckGate => "vault.artifacts.body.deck.gate",
+            Self::VaultArtifactsBodyDeckOracle => "vault.artifacts.body.deck.oracle",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
@@ -1000,6 +1018,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1124,6 +1143,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiscard
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
+                | Self::VaultArtifactsBodyDeckReview
+                | Self::VaultArtifactsBodyDeckMerge
+                | Self::VaultArtifactsBodyDeckExport
+                | Self::VaultArtifactsBodyDeckGate
+                | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1299,6 +1323,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1423,6 +1448,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiscard
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
+                | Self::VaultArtifactsBodyDeckReview
+                | Self::VaultArtifactsBodyDeckMerge
+                | Self::VaultArtifactsBodyDeckExport
+                | Self::VaultArtifactsBodyDeckGate
+                | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1623,6 +1653,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1776,6 +1807,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiscard
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
+                | Self::VaultArtifactsBodyDeckReview
+                | Self::VaultArtifactsBodyDeckMerge
+                | Self::VaultArtifactsBodyDeckExport
+                | Self::VaultArtifactsBodyDeckGate
+                | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1865,6 +1901,7 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
@@ -1952,6 +1989,9 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
                 | Self::VaultArtifactsBodyExport
+                | Self::VaultArtifactsBodyDeckMerge
+                | Self::VaultArtifactsBodyDeckExport
+                | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultClaimsSeed
@@ -2011,7 +2051,7 @@ impl AgentVerb {
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
             Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksWave => &["spec"],
-            Self::TasksUpdate => &["task_ref"],
+            Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2100,6 +2140,7 @@ impl AgentVerb {
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
+            Self::SelfUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2261,6 +2302,11 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiscard => &["spec"],
             Self::VaultArtifactsBodyExport => &["spec"],
             Self::VaultArtifactsBodyPreview => &["spec"],
+            Self::VaultArtifactsBodyDeckReview => &["spec"],
+            Self::VaultArtifactsBodyDeckMerge => &["spec"],
+            Self::VaultArtifactsBodyDeckExport => &["spec"],
+            Self::VaultArtifactsBodyDeckGate => &["spec"],
+            Self::VaultArtifactsBodyDeckOracle => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2304,7 +2350,7 @@ impl AgentVerb {
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
-            Self::TasksUpdate => &["task_ref"],
+            Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2393,6 +2439,7 @@ impl AgentVerb {
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
+            Self::SelfUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2554,6 +2601,11 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiscard => &["spec"],
             Self::VaultArtifactsBodyExport => &["spec"],
             Self::VaultArtifactsBodyPreview => &["spec"],
+            Self::VaultArtifactsBodyDeckReview => &["spec"],
+            Self::VaultArtifactsBodyDeckMerge => &["spec"],
+            Self::VaultArtifactsBodyDeckExport => &["spec"],
+            Self::VaultArtifactsBodyDeckGate => &["spec"],
+            Self::VaultArtifactsBodyDeckOracle => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2643,7 +2695,7 @@ impl AgentVerb {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
             }
             Self::TasksUpdate => {
-                "Records the owner's acknowledgement of a failed TASK; any other task stays as it was."
+                "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."
             }
             Self::VaultWitness => {
                 "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."
@@ -2890,6 +2942,9 @@ impl AgentVerb {
             }
             Self::RevealDescribe => {
                 "What a secret handle names, where it was found and what a reveal of it would do now; never the value."
+            }
+            Self::SelfUse => {
+                "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."
             }
             Self::VaultSharesCreate => {
                 "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."
@@ -3255,19 +3310,19 @@ impl AgentVerb {
                 "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none."
             }
             Self::VaultArtifactsBodyRead => {
-                "Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history."
+                "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history."
             }
             Self::VaultArtifactsBodyCommits => {
                 "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by."
             }
             Self::VaultArtifactsBodyEdit => {
-                "A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head."
+                "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."
             }
             Self::VaultArtifactsBodyForkOpen => {
                 "Opens a fork of the live body at its head for machine work, in an optional run."
             }
             Self::VaultArtifactsBodyForkEdit => {
-                "The opener's typed DOCX or XLSX operations on its open fork of a live body."
+                "The opener's typed DOCX, XLSX or deck operations on its open fork of a live body."
             }
             Self::VaultArtifactsBodyForkDiff => {
                 "A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show."
@@ -3279,10 +3334,25 @@ impl AgentVerb {
                 "Abandons an open fork's unlanded work and returns its record."
             }
             Self::VaultArtifactsBodyExport => {
-                "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator."
+                "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export."
             }
             Self::VaultArtifactsBodyPreview => {
                 "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands."
+            }
+            Self::VaultArtifactsBodyDeckReview => {
+                "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names."
+            }
+            Self::VaultArtifactsBodyDeckMerge => {
+                "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses."
+            }
+            Self::VaultArtifactsBodyDeckExport => {
+                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands."
+            }
+            Self::VaultArtifactsBodyDeckGate => {
+                "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector."
+            }
+            Self::VaultArtifactsBodyDeckOracle => {
+                "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened."
             }
             Self::VaultArtifactsAppend => {
                 "Appends one version of bytes to a blob artifact's append-only chain."

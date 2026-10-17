@@ -303,6 +303,9 @@ class Oneiron:
         @property
         def grants(self) -> "Oneiron._SelfGrantsVerbs":
             return Oneiron._SelfGrantsVerbs(self._client)
+        def use(self, spec):
+            """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
+            return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
         @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs":
             return Oneiron._SelfSkillsVerbs(self._client)
@@ -1024,7 +1027,7 @@ class Oneiron:
             """An artifact's live body head, or null."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_head(json.dumps(request, allow_nan=False))))
         def read(self, request: dict[str, Any]) -> dict[str, Any]:
-            """Reads a DOCX or XLSX live body, at its head or an earlier frontier."""
+            """Reads a live body, at its head or an earlier frontier."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_read(json.dumps(request, allow_nan=False))))
         def commits(self, request: dict[str, Any]) -> list[dict[str, Any]]:
             """Every commit receipt of a live body, in commit order."""
@@ -1041,6 +1044,9 @@ class Oneiron:
         def preview(self, request: dict[str, Any]) -> dict[str, Any]:
             """The workbook an XLSX export would land now, recalculated."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_preview(json.dumps(request, allow_nan=False))))
+        @property
+        def deck(self) -> "Oneiron._VaultArtifactsBodyDeckVerbs":
+            return Oneiron._VaultArtifactsBodyDeckVerbs(self._client)
     class _VaultArtifactsBodyForkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1059,6 +1065,24 @@ class Oneiron:
         def discard(self, request: dict[str, Any]) -> dict[str, Any]:
             """Abandons an open fork's unlanded work."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_discard(json.dumps(request, allow_nan=False))))
+    class _VaultArtifactsBodyDeckVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def review(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A deck fork's merge preflight against the live head."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_review(json.dumps(request, allow_nan=False))))
+        def merge(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A person lands a reviewed deck fork."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_merge(json.dumps(request, allow_nan=False))))
+        def export(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Projects a deck, landing it as the next version when its export gate is open."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_export(json.dumps(request, allow_nan=False))))
+        def gate(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The deck export gate for a profile."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_gate(json.dumps(request, allow_nan=False))))
+        def oracle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Records the deck oracle's receipt for its export profile."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_oracle(json.dumps(request, allow_nan=False))))
     class _VaultCodeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1369,7 +1393,7 @@ class Oneiron:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
             return json.loads(_translate(lambda: self._client.tasks_wave(json.dumps(spec))))
         def update(self, spec):
-            """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
+            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
             return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))
         def answer(self, handle, word):
             """Admits one person's word on an ask; the word is evidence, never approval."""
