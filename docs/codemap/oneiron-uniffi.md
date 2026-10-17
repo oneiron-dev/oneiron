@@ -18,5 +18,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedded_engine.rs` | src | s | 5 struct · 1 trait · 6 fn | AppHostCallbacks, EmbeddedEngine, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/facade_generated.rs` | src | L | — | — | — |
-| `src/facade_types_generated.rs` | src | XL | 654 struct · 257 enum | ActExecution, AdmissionBasis, AdmissionConsent, AgentHealthCard, AgentHealthCardView, AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft +903 | — |
+| `src/facade_types_generated.rs` | src | XL | 663 struct · 258 enum | ActExecution, AdmissionBasis, AdmissionConsent, AgentHealthCard, AgentHealthCardView, AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft +913 | — |
 | `src/lib.rs` | src | s | 1 struct · 9 fn · 1 const · 4 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |

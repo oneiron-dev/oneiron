@@ -165,6 +165,11 @@ pub const PROJECT_REVISION: &[u8] = b"oneiron/project-revision-id/v1/";
 /// question's registered name, then the caller's instance parts.
 pub const DECISION_QUESTION: &[u8] = b"oneiron.decision.question.v1";
 
+/// A host rule row: the owner's reason on one answered decision ask
+/// (`llm::decision::rules`). Parts: the question's id, its version (u32be), then
+/// each evidence id in the order it was asked.
+pub const DECISION_HOST_RULE: &[u8] = b"oneiron.decision.host_rule.v1";
+
 /// A coordination pattern's context and a team run's decision on a pack
 /// attribution (`skill_attribution::host`). Parts: `pattern` and the pattern's
 /// token, or `decider` and the team reference.
@@ -181,7 +186,7 @@ pub const GLOBAL_SETTING_SUBJECT: &[u8] = b"oneiron.learning.setting.global_subj
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 45] = [
+pub(crate) const ALL: [&[u8]; 46] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -224,6 +229,7 @@ pub(crate) const ALL: [&[u8]; 45] = [
     IMPORTED_NOTE,
     PROJECT_REVISION,
     DECISION_QUESTION,
+    DECISION_HOST_RULE,
     COORDINATION_PATTERN,
     SIDE_ROW_MASK,
     GLOBAL_SETTING_SUBJECT,
