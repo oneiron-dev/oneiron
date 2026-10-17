@@ -461,13 +461,10 @@ impl<'a, 't> ProjectReader<'a, 't> {
     /// Every stored project with its verdict, in id order.
     pub(crate) fn all(&self) -> Result<Vec<(EntityId, ProjectRecord, ProjectVerdict)>> {
         let mut ids = Vec::new();
-        for row in self.store.type_index.prefix_iter(self.txn, &[self.kind])? {
-            let (key, _) = row?;
-            ids.push(EntityId::from_bytes(
-                key[1..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("project type index"))?,
-            )?);
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            self.store, self.txn, self.kind, None,
+        )? {
+            ids.push(id?);
         }
         let mut rows = Vec::new();
         for id in ids {

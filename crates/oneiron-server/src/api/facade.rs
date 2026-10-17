@@ -24,6 +24,7 @@
 pub(super) mod action_routes;
 mod agent_verbs;
 mod graph_ask_doors;
+mod guest_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 pub(super) mod role_picks;
@@ -369,7 +370,8 @@ fn hooks_did_not_finish() -> MemoryError {
 /// The pre chain of a row this route runs itself (ARCH-0080 §3): the args to
 /// run it with. Its caller is the credential's actor; a credential bound to
 /// none calls as the host, the vault's owner in person when it is
-/// owner-grade.
+/// owner-grade. The row's door checks its own authority first, so a hook
+/// never fires on a call the door refuses.
 async fn facade_hooks_pre(
     server: &Arc<SyncServer>,
     headers: &HeaderMap,
@@ -377,6 +379,11 @@ async fn facade_hooks_pre(
     verb: &str,
     value: serde_json::Value,
 ) -> Result<VerbHookPre, FacadeApiError> {
+    if verb == "vault.export" {
+        export_admits(server, auth)?;
+    } else {
+        host_doors::door_admits(server, auth, verb)?;
+    }
     let (actor, class) = match facade_actor(auth) {
         Ok(actor) => actor,
         Err(_) => (
@@ -390,6 +397,27 @@ async fn facade_hooks_pre(
     };
     let invocation = facade_invocation_id(headers)?;
     Ok(row_hooks_pre(server, actor, class, invocation, verb, value).await?)
+}
+
+/// Whole-vault export's owner admission, as the export runs it in its own
+/// snapshot: the host's root, or the owner's own live slip. The route has
+/// already refused a credential short of owner-grade or with no verified
+/// slip.
+fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), FacadeApiError> {
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(());
+    };
+    if proof.claims().holder_ref == "host" {
+        server.vault.admit_host_owner_export(proof)?;
+    } else {
+        let (actor, class) = facade_actor(auth)?;
+        server
+            .vault
+            .memory(actor, class)
+            .at(auth.locality())
+            .admit_export(Some(proof))?;
+    }
+    Ok(())
 }
 
 /// The post chain over that row's result: the caller's view of it.

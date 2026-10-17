@@ -5,15 +5,13 @@ use std::collections::{BTreeMap, HashSet};
 
 use loro::LoroDoc;
 
-use super::companion_identity::{CompanionCrdtScrub, scrub_local_only_companions_from_crdt};
-
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{
-    EntityStep, IngestCtx, Residence, authority_parent_order, ingest_entity_in_savepoint,
-    is_authority_row, note_born, waits_for_sibling_row, watches,
+    IngestCtx, Residence, authority_parent_order, ingest_entity_in_savepoint, is_authority_row,
+    note_born, waits_for_sibling_row, watches,
 };
 use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
@@ -66,7 +64,6 @@ pub(super) fn materialize_entities_with_changes(
     // the full list to flag retry markers.
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut revision_changes = Vec::new();
-    let mut pending_companion_scrubs = Vec::new();
     // Rows a federated import watches that this batch wrote where none was
     // stored: their births, noted only once the batch commits.
     let mut born = Vec::new();
@@ -123,50 +120,44 @@ pub(super) fn materialize_entities_with_changes(
                 .flatten();
             let unborn = match EntityId::from_hex(key.as_ref()) {
                 Ok(id) if watches(vault, &id) => {
-                    vault.store.entities.get(wtxn, id.as_bytes())?.is_none()
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
+                        .is_none()
                 }
                 _ => false,
             };
-            match ingest_entity_in_savepoint(&ingest, wtxn, key.as_ref(), value)? {
-                EntityStep::LocalOnlyCompanion(id) => {
-                    pending_companion_scrubs.push(CompanionCrdtScrub::new(key.as_ref(), id));
+            let step = ingest_entity_in_savepoint(&ingest, wtxn, key.as_ref(), value)?;
+            if let (Some(id), Some(blob)) = (step.written(), value) {
+                if unborn {
+                    born.push((id, blob.to_vec()));
                 }
-                step => {
-                    if let (Some(id), Some(blob)) = (step.written(), value) {
-                        if unborn {
-                            born.push((id, blob.to_vec()));
-                        }
-                        applied_ops.push((id, blob.to_vec()));
-                        // The savepoint has no postcommit owner. Carry its
-                        // claim change to the outer transaction's watch,
-                        // which fires only after THAT commit.
-                        match EntityMetadataHeader::parse(blob).map(|h| h.entity_type) {
-                            Some(ENTITY_TYPE_CLAIM) => {
-                                crate::batch::queue_proactivity_change(vault, wtxn);
-                            }
-                            // A peer's consult or settlement reaches this
-                            // vault's board subscribers only after commit.
-                            Some(crate::registry::ENTITY_TYPE_TASK) => {
-                                crate::batch::queue_task_updates(vault, wtxn, [id]);
-                            }
-                            _ => {}
-                        }
-                        let revision =
-                            revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live)?;
-                        if previous_revision != revision {
-                            revision_changes.push(crate::vault::EntityRevisionChange {
-                                entity: id,
-                                previous_revision,
-                                revision,
-                                indexed_revision: revision_for_mode_in_txn(
-                                    &vault.store,
-                                    wtxn,
-                                    &id,
-                                    ReadMode::Indexed,
-                                )?,
-                            });
-                        }
+                applied_ops.push((id, blob.to_vec()));
+                // The savepoint has no postcommit owner. Carry its
+                // claim change to the outer transaction's watch,
+                // which fires only after THAT commit.
+                match EntityMetadataHeader::parse(blob).map(|h| h.entity_type) {
+                    Some(ENTITY_TYPE_CLAIM) => {
+                        crate::batch::queue_proactivity_change(vault, wtxn);
                     }
+                    // A peer's consult or settlement reaches this
+                    // vault's board subscribers only after commit.
+                    Some(crate::registry::ENTITY_TYPE_TASK) => {
+                        crate::batch::queue_task_updates(vault, wtxn, [id]);
+                    }
+                    _ => {}
+                }
+                let revision = revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live)?;
+                if previous_revision != revision {
+                    revision_changes.push(crate::vault::EntityRevisionChange {
+                        entity: id,
+                        previous_revision,
+                        revision,
+                        indexed_revision: revision_for_mode_in_txn(
+                            &vault.store,
+                            wtxn,
+                            &id,
+                            ReadMode::Indexed,
+                        )?,
+                    });
                 }
             }
         }
@@ -189,16 +180,6 @@ pub(super) fn materialize_entities_with_changes(
             note_born(vault, *id, blob);
         }
     }
-    if result.is_ok()
-        && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
-    {
-        tracing::error!(
-            kind = ?e.kind(),
-            window = %window_key,
-            "observer-b: local-only companion CRDT scrub failed after entity batch commit"
-        );
-    }
-
     // An earlier ChildOf or SpawnedBy can have arrived before this body's
     // endpoint and been deferred by the edge observer. Re-present only the
     // now-reachable structural keys through that SAME edge gauntlet; no raw

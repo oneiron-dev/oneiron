@@ -313,8 +313,21 @@ impl ResidenceRpc {
 
 /// The home is a peer, so its promotion snapshot passes the same carrier
 /// admission as a raw window update before any byte reaches the window.
+#[cfg(test)]
 pub(super) fn import_promotion_snapshot(doc: &loro::LoroDoc, snapshot: &[u8]) -> bool {
     crate::sync::window::validate_window_update_locality(doc, snapshot).is_ok()
+        && doc.import(snapshot).is_ok()
+}
+
+/// [`import_promotion_snapshot`] with this vault to judge the custody
+/// transitions an own machine's promotion carries by (OF-422): without one,
+/// admission refuses every custody insert.
+fn import_promotion_snapshot_with(
+    vault: &crate::Vault,
+    doc: &loro::LoroDoc,
+    snapshot: &[u8],
+) -> bool {
+    crate::sync::window::validate_promotion_snapshot(vault, doc, snapshot).is_ok()
         && doc.import(snapshot).is_ok()
 }
 
@@ -422,12 +435,12 @@ impl SyncClient {
                     .get(txn, &format!("rp:w:{window}"))?
                     .is_some()
                 {
-                    if self
-                        .vault
-                        .store
-                        .entities
-                        .get(txn, item.as_bytes())?
-                        .is_none()
+                    if crate::ports::EntityStoreRead::port_entity_raw_wiped(
+                        &self.vault.store,
+                        txn,
+                        &item,
+                    )?
+                    .is_none()
                     {
                         return Err(crate::Error::InvalidKey);
                     }
@@ -506,7 +519,7 @@ impl SyncClient {
                 "unpromoted window has local CRDT history",
             ));
         }
-        if !import_promotion_snapshot(&loaded.doc, &snapshot) {
+        if !import_promotion_snapshot_with(&self.vault, &loaded.doc, &snapshot) {
             self.manager.discard_window(window);
             return Err(refused());
         }
@@ -618,7 +631,7 @@ impl SyncClient {
             .decode(reply.snapshot)
             .map_err(|_| refused())?;
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
-            || !import_promotion_snapshot(&loaded.doc, &snapshot)
+            || !import_promotion_snapshot_with(&self.vault, &loaded.doc, &snapshot)
         {
             return Ok(false);
         }

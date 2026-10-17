@@ -390,8 +390,9 @@ pub fn promotion_snapshot_with(
             named.insert(id.to_hex());
             readable(id)
         };
-        if !promotion_covers_full_window(vault, source, window, scope, selector, walk)?
-            || super::window::window_withheld_for(vault, window, source, withhold)?
+        if !promotion_covers_full_window_for(
+            vault, source, window, scope, selector, withhold, walk,
+        )? || super::window::window_withheld_for(vault, window, source, withhold)?
         {
             return Ok(None);
         }
@@ -445,6 +446,31 @@ pub fn promotion_covers_full_window(
     window: &WindowKey,
     scope: FederationGrantScope,
     selector: &SyncSelector,
+    readable: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<bool> {
+    promotion_covers_full_window_for(
+        vault,
+        source,
+        window,
+        scope,
+        selector,
+        Withhold::Nothing,
+        readable,
+    )
+}
+
+/// [`promotion_covers_full_window`] for the machine `destination` names. A
+/// machine of this vault's that proved itself also covers the window's
+/// custody transitions (OF-422), each sealed to the owner's machines, and its
+/// room turn rows (OF-522); the selector copies neither. Any other
+/// destination does not, so a window that carries one is not promoted to it.
+pub fn promotion_covers_full_window_for(
+    vault: &Vault,
+    source: &LoroDoc,
+    window: &WindowKey,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    destination: Withhold<'_>,
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<bool> {
     // The existing full-window egress scrub is the authority for local-only
@@ -452,6 +478,14 @@ pub fn promotion_covers_full_window(
     // only the content-bearing current state against the grant selector.
     let _ = super::window::export_scrubbed_window_snapshot(vault, window, source)?;
     let selected = granted_window_doc(vault, source, window, scope, selector)?;
+    if matches!(destination, Withhold::Worlds(_) | Withhold::Peer(_)) {
+        for name in [
+            super::custody::CUSTODY_MAP,
+            super::room_turns::ROOM_TURNS_MAP,
+        ] {
+            super::loro_support::copy_binary_root_map(source, &selected, name)?;
+        }
+    }
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }

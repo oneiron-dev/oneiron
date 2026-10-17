@@ -72,7 +72,8 @@ mod verb_kind;
 mod wave_port;
 mod wire_decode;
 pub(crate) use wire_decode::{
-    TaskBinding, leader_task_body_in, task_binding, task_is_blocked_in, task_text_in,
+    TaskBinding, leader_task_body_in, leader_task_brief_in, task_binding, task_is_blocked_in,
+    task_text_in,
 };
 mod wire_encode;
 
@@ -190,7 +191,7 @@ pub(crate) fn open_thread_task_holder_in(
     }
 }
 
-pub(crate) use owner_index::index_owner_fact;
+pub(crate) use owner_index::{index_owner_fact, indexed_tasks_of_in};
 pub(crate) use policy_change_followup::{
     enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
 };
@@ -220,6 +221,7 @@ pub mod sdk;
 mod sdk_connector;
 mod sdk_diary;
 mod sdk_disclosure;
+mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_self;

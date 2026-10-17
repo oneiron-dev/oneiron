@@ -400,10 +400,7 @@ impl ConsolidationFence {
         if let Some(id) = pinned {
             let revision =
                 RowRevision::read_in(vault, txn, &id)?.ok_or(crate::Error::EntityNotFound)?;
-            let raw = vault
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                 .ok_or(crate::Error::EntityNotFound)?;
             let body = crate::claim::decode_claim_body(
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],

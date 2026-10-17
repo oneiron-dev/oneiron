@@ -81,6 +81,7 @@ impl HostSelfDispatcher<'_> {
     /// rewritten when a hook rewrote it, and what its post chain picks up;
     /// `Err` the answer a stop gives in its place. A run bound to an
     /// off-record session runs no hook: its receipts would land on record.
+    /// A call no binding can take passes before its args are built.
     pub(crate) fn enter_verb_hooks(
         &self,
         call: SelfCall,
@@ -93,6 +94,9 @@ impl HostSelfDispatcher<'_> {
             return Ok(Ok((call, HookedCall(None))));
         }
         let effect = call.effect();
+        if !vault.verb_hooks_may_run(effect.as_str()) {
+            return Ok(Ok((call, HookedCall(None))));
+        }
         let args = hook_args(&call)?;
         let hook_call = VerbCall {
             verb: effect.as_str().to_owned(),
@@ -285,6 +289,7 @@ fn hook_domain(call: &SelfCall) -> VerbDomain {
     match call {
         SelfCall::MemorySearch(_)
         | SelfCall::TasksWait(_)
+        | SelfCall::TasksWaitSet(_)
         | SelfCall::InferenceDefaultsRead
         | SelfCall::Context(_) => VerbDomain::Read,
         SelfCall::Fold(fold) if !fold.writes() => VerbDomain::Read,
@@ -367,6 +372,9 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
             .unwrap_or_else(|_| Value::String(text.clone()))}),
         SelfDispatchOutcome::Context(value) => json!({"spec": value.spec}),
         SelfDispatchOutcome::WakePolicyWritten(policy) => json!({"policy": policy}),
+        SelfDispatchOutcome::ReaderSpawn(receipt) => json!({"output": receipt}),
+        SelfDispatchOutcome::ReaderReport(receipt) => json!({"output": receipt}),
+        SelfDispatchOutcome::TaskWaitSet(result) => json!({"output": result}),
     }
 }
 
@@ -446,6 +454,16 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         SelfCall::WakePolicyWrite(write) => json!({"policy": to_json(&write.policy)?}),
         SelfCall::AgentVerb(verb) => json!({"verb": verb.verb.as_str(), "input": verb.input}),
         SelfCall::Fold(fold) => to_json(fold)?,
+        SelfCall::ReaderSpawn(spawn) => json!({
+            "source": spawn.source,
+            "ask": spawn.ask,
+            "intent_key": spawn.intent_key,
+        }),
+        SelfCall::ReaderReport(report) => json!({
+            "task_ref": report.task.to_hex(),
+            "resultRef": report.result_ref,
+        }),
+        SelfCall::TasksWaitSet(wait) => to_json(wait)?,
     })
 }
 
@@ -776,11 +794,16 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
             decode::<PolicyArgs>(args)?.policy,
         )),
         SelfCall::Fold(fold) => SelfCall::Fold(fold_rewrite(fold, args)?),
+        SelfCall::TasksWaitSet(_) => SelfCall::TasksWaitSet(decode(args)?),
+        // A reader's source and finding are resolved by the host before the
+        // hooks run: a rewrite would name a result nothing resolved.
         SelfCall::AgentsSpawn(_)
         | SelfCall::AgentsPut(_)
         | SelfCall::MemoryWriteFixture(_)
         | SelfCall::Context(_)
-        | SelfCall::AgentVerb(_) => {
+        | SelfCall::AgentVerb(_)
+        | SelfCall::ReaderSpawn(_)
+        | SelfCall::ReaderReport(_) => {
             return Err(format!("{} takes no rewrite", call.effect().as_str()));
         }
     })

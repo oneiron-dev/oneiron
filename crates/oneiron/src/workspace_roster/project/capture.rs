@@ -206,13 +206,8 @@ pub(crate) fn capture_stored_chains(
         return Ok(Vec::new());
     };
     let mut ids = Vec::new();
-    for row in store.type_index.prefix_iter(txn, &[kind])? {
-        let (key, _) = row?;
-        ids.push(EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project type index"))?,
-        )?);
+    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(store, txn, kind, None)? {
+        ids.push(id?);
     }
     let mut puts = Vec::new();
     for id in ids {
@@ -304,11 +299,8 @@ pub(crate) fn rebuild_project_revision_indexes(
         return Ok(());
     };
     let mut rows = Vec::new();
-    for row in store.type_index.prefix_iter(txn, &[kind])? {
-        let (key, _) = row?;
-        rows.push(EntityId::from_bytes(key[1..].try_into().map_err(
-            |_| Error::CorruptedIndex("project revision type index"),
-        )?)?);
+    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(store, txn, kind, None)? {
+        rows.push(id?);
     }
     let mut touched = BTreeSet::new();
     for id in rows {
