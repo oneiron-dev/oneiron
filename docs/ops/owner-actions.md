@@ -1011,6 +1011,24 @@ Two app writes are verbs as well, so a button and an agent make them the same wa
   "made_by"?}` creates an artifact with its first version. `POST /v1/core/artifacts` runs the
   same door.
 
+The core conversation writes and the atomic batch are verbs too:
+- `vault.conversations.create` creates a conversation. A body that names members also writes
+  its membership, creator and roles, as you.
+- `vault.conversations.turns.create` with `{"conversation", "body", ...}` puts one TURN under a
+  conversation, with its ChildOf edge.
+- `vault.conversations.records.append` appends one TURN to a conversation's DAG, under your
+  name. It takes the same fields as `POST /v1/core/conversations/{id}/records`, plus
+  `conversation` and less `actor`.
+- `vault.batch` with `{"entities": [...]}` commits up to 256 puts at once. An owner-grade
+  credential commits them at owner grade. Any other credential, and an embedded handle, commits
+  them below it, which refuses a put that turns an agent definition back on.
+
+Each REST route (`POST /v1/core/conversations`, `.../{id}/turns`, `.../{id}/records`,
+`/v1/core/batch`) runs its verb as an action of your credential. It runs the verb's own door
+instead when the request is larger than one action argument (16 KiB of JSON), names a room
+turn, or comes from a credential that binds no person or agent. The route picks the path before
+it writes. A TURN write wakes the Dreamer once on either path.
+
 ## Widen proposals
 
 When an agent asks to spawn a child with more context than its own slice holds, the gate does not

@@ -958,6 +958,10 @@ fn mcp_agent_verb_input(
         "vault.habits.checkin" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.conversations.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.conversations.turns.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.conversations.records.append" => a.spec.clone().ok_or_else(invalid),
+        "vault.batch" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.put" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.append" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.read" => a.spec.clone().ok_or_else(invalid),
@@ -1702,6 +1706,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.conversations.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.conversations.turns.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.conversations.records.append" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.batch" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.put" => {
@@ -4253,6 +4269,54 @@ async fn execute_agent_verb_row(
             let input: oneiron::blob_artifact::ArtifactCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.conversations.create" => {
+            let input: oneiron::core_write::ConversationCreateInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_conversations_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.conversations.turns.create" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.conversations.turns.create", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::core_write::ConversationTurnCreateInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_conversations_turns_create(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.conversations.records.append" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.conversations.records.append", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::core_write::DagRecordAppendInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_conversations_records_append(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.batch" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.batch", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::core_write::CoreBatchWriteInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_batch(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -3818,6 +3818,57 @@
       "section": false
     },
     {
+      "name": "vault.conversations.create",
+      "description": "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller.",
+      "input": "crate::core_write::ConversationCreateInput",
+      "output": "crate::core_write::CoreEntityWriteReceipt",
+      "call": "memory.conversations_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.turns.create",
+      "description": "Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once.",
+      "input": "crate::core_write::ConversationTurnCreateInput",
+      "output": "crate::core_write::CoreEntityWriteReceipt",
+      "call": "memory.conversations_turns_create(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.conversations.records.append",
+      "description": "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once.",
+      "input": "crate::core_write::DagRecordAppendInput",
+      "output": "crate::core_write::DagRecordAppendReceipt",
+      "call": "memory.conversations_records_append(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.batch",
+      "description": "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade.",
+      "input": "crate::core_write::CoreBatchWriteInput",
+      "output": "crate::core_write::CoreBatchWriteReceipt",
+      "call": "memory.core_batch_write(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.artifacts.put",
       "description": "Registers one blob artifact; its bytes ride vault.artifacts.append.",
       "uniffi": {

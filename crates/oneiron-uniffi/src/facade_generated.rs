@@ -1085,6 +1085,26 @@ export_facade! {
     let output = client.vault_artifacts_create(&input)?;
     crate::codec::lift_record("vault.artifacts.create", &output)
 };
+"vault.conversations.create" => fn vault_conversations_create(&self, input: ConversationCreateInput) -> CoreEntityWriteReceipt = |client| {
+    let input: oneiron::core_write::ConversationCreateInput = crate::codec::lower_record("vault.conversations.create", input)?;
+    let output = client.vault_conversations_create(&input)?;
+    crate::codec::lift_record("vault.conversations.create", &output)
+};
+"vault.conversations.turns.create" => fn vault_conversations_turns_create(&self, input: ConversationTurnCreateInput) -> CoreEntityWriteReceipt = |client| {
+    let input: oneiron::core_write::ConversationTurnCreateInput = crate::codec::lower_record("vault.conversations.turns.create", input)?;
+    let output = client.vault_conversations_turns_create(&input)?;
+    crate::codec::lift_record("vault.conversations.turns.create", &output)
+};
+"vault.conversations.records.append" => fn vault_conversations_records_append(&self, input: DagRecordAppendInput) -> DagRecordAppendReceipt = |client| {
+    let input: oneiron::core_write::DagRecordAppendInput = crate::codec::lower_record("vault.conversations.records.append", input)?;
+    let output = client.vault_conversations_records_append(&input)?;
+    crate::codec::lift_record("vault.conversations.records.append", &output)
+};
+"vault.batch" => fn vault_batch(&self, input: CoreBatchWriteInput) -> CoreBatchWriteReceipt = |client| {
+    let input: oneiron::core_write::CoreBatchWriteInput = crate::codec::lower_record("vault.batch", input)?;
+    let output = client.vault_batch(&input)?;
+    crate::codec::lift_record("vault.batch", &output)
+};
 "vault.artifacts.put" => fn vault_artifacts_put(&self, input: BlobArtifactInput) -> EntityRefReceipt = |client| {
     let input: oneiron::memory::BlobArtifactInput = input.lower()?;
     let output = client.vault_artifacts_put(&input)?;

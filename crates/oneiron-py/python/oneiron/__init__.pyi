@@ -436,6 +436,8 @@ class Oneiron:
         def structural(self) -> "Oneiron._VaultStructuralVerbs": ...
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
+        def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
+            """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
         @property
@@ -761,11 +763,23 @@ class Oneiron:
     class _VaultConversationsVerbs:
         @property
         def turn(self) -> "Oneiron._VaultConversationsTurnVerbs": ...
+        def create(self, spec: Facade.ConversationCreateInput) -> Facade.CoreEntityWriteReceipt:
+            """Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."""
+        @property
+        def turns(self) -> "Oneiron._VaultConversationsTurnsVerbs": ...
+        @property
+        def records(self) -> "Oneiron._VaultConversationsRecordsVerbs": ...
     class _VaultConversationsTurnVerbs:
         def continue_(self, spec: Facade.TurnActionRequest) -> Facade.TurnActionReceipt:
             """Queues generation that resumes an incomplete assistant reply from exactly its saved text."""
         def retry(self, spec: Facade.TurnActionRequest) -> Facade.TurnActionReceipt:
             """Queues a new answer to the user turn an assistant turn answered; the old reply stays."""
+    class _VaultConversationsTurnsVerbs:
+        def create(self, spec: Facade.ConversationTurnCreateInput) -> Facade.CoreEntityWriteReceipt:
+            """Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once."""
+    class _VaultConversationsRecordsVerbs:
+        def append(self, spec: Facade.DagRecordAppendInput) -> Facade.DagRecordAppendReceipt:
+            """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
     class _VaultMessagesVerbs:
         def react(self, spec: Facade.MessageReactionRequest) -> Facade.MessageReactionReceipt:
             """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
