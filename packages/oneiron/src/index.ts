@@ -580,6 +580,16 @@ export class Oneiron {
         /** Queues a new answer to the user turn an assistant turn answered; the old reply stays. */
         retry: (input: Facade.TurnActionRequest): Facade.TurnActionReceipt => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as Facade.TurnActionReceipt),
       },
+      /** Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller. */
+      create: (input: Facade.ConversationCreateInput): Facade.CoreEntityWriteReceipt => this.#call(() => this.#client.vaultConversationsCreate(input) as Facade.CoreEntityWriteReceipt),
+      turns: {
+        /** Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once. */
+        create: (input: Facade.ConversationTurnCreateInput): Facade.CoreEntityWriteReceipt => this.#call(() => this.#client.vaultConversationsTurnsCreate(input) as Facade.CoreEntityWriteReceipt),
+      },
+      records: {
+        /** Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once. */
+        append: (input: Facade.DagRecordAppendInput): Facade.DagRecordAppendReceipt => this.#call(() => this.#client.vaultConversationsRecordsAppend(input) as Facade.DagRecordAppendReceipt),
+      },
     },
     messages: {
       /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
@@ -653,6 +663,8 @@ export class Oneiron {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
     },
+    /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
+    batch: (input: Facade.CoreBatchWriteInput): Facade.CoreBatchWriteReceipt => this.#call(() => this.#client.vaultBatch(input) as Facade.CoreBatchWriteReceipt),
     consolidation: {
       /** Enqueues one consolidation attempt and returns its durable job reference. */
       enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
@@ -686,6 +698,13 @@ export class Oneiron {
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
     outcomes: (handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]),
   }
+  /** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+  readonly reveal = Object.assign((input: Facade.RevealRequest): Facade.RevealPending => this.#call(() => this.#client.reveal(input) as Facade.RevealPending), {
+    /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
+    wait: (input: Facade.RevealWaitRequest): Facade.RevealWaitAnswer => this.#call(() => this.#client.revealWait(input) as Facade.RevealWaitAnswer),
+    /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+    describe: (input: Facade.RevealDescribeRequest): Facade.RevealHandleCard => this.#call(() => this.#client.revealDescribe(input) as Facade.RevealHandleCard),
+  })
   /** Read-only ask routing or attributed partial answers. */
   can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
   /** Read-only ask routing or attributed partial answers. */

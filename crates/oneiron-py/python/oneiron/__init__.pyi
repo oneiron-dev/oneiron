@@ -265,6 +265,8 @@ class Oneiron:
     def describe(self, task_ref: str | None = None) -> TaskDescription: ...
     @property
     def tasks(self) -> "Oneiron._TasksVerbs": ...
+    @property
+    def reveal(self) -> "Oneiron._RevealVerbs": ...
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
     def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
     @overload
@@ -434,6 +436,8 @@ class Oneiron:
         def structural(self) -> "Oneiron._VaultStructuralVerbs": ...
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
+        def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
+            """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
         @property
@@ -764,11 +768,23 @@ class Oneiron:
     class _VaultConversationsVerbs:
         @property
         def turn(self) -> "Oneiron._VaultConversationsTurnVerbs": ...
+        def create(self, spec: Facade.ConversationCreateInput) -> Facade.CoreEntityWriteReceipt:
+            """Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."""
+        @property
+        def turns(self) -> "Oneiron._VaultConversationsTurnsVerbs": ...
+        @property
+        def records(self) -> "Oneiron._VaultConversationsRecordsVerbs": ...
     class _VaultConversationsTurnVerbs:
         def continue_(self, spec: Facade.TurnActionRequest) -> Facade.TurnActionReceipt:
             """Queues generation that resumes an incomplete assistant reply from exactly its saved text."""
         def retry(self, spec: Facade.TurnActionRequest) -> Facade.TurnActionReceipt:
             """Queues a new answer to the user turn an assistant turn answered; the old reply stays."""
+    class _VaultConversationsTurnsVerbs:
+        def create(self, spec: Facade.ConversationTurnCreateInput) -> Facade.CoreEntityWriteReceipt:
+            """Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once."""
+    class _VaultConversationsRecordsVerbs:
+        def append(self, spec: Facade.DagRecordAppendInput) -> Facade.DagRecordAppendReceipt:
+            """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
     class _VaultMessagesVerbs:
         def react(self, spec: Facade.MessageReactionRequest) -> Facade.MessageReactionReceipt:
             """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
@@ -842,6 +858,13 @@ class Oneiron:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+    class _RevealVerbs:
+        def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
+            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+        def wait(self, spec: Facade.RevealWaitRequest) -> Facade.RevealWaitAnswer:
+            """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
+        def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
+            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."""
