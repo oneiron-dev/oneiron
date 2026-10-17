@@ -229,6 +229,23 @@ pub(super) struct WidenRecord {
     pub landed: Option<WidenLanding>,
 }
 
+/// Each parent attempt's widen proposals the board has not approved (the
+/// Coach's `misalignment` count, OF-568). A proposal is a wider context the
+/// gate refused to grant directly; an approved one has landed and is not
+/// counted. Key: the parent attempt's bytes.
+pub(crate) fn unlanded_widens_by_parent(
+    vault: &crate::Vault,
+) -> Result<std::collections::BTreeMap<[u8; 16], u64>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = std::collections::BTreeMap::new();
+    for (_, record) in WIDEN.scan(&vault.store, &rtxn)? {
+        if record.landed.is_none() {
+            *out.entry(*record.request.intent.parent.as_bytes()).or_default() += 1;
+        }
+    }
+    Ok(out)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SliceOverride {

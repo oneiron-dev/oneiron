@@ -87,6 +87,36 @@ pub(crate) fn task_is_blocked_in(
         .is_some_and(|body| matches!(body.state, Some(TaskExecutionState::Blocked { .. }))))
 }
 
+/// The evidence a Done TASK's done-means needs: each `yes_if_all`
+/// criterion's `evidence_ref`. `None` unless the TASK settled Completed under
+/// a typed brief. The Coach's agent-health review (OF-568) reads it for
+/// `unsupported_done`: a ref that no longer resolves is missing evidence.
+pub(crate) fn done_task_evidence_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(body) = task_verb_body_in(vault, txn, task_ref)? else {
+        return Ok(None);
+    };
+    let completed = matches!(
+        body.state.as_ref().and_then(TaskExecutionState::terminal),
+        Some(terminal) if terminal.disposition == TaskTerminalDisposition::Completed
+    );
+    let Some(stored) = body.brief.filter(|_| completed) else {
+        return Ok(None);
+    };
+    Ok(Some(
+        stored
+            .brief
+            .success
+            .yes_if_all
+            .iter()
+            .filter_map(|criterion| criterion.evidence_ref)
+            .collect(),
+    ))
+}
+
 /// What one TASK asks, as text: its label, its spec and its typed brief
 /// (OF-380). The Coach's code-fix replay rebuilds a failed agent's call from
 /// it, and the export's verbatim guard checks an invented example against
