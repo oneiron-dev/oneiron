@@ -9,7 +9,8 @@
 //! a host Coach leases it with [`DreamerRunnerStore::admit_next_coach_host_job`]
 //! and runs the `Vault::run_coach_*` door its facet names, as it runs
 //! `coach.heal`. A closed-form job rides the maintenance lane, and the wake
-//! driver runs it in-engine.
+//! driver runs it in-engine. The Issues job rides the `coach.heal` queue
+//! itself (see [`super::coach_heal`]).
 use super::super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,
     DreamerRunnerStore,
@@ -66,6 +67,10 @@ pub const COACH_RESEARCH_SELECT_FACET: &str = "coach.research_select";
 /// fading runs no new evidence reached, and the coordination re-derivation
 /// of every labeled or projected run.
 pub const COACH_LEARNING_SWEEP_FACET: &str = "coach.learning_sweep";
+/// Issues (ARCH-0066 #coach, OF-418): the blocked reports agents filed, each
+/// asked which fix its agent needs and filed as a proposed heal. A report
+/// wakes it at once; the nightly pass wakes it again while reports wait.
+pub const COACH_ISSUES_FACET: &str = "coach.issues";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
@@ -159,6 +164,9 @@ impl DreamerRunnerStore<'_> {
                 run_id.clone(),
                 now,
             )?;
+        }
+        if crate::self_heal::blocked_reports::any_pending_in_txn(self.vault, &*txn)? {
+            self.enqueue_coach_issues_in_txn(txn, parent_attempt, run_id, now)?;
         }
         Ok(())
     }
@@ -317,7 +325,6 @@ impl Vault {
         })
     }
 
-    /// The leased attempt is this facet's, stamped for the Coach.
     /// Records the offer skill's draft as the Coach, under a leased
     /// `coach.training_offer` attempt. The offer waits on the owner; the
     /// nightly offer pass delivers it.
@@ -356,7 +363,12 @@ impl Vault {
         crate::skill_optimize::record_offer_check(self, &offer, input, now)
     }
 
-    fn require_coach_attempt(&self, attempt: &DreamerAdmittedAttempt, facet: &str) -> Result<()> {
+    /// The leased attempt is this facet's, stamped for the Coach.
+    pub(super) fn require_coach_attempt(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        facet: &str,
+    ) -> Result<()> {
         let stamp = self
             .dreamer_attempt_authority(attempt.status.attempt.id)?
             .ok_or_else(invalid)?;

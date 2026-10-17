@@ -106,6 +106,10 @@ pub enum DiagnosticEventClass {
     SyncReplayDivergence,
     /// A conversation degraded without raising any error of its own.
     SilentConversationDegradation,
+    /// An agent reported it could not go on (`self.report_blocked`). The
+    /// report is the agent's own word: it feeds the Coach's Issues job and
+    /// never a tripwire.
+    AgentBlocked,
 }
 
 impl DiagnosticEventClass {
@@ -126,6 +130,7 @@ impl DiagnosticEventClass {
             Self::ChainVerifyFailure => "chain_verify_failure",
             Self::SyncReplayDivergence => "sync_replay_divergence",
             Self::SilentConversationDegradation => "silent_conversation_degradation",
+            Self::AgentBlocked => "agent_blocked",
         }
     }
 
@@ -146,6 +151,7 @@ impl DiagnosticEventClass {
             "chain_verify_failure" => Self::ChainVerifyFailure,
             "sync_replay_divergence" => Self::SyncReplayDivergence,
             "silent_conversation_degradation" => Self::SilentConversationDegradation,
+            "agent_blocked" => Self::AgentBlocked,
             _ => return None,
         };
         Some(parsed)
@@ -154,7 +160,7 @@ impl DiagnosticEventClass {
     /// Every class, in declaration order. Census helper for tests and callers
     /// that need to iterate the closed vocabulary.
     #[must_use]
-    pub const fn all() -> [Self; 13] {
+    pub const fn all() -> [Self; 14] {
         [
             Self::TestFailure,
             Self::BeamEvalRegression,
@@ -169,6 +175,7 @@ impl DiagnosticEventClass {
             Self::ChainVerifyFailure,
             Self::SyncReplayDivergence,
             Self::SilentConversationDegradation,
+            Self::AgentBlocked,
         ]
     }
 }

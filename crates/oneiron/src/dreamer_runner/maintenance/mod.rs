@@ -4,6 +4,7 @@
 //! consolidations and applies what the owner approved, and the harness audit
 //! flags the Dreamer's tuning config for a retune. Neither deploys anything.
 pub mod coach;
+pub mod coach_heal;
 mod curator;
 mod evaluation;
 pub mod honesty;

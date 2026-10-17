@@ -288,6 +288,12 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
+    /// the receipt.
+    COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
+    /// The proposed heal the Coach filed for a blocked report or a failure-ladder case, so a
+    /// replay files none twice. Key: id16 of the receipt or the case.
+    COACH_ISSUE_SETTLED: VaultMeta b"coach:issue_settled:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
     COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;

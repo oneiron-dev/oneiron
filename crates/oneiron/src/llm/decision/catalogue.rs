@@ -304,6 +304,15 @@ pub const IDENTITY_SETTLE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which fix does this agent need: a skill edit, a prompt and a fork-resume, an environment
+/// fix, or a person (ARCH-0066 #healer, OF-418)? The Coach asks it of a failure-ladder case or
+/// of a blocked report; the answer only shapes a proposed heal. Keyed by what was asked about.
+pub const COACH_HEAL_ROUTE: QuestionFamily = QuestionFamily {
+    name: "coach.heal_route",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -337,4 +346,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     CLAIM_REPLAY,
     TASK_REALIZE,
     IDENTITY_SETTLE,
+    COACH_HEAL_ROUTE,
 ];
