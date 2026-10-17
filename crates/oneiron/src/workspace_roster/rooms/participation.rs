@@ -228,6 +228,18 @@ pub(super) fn delete_room_facts(
     Ok(())
 }
 
+/// Deletes every fact the thread of `room` rooted at `thread` holds, when
+/// that root is erased; the room's own facts and its other threads' stay.
+pub(super) fn delete_thread_facts(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+) -> Result<()> {
+    FACTS.delete_from(store, txn, &place_prefix(room, Some(thread)))?;
+    Ok(())
+}
+
 /// Who takes part when `actor` acts: the PERSON behind it, or the agent it
 /// is. A PERSON is itself. An AGENT_DEF with a live PERSON subject anchor is
 /// that person's pen (a member's own actor, a companion's persona), so it

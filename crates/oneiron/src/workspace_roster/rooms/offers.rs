@@ -180,12 +180,43 @@ pub(super) fn is_offer_id(value: &str) -> bool {
 
 /// Deletes every card minted in `room`, whatever its state (a superseded
 /// card keeps its row after the new one is current), then the room's
-/// current-card pointers. OFFERS is keyed by offer id, not by room, so the
-/// sweep reads the whole table in keyset pages.
+/// current-card pointers.
 pub(super) fn delete_room_offers(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     room: EntityId,
+) -> Result<()> {
+    delete_offers_where(store, txn, |card| card.room == room)?;
+    OFFER_CURRENT.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
+    Ok(())
+}
+
+/// [`delete_room_offers`] for the one thread of `room` rooted at `thread`,
+/// when that root is erased: its cards in every state, then its current-card
+/// pointers. The room's own cards and every other thread's stay.
+pub(super) fn delete_thread_offers(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+) -> Result<()> {
+    delete_offers_where(store, txn, |card| {
+        card.room == room && card.branch == Some(thread)
+    })?;
+    OFFER_CURRENT.delete_from(
+        store,
+        txn,
+        format!("{}/{}/", room.to_hex(), thread.to_hex()).as_bytes(),
+    )?;
+    Ok(())
+}
+
+/// Deletes every stored card `doomed` names. OFFERS is keyed by offer id, not
+/// by room, so the sweep reads the whole table in keyset pages.
+fn delete_offers_where(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    doomed: impl Fn(&OfferCard) -> bool,
 ) -> Result<()> {
     let page_limit = super::history::PAGE_LIMIT;
     let mut after: Option<String> = None;
@@ -196,7 +227,7 @@ pub(super) fn delete_room_offers(
             .take(page_limit)
             .collect::<Result<_>>()?;
         for (offer_id, stored) in &page {
-            if stored.card.room == room {
+            if doomed(&stored.card) {
                 OFFERS.delete(store, txn, offer_id)?;
             }
         }
@@ -205,7 +236,6 @@ pub(super) fn delete_room_offers(
         }
         after = page.last().map(|(offer_id, _)| offer_id.clone());
     }
-    OFFER_CURRENT.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
     Ok(())
 }
 
