@@ -4,17 +4,25 @@
 //! same-user child, hands the child its end of a fresh socket pair), and only
 //! then reads the key at the custody door and writes the frame. So a refused
 //! call, or a broker that is not there, never costs a key read.
+//!
+//! A reply whose shape streams arrives in chunks ([`BrokerStream`]); the
+//! daemon keeps them only once the broker says the body ended clean.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UnixStream;
+use tokio::time::Instant;
 use zeroize::Zeroizing;
 
-use crate::frame::{read_reply, write_call};
+use crate::frame::{read_chunk, read_reply, read_reply_header, read_stream_end, write_call};
 use crate::peer::own_uid;
-use crate::{BrokerError, CallHeader, ChildBroker, Isolation, Outcome, PROTOCOL_VERSION};
+use crate::send::push_wiped;
+use crate::{
+    BrokerError, CallHeader, ChildBroker, Failure, Isolation, MAX_STREAM, Outcome,
+    PROTOCOL_VERSION, ReplyHeader,
+};
 
 /// How the daemon reaches its broker, and who the broker must be.
 #[derive(Debug, Clone)]
@@ -138,37 +146,153 @@ pub struct BrokerConnection {
 pub struct BrokerReply {
     /// What happened.
     pub outcome: Outcome,
-    /// The stripped reply body; empty unless answered.
+    /// The reply body, stripped (or, for a shape that streams, checked and
+    /// whole); empty unless answered.
     pub body: Zeroizing<Vec<u8>>,
 }
 
+/// A reply as it arrives: its outcome first, then its body through
+/// [`Self::next`]. A buffered shape's body comes as one chunk; a streamed
+/// shape's ([`crate::Shape::streams`]) as many, up to [`MAX_STREAM`] bytes.
+/// The whole reply must arrive within the client's reply timeout.
+#[derive(Debug)]
+pub struct BrokerStream {
+    outcome: Outcome,
+    stream: UnixStream,
+    deadline: Instant,
+    /// A buffered shape's body, not yet handed out; `None` for a streamed
+    /// shape.
+    whole: Option<Zeroizing<Vec<u8>>>,
+    received: usize,
+    /// How the body ended, once it has: clean (`None`) or cut.
+    ended: Option<Option<Failure>>,
+}
+
+/// One step of a reply's body.
+#[derive(Debug)]
+pub enum StreamPart {
+    /// The next bytes of the body.
+    Chunk(Zeroizing<Vec<u8>>),
+    /// The body ended clean: the chunks are the whole of it.
+    End,
+    /// The broker cut the body: every chunk taken so far must be dropped.
+    Cut(Failure),
+}
+
 impl BrokerConnection {
-    /// Sends one call with its key, and waits for the answer. The daemon's
-    /// copy of the key is wiped once the frame is written. A reply for another
-    /// call or digest counts as lost.
+    /// Sends one call with its key, and waits for the whole answer. The
+    /// daemon's copy of the key is wiped once the frame is written. A reply
+    /// for another call or digest counts as lost. A streamed body the broker
+    /// cut comes back as [`Outcome::Failed`] with no body.
     pub async fn call(
-        mut self,
+        self,
         call: &CallHeader,
         body: &[u8],
         secret: Zeroizing<Vec<u8>>,
     ) -> Result<BrokerReply, BrokerError> {
+        let mut reply = self.open(call, body, secret).await?;
+        let mut whole = Zeroizing::new(Vec::new());
+        loop {
+            match reply.next().await? {
+                StreamPart::Chunk(chunk) if whole.is_empty() => whole = chunk,
+                StreamPart::Chunk(chunk) => push_wiped(&mut whole, &chunk),
+                StreamPart::End => break,
+                StreamPart::Cut(reason) => {
+                    return Ok(BrokerReply {
+                        outcome: Outcome::Failed { reason },
+                        body: Zeroizing::new(Vec::new()),
+                    });
+                }
+            }
+        }
+        Ok(BrokerReply {
+            outcome: reply.outcome,
+            body: whole,
+        })
+    }
+
+    /// Sends one call with its key, and waits for the reply's outcome; its
+    /// body follows through [`BrokerStream::next`]. The daemon's copy of the
+    /// key is wiped once the frame is written. A reply for another call or
+    /// digest counts as lost.
+    pub async fn open(
+        mut self,
+        call: &CallHeader,
+        body: &[u8],
+        secret: Zeroizing<Vec<u8>>,
+    ) -> Result<BrokerStream, BrokerError> {
         call.check(body).map_err(BrokerError::Refused)?;
         let written = write_call(&mut self.stream, call, body, &secret).await;
         drop(secret);
         written.map_err(|_| BrokerError::Lost)?;
-        let (reply, body) = tokio::time::timeout(self.reply_timeout, read_reply(&mut self.stream))
-            .await
-            .map_err(|_| BrokerError::Lost)?
-            .map_err(|_| BrokerError::Lost)?;
+        let deadline = Instant::now() + self.reply_timeout;
+        let (reply, whole): (ReplyHeader, _) = if call.shape.streams() {
+            let reply = tokio::time::timeout_at(deadline, read_reply_header(&mut self.stream))
+                .await
+                .map_err(|_| BrokerError::Lost)?
+                .map_err(|_| BrokerError::Lost)?;
+            (reply, None)
+        } else {
+            let (reply, body) = tokio::time::timeout_at(deadline, read_reply(&mut self.stream))
+                .await
+                .map_err(|_| BrokerError::Lost)?
+                .map_err(|_| BrokerError::Lost)?;
+            (reply, Some(body))
+        };
         if reply.version != PROTOCOL_VERSION
             || reply.call != call.call
             || reply.digest != call.digest
         {
             return Err(BrokerError::Lost);
         }
-        Ok(BrokerReply {
+        Ok(BrokerStream {
             outcome: reply.outcome,
-            body,
+            stream: self.stream,
+            deadline,
+            whole,
+            received: 0,
+            ended: None,
         })
+    }
+}
+
+impl BrokerStream {
+    /// What happened. For a streamed body, an answer here can still be cut.
+    #[must_use]
+    pub const fn outcome(&self) -> &Outcome {
+        &self.outcome
+    }
+
+    /// The body's next step. Once it has ended, every later call gives the
+    /// same end. An error ends the reply: the call counts as lost.
+    pub async fn next(&mut self) -> Result<StreamPart, BrokerError> {
+        if let Some(end) = self.ended {
+            return Ok(end.map_or(StreamPart::End, StreamPart::Cut));
+        }
+        if let Some(whole) = self.whole.take() {
+            self.ended = Some(None);
+            return Ok(if whole.is_empty() {
+                StreamPart::End
+            } else {
+                StreamPart::Chunk(whole)
+            });
+        }
+        let chunk = tokio::time::timeout_at(self.deadline, read_chunk(&mut self.stream))
+            .await
+            .map_err(|_| BrokerError::Lost)?
+            .map_err(|_| BrokerError::Lost)?;
+        if let Some(chunk) = chunk {
+            self.received += chunk.len();
+            if self.received > MAX_STREAM {
+                return Err(BrokerError::Lost);
+            }
+            return Ok(StreamPart::Chunk(chunk));
+        }
+        let end = tokio::time::timeout_at(self.deadline, read_stream_end(&mut self.stream))
+            .await
+            .map_err(|_| BrokerError::Lost)?
+            .map_err(|_| BrokerError::Lost)?;
+        self.ended = Some(end);
+        Ok(end.map_or(StreamPart::End, StreamPart::Cut))
     }
 }
