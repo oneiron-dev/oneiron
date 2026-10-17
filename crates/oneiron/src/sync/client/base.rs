@@ -217,6 +217,20 @@ impl SyncClient {
         crate::sync::window::raw_update_verdict_for(&self.manager, key, update, self.home_peer)
     }
 
+    /// Whether window `key`'s updates may go out as residence updates: an
+    /// opened machine sends only the windows the home granted (`rp:w:`). A
+    /// window the home refused to grant again stays on disk and no longer
+    /// syncs, so its writes wait queued instead of closing the socket ("window
+    /// not promoted"). A sync-all machine sends every window. A marker that
+    /// cannot be read is judged ungranted.
+    pub(crate) fn residence_granted(&self, key: &str) -> bool {
+        self.config.residence_mode != crate::sync::SyncResidenceMode::Opened
+            || self
+                .vault
+                .sync_state_get(&format!("rp:w:{key}"))
+                .is_ok_and(|marker| marker.is_some())
+    }
+
     /// Where this connection's sends go: the machine the home proved while it
     /// still stands here on the key it proved, else an unknown destination.
     pub(crate) fn home_destination(&self) -> crate::authority::Destination {
