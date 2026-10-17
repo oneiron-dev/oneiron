@@ -45,6 +45,8 @@ const WORK: SideTable<EntityId, CodeFixWork, Named> =
     SideTable::new(&side_table::FAILURE_SIGNALS_CODE_FIX_WORK);
 /// Blocked reports one job carries.
 const JOB_REPORTS: usize = 8;
+/// Most work rows one owner read returns.
+pub const MAX_CODE_FIX_WORK: usize = 256;
 /// Most bytes of one report's detail, one message, or one other text a
 /// question's state carries.
 const DETAIL_BYTES: usize = 1024;
@@ -450,6 +452,25 @@ pub(super) fn wake_in_txn(
 }
 
 impl Vault {
+    /// The Coach's code-fix work for the owner, newest queued first, at most
+    /// `limit` (capped at [`MAX_CODE_FIX_WORK`]): each case's heal and, once
+    /// its run settled, the failure's class, the invented example's verdict
+    /// and each candidate's shadow result. No text of the failure is in it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn code_fix_work(&self, limit: usize) -> Result<Vec<CodeFixWork>> {
+        let txn = self.store.env.read_txn()?;
+        let mut rows: Vec<CodeFixWork> = WORK
+            .iter_from(&self.store, &txn, &[])?
+            .map(|row| row.map(|(_, work)| work))
+            .collect::<Result<_>>()?;
+        rows.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
+        rows.truncate(limit.min(MAX_CODE_FIX_WORK));
+        Ok(rows)
+    }
+
     /// The Coach's code-fix run for one case, under its leased
     /// `coach.code_fix` attempt: the failure's class, the Coach's draft, the
     /// invented example through its export door, and the candidate's shadow
