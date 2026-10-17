@@ -25,11 +25,21 @@ use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::{ApproveScope, DeckOp};
 
-/// `vault.artifacts.body.head`, `.commits` and `.preview`: the artifact.
+/// `vault.artifacts.body.head` and `.preview`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyArtifactRequest {
     pub artifact_ref: String,
+}
+
+/// `vault.artifacts.body.commits`: the artifact, and the one actor whose
+/// commits are wanted, when only theirs are.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyCommitsRequest {
+    pub artifact_ref: String,
+    #[serde(default)]
+    pub actor_ref: Option<String>,
 }
 
 /// `vault.artifacts.body.import`: one DOCX, XLSX or PPTX version (the head
@@ -367,13 +377,21 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.body.commits`: every commit receipt, in commit order,
-    /// each naming its actor and its MadeBy.
+    /// each naming its actor and its MadeBy; with `actor_ref`, that actor's
+    /// alone.
     pub fn artifacts_body_commits(
         &self,
-        input: &OfficeBodyArtifactRequest,
+        input: &OfficeBodyCommitsRequest,
     ) -> MemoryResult<Vec<TextCommitReceipt>> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        Ok(self.vault().office_body_commits(&artifact)?)
+        let actor = input
+            .actor_ref
+            .as_deref()
+            .map(|actor| self.body_ref(actor))
+            .transpose()?;
+        Ok(self
+            .vault()
+            .office_body_commits(&artifact, actor.as_ref())?)
     }
 
     /// `vault.artifacts.body.edit`: a person's live edit.

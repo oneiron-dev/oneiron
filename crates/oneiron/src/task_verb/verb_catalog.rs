@@ -3474,7 +3474,7 @@ impl AgentVerb {
                 "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history."
             }
             Self::VaultArtifactsBodyCommits => {
-                "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by."
+                "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; with actor_ref, that actor's alone. A commit with no honoured receipt fails the read."
             }
             Self::VaultArtifactsBodyEdit => {
                 "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."

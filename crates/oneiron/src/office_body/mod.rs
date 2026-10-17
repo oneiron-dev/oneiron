@@ -49,10 +49,10 @@ pub use pptx::{
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
 pub use verbs::{
-    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest,
-    OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
-    OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest, OfficeBodyForkRequest,
-    OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyProposalRequest,
+    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitsRequest,
+    OfficeBodyEditRequest, OfficeBodyExportVerbRequest, OfficeBodyExportView,
+    OfficeBodyForkEditRequest, OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest,
+    OfficeBodyForkRequest, OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyProposalRequest,
     OfficeBodyProposalSettleRequest, OfficeBodyReadRequest, OfficeBodyReviewedFork, OfficeBodyView,
     XlsxBodyView, XlsxSheetView,
 };
@@ -316,12 +316,23 @@ impl Vault {
     }
 
     /// Every commit receipt of the body, in commit order, a landed fork's
-    /// included.
-    pub fn office_body_commits(&self, artifact: &EntityId) -> Result<Vec<TextCommitReceipt>> {
-        Ok(self
+    /// included; with `actor`, that actor's alone. A commit with no honoured
+    /// receipt fails the read: who made the body is never told short.
+    pub fn office_body_commits(
+        &self,
+        artifact: &EntityId,
+        actor: Option<&EntityId>,
+    ) -> Result<Vec<TextCommitReceipt>> {
+        let receipts = self
             .typed_body_receipts(artifact)?
             .into_iter()
-            .flatten()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(Error::InvariantViolation(
+                "a live body commit has no honoured receipt",
+            ))?;
+        Ok(receipts
+            .into_iter()
+            .filter(|receipt| actor.is_none_or(|actor| receipt.made_by.process.actor == *actor))
             .collect())
     }
 
