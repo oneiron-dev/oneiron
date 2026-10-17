@@ -51,9 +51,6 @@ pub const SEALED_PUT_PART_MAX: usize = 4 * 1024 * 1024;
 /// The most packet bytes one read reply carries; in base64 it stays under the
 /// 32 MiB reply bound.
 pub const SEALED_READ_PART_MAX: usize = 16 * 1024 * 1024;
-/// The largest packet the home stages or a reader takes in: a 1 GiB sealed body
-/// and its envelopes.
-pub const SEALED_PACKET_MAX: u64 = 1025 * 1024 * 1024;
 
 /// One live packet on the home's shelf, as a reader lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -292,7 +289,7 @@ pub fn stage_sealed_part(
 ) -> Result<u64> {
     admit_sender(vault, peer, window)?;
     let end = offset.checked_add(part.len() as u64).ok_or_else(denied)?;
-    if part.is_empty() || part.len() > SEALED_PUT_PART_MAX || end > SEALED_PACKET_MAX {
+    if part.is_empty() || part.len() > SEALED_PUT_PART_MAX {
         return Err(denied());
     }
     let key = stage_key(upload);
