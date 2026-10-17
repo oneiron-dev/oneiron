@@ -530,6 +530,15 @@ impl Memory<'_> {
                 let budget = super::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
                     .and_then(|body| body.brief)
                     .and_then(|stored| stored.brief.constraints.pins.budget);
+                // OF-540: a TASK a team's leader creates works in that team.
+                let team = match origin.and_then(TaskCreateOrigin::parent_attempt) {
+                    Some(parent) => crate::team::team_spawn_context_for_attempt_in_txn(
+                        self.vault(),
+                        &*wtxn,
+                        parent,
+                    )?,
+                    None => None,
+                };
                 // OF-221: a root carries the conversation its witness kept;
                 // a child takes its parent's stored origin in dispatch.
                 let outcome = AgentDispatcher::new(self.vault()).dispatch_for_task_in_txn(
@@ -547,6 +556,7 @@ impl Memory<'_> {
                         type_ref: Some(validated.type_ref.clone()),
                         budget,
                         origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
+                        team,
                         ..AgentSpawnContext::default()
                     },
                 )?;
