@@ -13,12 +13,13 @@ use rmpv::Value;
 
 pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
     let (kind, target) = match call.target {
-        AgentDispatchTarget::Custom(id) => ("agent_def", id),
-        AgentDispatchTarget::Workflow(id) => ("workflow", id),
+        Some(AgentDispatchTarget::Custom(id)) => (Value::from("agent_def"), entity_id_value(id)),
+        Some(AgentDispatchTarget::Workflow(id)) => (Value::from("workflow"), entity_id_value(id)),
+        None => (Value::Nil, Value::Nil),
     };
     Ok(request_map(vec![
-        ("target_kind", Value::from(kind)),
-        ("target", entity_id_value(target)),
+        ("target_kind", kind),
+        ("target", target),
         ("intent_key", Value::from(call.intent_key.as_str())),
         (
             "context_spec",

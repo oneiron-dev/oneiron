@@ -3572,6 +3572,13 @@
       "effect": "TasksRefuse"
     },
     {
+      "name": "self.agents.spawn",
+      "input": "crate::code_run::AgentSpawnInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "AgentsSpawn"
+    },
+    {
       "name": "self.leader.advice",
       "input": "crate::code_run::LeaderAdviceInput",
       "scope": "Read",
