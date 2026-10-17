@@ -165,7 +165,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
         let mut texts = 0;
         let mut oversized = 0_usize;
         for (id, fields) in sources {
-            if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?.is_none() {
+            if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &id)? {
                 continue;
             }
             match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields) {
@@ -186,7 +186,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
         }
         let phonetic = INDEX_SOURCE_PHONETIC.scan(&vault.store, txn)?;
         for (id, codes) in phonetic {
-            if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?.is_none() {
+            if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &id)? {
                 continue;
             }
             crate::batch::apply_phonetic(&vault.store, txn, id, &codes)?;

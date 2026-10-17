@@ -261,7 +261,7 @@ impl Vault {
         if self.project_tap_in_txn(txn, tap_key, digest)?.is_some() {
             return Err(invalid());
         }
-        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &id, |_| Ok(()))?.is_some() {
+        if EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
             return Err(invalid());
         }
         let root_id = ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?;
