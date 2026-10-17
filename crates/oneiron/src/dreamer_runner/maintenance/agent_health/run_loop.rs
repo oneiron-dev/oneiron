@@ -50,7 +50,10 @@ pub(super) fn run_loop_findings(
             let streak = &calls[start..end];
             start = end;
             if (streak.len() as u64) < repeats
-                || matches!(first.effect, SelfEffect::TasksWait | SelfEffect::TasksWaitSet)
+                || matches!(
+                    first.effect,
+                    SelfEffect::TasksWait | SelfEffect::TasksWaitSet
+                )
             {
                 continue;
             }
