@@ -139,6 +139,7 @@ mod gate;
 mod goal_axes;
 mod goal_binding;
 mod job;
+mod judge_swap;
 mod labels;
 mod offer;
 pub(crate) mod policy;
@@ -175,6 +176,11 @@ pub use self::job::{
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY,
     PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
     run_skill_optimize, run_skill_optimize_as, run_skill_optimize_for_resident,
+};
+pub(crate) use self::judge_swap::run_judge_swap;
+pub use self::judge_swap::{
+    JUDGE_SWAP_NOTIFICATION_PRODUCER, JudgeIncumbent, JudgeShadowAnswer, JudgeShadowCase,
+    JudgeShadowHost, JudgeSwapReceipt, JudgeSwapReport, judge_incumbent, judge_swap_receipts,
 };
 pub(crate) use self::labels::take_digest_asks_in_txn;
 pub use self::labels::{
