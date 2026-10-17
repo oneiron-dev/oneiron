@@ -1,7 +1,7 @@
 //! Observer A/B registration and the shared Materializer/OutboundSink state.
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use loro::{ContainerTrait, LoroDoc, LoroMap, Subscription};
@@ -147,39 +147,50 @@ impl Materializer {
 /// Outbound update sink: Observer A routes every persisted local update
 /// here (ONE-1126, closes the "nothing feeds `local_rx`" gap).
 ///
-/// While a connection is attached ([`OutboundSink::attach`]) the update is
-/// sent to the connection's `local_rx` channel (debounce → WindowSync
-/// UPDATE on the wire). With no live connection — never attached, detached
-/// on shutdown, or the receiver dropped — the update is pushed onto the
-/// durable [`SyncQueue`] (`q:{seq}` rows, db #25) and replayed on the next
-/// connect. Updates are additionally durable as `u:w:` rows either way, so
-/// a crash loses nothing; the queue only decides *when* the server hears
-/// about them.
+/// Every attached channel ([`OutboundSink::attach`]) gets each update: a
+/// connection's `local_rx` (debounce → WindowSync UPDATE on the wire), and a
+/// host's own relay to its clients beside it. One attach never replaces
+/// another, and a detach removes only its own channel. With no live channel
+/// — never attached, all detached, or every receiver dropped — the update is
+/// pushed onto the durable [`SyncQueue`] (`q:{seq}` rows, db #25) and
+/// replayed on the next connect. Updates are additionally durable as `u:w:`
+/// rows either way, so a crash loses nothing; the queue only decides *when*
+/// the server hears about them.
 #[derive(Default)]
 pub struct OutboundSink {
-    sender: Mutex<Option<mpsc::UnboundedSender<LocalUpdate>>>,
+    senders: Mutex<Vec<(OutboundAttachment, mpsc::UnboundedSender<LocalUpdate>)>>,
+    next: AtomicU64,
 }
+
+/// One channel attached to an [`OutboundSink`], which detaches it alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutboundAttachment(u64);
 
 impl OutboundSink {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Attaches a live connection's local-update channel.
-    pub fn attach(&self, sender: mpsc::UnboundedSender<LocalUpdate>) {
-        *self.lock() = Some(sender);
+    /// Attaches a local-update channel beside any already attached.
+    pub fn attach(&self, sender: mpsc::UnboundedSender<LocalUpdate>) -> OutboundAttachment {
+        let attachment = OutboundAttachment(self.next.fetch_add(1, Ordering::Relaxed));
+        self.lock().push((attachment, sender));
+        attachment
     }
 
-    /// Detaches the connection channel; subsequent updates fall back to the
-    /// durable [`SyncQueue`].
-    pub fn detach(&self) {
-        *self.lock() = None;
+    /// Detaches one channel; once none is attached, later updates fall back
+    /// to the durable [`SyncQueue`].
+    pub fn detach(&self, attachment: OutboundAttachment) {
+        self.lock().retain(|(attached, _)| *attached != attachment);
     }
 
-    /// Acquires the sender slot, recovering from poisoning (mirrors
+    /// Acquires the sender list, recovering from poisoning (mirrors
     /// [`Materializer::lock`]).
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<mpsc::UnboundedSender<LocalUpdate>>> {
-        self.sender
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, Vec<(OutboundAttachment, mpsc::UnboundedSender<LocalUpdate>)>>
+    {
+        self.senders
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -204,27 +215,23 @@ impl OutboundSink {
         }
     }
 
-    /// Routes an update only to an attached steady-state connection. The
-    /// deletion path uses this after atomically writing its own durable
-    /// delete-bearing queue row, avoiding both a missed live broadcast and a
-    /// duplicate offline queue entry.
+    /// Routes an update only to the attached channels; true when one took
+    /// it. The deletion path uses this after atomically writing its own
+    /// durable delete-bearing queue row, avoiding both a missed live
+    /// broadcast and a duplicate offline queue entry.
     pub(crate) fn route_live(&self, window_key: &str, update_bytes: &[u8]) -> bool {
-        {
-            let mut guard = self.lock();
-            if let Some(sender) = guard.as_ref() {
-                let send_result = sender.send(LocalUpdate {
+        let mut guard = self.lock();
+        // A dropped receiver's sender is stale: it goes, and the others
+        // still get the update.
+        guard.retain(|(_, sender)| {
+            sender
+                .send(LocalUpdate {
                     window_key: window_key.to_string(),
                     update_bytes: update_bytes.to_vec(),
-                });
-                if send_result.is_ok() {
-                    return true;
-                }
-                // Receiver dropped — clear the stale sender and fall through
-                // to the durable queue.
-                *guard = None;
-            }
-        }
-        false
+                })
+                .is_ok()
+        });
+        !guard.is_empty()
     }
 }
 

@@ -326,6 +326,9 @@ pub struct ServeConfig {
     /// The `[native_mail]` section: the host's own mail server, absent until
     /// the config file names it.
     pub native_mail: Option<super::NativeMailConfig>,
+    /// The `[device_sync]` section: the home this machine dials, absent until
+    /// the config file names it. Absent means it dials no one.
+    pub device_sync: Option<super::DeviceSyncConfig>,
     /// The `[connectors.<name>]` sections: each catalog connector's installed
     /// transport and endpoint, empty until the config file names one.
     pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
@@ -407,6 +410,7 @@ impl Default for ServeConfig {
             desktop: None,
             gpu: None,
             native_mail: None,
+            device_sync: None,
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
@@ -484,6 +488,7 @@ impl fmt::Debug for ServeConfig {
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
+            .field("device_sync", &self.device_sync)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)

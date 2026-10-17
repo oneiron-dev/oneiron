@@ -60,6 +60,7 @@ pub(super) async fn serve_with_config(
     if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
+    crate::owner::house::bind_house_leader_at_start(&vault, server_config.auth_secret.as_deref());
     match server_config.auth_secret.as_deref() {
         None if !server_config.allow_unauthenticated => {
             tracing::warn!(
@@ -146,12 +147,19 @@ pub(super) async fn serve_with_config(
     // The paired-machine mesh listener (OF-535): off unless the host names
     // its bind address.
     let mesh = crate::handler::mesh::start(
-        mesh_server,
+        Arc::clone(&mesh_server),
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
         config.limits.connections(),
     )
     .await?;
+    // A machine that is not the elected home dials its home on that mesh.
+    let device_sync = crate::device_sync::DeviceSyncHost::start(
+        &mesh_server,
+        config.device_sync.as_ref(),
+        mesh.as_ref(),
+    )
+    .await;
     host.ready()?;
     // Ready and bound: a client on this host can find it now. The file goes
     // when this returns, a clean stop or a late startup error alike.
@@ -192,6 +200,9 @@ pub(super) async fn serve_with_config(
         } => {
             tracing::warn!("connections still open after the drain grace; stopping anyway");
         }
+    }
+    if let Some(device_sync) = device_sync {
+        device_sync.stop().await;
     }
     if let Some(mesh) = mesh {
         mesh.stop().await;

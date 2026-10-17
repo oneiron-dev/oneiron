@@ -70,8 +70,10 @@ fn split_bytes(
                 family.assigned_at,
             )?;
         }
+        // The family gate decides what trains (OF-578): a held-out family
+        // never does, retired or not.
         let side = match family.purpose {
-            FamilyPurpose::Development => SplitSide::Training,
+            _ if vault.eval_family_feeds_training(&family.id)? => SplitSide::Training,
             FamilyPurpose::SealedConfirmation if cohort.families.contains(&family.id) => {
                 SplitSide::HeldOut
             }
