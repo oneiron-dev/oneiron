@@ -3358,6 +3358,13 @@
       "scope": "Read",
       "context": "run",
       "effect": "TasksWaitSet"
+    },
+    {
+      "name": "summarize",
+      "input": "crate::code_run::SummarizeInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Summarize"
     }
   ]
 }

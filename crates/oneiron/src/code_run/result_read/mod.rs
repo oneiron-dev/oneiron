@@ -177,6 +177,7 @@ impl ReadBounds<'_> {
 /// reader's grant and the rows it was served from are the caller's to check
 /// before it is made.
 pub(crate) struct ResultRead {
+    owner: EntityId,
     output: CodeRunRawOutput,
     name: Option<String>,
     range: Option<(u64, u64)>,
@@ -204,6 +205,7 @@ impl ResultRead {
         }
         let (state, secret) = storage.code_run_result_taint(Some(owner), &output)?;
         Ok(Ok(Self {
+            owner,
             output,
             name,
             range,
@@ -215,6 +217,11 @@ impl ResultRead {
     /// The result read.
     pub(crate) fn output(&self) -> &CodeRunRawOutput {
         &self.output
+    }
+
+    /// The run whose occurrence of the result is read.
+    pub(crate) fn owner(&self) -> EntityId {
+        self.owner
     }
 
     /// The range of its body the read is narrowed to, if any.
@@ -309,7 +316,7 @@ impl ResultRead {
 
     /// What any facet of a body that is not clean answers: its size and
     /// taint, none of its content.
-    fn withheld(&self) -> Value {
+    pub(crate) fn withheld(&self) -> Value {
         let (start, end) = self.range.unwrap_or((0, self.output.raw_len));
         json!({
             "withheld": taint_word(self.state),

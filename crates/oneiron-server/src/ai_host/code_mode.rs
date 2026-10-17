@@ -130,7 +130,13 @@ pub(super) async fn bind(
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => provider
             .with_clock_from_first_start()
-            .with_reader_meter(reader_meter),
+            .with_reader_meter(reader_meter)
+            .with_reader_window_tokens(
+                super::dreamer::dream_windows(models)
+                    .get(&seat.model)
+                    .copied()
+                    .unwrap_or(0),
+            ),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
             return server;

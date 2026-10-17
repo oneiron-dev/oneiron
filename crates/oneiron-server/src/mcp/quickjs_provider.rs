@@ -80,6 +80,9 @@ pub struct McpQuickJsProvider {
     /// The runtime reader children are made fresh from, compiled once at
     /// the first child.
     reader_template: Mutex<Option<WasmtimeComponentRuntime>>,
+    /// The input window of the model reader children and summaries run
+    /// on, in tokens, when the host knows it.
+    reader_window_tokens: Option<u64>,
 }
 
 /// A reader child's backend over the host-injected model: its calls are
@@ -145,6 +148,7 @@ impl McpQuickJsProvider {
             code_check: None,
             reader_meter: None,
             reader_template: Mutex::new(None),
+            reader_window_tokens: None,
         })
     }
 
@@ -166,6 +170,14 @@ impl McpQuickJsProvider {
     #[must_use]
     pub(crate) fn with_reader_meter(mut self, meter: ReaderMeter) -> Self {
         self.reader_meter = Some(meter);
+        self
+    }
+
+    /// The input window, in tokens, of the model reader children and
+    /// summaries run on: what `readAll` sizes its chunks and groups by.
+    #[must_use]
+    pub(crate) fn with_reader_window_tokens(mut self, tokens: u64) -> Self {
+        self.reader_window_tokens = (tokens > 0).then_some(tokens);
         self
     }
 
@@ -253,6 +265,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn reader_backend(&self, meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
         self.reader_meter.as_ref().map(|build| build(meter))
+    }
+    fn reader_window_tokens(&self) -> Option<u64> {
+        self.reader_window_tokens
     }
     fn executor_config(
         &self,

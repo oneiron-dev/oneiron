@@ -375,6 +375,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::ReaderReport(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::TaskWaitSet(result) => json!({"output": result}),
+        SelfDispatchOutcome::Summarize(reply) => json!({"output": reply.output()}),
     }
 }
 
@@ -464,6 +465,12 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
             "resultRef": report.result_ref,
         }),
         SelfCall::TasksWaitSet(wait) => to_json(wait)?,
+        SelfCall::Summarize(summary) => json!({
+            "ref": summary.reference,
+            "effort": summary.effort.map(crate::code_run::SummarizeEffort::as_str),
+            "group": summary.group,
+            "defer": summary.defer,
+        }),
     })
 }
 
@@ -795,15 +802,17 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         )),
         SelfCall::Fold(fold) => SelfCall::Fold(fold_rewrite(fold, args)?),
         SelfCall::TasksWaitSet(_) => SelfCall::TasksWaitSet(decode(args)?),
-        // A reader's source and finding are resolved by the host before the
-        // hooks run: a rewrite would name a result nothing resolved.
+        // A reader's source and finding, and a summary's members, are
+        // resolved by the host before the hooks run: a rewrite would name a
+        // result nothing resolved.
         SelfCall::AgentsSpawn(_)
         | SelfCall::AgentsPut(_)
         | SelfCall::MemoryWriteFixture(_)
         | SelfCall::Context(_)
         | SelfCall::AgentVerb(_)
         | SelfCall::ReaderSpawn(_)
-        | SelfCall::ReaderReport(_) => {
+        | SelfCall::ReaderReport(_)
+        | SelfCall::Summarize(_) => {
             return Err(format!("{} takes no rewrite", call.effect().as_str()));
         }
     })

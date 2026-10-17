@@ -129,6 +129,34 @@ pub struct ReaderSpawnInput {
     pub intent_key: String,
 }
 
+/// `summarize(r, {effort?, group?, defer?})`: one model call over a result
+/// and the results after it, made by a host job, never inside a step, and
+/// memoised by its members' occurrences and its recipe: the same call again
+/// answers the same summary.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SummarizeInput {
+    /// The result to summarize: a name, a handle or a range ref.
+    #[serde(rename = "ref")]
+    pub r#ref: String,
+    /// How hard the summary works; `medium` by default.
+    pub effort: Option<SummarizeInputEffort>,
+    /// More results summarized with it, after it, in order.
+    pub group: Option<Vec<String>>,
+    /// Answer `{task, state}` at once instead of waiting for the summary;
+    /// wait for it with `tasks.wait`.
+    pub defer: Option<bool>,
+}
+
+/// The wire name of a summary's effort.
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SummarizeInputEffort {
+    Low,
+    Medium,
+    High,
+}
+
 /// `tasks.wait`: one wait over reader children the run spawned, answered
 /// once all of them, or `n_of` of them, have a finding, or at `until`.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]

@@ -342,7 +342,12 @@ fn run_bound(
         .spend_scope_for_attempt(status.attempt.id)
         .map_err(text)?
         .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
-    let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
+    let seat = seats.seat(
+        run_id,
+        spend,
+        CallerLocality::OnDevice,
+        provider.reader_window_tokens(),
+    );
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

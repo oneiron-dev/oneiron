@@ -18,6 +18,11 @@ const PAGE_CHUNKS: usize = 256;
 /// Bytes a line-aligned chunk looks on past its size for a newline.
 const ALIGN_BYTES: u64 = 64 * 1024;
 
+/// The most bytes one token-sized `chunks` call tokenizes: tokenizing 8 MiB
+/// stays inside one 5 s step. It is a page bound, never a result bound: the
+/// reply's cursor goes on from where it stopped.
+pub(crate) const CHUNK_TOKEN_PAGE_BYTES: u64 = 8 << 20;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChunksInput {
@@ -25,6 +30,13 @@ struct ChunksInput {
     bytes: Option<u64>,
     #[serde(default)]
     lines: Option<u64>,
+    /// Chunks of about this many tokens each, counted with the executor's
+    /// tokenizer, grown line by line.
+    #[serde(default)]
+    tokens: Option<u64>,
+    /// With `tokens`: the most bytes one chunk holds.
+    #[serde(default)]
+    max_bytes: Option<u64>,
     #[serde(default)]
     overlap: Option<u64>,
     #[serde(default)]
@@ -87,6 +99,41 @@ pub(super) fn chunks(
     });
     let mut scan = Scan::new(bounds.scan_bytes());
     let mut page = Vec::new();
+    if let Some(tokens) = input.tokens {
+        if input.bytes.is_some() || input.lines.is_some() || input.overlap.is_some() || tokens == 0
+        {
+            return Ok(Reply::Denied(invalid_input(
+                "chunks takes tokens: n (with max_bytes) alone, with n above zero",
+            )));
+        }
+        if !text {
+            return Ok(Reply::Denied(refusal("tokens_on_binary")));
+        }
+        let max_bytes = input.max_bytes.unwrap_or(u64::MAX).max(1);
+        // The page bound reads no more than the scan bound would.
+        let scan_bound = bounds.scan_bytes();
+        let mut scan = Scan::new(scan_bound.min(CHUNK_TOKEN_PAGE_BYTES));
+        let (next, spent) = by_tokens(
+            body,
+            parent,
+            tokens,
+            max_bytes,
+            from.offset,
+            &mut scan,
+            &mut page,
+        )?;
+        let mut reply = json!({"ref": reference, "chunks": page, "done": next.is_none()});
+        if let Some(next) = next {
+            reply["next"] = next;
+        }
+        if spent && scan_bound <= CHUNK_TOKEN_PAGE_BYTES {
+            reply["limit"] = scan_limit();
+        }
+        return Ok(Reply::Output(reply));
+    }
+    if input.max_bytes.is_some() {
+        return Ok(Reply::Denied(invalid_input("max_bytes goes with tokens")));
+    }
     let (next, limited) = match (input.bytes, input.lines) {
         (Some(size), None) if size > 0 && overlap < size => by_bytes(
             body,
@@ -193,6 +240,90 @@ fn by_bytes(
             }
         }
         s = next.max(s + 1);
+    }
+}
+
+/// Chunks of about `tokens` tokens from `start`, each grown line by line
+/// until the next line would take it past `tokens` or past `max_bytes`: a
+/// line longer than either is cut at a character boundary into a chunk of
+/// its own, marked `cut`. Lines are counted with the executor's tokenizer.
+/// The cursor of the next page, and whether the scan bound ended this one.
+fn by_tokens(
+    body: &dyn ResultBody,
+    parent: &str,
+    tokens: u64,
+    max_bytes: u64,
+    start: u64,
+    scan: &mut Scan,
+    page: &mut Vec<Value>,
+) -> Result<(Option<Value>, bool)> {
+    let len = body.len();
+    let base = body.base();
+    // The longest piece of one line: a token is at least a byte.
+    let piece_cap = usize::try_from(ALIGN_BYTES.min(max_bytes).min(tokens).max(1)).unwrap_or(1);
+    let (mut buf, mut buf_at) = (Vec::new(), start);
+    let (mut chunk_start, mut at, mut count, mut cut) = (start, start, 0_u64, false);
+    loop {
+        if at >= len {
+            if at > chunk_start {
+                page.push(entry(parent, base, chunk_start, at, cut));
+            }
+            return Ok((None, false));
+        }
+        let off = usize::try_from(at - buf_at).unwrap_or(usize::MAX);
+        let rest = buf.get(off..).unwrap_or_default();
+        let newline = rest.iter().take(piece_cap).position(|byte| *byte == b'\n');
+        let held_to = buf_at + buf.len() as u64;
+        if newline.is_none() && rest.len() < piece_cap && held_to < len {
+            let more = scan.read(body, held_to, ALIGN_BYTES as usize)?;
+            if more.is_empty() {
+                // The bound is spent: the page ends at the last whole line.
+                if at > chunk_start {
+                    page.push(entry(parent, base, chunk_start, at, cut));
+                    return Ok((Some(json!({"offset": at})), true));
+                }
+                if page.is_empty() && !rest.is_empty() {
+                    let end = at + floor_boundary(rest, rest.len()).max(1) as u64;
+                    page.push(entry(parent, base, at, end, true));
+                    return Ok((Some(json!({"offset": end})), true));
+                }
+                return Ok((Some(json!({"offset": chunk_start})), true));
+            }
+            buf.drain(..off.min(buf.len()));
+            buf_at = at;
+            buf.extend_from_slice(&more);
+            continue;
+        }
+        let (line_len, piece) = match newline {
+            Some(newline) => (newline + 1, false),
+            None if rest.len() >= piece_cap => (floor_boundary(rest, piece_cap).max(1), true),
+            None => (rest.len(), false),
+        };
+        let line = &rest[..line_len];
+        let line_tokens = crate::tokenizer::count_context_pack_tokens(&String::from_utf8_lossy(line))
+            as u64;
+        let held = at - chunk_start;
+        if at > chunk_start
+            && (count.saturating_add(line_tokens) > tokens
+                || held.saturating_add(line_len as u64) > max_bytes)
+        {
+            page.push(entry(parent, base, chunk_start, at, cut));
+            (chunk_start, count, cut) = (at, 0, false);
+            if page.len() == PAGE_CHUNKS {
+                return Ok((Some(json!({"offset": at})), false));
+            }
+            continue;
+        }
+        count = count.saturating_add(line_tokens);
+        at += line_len as u64;
+        cut |= piece;
+        if count >= tokens || at - chunk_start >= max_bytes || piece {
+            page.push(entry(parent, base, chunk_start, at, cut));
+            (chunk_start, count, cut) = (at, 0, false);
+            if page.len() == PAGE_CHUNKS && at < len {
+                return Ok((Some(json!({"offset": at})), false));
+            }
+        }
     }
 }
 

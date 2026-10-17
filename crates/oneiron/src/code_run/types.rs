@@ -83,6 +83,10 @@ pub enum SelfCall {
     ReaderReport(super::reader::SelfReaderReportCall),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
+    /// `summarize(r, {effort?, group?, defer?})`: one summary of the run's
+    /// results, made by a host job on the run's route and memoised by its
+    /// members' occurrences and recipe.
+    Summarize(Box<super::reader::SelfSummarizeCall>),
 }
 
 impl SelfCall {
@@ -117,6 +121,7 @@ impl SelfCall {
             Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
+            Self::Summarize(_) => SelfEffect::Summarize,
         }
     }
 
@@ -191,6 +196,8 @@ pub enum SelfEffect {
     ReaderReport,
     /// A wait over the run's reader children.
     TasksWaitSet,
+    /// A summary of the run's results, made by a host job.
+    Summarize,
 }
 
 impl SelfEffect {
@@ -226,6 +233,7 @@ impl SelfEffect {
             Self::ReaderSpawn => "self.spawn",
             Self::ReaderReport => "tasks.update",
             Self::TasksWaitSet => "tasks.wait_set",
+            Self::Summarize => "summarize",
         }
     }
 
@@ -261,7 +269,7 @@ impl SelfEffect {
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
             Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
-            Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet => None,
+            Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Summarize => None,
         }
     }
 
@@ -611,6 +619,9 @@ pub enum SelfDispatchOutcome {
     ReaderReport(super::reader::ReaderReportReceipt),
     /// One reduction of a wait over the run's reader children.
     TaskWaitSet(super::reader::TaskWaitSetResult),
+    /// A summary's card, its job while it is made, or a withheld member's
+    /// reply.
+    Summarize(super::reader::SummarizeReply),
 }
 
 /// `self.skills.call(...)`: the skill and the arguments its call contract

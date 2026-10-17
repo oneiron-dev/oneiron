@@ -2,6 +2,7 @@
 
 mod compaction;
 mod folds;
+mod reader_folds;
 mod reader_jobs;
 mod records;
 mod routing;
@@ -9,7 +10,11 @@ mod speech_identity;
 mod wait_delivery;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
-pub use self::reader_jobs::ReaderJobs;
+pub(crate) use self::reader_folds::{
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree,
+};
+pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub(crate) use self::reader_jobs::{
     NewReaderJob, ReportOutcome, SpawnAdmission, SpendBook, WaitSetOutcome,
 };
