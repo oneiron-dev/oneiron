@@ -4282,7 +4282,7 @@ pub fn vault_recall(
     )?;
     crate::memory::caps::check_as_of(input.as_of)?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
-    crate::task_verb::sdk::recall_with_vector(memory, input, |_| None)
+    crate::task_verb::sdk::recall_unembedded(memory, input)
 }
 pub fn vault_export(
     memory: &Memory<'_>,

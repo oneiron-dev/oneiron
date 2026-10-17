@@ -812,7 +812,8 @@ pub enum EmbeddingKind {
 
 #[derive(Args, Clone, Debug)]
 pub struct EmbeddingSpaceDeclareArgs {
-    /// The space id: an `ai.embed` rung id, then `@where`.
+    /// The space id: an `ai.embed` rung id, then `@` and the `[models]`
+    /// provider key that binds that rung.
     pub id: String,
 
     /// The space's dimensions.

@@ -11054,7 +11054,7 @@
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
       "crate-vis": 5,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -16932,8 +16932,8 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 16,
-      "mod": 2,
+      "crate-vis": 17,
+      "mod": 3,
       "re-export": 17
      }
     },
@@ -17185,6 +17185,7 @@
      "path": "src/dreamer_consolidation/scope_summary_attempt.rs",
      "purpose": "The Dreamer writes a declared scope summary's body (ARCH-0006a)",
      "surface": {
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -17203,8 +17204,9 @@
      "path": "src/dreamer_consolidation/selection.rs",
      "purpose": "Mechanical candidate selection",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -17247,6 +17249,21 @@
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConsolidationStrengthPolicy",
+      "ConsolidationStrengthSnapshot"
+     ],
+     "path": "src/dreamer_consolidation/strength.rs",
+     "purpose": "Consolidation strength observations and an archive-only lifecycle (OF-216)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -17417,7 +17434,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -18089,7 +18106,7 @@
       "crate-vis": 7,
       "fn": 1,
       "mod": 10,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -18104,6 +18121,16 @@
      "surface": {
       "crate-vis": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/person_threshold.rs",
+     "purpose": "The accepted PersonThreshold row (Q3)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -18217,6 +18244,17 @@
       "crate-vis": 2,
       "fn": 4,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/strength.rs",
+     "purpose": "Nightly strength maintenance rides the existing wake recipe/run-tree lane",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2
      }
     },
     {
@@ -20864,7 +20902,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 2,
       "re-export": 9
      }
@@ -20990,9 +21028,20 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage, editable fields and immutable row pointers",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/summary.rs",
+     "purpose": "Scope-summary documents: retained derivations, purpose and editor `keep` memo",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2
      }
     },
     {
@@ -27019,7 +27068,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 4
      }
     },
@@ -35317,7 +35366,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PixelPull",
@@ -35329,7 +35378,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -37279,6 +37328,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScopeSummaryMetadata",
+      "SummaryDerivation",
+      "SummarySourceVersion"
+     ],
+     "path": "src/scope_summary/derivation.rs",
+     "purpose": "Scope-summary derivation envelopes and change-driven re-derivation",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -37287,7 +37352,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 5,
       "struct": 1
      }
@@ -37299,8 +37364,32 @@
      "path": "src/scope_summary/mod.rs",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 3
+      "crate-vis": 4,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/producer.rs",
+     "purpose": "Private admission for locally minted scope-summary bodies",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SummaryPurpose"
+     ],
+     "path": "src/scope_summary/purpose.rs",
+     "purpose": "Open, owner-approved summary-purpose descriptors, not a closed enum",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -37312,10 +37401,25 @@
       "ScopeSummaryTarget"
      ],
      "path": "src/scope_summary/request.rs",
-     "purpose": "A caller declares a summary scope; the Dreamer writes the body (ARCH-0006a \"the worker declares the scope…",
+     "purpose": "Scope-only declarations, exact-source fences and atomic Dreamer landings",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 13,
       "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScopeSummaryResult",
+      "ScopeSummaryStatus"
+     ],
+     "path": "src/scope_summary/status.rs",
+     "purpose": "Caller-visible queued completion and failure, without exposing runner payloads",
+     "surface": {
+      "crate-vis": 2,
       "fn": 1,
       "struct": 2
      }
@@ -42861,7 +42965,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 12,
       "struct": 1
      }
@@ -42884,7 +42988,7 @@
      "path": "src/sync/manager/live_mirror.rs",
      "purpose": "The live mirror: rows a local commit writes reach the window docs this manager has loaded",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -44407,6 +44511,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/catalog_fragment_revision.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/consts.rs",
      "purpose": "Module-level constants shared across the task-verb files",
      "surface": {
@@ -45069,8 +45183,21 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 33
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CatalogFragment"
+     ],
+     "path": "src/task_verb/sdk_catalog_fragment.rs",
+     "purpose": "The code-mode catalog fragment (ONE-2510 S2): the whole verb set code mode serves, as one TypeScript…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -46962,7 +47089,7 @@
      "purpose": "Soniox streaming ASR wire client",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1,
       "trait": 1
      }
@@ -48584,6 +48711,7 @@
      "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 5,
       "struct": 6
      }
@@ -50139,7 +50267,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50167,7 +50295,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 44,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50230,7 +50358,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50790,7 +50918,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 6,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51007,7 +51135,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 115,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51163,7 +51291,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3090,
+   "source_files": 3100,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62336,7 +62464,17 @@
      "path": "src/api/conversation_dag/mod.rs",
      "purpose": "HTTP adapters for transactional conversation DAG and summary doors",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/conversation_dag/summary.rs",
+     "purpose": "Scope-summary result polling, retained metadata and explicit re-derivation",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -62346,7 +62484,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 37
      }
     },
     {
@@ -65705,7 +65843,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DecisionHost"
@@ -65713,7 +65851,7 @@
      "path": "src/decision_host.rs",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 14,
       "struct": 1
      }
@@ -66938,7 +67076,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -67017,7 +67155,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "McpQuickJsProvider"
@@ -68261,7 +68399,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "re-export": 3
      }
     },
@@ -69110,7 +69248,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 274,
+     "files": 275,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69203,7 +69341,7 @@
     "decision_host": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…"
     },
@@ -69432,9 +69570,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 34,
+   "over_bar": 35,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 539,
+   "source_files": 540,
    "test_files": 182
   },
   "oneiron-spawn": {

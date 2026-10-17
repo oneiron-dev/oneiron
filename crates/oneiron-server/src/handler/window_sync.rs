@@ -366,16 +366,15 @@ pub(super) async fn handle_window_sync(
                 )));
             }
 
-            // A world flagged device-only on this server stays here, even as
-            // another device's relayed update. An update that adds no operation, such as a
+            // Each socket's delivery judges the update for the machine it
+            // serves, so a private world's window reaches only the machines
+            // that may read it (`window_delivery`). An update that adds no operation, such as a
             // catch-up reply to a vector this home already covers, has nothing to relay: relayed,
             // it would wake every socket that is not pushed the window, and their catch-ups would
             // wake each other in turn. It is still appended above, since another handler may hold
             // the same operations in memory before its own append lands, and the acknowledgment
             // below must name durable bytes.
-            if (imported.pending.is_some() || doc.oplog_vv() != before)
-                && !crate::server::withheld_from_peers(&server.reassert_manager, window_key, update)
-            {
+            if imported.pending.is_some() || doc.oplog_vv() != before {
                 let broadcast_msg =
                     protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
                         .into_result()

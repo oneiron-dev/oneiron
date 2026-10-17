@@ -846,14 +846,16 @@ oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
 `issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
 `file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
 `security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
-recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`. Nothing
-is published yet: the kit is pending. Put each piece where its home says, then `confirm` with two
-of them, or with one and the passphrase. That re-entry is the proof you saved them. Confirm makes
-the kit's root live on this machine and marks every earlier kit replaced. When this machine's
-keystore opens the vault key, confirm also seals it to the root as the escrow wrap `world-kit`. A
-replaced kit's pieces still open their own old root;
-replacing a kit does not revoke it. `this-machine` is refused until a keystore slot can hold a
-piece.
+recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`.
+`file-on:<machine>` with this machine's own id counts as `file-here`, and `other-machine:<machine>`
+with it is refused. Nothing is published yet: the kit is pending. Put each piece where its home
+says, then `confirm` with two of them, or with one and the passphrase. That re-entry is the proof
+you saved them. Confirm makes the kit's root live on this machine and marks every earlier kit
+replaced. When the vault has a key, confirm also seals it to the root as the escrow wrap
+`world-kit`, replacing the earlier kit's. It opens the key with this machine's keystore, and a key
+that stays locked refuses the confirm before anything changes. A replaced kit's pieces still open
+their own old root; replacing a kit does not revoke it. `this-machine` is refused until a keystore
+slot can hold a piece.
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
@@ -863,6 +865,7 @@ run only from the CLI, so no piece crosses HTTP.
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own:
 pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
+A kit this vault still lists as pending is refused: `confirm` it instead.
 
 On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
 `status` prints:
@@ -1071,7 +1074,9 @@ where the bytes come from.
 
 Text, image and audio each search through a kind slot. An unbound text slot reads the vault's
 own text index. A bound slot reads a declared embedding space, whose id is an `ai.embed` rung id
-(as `GET /v1/ai/options` lists it), then `@where`.
+(as `GET /v1/ai/options` lists it), then `@where`: the `[models]` provider key that binds that
+rung, so one model at two clouds is two spaces. Where the space's model runs is that provider's
+locality. A space whose `@where` names no provider serving its rung embeds nothing.
 
 - `GET /v1/owner/embedding-spaces` lists the declared spaces, the text index, which space each
   slot reads, every move with its last check, and how many probes each kind holds.
@@ -1083,6 +1088,13 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   With the text slot bound, a text query embeds through that space's text tower in the context
   pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
   holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
+  A `media` query (`{"space", "mime", "bytes_b64", "kinds"}`) seeds a search on its own: the
+  server embeds the bytes into that space through the `ai.embed` rung its id names and searches
+  that space's list. The context pack and the Context Board over HTTP, `/v1/core/query`, the
+  native MCP context pack, and `vault.recall` on every SDK take it. Recall refuses it at light
+  effort and in call mode, and refuses `kinds`. A client with no server (an embedded handle)
+  answers `MODEL_UNAVAILABLE` (`EMBEDDER_UNAVAILABLE` on the native context pack) and never
+  searches without the media.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`

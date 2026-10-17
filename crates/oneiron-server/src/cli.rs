@@ -41,14 +41,14 @@ pub use owner_args::{
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
     VaultKeyCommand, VaultKeyNamedArgs,
 };
-pub use widen_proposal_args::{
-    WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand,
-};
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,
     RecoveryKitRestoreArgs, RecoveryKitStatusArgs,
 };
 pub use wake_args::{WakeArgs, WakeCommand};
+pub use widen_proposal_args::{
+    WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand,
+};
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
 const DEFAULT_SERVER_MAP_SIZE: usize = 1 << 33;
