@@ -253,7 +253,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/connector_subscription_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/connectors/subscriptions`: the owner's door that lets an agent answer a built-in channel (OF-519) |
 | `src/api/owner_routes/cooperative_deletion_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route |
 | `src/api/owner_routes/decision_ask_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/decisions/asks`: the typed decisions the host's ladder asked the vault owner (ARCH-0076, its last… |
-| `src/api/owner_routes/desktop_takeover_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/desktops*`: the owner takes a run's desktop over (CUA-001) |
+| `src/api/owner_routes/desktop_takeover_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/desktops*`: the owner takes a run's desktop over (CUA-001) |
 | `src/api/owner_routes/diary_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/diary`: the owner's doors to agent diaries (OF-490, AGM-1+8) |
 | `src/api/owner_routes/disclosure_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/disclosure`: the owner's doors to contact disclosure (OF-365, the ILDF2 consent channel) |
 | `src/api/owner_routes/dreamer_maintenance_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/dreamer/maintenance` (OF-023, owner ruling 10-18: "autoapply + revert rather than holdout"): the… |
@@ -719,7 +719,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
 | `src/server/cooperative_deletion.rs` | src | s | 1 crate-vis | — | Delivers queued courtesy deletion asks and answers (OF-273) |
 | `src/server/core.rs` | src | L | 2 struct · 18 fn · 17 crate-vis | SyncServer, TaskWorkTurn | Core server state: the `SyncServer` struct, construction, and shared helpers |
-| `src/server/desktop_seats.rs` | src | s | 6 crate-vis | — | The run desktops live on this host (CUA-001), so the owner's door can reach the same guest a run's door drives |
+| `src/server/desktop_seats.rs` | src | m | 14 crate-vis | — | The run desktops live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |
 | `src/server/embedding.rs` | src | m | 6 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/housekeeping.rs` | src | m | 11 crate-vis | — | The host's half of the engine's housekeeping |
 | `src/server/housekeeping_tests.rs` | test | m | — | — | Done-means for host housekeeping: a running server, its lifecycle loop on a short tick over a vault on a… |

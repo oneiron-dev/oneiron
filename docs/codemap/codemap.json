@@ -12128,7 +12128,7 @@
      "path": "src/code_sandbox/egress/receipt.rs",
      "purpose": "Proxy receipts use the existing owner-local gate ledger",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -25949,6 +25949,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inbox/takeover_ask.rs",
+     "purpose": "CUA-001: a run guest's takeover ask as the owners' inbox Ask (\"Needs you\")",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -53445,7 +53455,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -54238,7 +54248,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3293,
+   "source_files": 3294,
    "test_files": 902
   },
   "oneiron-android": {
@@ -56384,6 +56394,7 @@
      "bucket": "XL",
      "kind": "src",
      "notable": [
+      "AbandonedTakeover",
       "DesktopGuest",
       "DesktopSession",
       "PersonInput",
@@ -56394,8 +56405,8 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…",
      "surface": {
       "enum": 2,
-      "fn": 13,
-      "struct": 3
+      "fn": 15,
+      "struct": 4
      }
     },
     {
@@ -67157,7 +67168,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/desktop_takeover_routes.rs",
@@ -72366,13 +72377,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/desktop_seats.rs",
-     "purpose": "The run desktops live on this host (CUA-001), so the owner's door can reach the same guest a run's door drives",
+     "purpose": "The run desktops live on this host (CUA-001), so the owner's door can reach the same guest a run's door…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 14
      }
     },
     {
