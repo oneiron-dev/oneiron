@@ -44,8 +44,8 @@ pub(super) enum BaseGuards {
         /// The project whose leader chat admitted this witness; its records
         /// are settled after the landing's effect.
         leader_project: Option<EntityId>,
-        /// The room thread reply's quote the room guard proved (OF-460): the
-        /// TURN is minted with it, or a stored one must already carry it.
+        /// The quote the room guard proved for the turn (OF-460, FIX 2027):
+        /// the TURN is minted with it, or a stored one must already carry it.
         quoted: Option<crate::conversation_dag::QuotedReply>,
         /// The thread binding the room guard proved (FIX 2951): a minted
         /// TURN is born with it; a stored one already holds it.
@@ -320,12 +320,15 @@ impl Memory<'_> {
     /// creates must be marker-free (checked INSIDE the write transaction so a
     /// concurrent hard delete cannot land between check and commit, A1),
     /// `prepare` runs, the conversation is re-read as a live room, an erased
-    /// PERSON is refused, and a project room admits the witness.
+    /// PERSON is refused, and the room admits the witness. `quote_key`, taken
+    /// before the writer opened, is the read a quote's selection passes
+    /// (FIX 2027).
     pub(super) fn base_guards_in_txn(
         &self,
         plan: &WitnessPlan<'_>,
         wtxn: &mut heed::RwTxn<'_>,
         prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        quote_key: Option<&crate::claim::ScopedReadActorKey>,
     ) -> MemoryResult<BaseGuards> {
         let message_ids = plan.message_ids();
         let created_ids = message_ids
@@ -388,6 +391,7 @@ impl Memory<'_> {
             plan.turn_id,
             plan.turn,
             &message_ids,
+            quote_key,
         )?;
         let leader_project = crate::workspace_roster::admit_leader_chat_witness(
             self.vault,
@@ -433,8 +437,8 @@ impl Memory<'_> {
 
     /// Stages the admitted turn into base: one batch, its text ops, the open
     /// session's activity bump and the turn's session membership. A minted
-    /// quoted reply also takes its `Parent` and `RepliesTo` edges and its
-    /// citation pin here, in the TURN's own write (OF-460).
+    /// quoted turn also takes its `RepliesTo` edge, a project thread reply's
+    /// `Parent`, and its citation pin here, in the TURN's own write (OF-460).
     pub(super) fn stage_in_base(
         &self,
         plan: &WitnessPlan<'_>,

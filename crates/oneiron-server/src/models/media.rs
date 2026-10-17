@@ -1017,10 +1017,7 @@ impl super::ModelRuntime {
                     .flat_map(|status| status.rungs.iter().enumerate());
                 for (position, rung) in rungs {
                     let live = health.get(&position).is_none_or(RungHealth::live_now);
-                    let Some(model) = rung
-                        .engine_model
-                        .clone()
-                        .filter(|_| rung.available && live)
+                    let Some(model) = rung.engine_model.clone().filter(|_| rung.available && live)
                     else {
                         continue;
                     };

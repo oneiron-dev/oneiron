@@ -7,9 +7,13 @@
 //! through the owner's doors, a widening only on the owner's word for that
 //! item, and an actor's apply lands nothing and leaves every item waiting.
 //! A new grant an actor declares also goes to the owner's widen inbox, filed
-//! under the actor's own credential.
+//! under the actor's own credential, and an apply reads the owner's answer
+//! there back into its journal. Each apply is one run-tree root with a child
+//! per item (see [`super::run`]), and its waiting items are one inbox group
+//! (see [`super::group`]).
 use super::live::{facet_name, world_name};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
+use super::run::ShapeApplyRun;
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::{AgentDefinition, AgentScope};
 use crate::authority::{HostSlipIssuer, VerifiedSlip};
@@ -37,6 +41,9 @@ use std::collections::BTreeMap;
 /// How long a grant an actor's apply files waits in the owner's widen inbox:
 /// the inbox's own ceiling. The item itself waits in the journal past it.
 const SHAPE_GRANT_PROPOSAL_SECS: u64 = 3600;
+
+/// The widen inbox's verdict on a filing the owner accepted, minting it.
+const SHAPE_FILING_ACCEPTED: &str = "accepted";
 
 /// Every apply's journal, keyed by the frontier of the plan it lands.
 const JOURNAL: SideTable<String, ShapeApplyReceipt, Named> =
@@ -76,7 +83,8 @@ pub enum ShapeItemState {
     Ceremony,
     /// The vault has no door for it yet; nothing landed.
     NoDoor,
-    /// Its door refused it, or the structure changed since the plan read it.
+    /// Its door refused it, the structure changed since the plan read it,
+    /// or the owner declined it.
     Refused { reason: String },
 }
 
@@ -100,6 +108,8 @@ pub struct ShapeApplyReceipt {
     pub items: Vec<ShapeApplyItem>,
     /// No item is pending or waiting.
     pub done: bool,
+    /// The apply's run tree: one root, one child row per item.
+    pub run: ShapeApplyRun,
 }
 
 /// Who applies: the vault's owner, with the host's slip issuer when the
@@ -117,7 +127,8 @@ pub enum ShapeApplier<'a> {
     },
 }
 
-const fn open(state: &ShapeItemState) -> bool {
+/// The item is pending or waits for the owner's word.
+pub(super) const fn open(state: &ShapeItemState) -> bool {
     matches!(
         state,
         ShapeItemState::Pending | ShapeItemState::Proposed | ShapeItemState::Filed { .. }
@@ -214,15 +225,21 @@ impl Vault {
             .collect())
     }
 
-    fn put_shape_apply(&self, receipt: &ShapeApplyReceipt) -> Result<()> {
-        self.with_write_txn_grouped(|txn| JOURNAL.put(&self.store, txn, &receipt.frontier, receipt))
+    /// Records `receipt`, and settles its run rows to match, in one writer.
+    pub(super) fn put_shape_apply(&self, receipt: &ShapeApplyReceipt, now: u64) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            JOURNAL.put(&self.store, txn, &receipt.frontier, receipt)?;
+            self.settle_shape_run_in_txn(txn, receipt, now)
+        })
     }
 
     /// Lands `request.plan`. A first apply re-plans its seed over the rows
     /// `visible` admits and refuses a plan whose frontier has moved; then it
-    /// stores the seed and opens the journal. Later applies of the same plan
-    /// resume its journal. Each open item then lands, waits or is refused,
-    /// and the journal is written after each.
+    /// stores the seed, and opens the journal and the apply's run tree in
+    /// one writer. Later applies of the same plan resume its journal. An
+    /// answer the owner gave in the widen inbox is read back first; then
+    /// each open item lands, waits or is refused, and the journal is written
+    /// after each.
     ///
     /// # Errors
     ///
@@ -250,24 +267,28 @@ impl Vault {
                 ));
             }
             let stored = self.put_shape_seed(author, &plan.seed, now)?;
-            let journal = ShapeApplyReceipt {
-                frontier: plan.frontier,
-                seed_id: stored.id,
-                author: author.to_hex(),
-                started_at: now,
-                items: plan
-                    .items
-                    .into_iter()
-                    .map(|item| ShapeApplyItem {
-                        item,
-                        state: ShapeItemState::Pending,
-                    })
-                    .collect(),
-                done: false,
-            };
-            self.put_shape_apply(&journal)?;
-            journal
+            self.with_write_txn_grouped(|txn| {
+                let journal = ShapeApplyReceipt {
+                    run: self.open_shape_run_in_txn(txn, &plan.frontier, &plan.items, now)?,
+                    frontier: plan.frontier,
+                    seed_id: stored.id,
+                    author: author.to_hex(),
+                    started_at: now,
+                    items: plan
+                        .items
+                        .into_iter()
+                        .map(|item| ShapeApplyItem {
+                            item,
+                            state: ShapeItemState::Pending,
+                        })
+                        .collect(),
+                    done: false,
+                };
+                JOURNAL.put(&self.store, txn, &journal.frontier, &journal)?;
+                Ok(journal)
+            })?
         };
+        self.reconcile_shape_filings(&mut journal, now)?;
 
         let (owner, slips) = match applier {
             ShapeApplier::Owner { owner, slips } => (owner, slips),
@@ -282,11 +303,70 @@ impl Vault {
                     }
                 }
                 journal.done = !journal.items.iter().any(|entry| open(&entry.state));
-                self.put_shape_apply(&journal)?;
+                self.put_shape_apply(&journal, now)?;
                 return Ok(journal);
             }
         };
+        self.land_shape_journal(owner, slips, &mut journal, &request.approve, now)?;
+        Ok(journal)
+    }
 
+    /// Reads back into `journal` what the owner answered in the widen inbox
+    /// for each grant filed there: an accepted filing minted the grant, so
+    /// its item landed with the proposal as its receipt; any other answer
+    /// declined it. A filing that lapsed unanswered waits in the journal as
+    /// any widening does. Nothing is written; the caller records it.
+    ///
+    /// # Errors
+    ///
+    /// A read failure.
+    pub(super) fn reconcile_shape_filings(
+        &self,
+        journal: &mut ShapeApplyReceipt,
+        now: u64,
+    ) -> Result<()> {
+        for entry in &mut journal.items {
+            let ShapeItemState::Filed {
+                proposal_ref,
+                expires_at,
+            } = &entry.state
+            else {
+                continue;
+            };
+            entry.state = match self.widen_proposal_settlement(proposal_ref)? {
+                Some((verdict, _)) if verdict == SHAPE_FILING_ACCEPTED => ShapeItemState::Landed {
+                    at: now,
+                    receipt: proposal_ref.clone(),
+                },
+                Some((verdict, _)) => ShapeItemState::Refused {
+                    reason: format!("the owner answered {verdict} in the widen inbox"),
+                },
+                None if *expires_at <= now => ShapeItemState::Proposed,
+                None => continue,
+            };
+        }
+        journal.done = !journal.items.iter().any(|entry| open(&entry.state));
+        Ok(())
+    }
+
+    /// The owner's landing loop over `journal`: each open item lands through
+    /// its door, waits for the owner's word unless `approve` carries its
+    /// `seq`, or is refused, and the journal and its run rows are written
+    /// after each. An owner's apply and the owner's answer to an apply's
+    /// inbox group both land through it.
+    ///
+    /// # Errors
+    ///
+    /// A store failure. A door's own refusal is the item's state.
+    pub(super) fn land_shape_journal(
+        &self,
+        owner: &AuthenticatedOwner,
+        slips: Option<&HostSlipIssuer>,
+        journal: &mut ShapeApplyReceipt,
+        approve: &[u32],
+        now: u64,
+    ) -> Result<()> {
+        let author = owner.revalidate(self)?;
         let mut live = self.live_by_target()?;
         for index in 0..journal.items.len() {
             if !open(&journal.items[index].state) {
@@ -295,8 +375,7 @@ impl Vault {
             let item = journal.items[index].item.clone();
             let state = match held(&item) {
                 ShapeItemState::Proposed
-                    if item.class == ShapeItemClass::Widening
-                        && !request.approve.contains(&item.seq) =>
+                    if item.class == ShapeItemClass::Widening && !approve.contains(&item.seq) =>
                 {
                     match &journal.items[index].state {
                         // A filing keeps its inbox reference while it waits.
@@ -307,8 +386,7 @@ impl Vault {
                 // Sharing the vault invites, in its own writer, each new
                 // member this apply approves: the founding members.
                 ShapeItemState::Proposed if item.target == ShapeTarget::Shared => {
-                    let founding =
-                        founding_members(&journal.items, &item, &request.approve, author);
+                    let founding = founding_members(&journal.items, &item, approve, author);
                     match self.share_vault(owner, &item, &founding, now) {
                         Ok(receipt) => {
                             for (at, _) in &founding {
@@ -347,11 +425,10 @@ impl Vault {
                 rest => rest,
             };
             journal.items[index].state = state;
-            self.put_shape_apply(&journal)?;
+            self.put_shape_apply(journal, now)?;
         }
         journal.done = !journal.items.iter().any(|entry| open(&entry.state));
-        self.put_shape_apply(&journal)?;
-        Ok(journal)
+        self.put_shape_apply(journal, now)
     }
 
     /// Where an actor's apply leaves `item`: a new grant it carries the bound

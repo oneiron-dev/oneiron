@@ -57,6 +57,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
         .route("/packs/hooks/qualify", post(qualify_hooks))
+        .route("/packs/agent/world", post(place_agent_world))
         .route("/packs/hooks/enabled", post(set_hook_enabled))
         .route("/packs/remove", post(remove_pack))
         .route("/packs/ref-sync", get(ref_sync).put(set_ref_sync))
@@ -365,6 +366,48 @@ async fn qualify_hooks(
     })
     .await?;
     Ok(Json(qualified))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentWorld {
+    /// The Candidate pack's source, as 32 hex (its receipt's `source_id`).
+    source: String,
+    /// The local world its agent runs in, as 32 hex; unset, the world its
+    /// scope names, once the owner has created it.
+    #[serde(default)]
+    world: Option<String>,
+}
+
+/// `POST /v1/owner/packs/agent/world`: the owner's answer to a travelling
+/// AgentPack held for its world (`needs_world`). The pack then installs and
+/// its agent runs in that world.
+async fn place_agent_world(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<AgentWorld>, JsonRejection>,
+) -> OwnerReply<PackPut> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let placed = blocking(move || {
+        let id = |hex: &str, what: &str| {
+            EntityId::from_hex(hex)
+                .map_err(|_| OwnerError::Invalid(format!("{what} is not an entity id")))
+        };
+        let source = id(&request.source, "source")?;
+        let world = request
+            .world
+            .as_deref()
+            .map(|world| id(world, "world"))
+            .transpose()?;
+        Ok(PackPut::from(
+            server
+                .vault()
+                .place_pack_agent_world(&owner, source, world)?,
+        ))
+    })
+    .await?;
+    Ok(Json(placed))
 }
 
 #[derive(Debug, Deserialize)]
