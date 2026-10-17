@@ -190,7 +190,7 @@ fn carried_structure<'a>(
 ) -> impl Iterator<Item = &'a AuthorityLogEntry> {
     evidence
         .into_iter()
-        .flat_map(|evidence| evidence.carried_past(resident))
+        .flat_map(move |evidence| evidence.carried_past(resident))
         .map(|(_, entry)| entry)
 }
 
