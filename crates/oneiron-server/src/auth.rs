@@ -28,6 +28,7 @@ pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use client_address::ClientAddress;
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality};
+pub(crate) use machine_proof::required_machine_proof;
 pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
