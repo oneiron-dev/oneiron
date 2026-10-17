@@ -20,6 +20,20 @@ pub(super) fn fold_entry_states(
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
 ) -> BTreeMap<AuthorityEntryHash, FoldState> {
+    fold_entry_states_seeded(by_hash, &BTreeMap::new(), context, issues)
+}
+
+/// [`fold_entry_states`] over `by_hash` with `seed` already folded (OF-469,
+/// an adopted checkpoint's frontier states): a seed row is a parent state
+/// only, never pending, replayed or counted, and every entry of `by_hash`
+/// still passes its own transition's checks. The states returned hold the
+/// seed's too. A full fold seeds nothing.
+pub(super) fn fold_entry_states_seeded(
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    seed: &BTreeMap<AuthorityEntryHash, FoldState>,
+    context: FoldContext<'_>,
+    issues: &mut Vec<AuthorityFoldIssue>,
+) -> BTreeMap<AuthorityEntryHash, FoldState> {
     let mut children = BTreeMap::<AuthorityEntryHash, Vec<AuthorityEntryHash>>::new();
     for (hash, entry) in by_hash {
         for parent in &entry.parent_hashes {
@@ -36,9 +50,13 @@ pub(super) fn fold_entry_states(
             *hash,
         )
     };
-    let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
+    let mut states = seed.clone();
     let mut rejected_retired = BTreeSet::new();
-    let mut pending: BTreeSet<AuthorityEntryHash> = by_hash.keys().copied().collect();
+    let mut pending: BTreeSet<AuthorityEntryHash> = by_hash
+        .keys()
+        .filter(|hash| !seed.contains_key(*hash))
+        .copied()
+        .collect();
     let mut queue: BTreeSet<_> = pending.iter().map(order).collect();
     loop {
         while let Some((_, hash)) = queue.pop_first() {

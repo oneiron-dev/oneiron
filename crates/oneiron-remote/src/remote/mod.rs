@@ -30,6 +30,8 @@ use serde::de::DeserializeOwned;
 use crate::caps::{MAX_REMOTE_EXPORT_BYTES, MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
 use crate::error::{bad_request, forbidden, transport_error};
 
+// OF-469: a pinned authority checkpoint, fetched for adoption.
+mod checkpoint;
 mod origin;
 mod pairing;
 mod response;

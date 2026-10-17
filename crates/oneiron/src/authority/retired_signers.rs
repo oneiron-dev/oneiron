@@ -394,6 +394,25 @@ pub(crate) fn stored_authority_row(
         .and_then(|body| decode_authority_log_entry_body(body).ok()))
 }
 
+/// The row at `hash` as a door's retired-standing walk reads it
+/// ([`AuthorityFold::stands_on_retired_key`]): the stored row, else, on a
+/// vault that adopted a checkpoint image (`evidence`), what the image holds
+/// of it ([`super::adopted_evidence::AdoptedEvidence::ancestor`]): a covered
+/// row's carried body, none for a covered row the image holds valid, and a
+/// refusal naming any other history the vault neither stores nor reads
+/// whole. With no adoption, a row not stored is none, as before.
+pub(crate) fn door_ancestor_row(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    evidence: Option<&super::adopted_evidence::AdoptedEvidence>,
+    hash: &AuthorityEntryHash,
+) -> crate::error::Result<Option<AuthorityLogEntry>> {
+    match stored_authority_row(store, txn, hash)? {
+        Some(row) => Ok(Some(row)),
+        None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(hash)),
+    }
+}
+
 /// Whether `entry` is already in the log at its own id, stored as an
 /// authority row. A resident row is history, not a new signature: replaying
 /// it adds no authority, so no door refuses it for its signer, whatever a
@@ -422,7 +441,10 @@ impl AuthorityFold {
     /// walk stops at rows this fold holds, whose ancestry it holds too. An
     /// approval the stale-roster window expired counts as held here: it stood
     /// in the settled fold, so no fence refused it, though it approves nothing
-    /// now.
+    /// now. On a vault that adopted a checkpoint image, a door's `row` is
+    /// [`door_ancestor_row`]: it reads a covered ancestor from the image,
+    /// stops at one the image holds valid, and refuses, naming the history,
+    /// at one it can not read, so no ancestor is skipped there.
     ///
     /// An owner anchor's row is none (`anchor_signed`): its anchor names a
     /// root this fold holds or one arriving beneath it, so a root and its marks

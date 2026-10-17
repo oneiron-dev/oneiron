@@ -214,14 +214,20 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
     }
     // Structure, signature and vault are not standing: a key a handoff
     // retired signs nothing new here, and nothing new stands on a row one
-    // signed, so its fork never reaches the log.
+    // signed, so its fork never reaches the log. An adopted checkpoint image
+    // answers for the history it covers.
+    let evidence = if resident {
+        None
+    } else {
+        crate::authority::adopted_evidence_in_txn(store, wtxn)?
+    };
     if !resident
         && crate::authority::door_refuses_retired_standing(
             store,
             &local_fold,
             &entry_hash,
             &entry,
-            &mut |hash| crate::authority::stored_authority_row(store, wtxn, hash),
+            &mut |hash| crate::authority::door_ancestor_row(store, wtxn, evidence.as_deref(), hash),
         )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(

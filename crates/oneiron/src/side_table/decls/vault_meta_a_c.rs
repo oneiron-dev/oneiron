@@ -92,6 +92,9 @@ side_tables! {
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;
+    /// The checkpoint v2 image this vault adopted (OF-469): the pin from owner-authorized pairing
+    /// and the attestations that verified the image; the pin names the image. Key: ().
+    AUTHORITY_CHECKPOINT_ADOPTED_PIN: VaultMeta b"authority:checkpoint-adopted-pin:v1" Named;
     /// One root's attestation of one authority checkpoint v2 image (OF-469): both signatures and
     /// the root's key binding, with the policy digest it was made under. Key: hash32 (image id) +
     /// root key (suite byte + key bytes).

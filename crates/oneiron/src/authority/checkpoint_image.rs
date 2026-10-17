@@ -47,11 +47,36 @@ pub struct AuthorityCheckpointRow {
     pub parents: Vec<AuthorityEntryHash>,
     /// The world of a side-branch row.
     pub world: Option<EntityId>,
-    /// The canonical signed body of a row a fold past the image reads whole
-    /// (an approval, a revocation, a handoff, a machine profile, a world-key
-    /// record); None for every other row.
+    /// Whether the row is a slip op (a mint, a slip revocation or a
+    /// consumption): a store door counts a slip issuer's slip ops toward no
+    /// bound.
+    pub slip_op: bool,
+    /// The canonical signed body of a row a fold or a store door past the
+    /// image reads whole (an approval, a binding, a confirm, a revocation, a
+    /// handoff, an enrollment, the genesis, a root record, a machine profile,
+    /// a world edit or a world-key record); None for every other row.
     #[serde(with = "body_bytes")]
     pub body: Option<Vec<u8>>,
+}
+
+/// Whether an image carries the canonical signed body of a covered row of
+/// `op`'s kind: each row a fold past the image reads whole
+/// ([`super::fold_resume::is_projected`]: an approval, a binding, a confirm,
+/// a device revocation, a handoff, a machine profile, a world-key record),
+/// and each row a store door past it reads whole to judge a new row: the
+/// genesis and each device enrollment the consent structure rests on, the
+/// root records that name owner anchors, the actor revocations a signer's
+/// revocations count, and the world edits that may be a stranger's.
+pub(super) fn carries_body(op: &AuthorityOp) -> bool {
+    super::fold_resume::is_projected(op)
+        || matches!(
+            op,
+            AuthorityOp::Genesis { .. }
+                | AuthorityOp::EnrollDevice { .. }
+                | AuthorityOp::OwnerRoot(_)
+                | AuthorityOp::RevokeActor { .. }
+                | AuthorityOp::WorldPrivacy(_)
+        )
 }
 
 /// The fold the image commits: the settled once fold before any install's
@@ -161,6 +186,10 @@ pub struct AuthorityCheckpointV2 {
     /// The root policy the image was built under. A verifier takes its
     /// policy from its own pin, never from here.
     pub root_policy: CheckpointRootPolicy,
+    /// The owner-root pin of the install that built the image: its fold
+    /// counted world keys and local reads under that pin. An adopter's own
+    /// pin must equal it.
+    pub building_pin: Option<PinnedRoot>,
     /// The previous image's id in this vault's local chain.
     pub parent: Option<[u8; 32]>,
 }
@@ -291,6 +320,7 @@ impl AuthorityCheckpointV2 {
                 row_body_matches(hash, row, body)?;
             }
         }
+        self.shape_graph()?;
         if !self
             .rows
             .keys()
@@ -298,6 +328,46 @@ impl AuthorityCheckpointV2 {
             .eq(self.frontier.iter())
         {
             return Err(refused("checkpoint image frontier"));
+        }
+        Ok(())
+    }
+
+    /// The covered rows form one acyclic graph whose only parentless row is
+    /// the genesis, so every covered row descends from it: a second root or
+    /// a cycle refuses. Parent membership is checked before this.
+    fn shape_graph(&self) -> Result<()> {
+        let mut children = BTreeMap::<&AuthorityEntryHash, Vec<&AuthorityEntryHash>>::new();
+        let mut waiting = BTreeMap::<&AuthorityEntryHash, usize>::new();
+        let mut ready = Vec::new();
+        for (hash, row) in &self.rows {
+            let parents: BTreeSet<_> = row.parents.iter().collect();
+            for parent in &parents {
+                children.entry(*parent).or_default().push(hash);
+            }
+            if parents.is_empty() {
+                if *hash != self.genesis {
+                    return Err(refused("checkpoint image has a second parentless row"));
+                }
+                ready.push(hash);
+            } else {
+                waiting.insert(hash, parents.len());
+            }
+        }
+        let mut reached = 0_usize;
+        while let Some(hash) = ready.pop() {
+            reached += 1;
+            for child in children.get(hash).into_iter().flatten() {
+                let count = waiting
+                    .get_mut(*child)
+                    .ok_or_else(|| refused("checkpoint image coverage graph"))?;
+                *count -= 1;
+                if *count == 0 {
+                    ready.push(*child);
+                }
+            }
+        }
+        if reached != self.rows.len() {
+            return Err(refused("checkpoint image coverage has a cycle"));
         }
         Ok(())
     }
@@ -385,8 +455,8 @@ impl AuthorityCheckpointV2 {
     }
 }
 
-/// A carried body is the canonical signed row its summary names, and a row a
-/// fold past the image reads whole.
+/// A carried body is the canonical signed row its summary names, and a row
+/// the image carries whole.
 fn row_body_matches(
     hash: &AuthorityEntryHash,
     row: &AuthorityCheckpointRow,
@@ -398,7 +468,8 @@ fn row_body_matches(
         || entry.seq != row.seq
         || entry.parent_hashes != row.parents
         || super::world_privacy::side_world(&entry.op) != row.world
-        || !super::fold_resume::is_projected(&entry.op)
+        || super::log_budget::is_slip_op(&entry.op) != row.slip_op
+        || !carries_body(&entry.op)
     {
         return Err(refused("checkpoint image row body"));
     }
@@ -575,7 +646,8 @@ impl Vault {
                     seq: entry.seq,
                     parents: entry.parent_hashes.clone(),
                     world: super::world_privacy::side_world(&entry.op),
-                    body: super::fold_resume::is_projected(&entry.op).then(|| body.clone()),
+                    slip_op: super::log_budget::is_slip_op(&entry.op),
+                    body: carries_body(&entry.op).then(|| body.clone()),
                 };
                 Ok((*hash, row))
             })
@@ -598,6 +670,7 @@ impl Vault {
             unresolved,
             archive_manifests: Vec::new(),
             root_policy: self.checkpoint_root_policy_in_txn(txn)?,
+            building_pin: pin,
             parent: None,
         };
         // One serde round trip normalizes what a decoder would (an empty

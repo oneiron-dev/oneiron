@@ -14,9 +14,11 @@
 //! and vault itself ([`Vault::verify_authority_history_page`]) and reports
 //! each hash by the evidence it holds. A verified scaffold is not replayed
 //! semantics: only a row the local fold folded counts as replayed, so a page
-//! row counts once it is imported and folded. `checkpoint_attested` waits for
-//! hash-signed authority checkpoints (v2) and `erased` for an erasure record,
-//! so both stay empty until those exist.
+//! row counts once it is imported and folded. A row the adopted checkpoint
+//! image covers is attested, and on a vault that adopted one no row counts as
+//! replayed: its fold rests on the attested image, covered rows and tail
+//! alike. `erased` waits for an erasure record, so it stays empty until one
+//! exists.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -94,10 +96,11 @@ pub struct AuthorityHistoryVerificationCoverage {
     /// Held, staged or on the page in canonical signed bytes whose
     /// signatures verify, naming this vault.
     pub scaffold_verified: BTreeSet<AuthorityEntryHash>,
-    /// The local fold replayed its operation and holds it valid.
+    /// The local fold replayed its operation from the whole history and
+    /// holds it valid. Empty on a vault that adopted a checkpoint image: its
+    /// fold rests on the image.
     pub semantics_replayed: BTreeSet<AuthorityEntryHash>,
-    /// Covered by a verified, adopted hash-signed checkpoint image (none
-    /// until authority checkpoint v2).
+    /// Covered by the verified checkpoint image this vault adopted.
     pub checkpoint_attested: BTreeSet<AuthorityEntryHash>,
     /// Known erased by an erasure record (none until one exists).
     pub erased: BTreeSet<AuthorityEntryHash>,
@@ -282,7 +285,8 @@ fn ancestry_closed(
 /// against what this vault holds and staged on the caller's snapshot. Every
 /// held and staged row decoded, so its bytes are canonical and its
 /// signatures verify; so did every page row (`decode_page`). The vault is
-/// this vault's own, else `expected`, else the one the first page row names.
+/// this vault's own, else the genesis of the checkpoint pin it adopted, else
+/// `expected`, else the one the first page row names.
 fn verification_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -294,7 +298,10 @@ fn verification_in_txn(
         .into_iter()
         .map(|(hash, (_, entry))| (hash, entry))
         .collect();
-    let mut bound = rows_vault(rows.iter()).or(expected);
+    let adopted = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&vault.store, txn)?;
+    let mut bound = rows_vault(rows.iter())
+        .or_else(|| adopted.as_ref().map(|adopted| adopted.pin().genesis))
+        .or(expected);
     for (hash, _, entry) in super::history_repair::staged_rows_in_txn(&vault.store, txn)? {
         rows.entry(hash).or_insert(entry);
     }
@@ -322,6 +329,13 @@ fn verification_in_txn(
             coverage.scaffold_verified.insert(*hash);
         }
     }
+    if let Some(adopted) = &adopted {
+        coverage.checkpoint_attested = scope
+            .iter()
+            .filter(|hash| adopted.image().rows.contains_key(*hash))
+            .copied()
+            .collect();
+    }
     let mut closed = BTreeMap::new();
     for hash in &coverage.scaffold_verified {
         if !ancestry_closed(&rows, *hash, &mut closed) {
@@ -334,7 +348,9 @@ fn verification_in_txn(
         Ok(fold) => {
             for hash in &coverage.scaffold_verified {
                 if fold.valid_entries.contains(hash) {
-                    coverage.semantics_replayed.insert(*hash);
+                    if adopted.is_none() {
+                        coverage.semantics_replayed.insert(*hash);
+                    }
                     continue;
                 }
                 let Some(entry) = rows.get(hash) else {

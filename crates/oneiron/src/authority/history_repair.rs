@@ -176,8 +176,11 @@ impl Vault {
             .filter(|hash| !resident.contains(*hash))
             .copied()
             .collect();
-        let mut request =
-            super::history_coverage::authority_missing_history_in_txn(&self.store, &txn)?;
+        let mut request = super::history_coverage::authority_missing_history_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            &txn,
+        )?;
         for hash in &waiting {
             if let Some((_, entry)) = merged.get(hash) {
                 request.missing.extend(entry.parent_hashes.iter().copied());

@@ -93,7 +93,7 @@ pub enum PeerMachine {
 /// well-formed Genesis its own device key signed at seq 0 counts, as in the
 /// fold; none resident is `None`, and more than one refuses. Never the
 /// store's own id, a checkpoint's asserted id or another entry's `vault_id`.
-fn resident_genesis_vault_id_in_txn(
+pub(super) fn resident_genesis_vault_id_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<AuthorityVaultId>> {

@@ -112,7 +112,9 @@ pub(super) fn import_order<'a>(
 }
 
 /// Indices of `entries` (hash, row) in the order one local write stages
-/// them over the rows `store` holds: as an import stages them.
+/// them over the rows `store` holds: as an import stages them. On a vault
+/// that adopted a checkpoint image, the structure also reads the image's
+/// carried rows, as the door does, while only the stored rows are resident.
 pub(super) fn write_stage_order(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -124,7 +126,13 @@ pub(super) fn write_stage_order(
         resident.insert(authority_entry_hash(&entry)?);
         stored.push(entry);
     }
-    let stored: Vec<_> = stored.iter().collect();
+    let evidence = super::adopted_evidence::adopted_evidence_in_txn(store, txn)?;
+    let carried = evidence
+        .iter()
+        .flat_map(|evidence| evidence.bodies())
+        .filter(|(hash, _)| !resident.contains(*hash))
+        .map(|(_, entry)| entry);
+    let stored: Vec<_> = stored.iter().chain(carried).collect();
     let local = LocalRoots::read_in_txn(store, txn)?;
     Ok(consent_order(&stored, &resident, local, entries))
 }

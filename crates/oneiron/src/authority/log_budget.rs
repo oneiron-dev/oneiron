@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use super::adopted_evidence::AdoptedEvidence;
 use super::log_structure::{
     AuthorityStructure, LocalRoots, authority_structure, authority_structure_under,
     self_signed_root, signed_by,
@@ -214,7 +215,7 @@ pub(super) fn memory_floor_fold(floor_bytes: u64) -> AuthorityFold {
     fold
 }
 
-fn is_slip_op(op: &AuthorityOp) -> bool {
+pub(super) fn is_slip_op(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke { .. } | AuthorityOp::SlipConsume { .. }
@@ -250,7 +251,11 @@ pub(super) fn is_uncounted(entry: &AuthorityLogEntry, issuers: &BTreeSet<Authori
 }
 
 /// What the store doors read of the stored log: its consent structure, and
-/// each signer's stored rows. Built once per authority generation.
+/// each signer's stored rows. Built once per authority generation. On a vault
+/// that adopted a checkpoint image (OF-469), the stored log is the image's
+/// covered history and the raw rows past it: each covered row counts once,
+/// from the image's summary and carried body, whether or not its raw bytes
+/// are stored too.
 #[derive(Debug)]
 pub(crate) struct AuthorityDoorView {
     structure: AuthorityStructure,
@@ -265,6 +270,44 @@ pub(crate) struct AuthorityDoorView {
     /// The stored rows that vouch only as a stranger's: anchors this
     /// install does not take as its own ([`AuthorityStructure::is_stranger`]).
     strangers: usize,
+    /// The adopted image's evidence the view read, for the doors' other
+    /// readers in the same generation.
+    pub(super) evidence: Option<Arc<AdoptedEvidence>>,
+}
+
+/// The per-signer and log-wide counts of a door view.
+#[derive(Default)]
+struct Tally {
+    rows: BTreeMap<AuthorityKey, usize>,
+    revocations: BTreeSet<(AuthorityKey, Revoked)>,
+    counted: usize,
+    issuer_handoffs: usize,
+    strangers: usize,
+}
+
+impl Tally {
+    /// Counts one row by its signer, whether it is a slip op, and its signed
+    /// body when the door reads it whole. A row read only by its summary is
+    /// no revocation, handoff or stranger's row: an adopted image carries the
+    /// body of every such row.
+    fn count(
+        &mut self,
+        structure: &AuthorityStructure,
+        signer: &AuthorityKey,
+        slip_op: bool,
+        entry: Option<&AuthorityLogEntry>,
+    ) {
+        self.strangers += usize::from(
+            entry.is_some_and(|entry| structure.vouches_for(entry) && structure.is_stranger(entry)),
+        );
+        *self.rows.entry(signer.clone()).or_default() += 1;
+        if let Some(revoked) = entry.and_then(|entry| Revoked::of(&entry.op)) {
+            self.revocations.insert((signer.clone(), revoked));
+        }
+        let issuer = structure.issuers.contains(signer);
+        self.counted += usize::from(!(issuer && slip_op));
+        self.issuer_handoffs += usize::from(issuer && entry.is_some_and(is_handoff));
+    }
 }
 
 #[cfg(test)]
@@ -293,35 +336,57 @@ pub(crate) fn door_view_builds_for_test() -> usize {
     DOOR_VIEW_BUILDS.with(std::cell::Cell::get)
 }
 
-fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<AuthorityDoorView>> {
+pub(super) fn door_view(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<Arc<AuthorityDoorView>> {
     super::readonly_fold::per_authority_generation(store, txn, &store.authority_door_view, || {
         #[cfg(test)]
         DOOR_VIEW_BUILDS.with(|builds| builds.set(builds.get() + 1));
+        let evidence = AdoptedEvidence::read_in_txn(store, txn)?;
         let mut entries = Vec::new();
-        for (_, body) in authority_log_rows_in_txn(store, txn)? {
+        for (id, body) in authority_log_rows_in_txn(store, txn)? {
+            // A covered row counts once, from the image.
+            if evidence
+                .as_ref()
+                .is_some_and(|evidence| evidence.covers_id(&id))
+            {
+                continue;
+            }
             entries.push(decode_authority_log_entry_body(&body)?);
         }
-        let structure = authority_structure_under(&entries, LocalRoots::read_in_txn(store, txn)?);
-        let mut rows = BTreeMap::<AuthorityKey, usize>::new();
-        let mut revocations = BTreeSet::new();
-        let (mut counted, mut issuer_handoffs, mut strangers) = (0, 0, 0);
+        // The structure reads the image's carried rows as the stored rows
+        // they stand for: it admits what the covered history admitted, never
+        // what the folded roster now holds.
+        let carried = evidence
+            .iter()
+            .flat_map(|evidence| evidence.bodies().values());
+        let structure = authority_structure_under(
+            carried.chain(&entries),
+            LocalRoots::read_in_txn(store, txn)?,
+        );
+        let mut tally = Tally::default();
         for entry in &entries {
-            strangers += usize::from(structure.vouches_for(entry) && structure.is_stranger(entry));
-            *rows.entry(entry.signer_key().clone()).or_default() += 1;
-            if let Some(revoked) = Revoked::of(&entry.op) {
-                revocations.insert((entry.signer_key().clone(), revoked));
+            tally.count(
+                &structure,
+                entry.signer_key(),
+                is_slip_op(&entry.op),
+                Some(entry),
+            );
+        }
+        if let Some(evidence) = &evidence {
+            for (hash, row) in evidence.rows() {
+                tally.count(&structure, &row.signer, row.slip_op, evidence.body(hash));
             }
-            let issuer = structure.issuers.contains(entry.signer_key());
-            counted += usize::from(!(issuer && is_slip_op(&entry.op)));
-            issuer_handoffs += usize::from(issuer && is_handoff(entry));
         }
         Ok(AuthorityDoorView {
             structure,
-            rows,
-            revocations,
-            counted,
-            issuer_handoffs,
-            strangers,
+            rows: tally.rows,
+            revocations: tally.revocations,
+            counted: tally.counted,
+            issuer_handoffs: tally.issuer_handoffs,
+            strangers: tally.strangers,
+            evidence: evidence.map(Arc::new),
         })
     })
 }

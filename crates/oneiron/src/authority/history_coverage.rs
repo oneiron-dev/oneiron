@@ -5,15 +5,20 @@
 //! request, so delivery fetches exactly those (range fetch); meanwhile the
 //! fold holds every row above a gap invalid instead of folding the rows it has
 //! as complete. Coverage reports each requested hash by its evidence: a held
-//! signed row is scaffold and semantic availability, never authorization.
-//! `attested` waits for hash-signed checkpoints (OF-570) and `erased` for an
-//! erasure record, so both stay empty until those exist.
+//! signed row is scaffold and semantic availability, never authorization; a
+//! row the adopted checkpoint image covers is attested, held or not.
+//! `erased` waits for an erasure record, so it stays empty until one exists.
+//!
+//! A vault that adopted a checkpoint image asks for what its fold past the
+//! image needs, through that fold's own preflight: nothing while the fold
+//! answers, and never a covered row left out for being attested when the fold
+//! needs it (a late fork, an op the image cannot fold past).
 
 use std::collections::BTreeSet;
 
 use super::*;
 use crate::store::Store;
-use crate::{Vault, error::Result};
+use crate::{HostingPrivacyPosture, Vault, error::Result};
 
 /// Exactly the authority rows this vault needs and does not hold.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -46,7 +51,7 @@ pub struct AuthorityHistoryCoverage {
     pub scaffold: BTreeSet<AuthorityEntryHash>,
     /// Its operation body is held and decodes.
     pub semantic: BTreeSet<AuthorityEntryHash>,
-    /// Covered by a hash-signed checkpoint (none until OF-570).
+    /// Covered by the verified checkpoint image this vault adopted.
     pub attested: BTreeSet<AuthorityEntryHash>,
     /// Known erased by an erasure record (none until one exists).
     pub erased: BTreeSet<AuthorityEntryHash>,
@@ -56,20 +61,29 @@ pub struct AuthorityHistoryCoverage {
 /// [`Vault::authority_missing_history`] on the caller's snapshot.
 pub(crate) fn authority_missing_history_in_txn(
     store: &Store,
+    posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityHistoryRequest> {
-    authority_history_request_in_txn(store, txn, &BTreeSet::new())
+    authority_history_request_in_txn(store, posture, txn, &BTreeSet::new())
 }
 
 /// [`Vault::authority_history_request`] on the caller's snapshot: what a
 /// held row names as a parent, the local checkpoint covers, the fold this
 /// snapshot resumes from has folded, or `required` names, that no held row
 /// has. The fold's own refusal for missing history names no hash outside it.
+/// On a vault that adopted a checkpoint image it is the fold's own request
+/// past the image (`readonly_fold::adopted_history_request_in_txn`).
 pub(crate) fn authority_history_request_in_txn(
     store: &Store,
+    posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
     required: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<AuthorityHistoryRequest> {
+    if let Some(request) =
+        super::readonly_fold::adopted_history_request_in_txn(store, posture, txn, required)?
+    {
+        return Ok(request);
+    }
     let mut held = BTreeSet::new();
     let mut named = required.clone();
     named.extend(super::readonly_fold::resumed_hashes_in_txn(store, txn)?);
@@ -118,6 +132,16 @@ pub(crate) fn authority_history_coverage_in_txn(
         }
     }
     coverage.unavailable = requested.difference(&coverage.scaffold).copied().collect();
+    // Attested, never replayed: `unavailable` still names a covered row with
+    // no scaffold here.
+    if let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+    {
+        coverage.attested = requested
+            .iter()
+            .filter(|hash| adopted.image().rows.contains_key(*hash))
+            .copied()
+            .collect();
+    }
     Ok(coverage)
 }
 
@@ -126,7 +150,7 @@ impl Vault {
     /// does not hold: the exact request delivery fetches. Complete when empty.
     pub fn authority_missing_history(&self) -> Result<AuthorityHistoryRequest> {
         let txn = self.store.env.read_txn()?;
-        authority_missing_history_in_txn(&self.store, &txn)
+        authority_missing_history_in_txn(&self.store, self.privacy_posture(), &txn)
     }
 
     /// [`Vault::authority_missing_history`], also naming the rows the fold
@@ -140,7 +164,7 @@ impl Vault {
         required: &BTreeSet<AuthorityEntryHash>,
     ) -> Result<AuthorityHistoryRequest> {
         let txn = self.store.env.read_txn()?;
-        authority_history_request_in_txn(&self.store, &txn, required)
+        authority_history_request_in_txn(&self.store, self.privacy_posture(), &txn, required)
     }
 
     /// Which of `requested` this vault holds, by evidence. A gap is reported
