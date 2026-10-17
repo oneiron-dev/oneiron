@@ -20,7 +20,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
-use oneiron::code_run::{AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall};
+use oneiron::code_run::{
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+};
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
     answer_records, create_question, edit_question, pause_question, read_question,
@@ -162,8 +164,7 @@ pub(crate) fn answer_as_agent(
     held: Option<HeldImage>,
 ) -> MemoryResult<(Value, Vec<EntityId>)> {
     let producers = ProducerRows::default();
-    let memory =
-        agent_memory(server, actor, origin, invocation).listing_producers(&producers);
+    let memory = agent_memory(server, actor, origin, invocation).listing_producers(&producers);
     let name = verb.as_str();
     let output = if served_by_host(verb) {
         verb_hook_boundary::row(&memory, name, input, |input| {
@@ -244,7 +245,9 @@ fn host_row(
                 .and_then(|text| server.embed_query(&text).ok());
             encode(memory.report_with_embedding(request, vector.as_deref())?)
         }
-        AgentVerb::VaultRecall => encode(server.recall(memory, principal, class, decode(input)?)?),
+        AgentVerb::VaultRecall => {
+            encode(server.recall(memory, principal, class, decode(input)?)?)
+        }
         AgentVerb::AiVerdict => {
             let request: AiVerdictRequest = decode(input)?;
             let held = HeldImage::in_task(request.image.as_deref());
@@ -269,7 +272,9 @@ fn host_row(
             request.validate()?;
             let lane = agent_lane(server, actor)?;
             let units = match request.select {
-                Some(select) => select_graph_units_by_type(&lane, select.entity_type, select.limit)?,
+                Some(select) => {
+                    select_graph_units_by_type(&lane, select.entity_type, select.limit)?
+                }
                 None => request.units,
             };
             let dial = server
@@ -324,7 +329,12 @@ fn host_row(
         }
         AgentVerb::VaultQuestionsRead => {
             let request: QuestionReadRequest = decode(input)?;
-            encode(read_question(vault, principal, request.id, request.version)?)
+            encode(read_question(
+                vault,
+                principal,
+                request.id,
+                request.version,
+            )?)
         }
         AgentVerb::VaultQuestionsAnswers => {
             let request: QuestionAnswersRequest = decode(input)?;

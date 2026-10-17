@@ -227,8 +227,13 @@ impl Vault {
             let (key, row) = row?;
             let typed = matches!(
                 &row.body,
-                PendingBody::Edit { sheet_answers: Some(_), .. }
-                    | PendingBody::Edit { format: OfficeFormat::Docx, .. }
+                PendingBody::Edit {
+                    sheet_answers: Some(_),
+                    ..
+                } | PendingBody::Edit {
+                    format: OfficeFormat::Docx,
+                    ..
+                }
             );
             if !typed || RECORD.contains(&self.store, &rtxn, &key)? {
                 continue;

@@ -326,8 +326,9 @@ impl Memory<'_> {
     /// Coach's answer, which lands on the card; asking again on the same
     /// evidence returns the standing ask.
     pub fn concern_move(&self, input: &ConcernMoveRequest) -> MemoryResult<ConcernMoveOutcome> {
-        let key = parse_card_ref(&input.card)
-            .ok_or_else(|| MemoryError::bad_request("card is a health: handle from a concern row"))?;
+        let key = parse_card_ref(&input.card).ok_or_else(|| {
+            MemoryError::bad_request("card is a health: handle from a concern row")
+        })?;
         let at = self.vault().store.clock.now_recorded_at();
         self.with_verified_actor_write_txn(|txn| {
             let card = CARDS

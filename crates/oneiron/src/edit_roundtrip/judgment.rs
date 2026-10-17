@@ -261,10 +261,7 @@ impl Vault {
         let mut abstained = Vec::new();
         let mut refused = Vec::new();
         for row in rows.start.row..=rows.end.row {
-            if request
-                .only_rows
-                .is_some_and(|only| !only.contains(&row))
-            {
+            if request.only_rows.is_some_and(|only| !only.contains(&row)) {
                 continue;
             }
             let target = CellRef {

@@ -264,7 +264,8 @@ pub(crate) fn unlanded_widens_by_parent(
     let mut out = std::collections::BTreeMap::new();
     for (_, record) in WIDEN.scan(&vault.store, &rtxn)? {
         if record.landed.is_none() {
-            *out.entry(*record.request.intent.parent.as_bytes()).or_default() += 1;
+            *out.entry(*record.request.intent.parent.as_bytes())
+                .or_default() += 1;
         }
     }
     Ok(out)
@@ -284,7 +285,8 @@ pub(crate) fn unlanded_widens_by_parent_since(
     let mut out = std::collections::BTreeMap::new();
     for (_, record) in WIDEN.scan(&vault.store, &rtxn)? {
         if record.recorded_at >= since && record.landed.is_none() {
-            *out.entry(*record.request.intent.parent.as_bytes()).or_default() += 1;
+            *out.entry(*record.request.intent.parent.as_bytes())
+                .or_default() += 1;
         }
     }
     Ok(out)

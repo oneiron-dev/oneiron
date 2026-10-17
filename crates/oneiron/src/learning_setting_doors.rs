@@ -160,7 +160,10 @@ fn scope_of(project: Option<&str>, task_type: Option<&str>) -> Result<SettingSco
 
 /// The owner's writer, from a proof revalidated now.
 fn owner_actor(vault: &Vault, owner: &AuthenticatedOwner) -> Result<WriteActor> {
-    Ok(WriteActor::new(owner.revalidate(vault)?, EdgeActorClass::Human))
+    Ok(WriteActor::new(
+        owner.revalidate(vault)?,
+        EdgeActorClass::Human,
+    ))
 }
 
 fn row_view(scope: SettingScope, row: SettingRow, by: String) -> LearningSettingRowView {
@@ -169,7 +172,9 @@ fn row_view(scope: SettingScope, row: SettingRow, by: String) -> LearningSetting
         SettingScope::Project(project) => {
             (LearningSettingScope::Project, Some(project.to_hex()), None)
         }
-        SettingScope::Type(type_ref) => (LearningSettingScope::TaskType, None, Some(type_ref.node_id)),
+        SettingScope::Type(type_ref) => {
+            (LearningSettingScope::TaskType, None, Some(type_ref.node_id))
+        }
     };
     LearningSettingRowView {
         key: row.key,

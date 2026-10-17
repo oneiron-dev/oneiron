@@ -24,9 +24,7 @@ use serde::{Deserialize, Serialize};
 use super::codec::{RECORD, settlement_key_parts};
 use super::pending::{PENDING, PendingProposalView};
 use super::receipts::{already_settled, manifest_ref, settlement_receipt_record};
-use super::records::{
-    SettleConsent, SettleOutcomeKind, SettleSelectOutcome, SettlementRecord,
-};
+use super::records::{SettleConsent, SettleOutcomeKind, SettleSelectOutcome, SettlementRecord};
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
@@ -183,8 +181,7 @@ impl Vault {
         let head = self
             .blob_artifact_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let moved =
-            head.version != base_version || head.content_hash != proposal.base_content_hash;
+        let moved = head.version != base_version || head.content_hash != proposal.base_content_hash;
         // Each folder answer's file as it stands now: its head and hash.
         let mut files = Vec::with_capacity(bundle.answers.len());
         let mut files_moved = false;
@@ -205,7 +202,11 @@ impl Vault {
             return Ok(None);
         }
         let answer_col = bundle.range.start.col;
-        let rows: BTreeSet<u32> = bundle.answers.iter().map(|answer| answer.cell.row).collect();
+        let rows: BTreeSet<u32> = bundle
+            .answers
+            .iter()
+            .map(|answer| answer.cell.row)
+            .collect();
         let reads = bundle.reads;
         let read_cols: Vec<u32> = reads
             .map(|reads| {
@@ -385,11 +386,12 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             self.docx_archive_limits_in_txn(&rtxn, Some(principal))?
         };
-        let blocks = oneiron_docedit::docx_body::read_docx_blocks(&current, limits).map_err(|_| {
-            Error::Artifact(ArtifactError::InvalidEditManifest(
-                "the held paragraphs' document does not read",
-            ))
-        })?;
+        let blocks =
+            oneiron_docedit::docx_body::read_docx_blocks(&current, limits).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "the held paragraphs' document does not read",
+                ))
+            })?;
         let rows = &proposal.manifest.paragraph_judgments;
         let mut kept = Vec::new();
         let mut withdrawn = Vec::new();
@@ -430,13 +432,8 @@ impl Vault {
             labels: rows[0].labels.clone(),
         };
         let carried = if carry && !kept.is_empty() {
-            let mut carried = carry_paragraph_judgments(
-                &current,
-                head.version,
-                kept,
-                &proposal.run_ref,
-                limits,
-            )?;
+            let mut carried =
+                carry_paragraph_judgments(&current, head.version, kept, &proposal.run_ref, limits)?;
             carried.manifest.paragraph_question = Some(question.clone());
             Some(carried)
         } else {
@@ -492,8 +489,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        let withdrawal =
-            (!split.withdrawal.answers.is_empty()).then_some(&split.withdrawal);
+        let withdrawal = (!split.withdrawal.answers.is_empty()).then_some(&split.withdrawal);
         match &split.carried {
             Some(carried) => self.settle_select_carried(
                 artifact,

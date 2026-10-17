@@ -53,9 +53,14 @@ pub(crate) async fn vault_settings_learning(
     auth: &CoreAuth,
     input: LearningSettingsRequest,
 ) -> MemoryResult<LearningSettingsView> {
-    as_owner(server, auth, "vault.settings.learning", move |server, owner| {
-        learning_setting_doors::learning_settings_as_owner(server.vault(), owner, &input)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.settings.learning",
+        move |server, owner| {
+            learning_setting_doors::learning_settings_as_owner(server.vault(), owner, &input)
+        },
+    )
     .await
 }
 
@@ -65,9 +70,14 @@ pub(crate) async fn vault_settings_learning_put(
     auth: &CoreAuth,
     input: LearningSettingPut,
 ) -> MemoryResult<LearningSettingsView> {
-    as_owner(server, auth, "vault.settings.learning.put", move |server, owner| {
-        learning_setting_doors::put_learning_setting_as_owner(server.vault(), owner, input)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.settings.learning.put",
+        move |server, owner| {
+            learning_setting_doors::put_learning_setting_as_owner(server.vault(), owner, input)
+        },
+    )
     .await
 }
 
@@ -77,8 +87,13 @@ pub(crate) async fn vault_settings_learning_clear(
     auth: &CoreAuth,
     input: LearningSettingClear,
 ) -> MemoryResult<LearningSettingsView> {
-    as_owner(server, auth, "vault.settings.learning.clear", move |server, owner| {
-        learning_setting_doors::clear_learning_setting_as_owner(server.vault(), owner, input)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.settings.learning.clear",
+        move |server, owner| {
+            learning_setting_doors::clear_learning_setting_as_owner(server.vault(), owner, input)
+        },
+    )
     .await
 }
