@@ -38,6 +38,15 @@ pub(crate) struct Admission<K> {
     pool: Arc<Pool<K>>,
 }
 
+/// A clone shares the pool: one bound, one queue.
+impl<K> Clone for Admission<K> {
+    fn clone(&self) -> Self {
+        Self {
+            pool: Arc::clone(&self.pool),
+        }
+    }
+}
+
 struct Pool<K> {
     queue: Mutex<Queue<K>>,
     bound: usize,
