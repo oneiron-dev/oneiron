@@ -34,11 +34,8 @@ crates/oneiron-server/src/api/*.rs
 ## decl
 + pub ( crate ) async fn annotate_turn_vad ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , payload : Result < Json < TurnVadAnnotateRequest > , JsonRejection > ) -> Result < Json < TurnVadAnnotateResponse > , EnvelopedApiError >
 + pub ( crate ) async fn create_companion_access_grant ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , payload : Result < Json < CompanionCreateAccessGrantRequest > , JsonRejection > ) -> Result < Json < CompanionAccessGrantResponse > , EnvelopedApiError >
-+ pub ( crate ) async fn create_companion_register_record ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , payload : Result < Json < CompanionRegisterCreateRecordRequest > , JsonRejection > ) -> Result < Json < CompanionRegisterRecordResponse > , EnvelopedApiError >
 + pub ( crate ) async fn discover ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > ) -> Result < Json < DiscoverResponse > , ApiError >
-+ pub ( crate ) async fn end_companion_register_relationship ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , Path ( record_id ) : Path < String > , payload : Result < Json < CompanionEndRelationshipRequest > , JsonRejection > ) -> Result < Json < CompanionEndRelationshipResponse > , EnvelopedApiError >
 + pub ( crate ) async fn get_companion_profile ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , Path ( persona_ref ) : Path < String > , query : Result < Query < CompanionProfileQuery > , QueryRejection > ) -> Result < Json < CompanionProfileResponse > , EnvelopedApiError >
-+ pub ( crate ) async fn get_companion_register_record ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , Path ( record_id ) : Path < String > ) -> Result < Json < CompanionRegisterRecordResponse > , EnvelopedApiError >
 + pub ( crate ) async fn get_consumer_usage ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > , query : Result < Query < ConsumerUsageQuery > , QueryRejection > ) -> Result < Json < ConsumerUsageState > , ApiError >
 + pub ( crate ) async fn get_consumer_usage_details ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > , query : Result < Query < ConsumerUsageQuery > , QueryRejection > ) -> Result < Json < ConsumerUsageDetails > , ApiError >
 + pub ( crate ) async fn get_edges ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > , Path ( id_hex ) : Path < String > , query : Result < Query < ViewQuery > , QueryRejection > ) -> Result < Json < Vec < Value > > , ApiError >
@@ -55,7 +52,6 @@ crates/oneiron-server/src/api/*.rs
 + pub ( crate ) async fn resume ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > ) -> Result < Json < ResumeBundle > , ApiError >
 + pub ( crate ) async fn resume_bundle ( server : & SyncServer , caller : & str ) -> Result < ResumeBundle , ApiError >
 + pub ( crate ) async fn resume_session_context ( server : & SyncServer , caller : & str ) -> Result < SessionContext , ApiError >
-+ pub ( crate ) async fn retire_companion_register_record ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , Path ( record_id ) : Path < String > , payload : Result < Json < CompanionRegisterRetireRecordRequest > , JsonRejection > ) -> Result < Json < CompanionRegisterRecordResponse > , EnvelopedApiError >
 + pub ( crate ) async fn revoke_companion_access_grant ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , Path ( grant_id ) : Path < String > , payload : Result < Json < CompanionRevokeAccessGrantRequest > , JsonRejection > ) -> Result < Json < CompanionAccessGrantResponse > , EnvelopedApiError >
 + pub ( crate ) async fn search_text ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > , query : Result < Query < TextSearchQuery > , QueryRejection > ) -> Result < Json < SearchResponse > , ApiError >
 + pub ( crate ) async fn search_vector ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > , query : Result < Query < VectorSearchQuery > , QueryRejection > ) -> Result < Json < SearchResponse > , ApiError >
@@ -63,7 +59,6 @@ crates/oneiron-server/src/api/*.rs
 + pub ( crate ) async fn serve_artifact_root ( headers : HeaderMap , OriginalUri ( uri ) : OriginalUri , State ( server ) : State < Arc < SyncServer > > , Path ( artifact ) : Path < String > , Query ( query ) : Query < ArtifactServeQuery > ) -> Result < Response , EnvelopedApiError >
 + pub ( crate ) async fn skills_pack ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > ) -> Result < impl IntoResponse , ApiError >
 + pub ( crate ) async fn top_up_consumer ( headers : HeaderMap , State ( server ) : State < Arc < SyncServer > > , request : Result < Json < ConsumerTopUpRequest > , JsonRejection > ) -> Result < Json < ConsumerTopUpState > , ApiError >
-+ pub ( crate ) async fn update_companion_register_record ( auth : CoreAuth , State ( server ) : State < Arc < SyncServer > > , Path ( record_id ) : Path < String > , payload : Result < Json < CompanionRegisterUpdateRecordRequest > , JsonRejection > ) -> Result < Json < CompanionRegisterRecordResponse > , EnvelopedApiError >
 + pub ( crate ) const ARTIFACT_CONTENT_SECURITY_POLICY : & str
 + pub ( crate ) const ARTIFACT_IMMUTABLE_CACHE_CONTROL : & str
 + pub ( crate ) const ARTIFACT_POINTER_CACHE_CONTROL : & str
@@ -102,21 +97,6 @@ crates/oneiron-server/src/api/*.rs
 + pub ( crate ) fn companion_profile_principal_ref ( auth : & CoreAuth , requested : Option < oneiron :: EntityId > ) -> Result < oneiron :: EntityId , ApiError >
 + pub ( crate ) fn companion_profile_response_state ( server : & SyncServer , persona_ref : & oneiron :: EntityId , person_ref : & oneiron :: EntityId , access : CompanionProfileAccess , selected_source_revision_ids : Option < & [ oneiron :: EntityId ] > ) -> Result < CompanionProfileResponse , EnvelopedApiError >
 + pub ( crate ) fn companion_profile_stale_reason ( reason : & oneiron :: PsychProfileStaleReason ) -> CompanionProfileStaleReasonPayload
-+ pub ( crate ) fn companion_register_actor_class ( value : u8 ) -> Result < oneiron :: EdgeActorClass , ApiError >
-+ pub ( crate ) fn companion_register_approval_from_wire ( value : & str ) -> Result < oneiron :: ClaimApprovalStatus , ApiError >
-+ pub ( crate ) fn companion_register_engine_error ( message : & ' static str , error : oneiron :: Error ) -> EnvelopedApiError
-+ pub ( crate ) fn companion_register_export_from_wire ( value : & str ) -> Result < oneiron :: CompanionExportClassification , ApiError >
-+ pub ( crate ) fn companion_register_kind_from_wire ( value : & str , field : & ' static str ) -> Result < oneiron :: CompanionRecordKind , ApiError >
-+ pub ( crate ) fn companion_register_lifecycle_from_wire ( value : & str ) -> Result < oneiron :: ClaimLifecycleStatus , ApiError >
-+ pub ( crate ) fn companion_register_provenance_from_payload ( payload : & CompanionRegisterProvenancePayload ) -> Result < oneiron :: CompanionProvenance , ApiError >
-+ pub ( crate ) fn companion_register_record_from_payload ( payload : & CompanionRegisterRecordPayload ) -> Result < oneiron :: CompanionRecord , ApiError >
-+ pub ( crate ) fn companion_register_record_payload ( record : & oneiron :: CompanionRecord ) -> CompanionRegisterRecordPayload
-+ pub ( crate ) fn companion_register_record_response ( id : & oneiron :: EntityId , record : & oneiron :: CompanionRecord ) -> CompanionRegisterRecordResponse
-+ pub ( crate ) fn companion_register_scope_from_payload ( payload : & CompanionRegisterScopePayload ) -> Result < oneiron :: CompanionScope , ApiError >
-+ pub ( crate ) fn companion_register_scope_payload ( scope : & oneiron :: CompanionScope ) -> CompanionRegisterScopePayload
-+ pub ( crate ) fn companion_register_source_from_wire ( value : & str ) -> Result < oneiron :: ClaimSource , ApiError >
-+ pub ( crate ) fn companion_register_subject_from_payload ( payload : & CompanionRegisterSubjectPayload ) -> Result < oneiron :: CompanionSubject , ApiError >
-+ pub ( crate ) fn companion_register_subject_payload ( subject : & oneiron :: CompanionSubject ) -> CompanionRegisterSubjectPayload
 + pub ( crate ) fn companion_scope_entity_refs ( scope : & CompanionAccessGrantScopePayload ) -> Result < ( oneiron :: EntityId , oneiron :: EntityId ) , ApiError >
 + pub ( crate ) fn companion_scope_response ( person_ref : & oneiron :: EntityId , persona_ref : & oneiron :: EntityId ) -> CompanionAccessGrantScopePayload
 + pub ( crate ) fn consumer_top_up_idempotency_conflict_error ( idempotency_key : & str ) -> ApiError
@@ -198,7 +178,6 @@ crates/oneiron-server/src/api/*.rs
 + pub ( crate ) fn usage_error ( error : UsageError ) -> ApiError
 + pub ( crate ) fn usage_mode_for_event ( config : & SyncServerConfig , event : & UsageEvent ) -> Result < UsageMode , ApiError >
 + pub ( crate ) fn vad_annotation_core_error ( error : oneiron :: Error ) -> ApiError
-+ pub ( crate ) fn validate_companion_register_scope_export ( scope : & oneiron :: CompanionScope , export : oneiron :: CompanionExportClassification ) -> Result < ( ) , ApiError >
 + pub ( crate ) struct ArtifactServeQuery
 + pub ( crate ) struct BoundContext
 + pub ( crate ) struct CompanionAccessGrantResponse
@@ -216,15 +195,6 @@ crates/oneiron-server/src/api/*.rs
 + pub ( crate ) struct CompanionProfileRefreshRequest
 + pub ( crate ) struct CompanionProfileResponse
 + pub ( crate ) struct CompanionProfileStaleReasonPayload
-+ pub ( crate ) struct CompanionRegisterCreateRecordRequest
-+ pub ( crate ) struct CompanionRegisterProvenancePayload
-+ pub ( crate ) struct CompanionRegisterRecordPayload
-+ pub ( crate ) struct CompanionRegisterRecordResponse
-+ pub ( crate ) struct CompanionRegisterRelationshipRefPayload
-+ pub ( crate ) struct CompanionRegisterRetireRecordRequest
-+ pub ( crate ) struct CompanionRegisterScopePayload
-+ pub ( crate ) struct CompanionRegisterSubjectPayload
-+ pub ( crate ) struct CompanionRegisterUpdateRecordRequest
 + pub ( crate ) struct CompanionRevokeAccessGrantRequest
 + pub ( crate ) struct ConsumerUsageQuery
 + pub ( crate ) struct DiscoverResponse

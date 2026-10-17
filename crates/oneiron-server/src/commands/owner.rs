@@ -453,8 +453,12 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))?;
     // The owner's own `vault.export`, so its verb hooks run around it
-    // (ARCH-0080 §3).
+    // (ARCH-0080 §3). The export's own owner check comes first, so a hook
+    // never fires on an export it refuses.
     let memory = vault.memory(owner, oneiron::edge::EdgeActorClass::Human);
+    memory
+        .admit_export(None)
+        .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
     let export = oneiron::task_verb::verb_hook_boundary::typed_row(
         &memory,
         "vault.export",
@@ -530,6 +534,8 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
     match command {
         SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
         SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
+        // `run_cli` sends revoke straight to `revoke_secret`, before the read.
+        SecretsCommand::Revoke(args) => revoke_secret(*args),
     }
 }
 
@@ -616,6 +622,15 @@ fn rotate_secret(args: SecretRotateArgs, value: &[u8]) -> anyhow::Result<secrets
     Ok(vault
         .rotate_secret_as_owner(&owner, &args.name, value, vault.now_recorded_at())?
         .into())
+}
+
+/// Revokes a secret through the engine door `POST /v1/owner/secrets/revoke`
+/// uses, as the local owner (OF-422). It reads nothing from stdin.
+pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/revoke --data -")?;
+    let owner = local_owner(&vault)?;
+    emit(&secrets::revoke(&vault, &owner, &args.name)?)
 }
 
 /// A batch file: imported claims, or the notes `import notes` wrote.
@@ -858,6 +873,34 @@ fn hold_targets(
         }));
     }
     Ok(targets)
+}
+
+/// The owner's ask guests (OF-232) on a stopped vault; `serve` answers the
+/// same at `/v1/owner/guests/revoke`. A revoke signs each pact disconnect
+/// with the host's own key, the config's auth secret `serve` signs with; a
+/// config without one has no host key, and the revoke refuses.
+pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
+    use crate::cli::GuestsCommand;
+    match command {
+        GuestsCommand::Revoke(args) => {
+            let grant = hold_id_arg(&args.grant_ref)?;
+            let config = resolve_serve_config(&args.serve)?;
+            let vault = open_vault(&config, "POST /v1/owner/guests/revoke --data -")?;
+            let owner = local_owner(&vault)?;
+            let secret = config
+                .sync_server_config()
+                .auth_secret
+                .filter(|secret| !secret.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "the config names no auth secret, so this host has no key to sign the guest's pact disconnects"
+                    )
+                })?;
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+            let outcome = vault.revoke_guest_access(&owner, &issuer, grant)?;
+            emit(&oneiron::receipt::project_guest_revoke(outcome))
+        }
+    }
 }
 
 pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
