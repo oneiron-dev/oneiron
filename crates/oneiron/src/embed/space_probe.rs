@@ -238,7 +238,12 @@ impl Vault {
                     .is_none_or(|text| super::space::text_hash(&text) != hash),
                 None => false,
             };
-            if moved || self.store.port_entity_record(&wtxn, &document.id)?.is_none() {
+            if moved
+                || self
+                    .store
+                    .port_entity_record(&wtxn, &document.id)?
+                    .is_none()
+            {
                 report.vanished += 1;
                 continue;
             }

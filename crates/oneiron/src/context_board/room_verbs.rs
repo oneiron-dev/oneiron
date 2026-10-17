@@ -590,8 +590,7 @@ pub(crate) fn room_reader_in(
     if members.contains(&caller) {
         return Ok(true);
     }
-    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
-    {
+    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
         return Ok(false);
     }
     let agent = crate::workspace_roster::JoinSubject::Agent(caller);
@@ -671,8 +670,7 @@ pub(crate) fn thread_reader_in(
     if room_reader_in(vault, txn, room, members, caller)? {
         return Ok(true);
     }
-    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
-    {
+    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
         return Ok(false);
     }
     let agent = crate::workspace_roster::JoinSubject::Agent(caller);
