@@ -49,6 +49,7 @@ pub enum AgentVerb {
     VaultWeaveDigest,
     VaultWeaveLens,
     VaultWeaveLinkWrong,
+    VaultWeaveOwnerLinkWrong,
     VaultPacksPut,
     VaultPacksSetupPrepare,
     VaultPacksSetupGet,
@@ -282,6 +283,8 @@ pub enum AgentVerb {
     VaultArtifactsBodyForkDiff,
     VaultArtifactsBodyForkMerge,
     VaultArtifactsBodyForkDiscard,
+    VaultArtifactsBodyProposalRead,
+    VaultArtifactsBodyProposalSettle,
     VaultArtifactsBodyExport,
     VaultArtifactsBodyPreview,
     VaultArtifactsBodyDeckReview,
@@ -289,6 +292,7 @@ pub enum AgentVerb {
     VaultArtifactsBodyDeckExport,
     VaultArtifactsBodyDeckGate,
     VaultArtifactsBodyDeckOracle,
+    VaultArtifactsBodyDeckPreview,
     VaultArtifactsAppend,
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
@@ -351,6 +355,7 @@ impl AgentVerb {
         Self::VaultWeaveDigest,
         Self::VaultWeaveLens,
         Self::VaultWeaveLinkWrong,
+        Self::VaultWeaveOwnerLinkWrong,
         Self::VaultPacksPut,
         Self::VaultPacksSetupPrepare,
         Self::VaultPacksSetupGet,
@@ -584,6 +589,8 @@ impl AgentVerb {
         Self::VaultArtifactsBodyForkDiff,
         Self::VaultArtifactsBodyForkMerge,
         Self::VaultArtifactsBodyForkDiscard,
+        Self::VaultArtifactsBodyProposalRead,
+        Self::VaultArtifactsBodyProposalSettle,
         Self::VaultArtifactsBodyExport,
         Self::VaultArtifactsBodyPreview,
         Self::VaultArtifactsBodyDeckReview,
@@ -591,6 +598,7 @@ impl AgentVerb {
         Self::VaultArtifactsBodyDeckExport,
         Self::VaultArtifactsBodyDeckGate,
         Self::VaultArtifactsBodyDeckOracle,
+        Self::VaultArtifactsBodyDeckPreview,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
@@ -656,6 +664,7 @@ impl AgentVerb {
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultWeaveLens => "vault.weave.lens",
             Self::VaultWeaveLinkWrong => "vault.weave.link.wrong",
+            Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
             Self::VaultPacksSetupGet => "vault.packs.setup.get",
@@ -893,6 +902,8 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiff => "vault.artifacts.body.fork.diff",
             Self::VaultArtifactsBodyForkMerge => "vault.artifacts.body.fork.merge",
             Self::VaultArtifactsBodyForkDiscard => "vault.artifacts.body.fork.discard",
+            Self::VaultArtifactsBodyProposalRead => "vault.artifacts.body.proposal.read",
+            Self::VaultArtifactsBodyProposalSettle => "vault.artifacts.body.proposal.settle",
             Self::VaultArtifactsBodyExport => "vault.artifacts.body.export",
             Self::VaultArtifactsBodyPreview => "vault.artifacts.body.preview",
             Self::VaultArtifactsBodyDeckReview => "vault.artifacts.body.deck.review",
@@ -900,6 +911,7 @@ impl AgentVerb {
             Self::VaultArtifactsBodyDeckExport => "vault.artifacts.body.deck.export",
             Self::VaultArtifactsBodyDeckGate => "vault.artifacts.body.deck.gate",
             Self::VaultArtifactsBodyDeckOracle => "vault.artifacts.body.deck.oracle",
+            Self::VaultArtifactsBodyDeckPreview => "vault.artifacts.body.deck.preview",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
@@ -961,6 +973,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
+                | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1157,6 +1170,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiff
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyProposalRead
+                | Self::VaultArtifactsBodyProposalSettle
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsBodyDeckReview
@@ -1164,6 +1179,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckExport
                 | Self::VaultArtifactsBodyDeckGate
                 | Self::VaultArtifactsBodyDeckOracle
+                | Self::VaultArtifactsBodyDeckPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1270,6 +1286,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
+                | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1466,6 +1483,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiff
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyProposalRead
+                | Self::VaultArtifactsBodyProposalSettle
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsBodyDeckReview
@@ -1473,6 +1492,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckExport
                 | Self::VaultArtifactsBodyDeckGate
                 | Self::VaultArtifactsBodyDeckOracle
+                | Self::VaultArtifactsBodyDeckPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1604,6 +1624,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
+                | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1829,6 +1850,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiff
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyProposalRead
+                | Self::VaultArtifactsBodyProposalSettle
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsBodyDeckReview
@@ -1836,6 +1859,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckExport
                 | Self::VaultArtifactsBodyDeckGate
                 | Self::VaultArtifactsBodyDeckOracle
+                | Self::VaultArtifactsBodyDeckPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1877,6 +1901,7 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultWeaveLinkWrong
+                | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
@@ -2015,6 +2040,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkEdit
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyProposalSettle
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyDeckMerge
                 | Self::VaultArtifactsBodyDeckExport
@@ -2098,6 +2124,7 @@ impl AgentVerb {
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
             Self::VaultWeaveLinkWrong => &["spec"],
+            Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -2331,6 +2358,8 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiff => &["spec"],
             Self::VaultArtifactsBodyForkMerge => &["spec"],
             Self::VaultArtifactsBodyForkDiscard => &["spec"],
+            Self::VaultArtifactsBodyProposalRead => &["spec"],
+            Self::VaultArtifactsBodyProposalSettle => &["spec"],
             Self::VaultArtifactsBodyExport => &["spec"],
             Self::VaultArtifactsBodyPreview => &["spec"],
             Self::VaultArtifactsBodyDeckReview => &["spec"],
@@ -2338,6 +2367,7 @@ impl AgentVerb {
             Self::VaultArtifactsBodyDeckExport => &["spec"],
             Self::VaultArtifactsBodyDeckGate => &["spec"],
             Self::VaultArtifactsBodyDeckOracle => &["spec"],
+            Self::VaultArtifactsBodyDeckPreview => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2401,6 +2431,7 @@ impl AgentVerb {
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
             Self::VaultWeaveLinkWrong => &["spec"],
+            Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -2634,6 +2665,8 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiff => &["spec"],
             Self::VaultArtifactsBodyForkMerge => &["spec"],
             Self::VaultArtifactsBodyForkDiscard => &["spec"],
+            Self::VaultArtifactsBodyProposalRead => &["spec"],
+            Self::VaultArtifactsBodyProposalSettle => &["spec"],
             Self::VaultArtifactsBodyExport => &["spec"],
             Self::VaultArtifactsBodyPreview => &["spec"],
             Self::VaultArtifactsBodyDeckReview => &["spec"],
@@ -2641,6 +2674,7 @@ impl AgentVerb {
             Self::VaultArtifactsBodyDeckExport => &["spec"],
             Self::VaultArtifactsBodyDeckGate => &["spec"],
             Self::VaultArtifactsBodyDeckOracle => &["spec"],
+            Self::VaultArtifactsBodyDeckPreview => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2781,11 +2815,16 @@ impl AgentVerb {
                 "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."
             }
             Self::VaultWeaveDigest => {
-                "One of the bound actor's saved weave digests, or the newest, under the current read policy."
+                "One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."
             }
-            Self::VaultWeaveLens => "",
+            Self::VaultWeaveLens => {
+                "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."
+            }
             Self::VaultWeaveLinkWrong => {
                 "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."
+            }
+            Self::VaultWeaveOwnerLinkWrong => {
+                "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."
             }
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
@@ -3225,7 +3264,9 @@ impl AgentVerb {
             Self::SelfBrowserSelect => {
                 "Picks the option of a select element by its label, text or value."
             }
-            Self::SelfBrowserWaitFor => "Waits until some page row matches a role and name.",
+            Self::SelfBrowserWaitFor => {
+                "Waits until a page row its refs name, or else some row matching a role and name, is there."
+            }
             Self::SelfBrowserExpect => {
                 "Checks that a page row is present or absent, and holds a given value."
             }
@@ -3268,7 +3309,9 @@ impl AgentVerb {
             }
             Self::SelfDesktopHotkey => "Presses a key combination in the current window.",
             Self::SelfDesktopScroll => "Scrolls a window target, or the window, by steps.",
-            Self::SelfDesktopWaitFor => "Waits until some window row matches a role and name.",
+            Self::SelfDesktopWaitFor => {
+                "Waits until a window row its refs name, or else some row matching a role and name, is there."
+            }
             Self::SelfDesktopExpect => {
                 "Checks that a window row is present or absent, and holds a given value."
             }
@@ -3366,7 +3409,7 @@ impl AgentVerb {
                 "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."
             }
             Self::VaultArtifactsBodyForkOpen => {
-                "Opens a fork of the live body at its head for machine work, in an optional run."
+                "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own."
             }
             Self::VaultArtifactsBodyForkEdit => {
                 "The opener's typed DOCX, XLSX or deck operations on its open fork of a live body."
@@ -3375,10 +3418,16 @@ impl AgentVerb {
                 "A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show."
             }
             Self::VaultArtifactsBodyForkMerge => {
-                "A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses."
+                "Lands one reviewed fork, naming the head and fork head the review read, on the caller's word from outside the opener's lineage or on a standing grant; a moved head, a blocking conflict or no answer refuses."
             }
             Self::VaultArtifactsBodyForkDiscard => {
                 "Abandons an open fork's unlanded work and returns its record."
+            }
+            Self::VaultArtifactsBodyProposalRead => {
+                "An office proposal on the artifact: its opener and run, each member fork with its verdict and answer, and its settlement."
+            }
+            Self::VaultArtifactsBodyProposalSettle => {
+                "Accepts or rejects the reviewed forks of an office proposal that the scope covers; each lands on a person's word from outside the opener's lineage or on a standing grant, or waits."
             }
             Self::VaultArtifactsBodyExport => {
                 "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export."
@@ -3400,6 +3449,9 @@ impl AgentVerb {
             }
             Self::VaultArtifactsBodyDeckOracle => {
                 "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened."
+            }
+            Self::VaultArtifactsBodyDeckPreview => {
+                "The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed."
             }
             Self::VaultArtifactsAppend => {
                 "Appends one version of bytes to a blob artifact's append-only chain."

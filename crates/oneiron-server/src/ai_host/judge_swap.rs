@@ -1,16 +1,19 @@
 //! The Coach's judge-swap upkeep on this server (OF-184). Its kept
 //! judgments are the replay judge's decision journal, and the registered
-//! judge's ladder answers them again; the engine rules the swap.
+//! judge's ladder answers them again; the engine rules the swap. A tie is
+//! broken by the first served model whose family is neither judge's, asked
+//! alone on its own ladder.
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
+use oneiron::llm::ModelId;
 use oneiron::llm::decision::{DecisionAnswer, Reversibility, TypedDecision};
 use oneiron::skill_optimize::{
-    HeldOutReplayNotes, JudgeShadowAnswer, JudgeShadowCase, JudgeShadowHost,
+    HeldOutReplayNotes, JudgeShadowAnswer, JudgeShadowCase, JudgeShadowHost, judgment_kind,
 };
-use oneiron::{Error, Vault};
 
+use crate::decision_host::MODEL_DIAL;
 use crate::replay_judge::{JournalRow, ServeReplayJudge};
 use crate::server::SyncServer;
 
@@ -25,7 +28,7 @@ pub(super) fn run(
         return Ok(());
     };
     let host = JournalShadow {
-        vault: server.vault(),
+        server,
         judge,
         rows: RefCell::new(BTreeMap::new()),
     };
@@ -36,7 +39,7 @@ pub(super) fn run(
 
 /// The journal's judgments, keyed by case, as the engine reads them.
 struct JournalShadow<'a> {
-    vault: &'a Vault,
+    server: &'a SyncServer,
     judge: &'static ServeReplayJudge,
     rows: RefCell<BTreeMap<String, JournalRow>>,
 }
@@ -45,7 +48,7 @@ impl JudgeShadowHost for JournalShadow<'_> {
     fn kept_cases(&self, limit: usize) -> oneiron::Result<Vec<JudgeShadowCase>> {
         let mut rows = self.rows.borrow_mut();
         let mut cases = Vec::new();
-        for row in crate::replay_judge::journal(self.vault, limit)?
+        for row in crate::replay_judge::journal(self.server.vault(), limit)?
             .into_iter()
             .rev()
         {
@@ -55,16 +58,23 @@ impl JudgeShadowHost for JournalShadow<'_> {
             if matches!(row.decision.answer, DecisionAnswer::Abstain) {
                 continue;
             }
-            let case_ref = blake3::hash(
-                format!("{}|{}|{}", row.at, row.question.id.to_hex(), row.state).as_bytes(),
-            )
-            .to_hex()
-            .to_string();
+            let Ok(state) = serde_json::from_str::<serde_json::Value>(&row.state) else {
+                continue;
+            };
+            let question = row.question.id.to_hex();
+            let case_ref =
+                blake3::hash(format!("{}|{}|{}", row.at, question, row.state).as_bytes())
+                    .to_hex()
+                    .to_string();
             cases.push(JudgeShadowCase {
                 case_ref: case_ref.clone(),
-                source_family: source_family(&row),
+                source_family: source_family(&row, &state),
                 judge,
                 answer: row.decision.answer.clone(),
+                kind: judgment_kind(&row.revision, &row.question, &state),
+                question,
+                asked_at: row.at,
+                state,
             });
             rows.insert(case_ref, row);
         }
@@ -76,15 +86,64 @@ impl JudgeShadowHost for JournalShadow<'_> {
         let Some(row) = rows.get(&case.case_ref) else {
             return Ok(None);
         };
-        let state: serde_json::Value = serde_json::from_str(&row.state)
-            .map_err(|_| Error::CorruptedIndex("skill judge journal"))?;
         let decisions = self.judge.decisions();
         let decision = decisions.ladder.run(
             &row.question,
             decisions.principal,
             &row.decision.evidence,
-            &state,
+            &case.state,
             decisions.dial,
+            &decisions.bands,
+            Reversibility::ReversibleRead,
+            decisions.deadline,
+        )?;
+        if matches!(decision.answer, DecisionAnswer::Abstain) {
+            return Ok(None);
+        }
+        Ok(judge_of(&decision).map(|judge| JudgeShadowAnswer {
+            judge,
+            answer: decision.answer,
+        }))
+    }
+
+    /// The first served model whose known family is neither judge's, asked
+    /// the kept question alone on its own ladder. `None` when either judge's
+    /// family is unknown, no such model is served, or it abstains.
+    fn tie_break(
+        &self,
+        case: &JudgeShadowCase,
+        incumbent: &str,
+        candidate: &str,
+    ) -> oneiron::Result<Option<JudgeShadowAnswer>> {
+        let (Some(old), Some(new)) = (model_of(incumbent), model_of(candidate)) else {
+            return Ok(None);
+        };
+        let Some(third) = self
+            .server
+            .models_outside_families(&[&old, &new])?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let rows = self.rows.borrow();
+        let Some(row) = rows.get(&case.case_ref) else {
+            return Ok(None);
+        };
+        let ladder = match self.server.decision_ladder_for_model(&third) {
+            Ok(ladder) => ladder,
+            Err(error) => {
+                tracing::debug!(%error, model = %third, "no third judge's ladder");
+                return Ok(None);
+            }
+        };
+        let decisions = self.judge.decisions();
+        let decision = ladder.ladder().run(
+            &row.question,
+            decisions.principal,
+            &row.decision.evidence,
+            &case.state,
+            MODEL_DIAL,
             &decisions.bands,
             Reversibility::ReversibleRead,
             decisions.deadline,
@@ -99,6 +158,13 @@ impl JudgeShadowHost for JournalShadow<'_> {
     }
 }
 
+/// The model a judge names, `model@version` split at its last `@`.
+fn model_of(judge: &str) -> Option<ModelId> {
+    judge
+        .rsplit_once('@')
+        .and_then(|(model, _)| ModelId::new(model).ok())
+}
+
 /// The rung that answered, `model@version`.
 fn judge_of(decision: &TypedDecision) -> Option<String> {
     decision
@@ -109,14 +175,12 @@ fn judge_of(decision: &TypedDecision) -> Option<String> {
 }
 
 /// The kind of run the judged state came from, else the question it asked.
-fn source_family(row: &JournalRow) -> String {
-    serde_json::from_str::<serde_json::Value>(&row.state)
-        .ok()
-        .and_then(|state| {
-            state
-                .get("kind")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| format!("question:{}", row.question.id.to_hex()))
+fn source_family(row: &JournalRow, state: &serde_json::Value) -> String {
+    state
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(
+            || format!("question:{}", row.question.id.to_hex()),
+            str::to_owned,
+        )
 }

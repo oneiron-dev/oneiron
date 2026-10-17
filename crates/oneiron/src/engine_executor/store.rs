@@ -271,6 +271,19 @@ pub(super) fn record_text_output(
     record_output(storage, record, path, text.as_bytes())
 }
 
+/// A step's program as stored: byte for byte, never swept, because a resumed
+/// step runs the stored program again.
+pub(super) fn record_script_output(
+    storage: &ExecutorStorage<'_>,
+    record: &mut CodeRunReplayRecord,
+    path: String,
+    script: &str,
+) -> EngineExecutorResult<()> {
+    let mut sink = storage.code_run_script_sink()?;
+    sink.write(script.as_bytes())?;
+    publish_output(storage, record, path, sink).map(drop)
+}
+
 /// Whether the occurrence of `output` that run `owner` holds may enter
 /// model context as it stands: one the secret scan marked, or one under
 /// live or stale taint, never does. A context output has no `owner`, and is

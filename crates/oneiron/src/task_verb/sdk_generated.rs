@@ -229,6 +229,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.weave.owner.link.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
+                ),
+            ),
+            (
                 "vault.packs.put",
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
@@ -1391,6 +1396,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.body.proposal.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyProposalRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.proposal.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyProposalSettleRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.body.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::office_body::OfficeBodyExportVerbRequest,
@@ -1427,6 +1444,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.artifacts.body.deck.oracle",
                 crate::code_run::vault_read::request_schema::<crate::office_body::DeckOracleRequest>(
+                ),
+            ),
+            (
+                "vault.artifacts.body.deck.preview",
+                crate::code_run::vault_read::request_schema::<crate::office_body::DeckPreviewRequest>(
                 ),
             ),
             (
@@ -1917,6 +1939,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.link.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.owner.link.wrong" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3281,6 +3310,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.body.proposal.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.body.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3324,6 +3367,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.body.deck.oracle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.deck.preview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3579,6 +3629,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::claim::WeaveReportRequest = decode(value.clone())?;
         }
         "vault.weave.link.wrong" => {
+            let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
+        }
+        "vault.weave.owner.link.wrong" => {
             let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
         }
         "vault.packs.put" => {
@@ -4314,6 +4367,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.body.fork.discard" => {
             let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
         }
+        "vault.artifacts.body.proposal.read" => {
+            let _input: crate::office_body::OfficeBodyProposalRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            let _input: crate::office_body::OfficeBodyProposalSettleRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.body.export" => {
             let _input: crate::office_body::OfficeBodyExportVerbRequest = decode(value.clone())?;
         }
@@ -4334,6 +4394,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.body.deck.oracle" => {
             let _input: crate::office_body::DeckOracleRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.deck.preview" => {
+            let _input: crate::office_body::DeckPreviewRequest = decode(value.clone())?;
         }
         "vault.artifacts.append" => {
             let input: AppendBlobVersionRequest = decode(value.clone())?;
@@ -4443,6 +4506,9 @@ pub fn invoke(
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.weave.lens" => encode(vault_weave_lens(memory, decode(value)?)?),
         "vault.weave.link.wrong" => encode(vault_weave_link_wrong(memory, decode(value)?)?),
+        "vault.weave.owner.link.wrong" => {
+            encode(vault_weave_owner_link_wrong(memory, decode(value)?)?)
+        }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
@@ -4754,6 +4820,13 @@ pub fn invoke(
         "vault.artifacts.body.fork.discard" => {
             encode(vault_artifacts_body_fork_discard(memory, decode(value)?)?)
         }
+        "vault.artifacts.body.proposal.read" => {
+            encode(vault_artifacts_body_proposal_read(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.proposal.settle" => encode(vault_artifacts_body_proposal_settle(
+            memory,
+            decode(value)?,
+        )?),
         "vault.artifacts.body.export" => {
             encode(vault_artifacts_body_export(memory, decode(value)?)?)
         }
@@ -4774,6 +4847,9 @@ pub fn invoke(
         }
         "vault.artifacts.body.deck.oracle" => {
             encode(vault_artifacts_body_deck_oracle(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.deck.preview" => {
+            encode(vault_artifacts_body_deck_preview(memory, decode(value)?)?)
         }
         "vault.artifacts.append" => encode(vault_artifacts_append(memory, decode(value)?)?),
         "vault.artifacts.read" => encode(vault_artifacts_read(memory, decode(value)?)?),
@@ -5324,7 +5400,7 @@ pub fn vault_weave_digest(
 pub fn vault_weave_lens(
     memory: &Memory<'_>,
     input: crate::claim::WeaveReportRequest,
-) -> MemoryResult<crate::lens::GeneratedLens> {
+) -> MemoryResult<crate::lens::LensFrameCard> {
     crate::task_verb::sdk::host_only(memory, "vault.weave.lens", &input)
 }
 pub fn vault_weave_link_wrong(
@@ -5334,6 +5410,15 @@ pub fn vault_weave_link_wrong(
     memory.weave_wrong_link(
         None,
         &memory.embedded_owner("vault.weave.link.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_owner_link_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongLinkRequest,
+) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
+    memory.weave_owner_wrong_link(
+        &memory.embedded_owner("vault.weave.owner.link.wrong")?,
         &input,
     )
 }
@@ -7147,7 +7232,7 @@ pub fn vault_artifacts_body_fork_open(
         memory,
         "vault.artifacts.body.fork.open",
         &input,
-        &["/artifact_ref", "/run_root_ref"],
+        &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
     )?;
     memory.artifacts_body_fork_open(&input)
 }
@@ -7205,6 +7290,30 @@ pub fn vault_artifacts_body_fork_discard(
         &["/artifact_ref", "/fork_ref"],
     )?;
     memory.artifacts_body_fork_discard(&input)
+}
+pub fn vault_artifacts_body_proposal_read(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyProposalRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.proposal.read",
+        &input,
+        &["/artifact_ref", "/proposal_ref"],
+    )?;
+    memory.artifacts_body_proposal_read(&input)
+}
+pub fn vault_artifacts_body_proposal_settle(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyProposalSettleRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.proposal.settle",
+        &input,
+        &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+    )?;
+    memory.artifacts_body_proposal_settle(&input)
 }
 pub fn vault_artifacts_body_export(
     memory: &Memory<'_>,
@@ -7283,6 +7392,12 @@ pub fn vault_artifacts_body_deck_oracle(
     input: crate::office_body::DeckOracleRequest,
 ) -> MemoryResult<crate::office_body::DeckGateView> {
     memory.artifacts_body_deck_oracle(&input)
+}
+pub fn vault_artifacts_body_deck_preview(
+    memory: &Memory<'_>,
+    input: crate::office_body::DeckPreviewRequest,
+) -> MemoryResult<crate::office_body::DeckPreview> {
+    memory.artifacts_body_deck_preview(&input, None)
 }
 pub fn vault_artifacts_append(
     memory: &Memory<'_>,

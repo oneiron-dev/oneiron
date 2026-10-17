@@ -10,10 +10,12 @@
 //! report. The tool's setting stays the catalog slate's, read at call time.
 //!
 //! Consenting a tool again retires the actor's earlier grant and key for it.
-//! A catalog key's re-qualification carries each derived key whose tool is
-//! unchanged and still allowed, and retires the rest; revoking or removing
-//! the catalog key retires them all. No grant expires on a clock: canon
-//! replaces expiry with the registry and the policy floor.
+//! Every change to the catalog key's status or admission reaches its derived
+//! keys: suspension, a staged manifest or a protocol revision holds them;
+//! a return to Active carries each whose tool is unchanged and still
+//! allowed, and retires the rest; revoking or removing the catalog key
+//! retires them all. No grant expires on a clock: canon replaces expiry
+//! with the registry and the policy floor.
 
 use std::collections::BTreeSet;
 
@@ -33,7 +35,7 @@ use crate::{EntityId, Vault};
 use super::super::manifest_drift::{ConnectorToolSchema, ResolvedConnectorManifest};
 use super::super::qualification::ConnectorQualificationReceipt;
 use super::super::record::{
-    ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance,
+    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance,
     canonical_scoped_server_segment, normalize_connector_key,
 };
 use super::super::slate::{
@@ -48,6 +50,10 @@ use super::super::txn::{
 pub const CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID: &str = "connector_consent";
 /// The owner act every connector-consent grant names.
 pub const CONNECTOR_CONSENT_ORIGIN_ACTION_ID: &str = "connector.consent";
+/// Why a per-grant key is suspended while its catalog connector is not
+/// Active, or while the catalog holds a staged change to the key's tool.
+/// The catalog's return lifts exactly this hold; nothing else does.
+pub(in crate::connector_key) const CATALOG_HOLD_REASON: &str = "held by its catalog connector";
 
 /// One tool row the owner accepts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,10 +313,17 @@ impl Vault {
         }))
     }
 
-    /// Re-derives each per-grant key of a catalog key that just qualified:
-    /// a tool still allowed with the same schema carries to the new revision
-    /// and report; any other is retired with its grant.
-    pub(in crate::connector_key) fn carry_tool_grants_in_txn(
+    /// Brings every per-grant key of a catalog key in line with the
+    /// catalog, after any change to its status or admission:
+    /// - a revoked or removed catalog retires them all, with their grants;
+    /// - a catalog that is not Active holds each live one: Suspended, for
+    ///   [`CATALOG_HOLD_REASON`];
+    /// - an Active catalog re-derives each. A tool still allowed on the
+    ///   owner-stamped slate, with the schema the key holds and that the
+    ///   catalog's approved manifest still pins, carries to the catalog's
+    ///   revision and report, and its hold lifts unless a staged manifest
+    ///   change touches the tool. Any other is retired with its grant.
+    pub(in crate::connector_key) fn sync_derived_keys_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         catalog: &ConnectorKeyRecord,
@@ -325,7 +338,9 @@ impl Vault {
         }
         // A catalog that qualified without a holding owner stamp carries
         // nothing: every derived tool goes back to the owner.
-        let admitted = admitted_from_record(self, wtxn, catalog, server.clone()).ok();
+        let admitted = (catalog.status == ConnectorKeyStatus::Active)
+            .then(|| admitted_from_record(self, wtxn, catalog, server.clone()).ok())
+            .flatten();
         for (key_id, record) in derived {
             if record.status == ConnectorKeyStatus::Revoked {
                 continue;
@@ -335,64 +350,80 @@ impl Vault {
             else {
                 continue;
             };
+            match catalog.status {
+                ConnectorKeyStatus::Active => {}
+                ConnectorKeyStatus::Revoked => {
+                    self.retire_tool_grant_in_txn(wtxn, &capability.grant_id(), &server, at)?;
+                    continue;
+                }
+                ConnectorKeyStatus::Pending | ConnectorKeyStatus::Suspended => {
+                    if record.status == ConnectorKeyStatus::Active {
+                        let held = held(record, at);
+                        rewrite_connector_key_in_txn(&self.store, wtxn, &key_id, &held)?;
+                        append_op(
+                            &self.store,
+                            wtxn,
+                            &key_id,
+                            "gate.connector_key.suspend",
+                            &held,
+                            at,
+                        )?;
+                    }
+                    continue;
+                }
+            }
             let carried = admitted.as_ref().and_then(|admitted| {
-                record
-                    .retained_manifest
-                    .as_ref()
-                    .and_then(|manifest| manifest.tools().first())
-                    .map(|tool| tool.name.clone())
-                    .filter(|tool| {
-                        admitted.slate.row(tool).is_some_and(|row| row.enabled())
-                            && tool_snapshot(&admitted.slate, tool).ok().as_ref()
-                                == record.retained_manifest.as_ref()
-                    })
-                    .map(|tool| (admitted, tool))
+                let snapshot = record.retained_manifest.as_ref()?;
+                let entry = snapshot.tools().first()?;
+                (admitted
+                    .slate
+                    .row(&entry.name)
+                    .is_some_and(|row| row.enabled())
+                    && tool_snapshot(&admitted.slate, &entry.name).ok().as_ref() == Some(snapshot)
+                    && approved_manifest_pins(catalog, &admitted.slate, &entry.name))
+                .then(|| (admitted, entry.name.clone()))
             });
             let Some((admitted, tool)) = carried else {
                 self.retire_tool_grant_in_txn(wtxn, &capability.grant_id(), &server, at)?;
                 continue;
             };
-            if record.protocol_revision.as_deref() == Some(admitted.revision.as_str())
+            let current = record.protocol_revision.as_deref() == Some(admitted.revision.as_str())
                 && record
                     .qualification_receipt
                     .as_ref()
-                    .is_some_and(|receipt| receipt.report_hash == admitted.report_hash)
-            {
-                continue;
-            }
-            let manifest = tool_snapshot(&admitted.slate, &tool)?;
-            let next = derived_admission(record, manifest, &admitted, at)?;
+                    .is_some_and(|receipt| receipt.report_hash == admitted.report_hash);
+            let staged = catalog.tool_requires_confirmation(&tool);
+            let was_held = is_held(&record);
+            let status = record.status;
+            let mut next = if current {
+                record
+            } else {
+                derived_admission(record, tool_snapshot(&admitted.slate, &tool)?, admitted, at)?
+            };
+            let op = match (staged, status) {
+                (true, ConnectorKeyStatus::Active) => {
+                    next = held(next, at);
+                    "gate.connector_key.suspend"
+                }
+                (false, ConnectorKeyStatus::Suspended) if was_held => {
+                    next = ConnectorKeyRecord {
+                        status: ConnectorKeyStatus::Active,
+                        status_changed_at: Some(at),
+                        suspended_reason: None,
+                        ..next
+                    };
+                    if current {
+                        "gate.connector_key.resume"
+                    } else {
+                        "gate.connector_key.carry"
+                    }
+                }
+                _ if current => continue,
+                _ => "gate.connector_key.carry",
+            };
             next.validate()?;
             rewrite_connector_key_in_txn(&self.store, wtxn, &key_id, &next)?;
-            append_op(
-                &self.store,
-                wtxn,
-                &key_id,
-                "gate.connector_key.carry",
-                &next,
-                at,
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Retires every grant and per-grant key derived from a catalog key: its
-    /// revoke or removal leaves nothing that authorizes a call on it.
-    pub(in crate::connector_key) fn retire_derived_tool_grants_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        catalog: &ConnectorKeyRecord,
-        at: u64,
-    ) -> Result<()> {
-        let Some(server) = catalog_server(catalog) else {
-            return Ok(());
-        };
-        for (_, record) in derived_keys_in_txn(&self.store, wtxn, &server)? {
-            if let Some(capability) =
-                ScopedCapabilityProvenance::parse_owner_capability_key(&record.connector)
-            {
-                self.retire_tool_grant_in_txn(wtxn, &capability.grant_id(), &server, at)?;
-            }
+            append_op(&self.store, wtxn, &key_id, op, &next, at)?;
         }
         Ok(())
     }
@@ -459,15 +490,16 @@ impl Vault {
     }
 }
 
-/// The catalog slate a per-grant key derives from: the catalog key whose
-/// name is the key's scoped server. `None` for any other key. This only
-/// says whose settings a call meets; the grant and the Gate stay the
-/// authority.
-pub(in crate::connector_key) fn derived_key_catalog_slate_in_txn(
+/// The catalog key a per-grant key derives from: the catalog key whose name
+/// is the key's scoped server, with the ordinary channel (`mcp:{server}`)
+/// the key's calls travel on. `None` for any other key. This only says
+/// whose settings, charter and shared budgets a call also meets; the grant
+/// and the Gate stay the authority.
+pub(in crate::connector_key) fn derived_key_catalog_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: &ConnectorKeyRecord,
-) -> Result<Option<EntityId>> {
+) -> Result<Option<(EntityId, ConnectorKeyRecord, String)>> {
     if key.catalog.is_some() {
         return Ok(None);
     }
@@ -477,7 +509,63 @@ pub(in crate::connector_key) fn derived_key_catalog_slate_in_txn(
     };
     Ok(catalog_key_in_txn(store, txn, capability.server())?
         .filter(|(_, catalog)| catalog_server(catalog).as_deref() == Some(capability.server()))
-        .and_then(|(_, catalog)| catalog.slate_ref))
+        .map(|(id, catalog)| (id, catalog, capability.ordinary_channel())))
+}
+
+/// The catalog slate a per-grant key derives from.
+pub(in crate::connector_key) fn derived_key_catalog_slate_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+) -> Result<Option<EntityId>> {
+    Ok(derived_key_catalog_in_txn(store, txn, key)?.and_then(|(_, catalog, _)| catalog.slate_ref))
+}
+
+/// The charter of the catalog connector a per-grant key derives from. The
+/// Gate and recovery read it beside the key's own, with the same matchers,
+/// so a per-grant call meets the catalog's drift and never-list too.
+pub(crate) fn catalog_charter_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+) -> Result<Option<ConnectorCharterBlock>> {
+    Ok(derived_key_catalog_in_txn(store, txn, key)?.and_then(|(_, catalog, _)| catalog.charter))
+}
+
+/// Holds each Active per-grant key of a catalog key that is no longer
+/// Active, inside the caller's transaction. The common suspend core calls
+/// it, so a budget exhaust holds them as an owner suspend does; the
+/// catalog's resume lifts the holds through `sync_derived_keys_in_txn`.
+pub(in crate::connector_key) fn hold_derived_keys_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    catalog: &ConnectorKeyRecord,
+    at: u64,
+) -> Result<()> {
+    if catalog.status == ConnectorKeyStatus::Active {
+        return Ok(());
+    }
+    let Some(server) = catalog_server(catalog) else {
+        return Ok(());
+    };
+    for (key_id, record) in derived_keys_in_txn(store, wtxn, &server)? {
+        if record.status != ConnectorKeyStatus::Active
+            || ScopedCapabilityProvenance::parse_owner_capability_key(&record.connector).is_none()
+        {
+            continue;
+        }
+        let held = held(record, at);
+        rewrite_connector_key_in_txn(store, wtxn, &key_id, &held)?;
+        append_op(
+            store,
+            wtxn,
+            &key_id,
+            "gate.connector_key.suspend",
+            &held,
+            at,
+        )?;
+    }
+    Ok(())
 }
 
 /// The catalog key that a consent can derive from: Active, qualified at its
@@ -549,6 +637,42 @@ fn derived_admission(
         retained_manifest: Some(manifest),
         pending_manifest: None,
         ..record
+    })
+}
+
+/// A per-grant key held while its catalog connector is not Active or holds
+/// a staged change to the key's tool.
+fn held(record: ConnectorKeyRecord, at: u64) -> ConnectorKeyRecord {
+    ConnectorKeyRecord {
+        status: ConnectorKeyStatus::Suspended,
+        status_changed_at: Some(at),
+        suspended_reason: Some(CATALOG_HOLD_REASON.to_owned()),
+        ..record
+    }
+}
+
+/// The key is suspended by its catalog's hold, not on its own.
+pub(in crate::connector_key) fn is_held(record: &ConnectorKeyRecord) -> bool {
+    record.status == ConnectorKeyStatus::Suspended
+        && record.suspended_reason.as_deref() == Some(CATALOG_HOLD_REASON)
+}
+
+/// The catalog's approved manifest, when it pins one, still lists the tool
+/// with the resolved schema the stamped slate holds for it: the one both
+/// were built from at admission.
+fn approved_manifest_pins(
+    catalog: &ConnectorKeyRecord,
+    slate: &ConnectorGrantSlate,
+    tool: &str,
+) -> bool {
+    let schema = slate
+        .tool(tool)
+        .and_then(|entry| entry.resolved_input_schema.as_ref());
+    catalog.retained_manifest.as_ref().is_none_or(|approved| {
+        approved
+            .tools()
+            .iter()
+            .any(|entry| entry.name == tool && Some(&entry.input_schema) == schema)
     })
 }
 

@@ -211,20 +211,25 @@ export_facade! {
     let output = client.vault_weave_report(&input)?;
     crate::codec::lift_record("vault.weave.report", &output)
 };
-"vault.weave.digest" => fn vault_weave_digest(&self, input: WeaveDigestRequest) -> Option<WeaveDigestView> = |client| {
+"vault.weave.digest" => fn vault_weave_digest(&self, input: WeaveDigestRequest) -> WireJson = |client| {
     let input: oneiron::claim::WeaveDigestRequest = crate::codec::lower_record("vault.weave.digest", input)?;
     let output = client.vault_weave_digest(&input)?;
-    crate::codec::lift_record("vault.weave.digest", &output)
+    crate::codec::encode("vault.weave.digest", &output)
 };
-"vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveReportRequest) -> GeneratedLens = |client| {
+"vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveReportRequest) -> WireJson = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.lens", input)?;
     let output = client.vault_weave_lens(&input)?;
-    crate::codec::lift_record("vault.weave.lens", &output)
+    crate::codec::encode("vault.weave.lens", &output)
 };
 "vault.weave.link.wrong" => fn vault_weave_link_wrong(&self, input: WeaveWrongLinkRequest) -> WeaveLinkCorrectionView = |client| {
     let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.link.wrong", input)?;
     let output = client.vault_weave_link_wrong(&input)?;
     crate::codec::lift_record("vault.weave.link.wrong", &output)
+};
+"vault.weave.owner.link.wrong" => fn vault_weave_owner_link_wrong(&self, input: WeaveWrongLinkRequest) -> WeaveLinkCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.owner.link.wrong", input)?;
+    let output = client.vault_weave_owner_link_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.owner.link.wrong", &output)
 };
 "vault.packs.put" => fn vault_packs_put(&self, input: PackPutRequest) -> PackPutReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackPutRequest = crate::codec::lower_record("vault.packs.put", input)?;
@@ -241,8 +246,8 @@ export_facade! {
     let output = client.vault_packs_setup_get(&input)?;
     crate::codec::lift_record("vault.packs.setup.get", &output)
 };
-"vault.packs.setup.answer" => fn vault_packs_setup_answer(&self, input: PackSetupAnswerRequest) -> PackSetupReceipt = |client| {
-    let input: oneiron::task_verb::sdk::PackSetupAnswerRequest = crate::codec::lower_record("vault.packs.setup.answer", input)?;
+"vault.packs.setup.answer" => fn vault_packs_setup_answer(&self, input: WireJson) -> PackSetupReceipt = |client| {
+    let input: oneiron::task_verb::sdk::PackSetupAnswerRequest = crate::codec::decode("vault.packs.setup.answer", &input)?;
     let output = client.vault_packs_setup_answer(&input)?;
     crate::codec::lift_record("vault.packs.setup.answer", &output)
 };
@@ -1206,6 +1211,16 @@ export_facade! {
     let output = client.vault_artifacts_body_fork_discard(&input)?;
     crate::codec::lift_record("vault.artifacts.body.fork.discard", &output)
 };
+"vault.artifacts.body.proposal.read" => fn vault_artifacts_body_proposal_read(&self, input: OfficeBodyProposalRequest) -> OfficeBodyProposal = |client| {
+    let input: oneiron::office_body::OfficeBodyProposalRequest = crate::codec::lower_record("vault.artifacts.body.proposal.read", input)?;
+    let output = client.vault_artifacts_body_proposal_read(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.proposal.read", &output)
+};
+"vault.artifacts.body.proposal.settle" => fn vault_artifacts_body_proposal_settle(&self, input: OfficeBodyProposalSettleRequest) -> OfficeBodyProposal = |client| {
+    let input: oneiron::office_body::OfficeBodyProposalSettleRequest = crate::codec::lower_record("vault.artifacts.body.proposal.settle", input)?;
+    let output = client.vault_artifacts_body_proposal_settle(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.proposal.settle", &output)
+};
 "vault.artifacts.body.export" => fn vault_artifacts_body_export(&self, input: OfficeBodyExportVerbRequest) -> OfficeBodyExportView = |client| {
     let input: oneiron::office_body::OfficeBodyExportVerbRequest = crate::codec::lower_record("vault.artifacts.body.export", input)?;
     let output = client.vault_artifacts_body_export(&input)?;
@@ -1240,6 +1255,11 @@ export_facade! {
     let input: oneiron::office_body::DeckOracleRequest = crate::codec::lower_record("vault.artifacts.body.deck.oracle", input)?;
     let output = client.vault_artifacts_body_deck_oracle(&input)?;
     crate::codec::lift_record("vault.artifacts.body.deck.oracle", &output)
+};
+"vault.artifacts.body.deck.preview" => fn vault_artifacts_body_deck_preview(&self, input: DeckPreviewRequest) -> DeckPreview = |client| {
+    let input: oneiron::office_body::DeckPreviewRequest = crate::codec::lower_record("vault.artifacts.body.deck.preview", input)?;
+    let output = client.vault_artifacts_body_deck_preview(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.deck.preview", &output)
 };
 "vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView = |client| {
     let input: oneiron::task_verb::sdk::AppendBlobVersionRequest = (artifact_ref, content, run_ref, occurred_at, learned_at).lower()?;
