@@ -245,13 +245,18 @@ impl Vault {
     /// For an unexecuted export-first `remove_owner` act, the export of what
     /// its target could read: every axis their Owner grant reads, at the
     /// export verb. Taken before the act's writer opens, as the export door
-    /// reads its own snapshot.
+    /// reads its own snapshot, and only once `executor` and the starter
+    /// stand as live Owners holding the act's verb and its window has
+    /// passed, so a refused caller builds nothing (FIX 3217); the writer
+    /// checks them again.
     pub(super) fn removal_export(
         &self,
+        executor: &AuthenticatedOwner,
         act_id: &str,
     ) -> Result<Option<(EntityId, Vec<ScopedRecord>)>> {
         let (target, mut reads) = {
             let txn = self.store.env.read_txn()?;
+            let actor = executor.revalidate_person_in_txn(self, &txn)?;
             let Some(act) = self.pending_authority_act_in_txn(&txn, act_id)? else {
                 return Ok(None);
             };
@@ -263,6 +268,14 @@ impl Vault {
             let plan: RemoveOwnerPlan = decode(&act.payload)?;
             if !plan.export_first {
                 return Ok(None);
+            }
+            super::check_vault(self, &txn, act.vault_id)?;
+            let now = self.store.clock.now_recorded_at();
+            self.act_executors_in_txn(&txn, &act, actor, now)?;
+            if now < act.deadline {
+                return Err(crate::error::Error::ConcurrentWrite(
+                    "authority act not completed",
+                ));
             }
             let target = EntityId::from_hex(&plan.target)?;
             let reads = self
