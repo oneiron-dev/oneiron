@@ -33,7 +33,10 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod connector_call_host;
+mod connector_call_settle;
 pub mod control_keys;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod credential_resume;
 mod decision_artifact;
 mod decision_graph;
 pub mod decision_host;

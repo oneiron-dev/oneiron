@@ -155,12 +155,11 @@ impl RefusalNote {
     }
 }
 
-/// Bound on queued refusals; the oldest goes first past it.
-const MAX_QUEUED_REFUSALS: usize = 1024;
-
 /// Refusals not yet in a hold log. The refusing transaction rolls back, so
-/// a refusal reaches its log through the next write that drains this
-/// ([`crate::Vault::flush_legal_hold_refusals`]). Never persisted.
+/// the door that owns it logs them in a short write of its own once that
+/// writer has ended, before it returns
+/// ([`Store::flush_legal_hold_refusals_settled`]). A note a failed log write
+/// put back waits here for the next flush. Never persisted.
 #[derive(Debug, Default)]
 pub(crate) struct LegalHoldRefusals(Mutex<Vec<RefusalNote>>);
 
@@ -171,18 +170,22 @@ impl LegalHoldRefusals {
         if queue.iter().any(|queued| queued.same(&note)) {
             return;
         }
-        if queue.len() >= MAX_QUEUED_REFUSALS {
-            queue.remove(0);
-        }
         queue.push(note);
     }
 
-    pub(crate) fn take(&self) -> Vec<RefusalNote> {
+    fn is_empty(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+    }
+
+    fn take(&self) -> Vec<RefusalNote> {
         std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Puts back refusals a failed flush did not write.
-    pub(crate) fn restore(&self, notes: Vec<RefusalNote>) {
+    fn restore(&self, notes: Vec<RefusalNote>) {
         for note in notes {
             self.note(note);
         }
@@ -396,6 +399,53 @@ impl Store {
         };
         Err(Error::InvalidConfig(refusal.to_owned()))
     }
+
+    /// Writes the queued refusals to their hold logs in one raw write of its
+    /// own, never through the group commit (whose return flushes here). Only
+    /// on a thread that holds no writer. A failed write puts them back.
+    /// Returns how many were written.
+    pub(crate) fn flush_legal_hold_refusals_now(&self) -> Result<u64> {
+        let notes = self.legal_hold_refusals.take();
+        if notes.is_empty() {
+            return Ok(0);
+        }
+        let hosted = hosts_bytes(self);
+        let written = self.env.write_txn().and_then(|mut txn| {
+            let written = flush_refusals_in_txn(self, &mut txn, &notes, hosted)?;
+            txn.commit()?;
+            Ok(written)
+        });
+        if written.is_err() {
+            self.legal_hold_refusals.restore(notes);
+        }
+        written
+    }
+
+    /// The door's flush, once the writer that refused has ended: its refusals
+    /// reach their logs before the door returns. A failed write leaves them
+    /// queued for the next flush and never replaces the door's own result.
+    /// A thread still holding a session segment permit leaves them queued
+    /// too: that permit is taken under the base writer, never before it.
+    pub(crate) fn flush_legal_hold_refusals_settled(&self) {
+        if self.legal_hold_refusals.is_empty() || crate::session_overlay::txn_segment_installed() {
+            return;
+        }
+        if let Err(error) = self.flush_legal_hold_refusals_now() {
+            tracing::warn!(
+                error = %error,
+                "legal hold refusals kept for the next flush"
+            );
+        }
+    }
+}
+
+/// Oneiron hosts this vault's bytes: Cloud, or our relay copy of a
+/// self-hosted vault.
+fn hosts_bytes(store: &Store) -> bool {
+    matches!(
+        store.privacy_posture,
+        crate::HostingPrivacyPosture::Hosted | crate::HostingPrivacyPosture::Relay
+    )
 }
 
 /// Writes queued refusals to their hold logs. A refused privacy erasure keeps
@@ -472,10 +522,7 @@ pub(crate) fn split_privacy_erase_in_txn(
     actor: &HoldActor,
 ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
     let now = store.clock.now_recorded_at();
-    let hosted = matches!(
-        store.privacy_posture,
-        crate::HostingPrivacyPosture::Hosted | crate::HostingPrivacyPosture::Relay
-    );
+    let hosted = hosts_bytes(store);
     let actor = actor.clone().privacy(true);
     let (mut erase, mut kept) = (Vec::new(), Vec::new());
     for record in records {
@@ -570,8 +617,9 @@ pub(crate) fn link_erase_in_txn(
     Ok(())
 }
 
-/// "Erase completed" (C4): the deletion receipt over `records` now has both
-/// `hard_purge_complete_at` and `sweep_complete_at`. Logs one event, with
+/// "Erase completed" (C4): the linked receipt pair over `records` is now
+/// complete, the deletion receipt's `hard_purge_complete_at` and its appended
+/// completion row's `sweep_complete_at` both written. Logs one event, with
 /// the receipt's `request_id`, for each hold an owner's confirm lifted or met
 /// on each record, then drops the link, so a retried sweep logs it once.
 pub(crate) fn note_erase_completed_in_txn(

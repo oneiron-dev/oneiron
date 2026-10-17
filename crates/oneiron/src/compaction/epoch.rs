@@ -6,6 +6,8 @@ use rmpv::Value;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -615,6 +617,31 @@ pub(super) fn mint_epoch_summary_guarded(
     // when it happened to be minted.
     let at = request.watermark.learned_at;
     let summary_id = vault.store.clock.entity_id()?;
+    // Rule A: the summary is concluded from the window it read: each message
+    // and its turn, then the request's sources, the first MAX_BIRTH_INPUTS of
+    // them in that order, over the rendered text it summarized.
+    let birth = {
+        let inputs: Vec<EntityId> = request
+            .window
+            .iter()
+            .flat_map(|message| [message.message_id, message.turn_id])
+            .chain(request.sources.iter().copied())
+            .take(MAX_BIRTH_INPUTS)
+            .collect();
+        let read: Vec<&[u8]> = request
+            .window
+            .iter()
+            .map(|message| message.content.as_bytes())
+            .collect();
+        RowBirth::written(
+            byline,
+            MadeByClass::Concluded,
+            "compaction.epoch",
+            &inputs,
+            &read,
+            at,
+        )
+    };
 
     let epoch = vault.with_write_txn_grouped(|wtxn| {
         landing(wtxn)?;
@@ -651,6 +678,7 @@ pub(super) fn mint_epoch_summary_guarded(
             at,
             &body,
         );
+        batch = batch.made_by(&summary_id, birth);
         // A source erased or withdrawn before this mint has already run its
         // invalidation, so the summary is born withdrawn, as it would be had
         // the erasure come after it: never indexed, never embedded, its row

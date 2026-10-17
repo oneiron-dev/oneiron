@@ -5,6 +5,7 @@
 
 use crate::Vault;
 use crate::connector_key::events::ConnectorEvent;
+use crate::delivery_window::DeliveryWindowResolvedLevel;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::surface_event::{SurfaceConnectorPayload, SurfaceCounterpartyStamp};
@@ -84,7 +85,11 @@ pub fn connector_reply_request(
         reply.occurred_at,
         OutboundDeliveryWindowDecision::DeliverNow,
     )
-    .channel_identity_ref(identity);
+    .channel_identity_ref(identity)
+    // An answer to an inbound message is a plain chat message on its own
+    // thread, not an interrupt: LINE's compatibility `send` included. The
+    // live delivery-window claims still decide at the door.
+    .delivery_window_resolved_level(DeliveryWindowResolvedLevel::PlainChat);
     if let SurfaceCounterpartyStamp::Known { counterparty_ref } = &origin.counterparty {
         request = request.counterparty_ref(counterparty_ref.clone());
     }

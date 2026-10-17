@@ -275,7 +275,9 @@ pub(super) fn board_parts(
             };
             rows.attach_people(people, &children);
             let you = oneiron::context_board::render_you_line(&forks, &rows.intents);
-            (rows.render(), you)
+            let mut tasks = rows.render();
+            tasks.pin_hook_tasks(&rows.intents, hook_pins);
+            (tasks, you)
         }
         None => (
             oneiron::context_board::TasksSection {
