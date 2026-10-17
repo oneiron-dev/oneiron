@@ -3,7 +3,9 @@
 //! Dreamer facets ride the nightly wake: the curator grades the Dreamer's own
 //! consolidations and applies what the owner approved, and the harness audit
 //! flags the Dreamer's tuning config for a retune. Neither deploys anything.
+pub mod agent_health;
 pub mod coach;
+pub mod coach_heal;
 mod curator;
 mod evaluation;
 pub mod honesty;
@@ -162,6 +164,9 @@ pub(crate) fn execute(
         }
         coach::COACH_LEARNING_SWEEP_FACET => {
             coach::run_learning_sweep(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        agent_health::COACH_AGENT_HEALTH_FACET => {
+            agent_health::run(ctx.vault, ctx.now_ms / 1000)?;
         }
         _ => return Err(invalid()),
     }

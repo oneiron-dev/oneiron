@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub use crate::dreamer_runner::maintenance::identity::MentionProvenance;
+
 /// Version for the intent field contract consumed by the later dispatcher.
 pub const OUTBOUND_INTENT_SCHEMA_VERSION: &str = "outbound.intent.v1";
 
@@ -28,6 +30,10 @@ pub struct OutboundIntent {
     pub trigger_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_ref: Option<String>,
+    /// The saved mention the target came from, when an agent named the
+    /// person (OF-123): dispatch refuses while that mention is unsettled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention: Option<MentionProvenance>,
 }
 
 impl OutboundIntent {
@@ -46,6 +52,7 @@ impl OutboundIntent {
             intent_source: trigger.source.as_str().to_owned(),
             trigger_ref: trigger.trigger_ref,
             job_ref: trigger.job_ref,
+            mention: draft.mention,
         }
     }
 }
@@ -61,6 +68,7 @@ pub struct OutboundIntentDraft {
     pub content_ref: Option<String>,
     pub idempotency_key: Option<String>,
     pub dedupe_key: Option<String>,
+    pub mention: Option<MentionProvenance>,
 }
 
 impl OutboundIntentDraft {
@@ -80,6 +88,7 @@ impl OutboundIntentDraft {
             content_ref: None,
             idempotency_key: None,
             dedupe_key: None,
+            mention: None,
         }
     }
 
@@ -106,6 +115,13 @@ impl OutboundIntentDraft {
     #[must_use]
     pub fn dedupe_key(mut self, dedupe_key: impl Into<String>) -> Self {
         self.dedupe_key = Some(dedupe_key.into());
+        self
+    }
+
+    /// The saved mention the target came from (OF-123 act-now guard).
+    #[must_use]
+    pub fn mention(mut self, mention: MentionProvenance) -> Self {
+        self.mention = Some(mention);
         self
     }
 }
