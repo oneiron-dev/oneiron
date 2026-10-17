@@ -35,7 +35,7 @@ pub const CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS: usize = 256;
 /// Stable serializer identity recorded in whole-vault export manifests.
 pub const WHOLE_VAULT_EXPORT_SERIALIZER: &str = "oneiron.whole_vault_export";
 /// Version of the whole-vault export serializer contract.
-pub const WHOLE_VAULT_EXPORT_SERIALIZER_VERSION: u16 = 1;
+pub const WHOLE_VAULT_EXPORT_SERIALIZER_VERSION: u16 = 2;
 
 #[derive(Debug, Clone)]
 pub struct SerializeConfig {

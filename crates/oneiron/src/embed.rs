@@ -26,9 +26,10 @@ pub use space::{
     KindSlotBindings, MediaRefused,
 };
 pub(crate) use space::{
-    TEXT_HASH_LEN, delete_media_vectors_in_txn, delete_text_media_vectors_in_txn,
-    embedding_space_in_txn, replay_media_vector_in_txn, search_media_space_in_txn,
-    stage_media_vector_in_txn,
+    TEXT_HASH_LEN, bind_kind_slot_in_txn, declare_embedding_space_in_txn,
+    delete_media_vectors_in_txn, delete_text_media_vectors_in_txn, embedding_space_in_txn,
+    embedding_spaces_in_txn, kind_slot_bindings_in_txn, replay_media_vector_in_txn,
+    search_media_space_in_txn, stage_media_vector_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use space::{

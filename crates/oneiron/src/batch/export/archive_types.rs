@@ -57,6 +57,12 @@ pub enum ArchiveRecordKind {
     /// ruling 2026-10-17: an export carries its keys, so a re-import keeps
     /// them). Exports to contacts and shares never carry one.
     SecretCustody,
+    /// One declared embedding space's descriptor (OF-370), only in a
+    /// whole-vault archive.
+    EmbeddingSpace,
+    /// One kind slot's binding, `{kind, space}` with a null `space` for an
+    /// unbound slot: a row per kind, only in a whole-vault archive.
+    SlotBinding,
 }
 
 impl ArchiveRecordKind {
@@ -73,6 +79,8 @@ impl ArchiveRecordKind {
             Self::Run => "records/run.jsonl",
             Self::ResultBody => "records/result_body.jsonl",
             Self::SecretCustody => "records/secret_custody.jsonl",
+            Self::EmbeddingSpace => "records/embedding_space.jsonl",
+            Self::SlotBinding => "records/slot_binding.jsonl",
         })
     }
 
