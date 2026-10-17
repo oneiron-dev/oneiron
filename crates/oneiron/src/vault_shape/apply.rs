@@ -85,15 +85,6 @@ pub enum ShapeApplier<'a> {
     Actor(EntityId),
 }
 
-impl ShapeApplier<'_> {
-    const fn actor(&self) -> EntityId {
-        match self {
-            Self::Owner(owner) => owner.actor(),
-            Self::Actor(actor) => *actor,
-        }
-    }
-}
-
 const fn open(state: &ShapeItemState) -> bool {
     matches!(state, ShapeItemState::Pending | ShapeItemState::Proposed)
 }
@@ -167,9 +158,11 @@ impl Vault {
         now: u64,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapeApplyReceipt> {
-        if let ShapeApplier::Owner(owner) = applier {
-            owner.revalidate(self)?;
-        }
+        // The owner's proof names the author; it must still hold.
+        let author = match applier {
+            ShapeApplier::Owner(owner) => owner.revalidate(self)?,
+            ShapeApplier::Actor(actor) => actor,
+        };
         let mut journal = if let Some(journal) = self.shape_apply(&request.plan.frontier)? {
             journal
         } else {
@@ -179,7 +172,6 @@ impl Vault {
                     "the vault has moved since this plan was read; plan again",
                 ));
             }
-            let author = applier.actor();
             let stored = self.put_shape_seed(author, &plan.seed, now)?;
             let journal = ShapeApplyReceipt {
                 frontier: plan.frontier,
