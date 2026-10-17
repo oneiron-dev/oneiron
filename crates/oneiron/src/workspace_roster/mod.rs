@@ -228,4 +228,5 @@ pub use join_consent::{
 pub use join_door::{
     ConsentAnswer, JoinDecisionView, JoinOutcome, rooms_consent_in_txn, rooms_join_in_txn,
 };
+pub(crate) use join_door::{files_roster_joins_in_txn, roster_invitee_in_txn};
 pub use join_receipt::{JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer};
