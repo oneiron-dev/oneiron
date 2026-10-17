@@ -38,29 +38,36 @@ pub(crate) struct EndpointFields<'a> {
     api_key_env: Option<&'a str>,
 }
 
-impl<'a> EndpointFields<'a> {
-    /// The primary endpoint's fields, from its section.
-    pub(crate) fn primary(config: &'a EndpointEmbedderConfig) -> oneiron::Result<Self> {
-        let required = |field: Option<&'a String>, name: &str| {
-            field.map(String::as_str).ok_or_else(|| {
-                oneiron::Error::InvalidConfig(format!("embedder.{name} is required"))
-            })
-        };
-        Ok(Self {
-            endpoint: required(config.endpoint.as_ref(), "endpoint")?,
-            model_key: required(config.model_key.as_ref(), "model_key")?,
-            api_key_env: config.api_key_env.as_deref(),
+/// A section that configures an endpoint: the primary's or a remote rung's.
+pub(crate) trait EndpointSection {
+    fn fields(&self) -> oneiron::Result<EndpointFields<'_>>;
+}
+
+impl EndpointSection for EndpointEmbedderConfig {
+    fn fields(&self) -> oneiron::Result<EndpointFields<'_>> {
+        let missing =
+            |name: &str| oneiron::Error::InvalidConfig(format!("embedder.{name} is required"));
+        Ok(EndpointFields {
+            endpoint: self
+                .endpoint
+                .as_deref()
+                .ok_or_else(|| missing("endpoint"))?,
+            model_key: self
+                .model_key
+                .as_deref()
+                .ok_or_else(|| missing("model_key"))?,
+            api_key_env: self.api_key_env.as_deref(),
         })
     }
 }
 
-impl<'a> From<&'a RemoteEmbedderConfig> for EndpointFields<'a> {
-    fn from(config: &'a RemoteEmbedderConfig) -> Self {
-        Self {
-            endpoint: &config.endpoint,
-            model_key: &config.model_key,
-            api_key_env: config.api_key_env.as_deref(),
-        }
+impl EndpointSection for RemoteEmbedderConfig {
+    fn fields(&self) -> oneiron::Result<EndpointFields<'_>> {
+        Ok(EndpointFields {
+            endpoint: &self.endpoint,
+            model_key: &self.model_key,
+            api_key_env: self.api_key_env.as_deref(),
+        })
     }
 }
 
@@ -74,24 +81,24 @@ pub(crate) struct AdmittedRequests {
 }
 
 impl AdmittedRequests {
-    /// The door for the endpoint `fields` names at `locality`, its rows
-    /// written to `receipts`, on a line with no limit.
+    /// The door for the endpoint `config` configures at `locality`, its
+    /// rows written to `receipts`, on a line with no limit.
     pub(crate) fn unmetered(
-        fields: impl Into<EndpointFields<'_>>,
+        config: &impl EndpointSection,
         locality: EmbedderLocality,
         receipts: Arc<dyn RunReceiptSink>,
     ) -> oneiron::Result<Self> {
-        Self::on_line(fields, locality, receipts, u64::MAX)
+        Self::on_line(config, locality, receipts, u64::MAX)
     }
 
     pub(super) fn on_line(
-        fields: impl Into<EndpointFields<'_>>,
+        config: &impl EndpointSection,
         locality: EmbedderLocality,
         receipts: Arc<dyn RunReceiptSink>,
         limit_units: u64,
     ) -> oneiron::Result<Self> {
         Ok(Self {
-            connector: connector(fields.into(), locality)?,
+            connector: connector(config.fields()?, locality)?,
             limit_units,
             receipts,
         })
@@ -109,7 +116,7 @@ pub(super) fn pay_primary(
     receipts: Arc<dyn RunReceiptSink>,
 ) -> oneiron::Result<()> {
     http.pay_through(Arc::new(AdmittedRequests::unmetered(
-        EndpointFields::primary(&config.endpoint)?,
+        &config.endpoint,
         http.locality(),
         receipts,
     )?));
