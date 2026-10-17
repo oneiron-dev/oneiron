@@ -513,15 +513,25 @@ class Oneiron:
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
         @property
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveItemVerbs": ...
     class _VaultWeaveLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
     class _VaultWeaveOwnerVerbs:
         @property
         def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs": ...
     class _VaultWeaveOwnerLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
+    class _VaultWeaveOwnerItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+    class _VaultWeaveItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
     class _VaultPacksVerbs:
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
