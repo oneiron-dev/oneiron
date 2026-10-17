@@ -1512,6 +1512,41 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
     Ok(items)
 }
 
+/// Every card in `txn`, concern first and newest first within a tone, as
+/// [`Vault::agent_health_cards_between`] orders them: the weave report reads
+/// them in its own snapshot (OF-568).
+pub(crate) fn agent_health_cards_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AgentHealthCard>> {
+    let mut cards: Vec<AgentHealthCard> = CARDS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, card)| card)
+        .collect();
+    cards.sort_by(|left, right| {
+        right
+            .tone
+            .impact()
+            .cmp(&left.tone.impact())
+            .then(right.updated_at.cmp(&left.updated_at))
+    });
+    Ok(cards)
+}
+
+/// One card by its `health:` handle in `txn`: a saved weave period rechecks
+/// the card it carries against the current one (OF-568).
+pub(crate) fn agent_health_card_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    card: &str,
+) -> Result<Option<AgentHealthCard>> {
+    let Some(key) = parse_card_ref(card) else {
+        return Ok(None);
+    };
+    CARDS.get(&vault.store, txn, &key)
+}
+
 /// What a card now says: the answer to a settle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConcernCardSummary {
