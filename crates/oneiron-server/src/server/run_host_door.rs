@@ -259,7 +259,9 @@ pub(crate) fn answer_as_agent(
     held: Option<HeldImage>,
 ) -> MemoryResult<(Value, Vec<EntityId>)> {
     let producers = ProducerRows::default();
-    let memory = agent_memory(server, actor, origin, invocation).listing_producers(&producers);
+    let memory = agent_memory(server, actor, origin, invocation)
+        .with_task_decisions(server.decision_host().task_decisions()?)
+        .listing_producers(&producers);
     let name = verb.as_str();
     let output = if served_by_host(verb) {
         verb_hook_boundary::row(&memory, name, input, |input| {
