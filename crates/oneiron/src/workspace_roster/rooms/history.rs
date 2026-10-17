@@ -2,7 +2,7 @@
 use super::*;
 use crate::store::Store;
 
-pub(super) const PAGE_LIMIT: usize = 256;
+pub(in crate::workspace_roster) const PAGE_LIMIT: usize = 256;
 
 /// One HISTORY row: its `(room, at, turn)` key and the turn id.
 type HistoryRow = Result<((EntityId, u64, EntityId), EntityId)>;
@@ -46,7 +46,9 @@ pub(in crate::workspace_roster) fn thread_turns_in(
 
 /// Deletes every auxiliary row a room owns, paged in [`PAGE_LIMIT`]-sized
 /// chunks so no single collect-then-delete pass has to hold an unbounded
-/// number of keys for a room with a long history.
+/// number of keys for a room with a long history: its history, host pin and
+/// participation facts, every join receipt and offer card filed for it, and
+/// their room-keyed indexes.
 pub(in crate::workspace_roster) fn delete_room_metadata(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -101,7 +103,30 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
         }
     }
     super::hosting::delete_room_host_pin(store, txn, room)?;
-    super::participation::delete_room_facts(store, txn, room)
+    super::participation::delete_room_facts(store, txn, room)?;
+    crate::workspace_roster::join_receipt::delete_room_joins(store, txn, room)?;
+    super::offers::delete_room_offers(store, txn, room)?;
+    Ok(())
+}
+
+/// [`delete_room_metadata`] for a CONVERSATION whose record leaves, run by
+/// the shared erase doors (`deletion/derived_rows.rs`) before its body goes;
+/// a no-op for any other entity. A project's home room reaches it from
+/// `deindex_project_room` as well; the sweep is idempotent.
+pub(crate) fn erase_room_side_rows(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(());
+    };
+    let is_room = crate::batch::EntityMetadataHeader::parse(&raw)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION);
+    if is_room {
+        delete_room_metadata(store, txn, *id)?;
+    }
+    Ok(())
 }
 impl Memory<'_> {
     /// The turns among `turns` this reader may read. Membership admits none

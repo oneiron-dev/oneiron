@@ -4,12 +4,15 @@
 //! committed. A Ready receipt is the evidence later work in the room
 //! re-proves; it is never a standing grant.
 
+use std::ops::Bound;
+
 use serde::{Deserialize, Serialize};
 
 use super::join_consent::{ConsentPart, ConsentSet, JoinDecision, JoinRequest, JoinSubject};
 use crate::agent_dispatch::SpendScopeId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::store::Store;
 use crate::{EntityId, Vault};
 
 /// One join intent's receipt. Key: its join ref.
@@ -97,6 +100,36 @@ pub(super) fn ready_key(room: EntityId, subject: &JoinSubject, branch: Option<En
         subject.id().to_hex(),
         branch.map_or_else(|| "-".to_owned(), |branch| branch.to_hex())
     )
+}
+
+/// Deletes every join receipt a request for `room` filed, whatever its
+/// decision, then the room's Ready index. JOINS is keyed by join ref, not by
+/// room, so the sweep reads the whole table in keyset pages.
+pub(super) fn delete_room_joins(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+) -> Result<()> {
+    let page_limit = super::rooms::PAGE_LIMIT;
+    let mut after: Option<String> = None;
+    loop {
+        let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
+        let page: Vec<(String, JoinReceipt)> = JOINS
+            .iter_range(store, txn, start, Bound::Unbounded)?
+            .take(page_limit)
+            .collect::<Result<_>>()?;
+        for (join_ref, receipt) in &page {
+            if receipt.request.room == room {
+                JOINS.delete(store, txn, join_ref)?;
+            }
+        }
+        if page.len() < page_limit {
+            break;
+        }
+        after = page.last().map(|(join_ref, _)| join_ref.clone());
+    }
+    READY.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
+    Ok(())
 }
 
 /// One party's answer, as recorded.
