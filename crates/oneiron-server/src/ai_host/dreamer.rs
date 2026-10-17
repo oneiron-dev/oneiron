@@ -14,10 +14,10 @@ use std::sync::Arc;
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
 use oneiron::dreamer_consolidation::{
-    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, ResidentDreamModel,
-    RoleBackend, RoleBackends, TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel,
-    WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, resident_of_dream_input, run_resident_dream,
-    run_task_realize, run_weave_lens,
+    CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE,
+    DREAMER_ROLES, ResidentDreamModel, RoleBackend, RoleBackends, TASK_REALIZE_UNLENT_PARK_REASON,
+    TaskRealizeModel, WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, resident_of_dream_input,
+    run_resident_dream, run_task_realize, run_weave_lens, settle_parked_conflicts,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::llm::manifest::ModelRole;
@@ -45,6 +45,14 @@ use crate::models::{ModelRuntime, RoleRefusal, RoleRoute, RunBackend, Seat};
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
 /// Base id of the per-pass durable budget rows (`dreamer:p<n>`).
 const BUDGET_ID: &str = "dreamer";
+/// The most parked conflicts one home-timer pass asks the ladder to settle.
+const CONFLICT_SETTLE_LIMIT: usize = 8;
+/// What one pass's settlement asks may spend between them.
+const CONFLICT_SETTLE_BUDGET: std::time::Duration = std::time::Duration::from_secs(60);
+/// How the host words a settlement ask.
+const CONFLICT_SETTLE_WORDING: &str = "These claims about one subject contradict each other. \
+Keep the one member that is true and let it supersede the rest, hold both if both can stand, \
+dismiss if they do not really conflict, or escalate if you cannot tell.";
 
 /// A running Dreamer: its stop handle, its hint producer and its thread.
 pub(super) struct DreamerHost {
@@ -236,6 +244,7 @@ async fn supervise(
             question_timer,
             serve,
             admission,
+            settle_after: None,
         };
         let lifecycle = SessionLifecycleDriver::new(
             &vault,
@@ -362,6 +371,9 @@ struct ObservedFactory {
     /// responder's model calls block on.
     serve: tokio::runtime::Handle,
     admission: PassAdmission,
+    /// The last parked conflict a settlement pass asked about: the next
+    /// starts after it.
+    settle_after: Option<oneiron::EntityId>,
 }
 
 /// A pass's admission, held while the pass runs.
@@ -613,10 +625,10 @@ impl PassExecutorFactory for ObservedFactory {
         }
     }
 
-    /// The standing-question pump, once serve has bound the server, under
-    /// the host's gate. Its model rungs block on the server's runtime, so it
-    /// runs on a thread of its own, off this pass's runtime; the pass waits
-    /// for it.
+    /// The standing-question pump and the parked-conflict settlement, once
+    /// serve has bound the server, under the host's gate. Their model rungs
+    /// block on the server's runtime, so they run on a thread of their own,
+    /// off this pass's runtime; the pass waits for them.
     fn run_home_timer(
         &mut self,
         _vault: &Vault,
@@ -629,16 +641,72 @@ impl PassExecutorFactory for ObservedFactory {
         let Some(_pass) = admit(&self.admission) else {
             return Ok(());
         };
-        std::thread::scope(|scope| {
+        let dreamer = self.actor;
+        let after = self.settle_after;
+        let joined = std::thread::scope(|scope| {
             scope
-                .spawn(|| crate::decision_graph::pump_due(&server, now_secs))
+                .spawn(|| {
+                    let pumped = crate::decision_graph::pump_due(&server, now_secs);
+                    (pumped, settle_parked(&server, dreamer, after, now_secs))
+                })
                 .join()
-        })
-        .unwrap_or_else(|_| {
-            Err(oneiron::Error::InvalidConfig(
+        });
+        let Ok((pumped, settled_to)) = joined else {
+            return Err(oneiron::Error::InvalidConfig(
                 "standing question pump panicked".into(),
-            ))
-        })
+            ));
+        };
+        self.settle_after = settled_to;
+        pumped
+    }
+}
+
+/// Asks the ladder to settle the parked conflicts the Dreamer's own review
+/// Grant covers (OF-023), on the home node only: `pump_due`'s home gate is
+/// its own. With no Grant the listing is empty and nothing is asked; a
+/// conflict the ladder leaves stays for the owner, and the next pass starts
+/// after the last one asked: the cursor this returns. A failure logs by kind
+/// only, since its text can quote the vault.
+fn settle_parked(
+    server: &crate::server::SyncServer,
+    dreamer: WriteActor,
+    after: Option<oneiron::EntityId>,
+    now_secs: u64,
+) -> Option<oneiron::EntityId> {
+    let vault = server.vault();
+    match crate::decision_graph::at_home(vault, now_secs) {
+        Ok(true) => {}
+        Ok(false) => return after,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "parked conflicts wait: the home check failed");
+            return after;
+        }
+    }
+    let host = server.decision_host();
+    let deadline = oneiron::retrieval_depth::RetrievalDeadline::hard(
+        std::time::Instant::now(),
+        CONFLICT_SETTLE_BUDGET,
+    );
+    let decisions = ConflictSettleDecisions {
+        ladder: host.ladder().ladder(),
+        principal: dreamer.entity_ref(),
+        dial: CONFLICT_SETTLE_DIAL,
+        bands: host.bands(),
+        wording: CONFLICT_SETTLE_WORDING.to_owned(),
+        deadline: &deadline,
+    };
+    match settle_parked_conflicts(
+        &vault.memory(dreamer.entity_ref(), dreamer.actor_class()),
+        &decisions,
+        after,
+        CONFLICT_SETTLE_LIMIT,
+        now_secs.saturating_mul(1000),
+    ) {
+        Ok(pass) => pass.last.or(after),
+        Err(error) => {
+            tracing::warn!(code = %error.code, "parked conflicts wait for the next pass");
+            after
+        }
     }
 }
 

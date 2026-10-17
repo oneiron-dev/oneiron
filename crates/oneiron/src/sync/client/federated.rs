@@ -365,9 +365,10 @@ impl SyncClient {
 
 impl SyncClient {
     /// Imports an update a federation peer sent under `grant`: holds the
-    /// facet stamps it sent ahead of their rows, imports it, then releases
-    /// each stamp whose row that import's entity door birthed from the peer's
-    /// bytes.
+    /// facet stamps it sent ahead of their rows, records the rows whose door
+    /// judges a peer's row apart from this vault's own, imports it, then
+    /// releases each stamp whose row that import's entity door birthed from
+    /// the peer's bytes.
     pub(super) fn import_peer_update(
         &mut self,
         window_key: &str,
@@ -378,12 +379,12 @@ impl SyncClient {
         admitted
             .hold_from_peer(&self.vault, key, grant)
             .map_err(map_federated_admission_err)?;
+        crate::sync::ingest::record_peer_rows(&self.vault, window_key, admitted.peer_rows())
+            .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
         let born = watch_births(&vault, admitted.births(), || {
-            crate::sync::ingest::peer_import(&vault, || {
-                self.import_accepted_window_update(window_key, &window, admitted.bytes())
-            })
+            self.import_accepted_window_update(window_key, &window, admitted.bytes())
         })?;
         admitted
             .keep_born_with(&self.vault)

@@ -356,6 +356,7 @@ pub fn prepare_tool_call(
     super::tool_schema::validate(
         schema,
         &serde_json::to_value(&body).map_err(|_| invalid_schema())?,
+        &call.tool,
     )?;
     let mut headers = BTreeMap::new();
     let mut requirements = Vec::new();
@@ -456,10 +457,7 @@ pub(super) fn invalid_schema() -> Error {
 fn reject_unresolved(value: &Value) -> Result<()> {
     match value {
         Value::Object(map) => {
-            if ["$ref", "allOf", "anyOf", "oneOf"]
-                .iter()
-                .any(|key| map.contains_key(*key))
-            {
+            if ["$ref", "allOf"].iter().any(|key| map.contains_key(*key)) {
                 return Err(invalid_schema());
             }
             for child in map.values() {
