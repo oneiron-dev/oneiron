@@ -131,6 +131,9 @@ const PACK: &str = PROJECT_PACK;
 /// The root project's entity id, seeded once at first boot. Key: ().
 const ROOT: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::PROJECT_ROOT);
 
+/// The seeded row the root is born led by, before any workspace names its house.
+const ROOT_SEED_LEADER: &str = "sys.team_lead";
+
 /// Index from a project's derived home room back to the project that owns it. Key: id16 (derived
 /// home-room id).
 pub(super) const ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
@@ -1119,7 +1122,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
         register_pack_kind(vault, revision::PROJECT_REVISION_SHORT_ID_PREFIX)?;
     }
     let (leader, _) = vault
-        .get_seeded_agent_definition_by_logical_id("sys.team_lead")?
+        .get_seeded_agent_definition_by_logical_id(ROOT_SEED_LEADER)?
         .ok_or_else(invalid)?;
     vault.with_write_txn_grouped(|txn| {
         if ROOT.contains(&vault.store, txn, &())? {

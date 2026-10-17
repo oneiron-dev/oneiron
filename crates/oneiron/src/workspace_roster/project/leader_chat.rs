@@ -3,7 +3,7 @@ use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject};
 use crate::conversation::{ConversationBody, ConversationKind};
 use crate::error::RecordError;
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::write_envelope::WriteActor;
 
 const CHAT: &[u8] = b"project.leader_chat.v1/";
@@ -28,7 +28,8 @@ pub const LEADER_CHAT_RULE_PREDICATE: &str = "project.leader_chat";
 pub struct LeaderChat {
     pub projects: [EntityId; 2],
     pub actors: [EntityId; 2],
-    pub persons: [EntityId; 2],
+    /// Each speaker's PERSON, or `None` for an AGENT_DEF that speaks as itself.
+    pub persons: [Option<EntityId>; 2],
 }
 
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
@@ -211,23 +212,27 @@ pub(super) fn lineage(
     }
     Ok(result)
 }
+/// The PERSON `actor` speaks as: itself, or the PERSON it is anchored to.
+/// An institutional leader, an AGENT_DEF anchored to an ORG (the house mind,
+/// the ORG given a pen) or to no one, speaks as itself (`None`); the ORG is
+/// never expanded to its humans.
 fn speaker_person(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     at: u64,
-) -> Result<EntityId> {
-    let person = if vault.get_entity_type_in_txn(txn, &actor)? == Some(ENTITY_TYPE_PERSON) {
-        actor
-    } else {
-        crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &actor, at)?
-            .ok_or_else(denied)?
-            .subject_ref
-    };
-    if vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON) {
-        return Err(denied());
+) -> Result<Option<EntityId>> {
+    let kind = vault.get_entity_type_in_txn(txn, &actor)?;
+    if kind == Some(ENTITY_TYPE_PERSON) {
+        return Ok(Some(actor));
     }
-    Ok(person)
+    match crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &actor, at)? {
+        Some(anchor) if anchor.subject_kind == crate::subject_model::SubjectKind::Person => {
+            Ok(Some(anchor.subject_ref))
+        }
+        _ if kind == Some(ENTITY_TYPE_AGENT_DEF) => Ok(None),
+        _ => Err(denied()),
+    }
 }
 fn ensure_leaders(vault: &Vault, txn: &heed::RoTxn<'_>, chat: &LeaderChat, at: u64) -> Result<()> {
     for i in 0..2 {
@@ -238,7 +243,9 @@ fn ensure_leaders(vault: &Vault, txn: &heed::RoTxn<'_>, chat: &LeaderChat, at: u
             return Err(denied());
         }
     }
-    if chat.actors[0] == chat.actors[1] || chat.persons[0] == chat.persons[1] {
+    if chat.actors[0] == chat.actors[1]
+        || chat.persons[0].is_some_and(|person| chat.persons[1] == Some(person))
+    {
         return Err(denied());
     }
     Ok(())
@@ -279,9 +286,9 @@ fn check_rule(vault: &Vault, txn: &heed::RoTxn<'_>, chat: &LeaderChat, at: u64) 
 }
 
 /// Whether the leaders of `projects` may open a direct chat now: the chat
-/// their current leaders form, each as the person they speak as now, passes
-/// the leader and rule checks [`Vault::open_leader_chat`] runs before it
-/// writes, read in `txn` alone.
+/// their current leaders form, each as the PERSON it speaks as now when it
+/// speaks as one, passes the leader and rule checks
+/// [`Vault::open_leader_chat`] runs before it writes, read in `txn` alone.
 pub(crate) fn chat_allowed(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -336,7 +343,7 @@ impl Vault {
             check_rule(self, txn, &chat, now)?;
             let mut body = ConversationBody {
                 kind: ConversationKind::Direct,
-                member_ids: chat.persons.to_vec(),
+                member_ids: chat.persons.into_iter().flatten().collect(),
                 ..Default::default()
             };
             let bytes = encode(&chat)?;
@@ -505,7 +512,7 @@ pub(crate) fn admit_turn(
         || body
             .member_ids
             .iter()
-            .any(|person| !chat.persons.contains(person))
+            .any(|person| !chat.persons.contains(&Some(*person)))
         || has_unattributed_message
     {
         return Err(denied());
@@ -516,7 +523,7 @@ pub(crate) fn admit_turn(
         .iter()
         .position(|candidate| *candidate == actor)
         .ok_or_else(denied)?;
-    if !body.member_ids.contains(&chat.persons[slot]) {
+    if chat.persons[slot].is_some_and(|person| !body.member_ids.contains(&person)) {
         return Err(denied());
     }
     Ok(Some(chat.projects[slot]))
