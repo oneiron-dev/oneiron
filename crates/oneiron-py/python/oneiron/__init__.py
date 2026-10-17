@@ -632,11 +632,14 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def launch(self, spec):
-            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_fanout_launch(json.dumps(spec))))
         def resume(self, spec):
             """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
             return json.loads(_translate(lambda: self._client.vault_fanout_resume(json.dumps(spec))))
+        def resume_as(self, spec):
+            """A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_resume_as(json.dumps(spec))))
         def ack(self, spec):
             """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
             return json.loads(_translate(lambda: self._client.vault_fanout_ack(json.dumps(spec))))

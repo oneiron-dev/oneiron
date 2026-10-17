@@ -69,8 +69,8 @@ pub(in crate::sync) use self::reassert_drain::{
     enqueue_tombstone_reassert_marker, enqueue_tombstone_reassert_marker_in_txn,
 };
 pub(in crate::sync) use self::remat_markers::{
-    clear_remat_marker_in_txn, clear_replay_remat_marker_in_txn, set_remat_marker_in_txn,
-    set_replay_remat_marker, set_replay_remat_marker_in_txn,
+    clear_remat_marker_in_txn, clear_replay_remat_marker_in_txn, drain_remat_markers_of,
+    set_remat_marker_in_txn, set_replay_remat_marker, set_replay_remat_marker_in_txn,
 };
 pub(crate) use self::remat_markers::{pending_remat_entities, unproven_remat_marker_exists_in_txn};
 // QUARANTINE_PREFIX, QUARANTINE_BATCH_DROPS_KEY and reassert_marker_key keep
