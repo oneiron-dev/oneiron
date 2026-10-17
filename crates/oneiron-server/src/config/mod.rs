@@ -15,6 +15,7 @@ mod limits;
 mod lookup;
 pub mod merge;
 pub mod models;
+pub mod native_mail;
 pub mod oneironer;
 mod recall;
 pub mod remote_embedder;
@@ -44,6 +45,7 @@ pub use merge::{
     resolve_serve_config_with_sources,
 };
 pub use models::ModelsConfig;
+pub use native_mail::NativeMailConfig;
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
 };

@@ -190,6 +190,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_PEER_HANDLE, CONTENT),
     (&t::TASK_PROJECT_TRADEOFF_ASK, CONTENT),
     (&t::TASK_PROJECT_TRADEOFF_TURN, CONTENT),
+    (&t::TASK_REPORT_JOURNAL, CONTENT),
     (&t::TASK_SYMBOL_LEASE, CONTENT),
     (&t::TASK_ASK_WAIT, CONTENT),
     (&t::TASK_FANOUT_RUN, CONTENT),

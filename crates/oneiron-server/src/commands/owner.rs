@@ -27,7 +27,9 @@ use crate::owner::embedder::EmbedderReport;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
 
+mod recovery_kit;
 mod vault_key;
+pub use self::recovery_kit::recovery_kit;
 pub use self::vault_key::vault_key;
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {

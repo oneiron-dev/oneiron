@@ -305,6 +305,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
     }
+    if let Some(native_mail) = &config.native_mail {
+        native_mail.validate()?;
+    }
     if let Some(embedding) = &config.embedding {
         embedding.validate()?;
     }
@@ -520,6 +523,7 @@ struct FileServeConfig {
     browser: Option<super::BrowserConfig>,
     desktop: Option<super::DesktopConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
+    native_mail: Option<super::NativeMailConfig>,
     embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
@@ -579,6 +583,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             browser: value.browser,
             desktop: value.desktop,
             gpu: value.gpu,
+            native_mail: value.native_mail,
             embedding: value.embedding,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -643,6 +648,8 @@ struct PartialServeConfig {
     desktop: Option<super::DesktopConfig>,
     /// `[gpu]` is file-only, as `[browser]` is.
     gpu: Option<crate::runtime::GpuPoolConfig>,
+    /// `[native_mail]` is file-only, as `[browser]` is.
+    native_mail: Option<super::NativeMailConfig>,
     /// `[embedding]` is file-only, as `[models]` is.
     embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -715,6 +722,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
+            .field("native_mail", &self.native_mail)
             .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -890,6 +898,9 @@ impl PartialServeConfig {
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
         }
+        if let Some(value) = self.native_mail {
+            resolved.native_mail = Some(value);
+        }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
         }
@@ -970,6 +981,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             browser: None,
             desktop: None,
             gpu: None,
+            native_mail: None,
             embedding: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,

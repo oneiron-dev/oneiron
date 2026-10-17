@@ -108,6 +108,8 @@ pub(super) const FIELD_SHEET_ANSWERS: &str = "sheet_answers";
 
 pub(super) const FIELD_REASON: &str = "reason";
 
+pub(super) const FIELD_WITHDRAWN_UNITS: &str = "withdrawn_units";
+
 pub(super) const KEY_PPTX_MINTS: &str = SETTLEMENT_RECORD_KEYS[13];
 
 pub(super) const KEY_PPTX_REVIEW_IDENTITIES: &str = SETTLEMENT_RECORD_KEYS[14];

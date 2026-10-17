@@ -796,6 +796,47 @@ to trust a backup on, and a backup's own head is never trusted. Where no vault i
 configured path, the restore makes it there, unlocks its key the same way and wraps it to this
 install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
 
+## The world recovery kit
+
+The world kit carries your recovery root: the key every private world's key is also wrapped to.
+It is a fixed 2 of 3: any two pieces open it, and one piece alone, or the passphrase alone, opens
+nothing. No piece ever lives on the host. Run these on a stopped vault:
+
+```sh
+oneiron recovery-kit issue --home paper --home password-manager --home passphrase --out /Volumes/KEY/kit
+oneiron recovery-kit confirm --piece /Volumes/KEY/kit/piece-1.txt --piece /Volumes/KEY/kit/piece-2.txt
+oneiron recovery-kit status
+oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
+```
+
+`issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
+`file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
+`security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
+recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`. Nothing
+is published yet: the kit is pending. Put each piece where its home says, then `confirm` with two
+of them, or with one and the passphrase. That re-entry is the proof you saved them. Confirm makes
+the kit's root live on this machine and marks every earlier kit replaced. When this machine's
+keystore opens the vault key, confirm also seals it to the root as the escrow wrap `world-kit`. A
+replaced kit's pieces still open their own old root;
+replacing a kit does not revoke it. `this-machine` is refused until a keystore slot can hold a
+piece.
+
+`status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
+private world's state. `covered` means only that the world's current key has a wrap to the pinned
+root. A running server shows the same at `GET /v1/owner/recovery-kit`; issue, confirm and restore
+run only from the CLI, so no piece crosses HTTP.
+
+`restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
+world's settings. A kit opened with one piece and the passphrase is not verified on its own:
+pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
+
+On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
+`status` prints:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id <hex> --piece piece-1.txt --piece piece-2.txt --trust signer.json
+```
+
 ## Contact disclosure
 
 A contact sees only what you cleared it for. An agent or the companion can only offer you a
