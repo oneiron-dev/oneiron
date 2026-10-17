@@ -12,6 +12,8 @@ in these stubs.
 import os
 from typing import Any, Literal, NotRequired, TypedDict, overload
 
+from . import facade_types as Facade
+
 __all__ = ["Oneiron", "OneironError"]
 
 WitnessAuthor = Literal["user", "companion", "system"]
@@ -141,6 +143,7 @@ class MemoryPack(TypedDict):
 
 class FacadeReceipt(TypedDict):
     receipt_ref: str
+    kind: str
     outcome: str
     created_at: int
     reason_codes: list[str]
@@ -148,6 +151,7 @@ class FacadeReceipt(TypedDict):
     actor_ref: str | None
     content_kind: str
     claim_ref: str | None
+    fields: NotRequired[dict[str, str]]
 
 
 class KeyValueAddress(TypedDict):
@@ -230,6 +234,22 @@ class TaskAskPersonEvidence(TypedDict):
     at: int
     source: str | None
 
+# OF-181: a host-rendered lens card's event and close. These keep the wire's
+# camelCase keys: they are the server route's bodies, not snake_case DTOs.
+LensFrameEventRequest = TypedDict(
+    "LensFrameEventRequest",
+    {"event": Facade.GeneratedUiActionEvent, "idempotencyKey": str},
+)
+LensFrameLocalReply = TypedDict("LensFrameLocalReply", {"$state": Facade.GeneratedUiStateSnapshot})
+LensFrameToolReply = TypedDict(
+    "LensFrameToolReply",
+    {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
+)
+LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply
+
+class CloseLensFrameReply(TypedDict):
+    closed: bool
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -263,6 +283,10 @@ class Oneiron:
     def last_receipt_ref(self) -> str | None: ...
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
         """Resends a PENDING_ASK call under its invocation; the reply is the verb's shared wire JSON."""
+    def lens_frame_event(self, card_id: str, request: LensFrameEventRequest) -> LensFrameEventReply:
+        """Sends one event on a lens card the connected server rendered; embedded raises BAD_REQUEST."""
+    def close_lens_frame(self, card_id: str) -> CloseLensFrameReply:
+        """Closes a lens card the connected server rendered and frees its frame."""
 # BEGIN GENERATED FACADE VERBS
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -475,9 +499,11 @@ class Oneiron:
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
     class _VaultFanoutVerbs:
         def launch(self, spec: Facade.FanoutLaunchRequest) -> Facade.FanoutLaunchView | None:
-            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."""
         def resume(self, spec: Facade.FanoutResumeRequest) -> Facade.FanoutLaunchView:
             """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
+        def resume_as(self, spec: Facade.FanoutResumeRequest) -> Facade.FanoutLaunchView:
+            """A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember."""
         def ack(self, spec: Facade.FanoutAckRequest) -> Facade.FanoutLaunchView:
             """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
     class _VaultClaimsVerbs:
@@ -493,7 +519,7 @@ class Oneiron:
         def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
             """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
     class _VaultReceiptsVerbs:
-        def __call__(self, limit: int = 100) -> list[FacadeReceipt]: ...
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
     class _VaultImagesVerbs:
@@ -527,15 +553,25 @@ class Oneiron:
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
         @property
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveItemVerbs": ...
     class _VaultWeaveLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
     class _VaultWeaveOwnerVerbs:
         @property
         def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs": ...
     class _VaultWeaveOwnerLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
+    class _VaultWeaveOwnerItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+    class _VaultWeaveItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
     class _VaultPacksVerbs:
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
@@ -742,14 +778,14 @@ class Oneiron:
         def import_(self, request: Facade.OfficeBodyImportRequest) -> Facade.OfficeBodyHead: ...
         def head(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.OfficeBodyHead | None: ...
         def read(self, request: Facade.OfficeBodyReadRequest) -> Facade.OfficeBodyView: ...
-        def commits(self, request: Facade.OfficeBodyArtifactRequest) -> list[Facade.TextCommitReceipt]: ...
+        def commits(self, request: Facade.OfficeBodyCommitsRequest) -> list[Facade.OfficeBodyCommitView]: ...
         def edit(self, request: Facade.OfficeBodyEditRequest) -> Facade.OfficeBodyEdit: ...
         @property
         def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs": ...
         @property
         def proposal(self) -> "Oneiron._VaultArtifactsBodyProposalVerbs": ...
         def export(self, request: Facade.OfficeBodyExportVerbRequest) -> Facade.OfficeBodyExportView: ...
-        def preview(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.XlsxPreview: ...
+        def preview(self, request: Facade.OfficeBodyPreviewRequest) -> Facade.XlsxPreview: ...
         @property
         def deck(self) -> "Oneiron._VaultArtifactsBodyDeckVerbs": ...
     class _VaultArtifactsBodyForkVerbs:
@@ -969,7 +1005,7 @@ class Oneiron:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""
         def poll(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoJob:
-            """Where a video job stands; a finished one answers with its clip, once."""
+            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
         def cancel(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoCancelled:
             """Stops a video job at its provider."""
     class _ConnectorVerbs:

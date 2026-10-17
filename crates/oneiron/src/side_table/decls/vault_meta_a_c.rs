@@ -84,14 +84,24 @@ side_tables! {
     /// Pointer to the current default (winning) authoring strategy pin and its promotion receipt.
     /// Key: ().
     AUTOREASON_BEAM_DEFAULT: VaultMeta b"authoring/default-beam-winner" LegacyJson;
-    /// Content hash of the current head of the local authority-checkpoint chain. Key: ().
-    AUTHORITY_CHECKPOINT_HEAD: VaultMeta b"authority.checkpoint.head.v1" Raw;
-    /// One durable, quorum-signed authority checkpoint (hand-rolled MessagePack map), keyed by its
-    /// content hash. Key: hash32.
-    AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
+    /// The id of the newest checkpoint v2 image of this vault's local chain (OF-469). Key: ().
+    AUTHORITY_CHECKPOINT_V2_HEAD: VaultMeta b"authority.checkpoint.head.v2" Raw;
+    /// One checkpoint v2 image's canonical bytes (domain, then named MessagePack), keyed by its
+    /// unsigned id (OF-469). Key: hash32.
+    AUTHORITY_CHECKPOINT_V2_IMAGE: VaultMeta b"authority.checkpoint.v2." Raw;
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;
+    /// One root's attestation of one authority checkpoint v2 image (OF-469): both signatures and
+    /// the root's key binding, with the policy digest it was made under. Key: hash32 (image id) +
+    /// root key (suite byte + key bytes).
+    AUTHORITY_CHECKPOINT_ATTESTATION: VaultMeta b"authority:checkpoint-attestation:v1:" Named;
+    /// The newest checkpoint v2 image whose stored attestations reached this vault's own root
+    /// policy, and that policy's digest (OF-469). Key: ().
+    AUTHORITY_CHECKPOINT_ATTESTED_HEAD: VaultMeta b"authority:checkpoint-attested-head:v1" Named;
+    /// One eligible root's certified checkpoint SLH-DSA key: the root's classical signature over
+    /// this install's hash-based key (OF-469). Key: root key (suite byte + key bytes).
+    AUTHORITY_CHECKPOINT_KEY_BINDING: VaultMeta b"authority:checkpoint-key-binding:v1:" Named;
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
@@ -465,6 +475,9 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// The place a removed epoch summary held in its session's count: the highest removed epoch
+    /// and the turn it ended at, no words (OF-013). Key: id16(session).
+    COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
     /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
     CONNECTOR_GRANT_SLATE_BINDING: VaultMeta b"connector.grant_slate.binding.v1/" Raw;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.

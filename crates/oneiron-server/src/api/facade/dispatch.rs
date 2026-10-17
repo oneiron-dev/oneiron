@@ -614,6 +614,26 @@ async fn vault_fanout_resume(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_fanout_resume_as(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.fanout.resume_as")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.fanout.resume_as", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.fanout.resume_as", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_fanout_resume_as(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_fanout_ack(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -1164,6 +1184,50 @@ async fn vault_weave_owner_link_wrong(
     let hooks = facade_hooks_pre(server, call, "vault.weave.owner.link.wrong", value).await?;
     let output = facade_output(
         super::host_doors::vault_weave_owner_link_wrong(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_weave_item_wrong(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.item.wrong")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.item.wrong", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.weave.item.wrong", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_weave_item_wrong(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_weave_owner_item_wrong(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.owner.item.wrong")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.owner.item.wrong", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.weave.owner.item.wrong", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_weave_owner_item_wrong(
             server,
             auth,
             facade_input(hooks.args.clone())?,
@@ -6096,6 +6160,7 @@ pub(crate) async fn call_verb(
         "tasks.wave" => tasks_wave(server, call, input).await,
         "vault.fanout.launch" => vault_fanout_launch(server, call, input).await,
         "vault.fanout.resume" => vault_fanout_resume(server, call, input).await,
+        "vault.fanout.resume_as" => vault_fanout_resume_as(server, call, input).await,
         "vault.fanout.ack" => vault_fanout_ack(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
         "vault.witness" => vault_witness(server, call, input).await,
@@ -6121,6 +6186,8 @@ pub(crate) async fn call_verb(
         "vault.weave.lens" => vault_weave_lens(server, call, input).await,
         "vault.weave.link.wrong" => vault_weave_link_wrong(server, call, input).await,
         "vault.weave.owner.link.wrong" => vault_weave_owner_link_wrong(server, call, input).await,
+        "vault.weave.item.wrong" => vault_weave_item_wrong(server, call, input).await,
+        "vault.weave.owner.item.wrong" => vault_weave_owner_item_wrong(server, call, input).await,
         "vault.packs.put" => vault_packs_put(server, call, input).await,
         "vault.packs.setup.prepare" => vault_packs_setup_prepare(server, call, input).await,
         "vault.packs.setup.get" => vault_packs_setup_get(server, call, input).await,

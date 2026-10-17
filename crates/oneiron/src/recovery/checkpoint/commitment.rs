@@ -293,3 +293,64 @@ pub(super) fn verify(
         .map_err(|_| refused("the checkpoint's signature does not verify"))?;
     Ok(commitment)
 }
+
+impl Vault {
+    /// Signs `transcript` with this install's checkpoint SLH-DSA-SHA2-256s key
+    /// alone: a single-suite `BatchCheckpoint` record whose signer is the
+    /// install id. It is the hash-based half of an authority checkpoint
+    /// attestation (OF-469, checkpoint v2); the caller makes the classical half
+    /// with the root's own key. Returns the install id, the SLH-DSA public key
+    /// and the record's bytes.
+    pub(crate) fn sign_authority_image(
+        &self,
+        transcript: &[u8],
+    ) -> Result<([u8; 16], Vec<u8>, Vec<u8>)> {
+        let keys = self.checkpoint_signing_keys()?;
+        let record = sign(
+            SuiteId::SIG_SLHDSA_SHA2_256S_V1,
+            SigPurpose::BatchCheckpoint,
+            EPOCH,
+            &keys.install,
+            transcript,
+            &[(SLHDSA_KEY_ID, &keys.slhdsa)],
+            &mut SysRng,
+        )
+        .map_err(|_| refused("signing the authority checkpoint failed"))?;
+        Ok((
+            keys.install,
+            keys.slhdsa.verifying_key().to_bytes(),
+            record.to_bytes(),
+        ))
+    }
+
+    /// Verifies a record [`Self::sign_authority_image`] made over
+    /// `transcript`: install `install`'s signature under the SLH-DSA public key
+    /// `slhdsa`, at crypto epoch `min_epoch` or later. The caller names the key;
+    /// the record never does.
+    pub(crate) fn verify_authority_image(
+        install: &[u8; 16],
+        slhdsa: &[u8],
+        min_epoch: u64,
+        transcript: &[u8],
+        record: &[u8],
+    ) -> Result<()> {
+        if record.len() as u64 > MAX_SIGNED_FRAME {
+            return Err(codec());
+        }
+        let key = VerifyingKey::from_bytes(SuiteId::SIG_SLHDSA_SHA2_256S_V1, slhdsa)
+            .map_err(|_| codec())?;
+        SignatureRecord::parse(record)
+            .map_err(|_| codec())?
+            .verify(
+                transcript,
+                &VerifyPolicy {
+                    suite: SuiteId::SIG_SLHDSA_SHA2_256S_V1,
+                    purpose: SigPurpose::BatchCheckpoint,
+                    signer: install,
+                    min_epoch,
+                },
+                &[(SLHDSA_KEY_ID, &key)],
+            )
+            .map_err(|_| refused("the authority checkpoint's hash-based signature does not verify"))
+    }
+}

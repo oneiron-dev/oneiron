@@ -74,7 +74,7 @@ pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::mark_cloud_node;
+pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
@@ -82,6 +82,7 @@ pub(crate) use raw::{InjectedRuns, RawInference};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{rerank_request, rerank_scores};
+pub(crate) use responses_socket::set_responses_store;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
@@ -402,6 +403,7 @@ impl ModelRuntime {
                 }
                 None
             });
+        router.name_aliases(&config.aliases);
         Self {
             seats,
             router: (!router.is_empty()).then(|| Arc::new(router)),

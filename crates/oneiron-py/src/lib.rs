@@ -243,6 +243,35 @@ impl NativeClient {
         encode(&output)
     }
 
+    /// Sends one event on a lens card the connected server rendered
+    /// (OF-181). `request_json` is the route's `{event, idempotencyKey}`
+    /// body, camelCase as the wire spells it; the reply is its wire JSON,
+    /// `{"$state"}` or `{outcome, readReceipt}`. The route, the credential
+    /// and the embedded refusal all stay in
+    /// `oneiron_remote::OneironClient::lens_frame_event`.
+    fn lens_frame_event(
+        &self,
+        py: Python<'_>,
+        card_id: &str,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let request: oneiron_remote::LensFrameEventRequest =
+            decode(request_json, "lens frame event")?;
+        let output = py
+            .detach(|| self.inner.lens_frame_event(card_id, &request))
+            .map_err(raise)?;
+        encode(&output)
+    }
+
+    /// Closes a lens card the connected server rendered and frees its frame
+    /// (OF-181); the reply is the route's `{closed}`.
+    fn close_lens_frame(&self, py: Python<'_>, card_id: &str) -> PyResult<String> {
+        let output = py
+            .detach(|| self.inner.close_lens_frame(card_id))
+            .map_err(raise)?;
+        encode(&output)
+    }
+
     // BEGIN GENERATED AGENT VERBS
     fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "report")?;
@@ -433,6 +462,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_fanout_resume_as(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.resume_as")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.resume_as", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_fanout_ack(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.fanout.ack")?;
         let output = py
@@ -519,11 +555,17 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (limit=None))]
-    fn vault_receipts(&self, py: Python<'_>, limit: Option<usize>) -> PyResult<String> {
+    #[pyo3(signature = (limit=None, kinds=None))]
+    fn vault_receipts(
+        &self,
+        py: Python<'_>,
+        limit: Option<usize>,
+        kinds: Option<Vec<String>>,
+    ) -> PyResult<String> {
         let limit = limit.unwrap_or(100);
+        let kinds = kinds.unwrap_or_default();
         let output = py
-            .detach(|| self.inner.vault_receipts(limit))
+            .detach(|| self.inner.vault_receipts(limit, &kinds))
             .map_err(raise)?;
         encode(&output)
     }
@@ -645,6 +687,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.weave.owner.link.wrong")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.weave.owner.link.wrong", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_item_wrong(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.item.wrong")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.item.wrong", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_owner_item_wrong(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.owner.item.wrong")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.owner.item.wrong", input))
             .map_err(raise)?;
         encode(&output)
     }

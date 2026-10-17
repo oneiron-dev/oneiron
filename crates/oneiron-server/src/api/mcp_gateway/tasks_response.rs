@@ -764,6 +764,7 @@ fn mcp_agent_verb_input(
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.launch" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.resume" => a.spec.clone().ok_or_else(invalid),
+        "vault.fanout.resume_as" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.ack" => a.spec.clone().ok_or_else(invalid),
         "tasks.update" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
@@ -794,6 +795,8 @@ fn mcp_agent_verb_input(
         "vault.weave.lens" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.link.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.owner.link.wrong" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.item.wrong" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.owner.item.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.put" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.setup.prepare" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.setup.get" => a.spec.clone().ok_or_else(invalid),
@@ -1251,6 +1254,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.fanout.resume" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.fanout.resume_as" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.fanout.ack" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1321,6 +1327,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.owner.link.wrong" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.item.wrong" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.owner.item.wrong" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.packs.put" => {
@@ -2486,6 +2498,19 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.fanout.resume_as" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.fanout.resume_as", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::FanoutResumeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_fanout_resume_as(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.fanout.ack" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.fanout.ack", &input)
@@ -2754,6 +2779,32 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 crate::api::facade::host_doors::vault_weave_owner_link_wrong(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.item.wrong" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.item.wrong", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveWrongItemRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_weave_item_wrong(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.owner.item.wrong" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.owner.item.wrong", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveWrongItemRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_weave_owner_item_wrong(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -4791,7 +4842,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.artifacts.body.commits" => {
-            let input: oneiron::office_body::OfficeBodyArtifactRequest =
+            let input: oneiron::office_body::OfficeBodyCommitsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_body_commits(&memory, input)
                 .map_err(mcp_facade_error)?;
@@ -4873,7 +4924,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.artifacts.body.preview" => {
-            let input: oneiron::office_body::OfficeBodyArtifactRequest =
+            let input: oneiron::office_body::OfficeBodyPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_body_preview(&memory, input)
                 .map_err(mcp_facade_error)?;

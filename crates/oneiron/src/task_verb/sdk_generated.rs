@@ -152,6 +152,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.fanout.resume_as",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutResumeRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.ack",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutAckRequest,
@@ -255,6 +261,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.weave.owner.link.wrong",
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
+                ),
+            ),
+            (
+                "vault.weave.item.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongItemRequest>(
+                ),
+            ),
+            (
+                "vault.weave.owner.item.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongItemRequest>(
                 ),
             ),
             (
@@ -1380,7 +1396,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.artifacts.body.commits",
                 crate::code_run::vault_read::request_schema::<
-                    crate::office_body::OfficeBodyArtifactRequest,
+                    crate::office_body::OfficeBodyCommitsRequest,
                 >(),
             ),
             (
@@ -1440,7 +1456,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.artifacts.body.preview",
                 crate::code_run::vault_read::request_schema::<
-                    crate::office_body::OfficeBodyArtifactRequest,
+                    crate::office_body::OfficeBodyPreviewRequest,
                 >(),
             ),
             (
@@ -1843,6 +1859,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.fanout.resume_as" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.fanout.ack" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2002,6 +2025,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.owner.link.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.owner.item.wrong" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3618,6 +3655,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
         }
+        "vault.fanout.resume_as" => {
+            let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
+        }
         "vault.fanout.ack" => {
             let _input: crate::task_verb::sdk::FanoutAckRequest = decode(value.clone())?;
         }
@@ -3705,6 +3745,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.weave.owner.link.wrong" => {
             let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
+        }
+        "vault.weave.item.wrong" => {
+            let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
+        }
+        "vault.weave.owner.item.wrong" => {
+            let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
         }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
@@ -4419,7 +4465,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::office_body::OfficeBodyReadRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.commits" => {
-            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+            let _input: crate::office_body::OfficeBodyCommitsRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.edit" => {
             let _input: crate::office_body::OfficeBodyEditRequest = decode(value.clone())?;
@@ -4450,7 +4496,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::office_body::OfficeBodyExportVerbRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.preview" => {
-            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+            let _input: crate::office_body::OfficeBodyPreviewRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.deck.review" => {
             let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
@@ -4560,6 +4606,7 @@ pub fn invoke(
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
+        "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
@@ -4592,6 +4639,10 @@ pub fn invoke(
         "vault.weave.link.wrong" => encode(vault_weave_link_wrong(memory, decode(value)?)?),
         "vault.weave.owner.link.wrong" => {
             encode(vault_weave_owner_link_wrong(memory, decode(value)?)?)
+        }
+        "vault.weave.item.wrong" => encode(vault_weave_item_wrong(memory, decode(value)?)?),
+        "vault.weave.owner.item.wrong" => {
+            encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
@@ -5352,6 +5403,12 @@ pub fn vault_fanout_resume(
 ) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
     crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)
 }
+pub fn vault_fanout_resume_as(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutResumeRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)
+}
 pub fn vault_fanout_ack(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::FanoutAckRequest,
@@ -5527,6 +5584,25 @@ pub fn vault_weave_owner_link_wrong(
 ) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
     memory.weave_owner_wrong_link(
         &memory.embedded_owner("vault.weave.owner.link.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongItemRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    memory.weave_wrong_item(
+        None,
+        &memory.embedded_owner("vault.weave.item.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_owner_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongItemRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    memory.weave_owner_wrong_item(
+        &memory.embedded_owner("vault.weave.owner.item.wrong")?,
         &input,
     )
 }
@@ -7304,8 +7380,8 @@ pub fn vault_artifacts_body_read(
 }
 pub fn vault_artifacts_body_commits(
     memory: &Memory<'_>,
-    input: crate::office_body::OfficeBodyArtifactRequest,
-) -> MemoryResult<Vec<crate::provenance::text_commit::TextCommitReceipt>> {
+    input: crate::office_body::OfficeBodyCommitsRequest,
+) -> MemoryResult<Vec<crate::office_body::OfficeBodyCommitView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.artifacts.body.commits",
@@ -7443,7 +7519,7 @@ pub fn vault_artifacts_body_export(
 }
 pub fn vault_artifacts_body_preview(
     memory: &Memory<'_>,
-    input: crate::office_body::OfficeBodyArtifactRequest,
+    input: crate::office_body::OfficeBodyPreviewRequest,
 ) -> MemoryResult<crate::office_body::XlsxPreview> {
     crate::gate::record_references::admit_row_references(
         memory,

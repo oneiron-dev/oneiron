@@ -2,6 +2,7 @@ mod conflict;
 mod conflict_value;
 mod document;
 mod git;
+mod lift;
 pub mod mount;
 mod oplog;
 pub mod proposal;

@@ -213,10 +213,11 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
             write_facet: None,
         },
     )?;
-    Ok(oneiron::authority::format_pairing_link(
+    Ok(oneiron::authority::format_pinned_pairing_link(
         &origin,
         &link.code,
         &owner.to_hex(),
+        link.pin.as_ref(),
     ))
 }
 
@@ -520,8 +521,12 @@ fn mint_paired_credential(
     )?;
     let key = SigningKey::generate(&mut rand_core::OsRng);
     let binding_key = key.verifying_key().to_bytes();
-    let transcript =
-        oneiron::authority::pairing_binding_transcript(&link.code, &binding_key, principal)?;
+    let transcript = oneiron::authority::pairing_binding_transcript_pinned(
+        &link.code,
+        &binding_key,
+        principal,
+        link.pin.as_ref(),
+    )?;
     let slip = vault.redeem_pairing_link(
         issuer,
         &link.code,
@@ -582,7 +587,12 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
     let (origin, link) = api::create_pairing_link(&args.url, credential, body)?;
     println!(
         "{}",
-        oneiron::authority::format_pairing_link(&origin, &link.code, &args.principal_ref)
+        oneiron::authority::format_pinned_pairing_link(
+            &origin,
+            &link.code,
+            &args.principal_ref,
+            link.pin.as_ref(),
+        )
     );
     eprintln!(
         "the pairing link expires at unix second {}",

@@ -124,6 +124,9 @@ impl OneironClient {
                 "vault.fanout.resume" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::FanoutLaunchView,
                 >(client, verb, &input),
+                "vault.fanout.resume_as" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FanoutLaunchView,
+                >(client, verb, &input),
                 "vault.fanout.ack" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::FanoutLaunchView,
                 >(client, verb, &input),
@@ -202,6 +205,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.weave.owner.link.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveLinkCorrectionView,
+                >(client, verb, &input),
+                "vault.weave.item.wrong" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveItemCorrectionView,
+                >(client, verb, &input),
+                "vault.weave.owner.item.wrong" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveItemCorrectionView,
                 >(client, verb, &input),
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
@@ -777,7 +786,7 @@ impl OneironClient {
                     oneiron::office_body::OfficeBodyView,
                 >(client, verb, &input),
                 "vault.artifacts.body.commits" => remote_agent_verb_output::<
-                    Vec<oneiron::provenance::text_commit::TextCommitReceipt>,
+                    Vec<oneiron::office_body::OfficeBodyCommitView>,
                 >(client, verb, &input),
                 "vault.artifacts.body.edit" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyEdit,
@@ -1228,6 +1237,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.fanout.resume", value)
     }
+    pub fn vault_fanout_resume_as(
+        &self,
+        input: &oneiron::task_verb::sdk::FanoutResumeRequest,
+    ) -> Result<oneiron::task_verb::sdk::FanoutLaunchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.fanout.resume_as", value)
+    }
     pub fn vault_fanout_ack(
         &self,
         input: &oneiron::task_verb::sdk::FanoutAckRequest,
@@ -1356,14 +1377,16 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.export", value)
     }
-    /// Lists governance receipts, newest first.
+    /// Lists governance receipts, newest first: the gate decision ledger, or
+    /// the receipts of the named kinds.
     pub fn vault_receipts(
         &self,
         limit: usize,
+        kinds: &[String],
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
         let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
             limit: Some(limit),
-            ..Default::default()
+            kinds: kinds.to_vec(),
         };
         oneiron::memory::caps::check_limit(
             input
@@ -1575,6 +1598,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.weave.owner.link.wrong", value)
+    }
+    pub fn vault_weave_item_wrong(
+        &self,
+        input: &oneiron::claim::WeaveWrongItemRequest,
+    ) -> Result<oneiron::claim::WeaveItemCorrectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.item.wrong", value)
+    }
+    pub fn vault_weave_owner_item_wrong(
+        &self,
+        input: &oneiron::claim::WeaveWrongItemRequest,
+    ) -> Result<oneiron::claim::WeaveItemCorrectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.owner.item.wrong", value)
     }
     pub fn vault_packs_put(
         &self,
@@ -3894,11 +3941,11 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.body.read", value)
     }
-    /// Every commit receipt of a live body, in commit order.
+    /// Every commit receipt of a live body, in commit order, or one actor's.
     pub fn vault_artifacts_body_commits(
         &self,
-        input: &oneiron::office_body::OfficeBodyArtifactRequest,
-    ) -> Result<Vec<oneiron::provenance::text_commit::TextCommitReceipt>, MemoryError> {
+        input: &oneiron::office_body::OfficeBodyCommitsRequest,
+    ) -> Result<Vec<oneiron::office_body::OfficeBodyCommitView>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4027,7 +4074,7 @@ impl OneironClient {
     /// The workbook an XLSX export would land now, recalculated.
     pub fn vault_artifacts_body_preview(
         &self,
-        input: &oneiron::office_body::OfficeBodyArtifactRequest,
+        input: &oneiron::office_body::OfficeBodyPreviewRequest,
     ) -> Result<oneiron::office_body::XlsxPreview, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
