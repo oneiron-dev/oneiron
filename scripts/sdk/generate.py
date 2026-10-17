@@ -60,8 +60,9 @@ for row in ROWS:
     # takes effect at once and needs write capability.
     if row.get('proposes') and row['scope'] != 'Write': raise ValueError(f'{row["name"]}: only a Write row proposes')
     # ARCH-0026 RD-26: `lands_turn` marks a write that lands a conversation
-    # turn, so every served door (the HTTP facade and the MCP dispatch) wakes
-    # the Dreamer's turn producer after it.
+    # turn, so every served door (the HTTP facade and the MCP dispatch, a host
+    # door's too) wakes the Dreamer's turn producer after it. A host door that
+    # lands its turn itself leaves the flag off.
     if row.get('lands_turn') and row['scope'] != 'Write': raise ValueError(f'{row["name"]}: only a Write row lands a turn')
     if row.get('lands_turn') and row.get('context') == 'board': raise ValueError(f'{row["name"]}: a board verb lands no turn')
     # `host_door` marks a row only a server's own state answers (the owner's
@@ -1068,16 +1069,19 @@ def facade_dispatch(facade_rows):
             # A host door answers from the server's own state, outside any
             # room turn, under the credential the call presented. It opens its
             # own handles, so no list here names the rows it read, unless the
-            # door lists them itself (`host_door_lists`).
+            # door lists them itself (`host_door_lists`). A flagged one wakes
+            # the turn producer after it, as its MCP arm does.
+            lands = r.get('lands_turn')
+            landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
             door = f'super::host_doors::{method}(server, auth, {"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await'
             answer = (f'''let (output, listed) = {door};
-                let output = facade_output(output?)?;
+                let output = facade_output(output?)?;{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(listed) }})''' if r.get('host_door_lists') else
-                      f'''let output = facade_output({door}?)?;
+                      f'''let output = facade_output({door}?)?;{landed}
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
             dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
                 {record_scope_guard(r)}
-                facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(auth)?;" if r.get("host_door_caller") else ""}
+                facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(auth)?;" if lands else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
