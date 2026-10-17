@@ -76,7 +76,8 @@ impl AttemptQueue<'_> {
                 .placement
                 .as_ref()
                 .and_then(|old| old.worker.as_deref());
-        if worker_moved && record.state == AttemptState::Leased {
+        let fenced = worker_moved && record.state == AttemptState::Leased;
+        if fenced {
             record.state = AttemptState::Queued;
             record.lease_owner = None;
             record.scheduled_at = None;
@@ -101,6 +102,14 @@ impl AttemptQueue<'_> {
             .put(&mut txn, record.id.as_bytes(), &encoded)?;
         txn.commit()?;
         self.store.notify_attempt_observers();
+        // Committed: the step the fenced lease was running stops (FIX 600).
+        if fenced {
+            crate::engine_executor::stop_attempt_step(
+                self.vault,
+                record.id,
+                record.attempt_count - 1,
+            );
+        }
         Ok(InterveneOutcome {
             effect: AttemptInterventionEffect::Redirected,
             record,

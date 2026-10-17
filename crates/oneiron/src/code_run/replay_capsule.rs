@@ -285,7 +285,7 @@ pub(crate) fn capture_step(vault: &Vault, capture: &StepCapture<'_>) {
         }),
         Ok(None) => {}
         Err(error) => {
-            tracing::warn!(kind = ?error.kind(), "a step replay capsule was not captured")
+            tracing::warn!(kind = ?error.kind(), "a step replay capsule was not captured");
         }
     }
 }

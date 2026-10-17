@@ -164,6 +164,9 @@ pub struct Vault {
     /// The callable skill invocations running on this handle, each with the
     /// token an owner's suspension cancels it by (FIX 600). In memory only.
     pub(crate) skill_invocations: crate::skill::SkillInvocations,
+    /// The step loops leased attempts run on this handle, each under the
+    /// root token a hard queue control stops it by (FIX 600). In memory only.
+    pub(crate) attempt_cancels: crate::engine_executor::AttemptCancels,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

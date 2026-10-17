@@ -197,6 +197,10 @@ impl AttemptQueue<'_> {
         let outcome = self.force_cancel_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        // Committed: the step its lease was running stops (FIX 600).
+        if let ForceCancelOutcome::Cancelled(record) = &outcome {
+            crate::engine_executor::stop_attempt_step(self.vault, record.id, record.attempt_count);
+        }
         Ok(outcome)
     }
 
