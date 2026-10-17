@@ -20,6 +20,11 @@ impl AgentDispatcher<'_> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
+        // OF-541: a plan seats one AGENT_DEF; a saved workflow's leaves are
+        // its own composition, so a planned spawn names an agent.
+        if spawn.plan.is_some() {
+            return Err(invalid("a spawn plan seats an agent, not a workflow"));
+        }
         let spawn = AgentSpawnContext {
             context_spec: spawn.context_spec.map(normalize_context_spec),
             ..spawn

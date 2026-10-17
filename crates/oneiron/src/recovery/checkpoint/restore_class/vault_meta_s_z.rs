@@ -53,6 +53,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_WAKE_POLICY, LIVE),
     (&t::EDIT_DISTANCE_MINER_K, LIVE),
     (&t::INBOX_REVIEW_DIAL, LIVE),
+    (&t::MODEL_OWNER_FALLBACK, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_ENABLED, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT, LIVE),
     (&t::SKILL_RELIABILITY_FLOOR, LIVE),
@@ -74,6 +75,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
     (&t::SKILL_CALLABLE_GATE, CONTENT),
+    // A restore cannot refund a spent exploration slice or re-open a trial's
+    // exposure: trials, their routed runs and the slice ledger stand as the
+    // live vault holds them.
+    (&t::SKILL_EXPLORATION_ROUTE, LIVE),
+    (&t::SKILL_EXPLORATION_SLICE, LIVE),
+    (&t::SKILL_EXPLORATION_TARGET, LIVE),
+    (&t::SKILL_EXPLORATION_TRIAL, LIVE),
     (&t::SKILL_RESIDENT_LOADED_SKILL, CONTENT),
     (&t::SKILL_RESIDENT_OWNER, CONTENT),
     (&t::SKILL_RESIDENT_RECEIPT, CONTENT),
@@ -121,6 +129,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_OPTIMIZE_GOAL, CONTENT),
     (&t::SKILL_OPTIMIZE_LIVE_AXES, CONTENT),
     (&t::SKILL_OPTIMIZE_ORIGIN_MARKER, CONTENT),
+    (&t::SKILL_OPTIMIZE_PREFLIGHT, CONTENT),
     (&t::SKILL_OPTIMIZE_PROJECT_GOAL, CONTENT),
     (&t::SKILL_OPTIMIZE_PROJECT_GOAL_DISMISSED, CONTENT),
     (&t::SKILL_OPTIMIZE_PROJECT_GOAL_PROPOSAL, CONTENT),
