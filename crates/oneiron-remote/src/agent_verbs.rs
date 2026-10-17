@@ -141,6 +141,9 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "tasks.accept" => remote_agent_verb_output::<oneiron::task_verb::TaskCallReceipt>(
+                    client, verb, &input,
+                ),
                 "vault.witness" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
                     client, verb, &input,
                 ),
@@ -1332,6 +1335,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.update", value)
+    }
+    pub fn tasks_accept(
+        &self,
+        input: &oneiron::task_verb::TaskAccept,
+    ) -> Result<oneiron::task_verb::TaskCallReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.accept", value)
     }
     /// Witnesses one conversational turn.
     ///

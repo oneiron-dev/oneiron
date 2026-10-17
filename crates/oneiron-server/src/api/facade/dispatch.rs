@@ -732,6 +732,34 @@ async fn tasks_update(
     .await
     .map_err(|_| FacadeApiError::from(super::host_doors::internal("tasks.update")))?
 }
+async fn tasks_accept(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "tasks.accept",
+        oneiron::memory::RoomTurnHandle::serves("tasks.accept"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.accept",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_witness(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -3983,19 +4011,18 @@ async fn vault_projects_confirm(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "vault.projects.confirm")?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.projects.confirm",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    oneiron::task_verb::sdk::validate_input("vault.projects.confirm", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.projects.confirm", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_projects_confirm(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: Some(listed),
+    })
 }
 async fn vault_projects_roster_write(
     server: &Arc<SyncServer>,
@@ -6429,6 +6456,7 @@ pub(crate) async fn call_verb(
         "vault.fanout.resume_as" => vault_fanout_resume_as(server, call, input).await,
         "vault.fanout.ack" => vault_fanout_ack(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
+        "tasks.accept" => tasks_accept(server, call, input).await,
         "vault.witness" => vault_witness(server, call, input).await,
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
         "vault.recall" => vault_recall(server, call, input).await,

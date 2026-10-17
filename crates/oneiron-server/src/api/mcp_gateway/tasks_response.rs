@@ -86,7 +86,8 @@ fn mcp_describe_result(
             "describe of one task returned the TASKS section",
         )),
         description @ (oneiron::task_verb::TaskDescription::SelfCard { .. }
-        | oneiron::task_verb::TaskDescription::VaultCard { .. }) => {
+        | oneiron::task_verb::TaskDescription::VaultCard { .. }
+        | oneiron::task_verb::TaskDescription::Status { .. }) => {
             let value = serde_json::to_value(description).map_err(|_| {
                 McpGatewayError::new(
                     -32603,
@@ -749,6 +750,12 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.frame_epoch {
                 map.insert("frame_epoch".to_owned(), json!(value));
             }
+            if let Some(value) = &a.handle {
+                map.insert("handle".to_owned(), json!(value));
+            }
+            if let Some(value) = &a.after {
+                map.insert("after".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.create" => {
@@ -763,6 +770,15 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.assignee {
                 map.insert("assignee".to_owned(), json!(value));
             }
+            if let Some(value) = &a.intent_key {
+                map.insert("intent_key".to_owned(), json!(value));
+            }
+            if let Some(value) = &a.brief {
+                map.insert("brief".to_owned(), json!(value));
+            }
+            if let Some(value) = &a.ttl {
+                map.insert("ttl".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
@@ -771,6 +787,14 @@ fn mcp_agent_verb_input(
         "vault.fanout.resume_as" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.ack" => a.spec.clone().ok_or_else(invalid),
         "tasks.update" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.task_ref.as_deref() != map.get("task_ref").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
+        "tasks.accept" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
             let map = input.as_object_mut().ok_or_else(invalid)?;
             if a.task_ref.as_deref() != map.get("task_ref").and_then(Value::as_str) {
@@ -1256,6 +1280,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("frame_epoch") {
                 arguments.insert("frame_epoch".to_owned(), value.clone());
             }
+            if let Some(value) = input.get("handle") {
+                arguments.insert("handle".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("after") {
+                arguments.insert("after".to_owned(), value.clone());
+            }
         }
         "tasks.create" => {
             if let Some(value) = input.get("spec") {
@@ -1266,6 +1296,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("assignee") {
                 arguments.insert("assignee".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("intent_key") {
+                arguments.insert("intent_key".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("brief") {
+                arguments.insert("brief".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("ttl") {
+                arguments.insert("ttl".to_owned(), value.clone());
             }
         }
         "tasks.wave" => {
@@ -1284,6 +1323,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.update" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("task_ref") {
+                arguments.insert("task_ref".to_owned(), value.clone());
+            }
+        }
+        "tasks.accept" => {
             arguments.insert("spec".to_owned(), input.clone());
             if let Some(value) = input.get("task_ref") {
                 arguments.insert("task_ref".to_owned(), value.clone());
@@ -2500,19 +2545,19 @@ async fn execute_agent_verb_row(
                 })
                 .await;
             }
-            if input.task_ref.is_none() && !input.self_target && !input.vault {
+            if input.task_ref.is_none()
+                && input.handle.is_none()
+                && input.after.is_none()
+                && !input.self_target
+                && !input.vault
+            {
                 // The section is narrowed to this credential before its
                 // render cap, so its counts are the credential's rows alone.
                 let rows = memory.describe_rows().map_err(mcp_facade_error)?;
                 let (value, source) = mcp_tasks_section(server, actor, rows, served)?;
                 return Ok((value, source, McpCarrierPolicy::Drain, None));
             }
-            served.extend(
-                input
-                    .task_ref
-                    .as_deref()
-                    .and_then(|id| oneiron::EntityId::from_hex(id).ok()),
-            );
+            served.extend(oneiron::task_verb::sdk::describe_named_rows(&input));
             let output =
                 oneiron::task_verb::sdk::describe(&memory, input).map_err(mcp_facade_error)?;
             let (value, source) = mcp_describe_result(output)?;
@@ -2599,6 +2644,15 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed, on a refusal too.
             served.extend(listed);
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.accept" => {
+            let input: oneiron::task_verb::TaskAccept =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.task_ref]);
+            let output =
+                oneiron::task_verb::sdk::tasks_accept(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -4287,10 +4341,16 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.projects.confirm" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.projects.confirm", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::workspace_roster::ProjectCardConfirmRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_projects_confirm(&memory, input)
-                .map_err(mcp_facade_error)?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_projects_confirm(server, auth, input).await;
+            // Derived from the rows its reads listed.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
