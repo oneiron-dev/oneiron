@@ -18497,6 +18497,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/coach_learning.rs",
+     "purpose": "The Coach's own record (ARCH-0066 #coach: \"calibration, meta-learning\"; ARCH-0053 #training-offers): each…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/coach_repair.rs",
      "purpose": "The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418)",
      "surface": {
@@ -18652,7 +18664,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 11,
+      "mod": 12,
       "re-export": 4
      }
     },
@@ -51908,7 +51920,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52911,7 +52923,7 @@
    },
    "over_bar": 162,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3203,
+   "source_files": 3204,
    "test_files": 903
   },
   "oneiron-android": {
@@ -63547,7 +63559,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer.rs",
@@ -71838,7 +71850,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 47,
+   "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 584,
    "test_files": 182
