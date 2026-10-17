@@ -18,12 +18,15 @@ mod state;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::claim::ScopedReadActorKey;
 pub use crate::error::VerbHookStop;
+use crate::memory::MemoryResult;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
+pub use state::{InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait};
 
 /// One logical verb's id, minted once where the call enters and passed
 /// across transport wrappers and internal dispatch (review fix M7).
@@ -91,14 +94,26 @@ pub struct VerbCall {
     pub scope: Option<String>,
     pub board_epoch: Option<u64>,
     pub domain: VerbDomain,
+    /// The caller's scoped-read key: its proof, room turn and locality. A
+    /// hook reads through it, capped by its grant. `None` for a host's own
+    /// call, which reads as its actor.
+    pub reader: Option<ScopedReadActorKey>,
 }
 
 impl VerbCall {
     /// The call of `verb` on `memory`: its actor and class, the invocation
-    /// its host bound or a fresh one.
-    #[must_use]
-    pub fn for_memory(memory: &crate::Memory<'_>, verb: &str, domain: VerbDomain) -> Self {
-        Self {
+    /// its host bound or a fresh one, and the handle's read key when a hook
+    /// may run on `verb`.
+    ///
+    /// # Errors
+    ///
+    /// When a hook may run and the handle's read key does not build.
+    pub fn for_memory(
+        memory: &crate::Memory<'_>,
+        verb: &str,
+        domain: VerbDomain,
+    ) -> MemoryResult<Self> {
+        Ok(Self {
             verb: verb.to_owned(),
             invocation: memory.invocation().unwrap_or_else(InvocationId::mint),
             actor: memory.actor(),
@@ -106,6 +121,32 @@ impl VerbCall {
             scope: None,
             board_epoch: None,
             domain,
+            reader: Self::reader_of(memory, verb)?,
+        })
+    }
+
+    /// Whether a verb hook may run on `verb`. A door builds what only a hook
+    /// reads (the caller's key, a rewrite's re-admission) only when one may,
+    /// so a call no binding takes pays nothing.
+    #[must_use]
+    pub fn may_run(vault: &Vault, verb: &str) -> bool {
+        vault.verb_hooks_may_run(verb)
+    }
+
+    /// The key a call of `verb` on `memory` carries: the handle's read key
+    /// when a hook may run on `verb`, else none.
+    ///
+    /// # Errors
+    ///
+    /// When a hook may run and the handle's read key does not build.
+    pub fn reader_of(
+        memory: &crate::Memory<'_>,
+        verb: &str,
+    ) -> MemoryResult<Option<ScopedReadActorKey>> {
+        if Self::may_run(memory.vault(), verb) {
+            memory.read_key().map(Some)
+        } else {
+            Ok(None)
         }
     }
 }

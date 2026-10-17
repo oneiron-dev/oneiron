@@ -70,7 +70,7 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let effect = call.effect();
-        let (call, hooked) = match self.enter_verb_hooks(call, site)? {
+        let (call, hooked) = match self.enter_verb_hooks(call, site, read_as.clone())? {
             Ok(entered) => entered,
             Err(stopped) => return Ok(stopped),
         };
@@ -85,11 +85,14 @@ impl HostSelfDispatcher<'_> {
     /// rewritten when a hook rewrote it, and what its post chain picks up;
     /// `Err` the answer a stop gives in its place. A run bound to an
     /// off-record session runs no hook: its receipts would land on record.
-    /// A call no binding can take passes before its args are built.
+    /// A call no binding can take passes before its args are built. A hook
+    /// reads under `read_as`, the key the run's door admitted the call with,
+    /// and as the run's actor when its host binds no door.
     pub(crate) fn enter_verb_hooks(
         &self,
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<std::result::Result<(SelfCall, HookedCall), SelfDispatchOutcome>> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Ok(Ok((call, HookedCall(None))));
@@ -110,6 +113,7 @@ impl HostSelfDispatcher<'_> {
             scope: None,
             board_epoch: None,
             domain: hook_domain(&call),
+            reader: read_as,
         };
         let check = |rewritten: &Value| rewrite(&call, rewritten).map(|_| ());
         let pre = match vault.pre_verb_hooks(hook_call, args.clone(), &check)? {

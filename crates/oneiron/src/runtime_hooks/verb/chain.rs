@@ -452,12 +452,21 @@ impl<'c> Chain<'c> {
         let key = run_key(self.call.invocation, id, self.phase);
         let input = self.input(id, binding, args, result)?;
         // The caller's lane, narrowed to the hook's grant: its reader's lane
-        // when that is someone else, and its predicates and worlds.
+        // when that is someone else, and its predicates and worlds. A caller
+        // whose door carried its key reads under it; a host's own call reads
+        // as its actor.
         let grant = grant::effective_grant(self.vault, id, binding)?;
         let caller = self
             .vault
             .memory(self.call.actor, filter::edge_class(self.call.class));
-        let lane = caller.read_lane(ClaimReadStatus::Recorded).ok();
+        let lane = match &self.call.reader {
+            Some(key) => Some(
+                self.vault
+                    .scoped_read(key.clone())
+                    .with_claim_status(ClaimReadStatus::Recorded),
+            ),
+            None => caller.read_lane(ClaimReadStatus::Recorded).ok(),
+        };
         let reader = (grant.reader != self.call.actor).then(|| {
             self.vault
                 .memory(grant.reader, filter::edge_class(grant.reader_class))
