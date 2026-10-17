@@ -403,7 +403,11 @@ async fn answered(
         )
     };
     match answer {
-        Ok(_) if voices.as_ref().is_some_and(|voices| !voices.answered_current()) => {
+        Ok(_)
+            if voices
+                .as_ref()
+                .is_some_and(|voices| !voices.answered_current()) =>
+        {
             Err(withdrawn())
         }
         Err(_) if voices.as_ref().is_some_and(RungVoices::withdrawn) => Err(withdrawn()),

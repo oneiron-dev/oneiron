@@ -132,10 +132,10 @@ pub(in crate::memory) fn decode_witness_turn_speaker(body: &[u8]) -> MemoryResul
 }
 
 /// A PERSON author is an immutable identity stamp, not a speaker label.
-/// Non-PERSON writer actors leave the author unknown. A quoted room thread
-/// reply is born a DAG thread record (OF-460): its first body carries the
-/// record kind, reply mode and reply pointer with the engine-issued anchor,
-/// which no later put may change.
+/// Non-PERSON writer actors leave the author unknown. A quoted room turn's
+/// first body carries the reply mode and reply pointer with the
+/// engine-issued anchor, and a project thread reply's the DAG thread record
+/// kind as well (OF-460), which no later put may change.
 pub(super) fn encode_witness_turn_body(
     speaker: &str,
     person: Option<crate::EntityId>,

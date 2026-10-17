@@ -442,9 +442,10 @@ impl DecisionModel for BigModel {
         if left.is_zero() {
             return Err(failed("admitted after the work time"));
         }
+        // Inside a verdict, the caller's own line (FIX 1123).
         let run = self.models.undeclared_run(
             format!("{PURPOSE}:{}", EntityId::now().to_hex()),
-            self.meter.clone(),
+            crate::decision_verdict::rung_meter(&self.meter),
         );
         let response = self
             .runtime

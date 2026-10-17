@@ -14,6 +14,8 @@ pub mod coach_heal;
 pub mod coach_learning;
 mod coach_repair;
 pub mod code_fix;
+mod contribution;
+pub use contribution::{ContributionForks, ContributionReplayHost};
 mod curator;
 pub mod detectors;
 mod evaluation;
@@ -147,6 +149,7 @@ impl DreamerRunnerStore<'_> {
 pub(crate) fn execute(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,
+    contribution_host: Option<&(dyn ContributionReplayHost + Send + Sync)>,
 ) -> Result<DreamerAttemptExecution> {
     let facet = attempt.status.payload.attempt_type.as_str();
     match facet {
@@ -192,6 +195,9 @@ pub(crate) fn execute(
         }
         coach::COACH_LEARNING_SWEEP_FACET => {
             coach::run_learning_sweep(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_CONTRIBUTION_CHECK_FACET => {
+            return contribution::execute(attempt, ctx, contribution_host);
         }
         agent_health::COACH_AGENT_HEALTH_FACET => {
             agent_health::run(ctx.vault, ctx.now_ms / 1000)?;

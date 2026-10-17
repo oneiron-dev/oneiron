@@ -2,9 +2,12 @@
 //! socket. The steady sync socket keeps sole ownership of its own reader.
 
 mod authority;
+mod bundle;
 mod index;
 mod sealed;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
+pub use bundle::SealedBundleRelay;
+pub(crate) use bundle::relay_sealed_bundle;
 pub use index::ResidenceIndexWindow;
 pub use sealed::SealedRelay;
 pub(crate) use sealed::relay_sealed_windows;
