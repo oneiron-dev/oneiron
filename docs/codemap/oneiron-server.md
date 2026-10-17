@@ -760,9 +760,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/boot.rs` | src | m | 3 crate-vis | — | The server's own voice loop at serve start (OF-410) |
 | `src/voice_host/brain.rs` | src | m | 2 struct · 1 fn | ChatBrain, ChatBrainBindings | The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it |
 | `src/voice_host/connection.rs` | src | m | 4 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
+| `src/voice_host/entry_barrier.rs` | src | s | 6 crate-vis | — | The newcomer barrier on a live reply (OF-365 P5, FIX 1389) |
 | `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | — |
 | `src/voice_host/media_bridge.rs` | src | L | 1 struct · 1 enum · 20 crate-vis | VoiceMediaBindings, VoiceMediaIn | The host's own speech and hearing on the media seats (OF-410) |
-| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 7 fn · 5 re-export · 1 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
+| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 7 fn · 5 re-export · 2 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
 | `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
 | `src/voice_host/speech.rs` | src | m | 2 struct · 1 enum · 3 fn · 13 crate-vis | PlayoutFrame, VoiceBrainOut, VoicePlayout | The brain's reply in the host's own voice (OF-410) |
 | `src/voice_host/tests.rs` | test | m | — | — | Source-only proofs with a manually released backend |

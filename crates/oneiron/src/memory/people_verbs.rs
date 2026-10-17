@@ -267,6 +267,7 @@ impl Memory<'_> {
                 order: 0,
             }],
             occurred_at: now_ms / 1_000,
+            assertions: Default::default(),
         })?;
         Ok(MessagePersonReceipt {
             room: room.to_hex(),

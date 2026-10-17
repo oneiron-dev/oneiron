@@ -932,6 +932,21 @@ impl OfferLadder {
             .await
     }
 
+    /// [`Self::generate_within`], with the model of the rung that answered,
+    /// the owner's fallback included: the model a decision's receipt names
+    /// (FIX 2730), on the caller's own deadline.
+    pub async fn generate_served_within(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        wait_budget: Duration,
+    ) -> LlmResult<(LlmResponse, ModelId)> {
+        self.generate_from(run, request, selector, may_send, wait_budget, true)
+            .await
+    }
+
     /// [`Self::generate_within`]; once every rung has parked, a call whose
     /// parked offer has the owner's fallback goes there, when
     /// `may_fall_back` (a fallback's own call falls back no further). Boxed,

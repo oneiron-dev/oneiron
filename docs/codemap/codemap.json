@@ -10252,7 +10252,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -15923,9 +15923,9 @@
      "path": "src/conversation/attendee.rs",
      "purpose": "An attendee's first entry into a chat or room (OF-365, ILDF2 P5)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -15982,8 +15982,22 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputMark"
+     ],
+     "path": "src/conversation/output_guard.rs",
+     "purpose": "The container output guard (OF-365 P5, FIX 1389): the fence between an attendee's first entry into a…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -18950,9 +18964,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/coach_learning.rs",
-     "purpose": "The Coach's own record (ARCH-0066 #coach: \"calibration, meta-learning\"; ARCH-0053 #training-offers): each…",
+     "purpose": "The Coach's own record (ARCH-0066 #coach: \"calibration, meta-learning\"): each anchored outcome of the…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 1,
       "fn": 1
      }
@@ -26658,7 +26672,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Interlocutor",
@@ -26673,7 +26687,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)",
      "surface": {
       "enum": 3,
-      "fn": 27,
+      "fn": 29,
       "struct": 4
      }
     },
@@ -30442,7 +30456,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/affiliated.rs",
@@ -31086,6 +31100,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "WitnessAssertions",
       "WitnessAuthor",
       "WitnessMessage",
       "WitnessReceipt",
@@ -31096,7 +31111,7 @@
      "surface": {
       "enum": 1,
       "fn": 2,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -42824,8 +42839,9 @@
      "path": "src/skill_optimize/offer.rs",
      "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
      "surface": {
+      "const": 1,
       "enum": 4,
-      "fn": 7,
+      "fn": 9,
       "struct": 10
      }
     },
@@ -49816,22 +49832,24 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AsrUpdate",
       "AudienceRefresh",
       "SafeguardUpdate",
       "VoiceCascadeSession",
+      "VoiceContainerBinding",
       "VoiceSessionConfig"
      ],
      "path": "src/voice_cascade/session.rs",
      "purpose": "Session transitions only",
      "surface": {
+      "const": 1,
       "enum": 1,
-      "fn": 21,
+      "fn": 23,
       "re-export": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -53041,7 +53059,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53386,7 +53404,7 @@
     "interlocutor": {
      "files": 2,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
@@ -54161,9 +54179,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 181,
+   "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3288,
+   "source_files": 3289,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72737,6 +72755,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/voice_host/entry_barrier.rs",
+     "purpose": "The newcomer barrier on a live reply (OF-365 P5, FIX 1389)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/voice_host/extraction.rs",
      "purpose": "—",
      "surface": {
@@ -72772,7 +72800,7 @@
      "path": "src/voice_host/mod.rs",
      "purpose": "Private voice request adapter, not an audio/provider scheduler",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "re-export": 5,
@@ -73628,7 +73656,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73665,7 +73693,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 619,
+   "source_files": 620,
    "test_files": 182
   },
   "oneiron-spawn": {
