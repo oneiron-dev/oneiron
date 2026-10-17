@@ -50,6 +50,8 @@ pub(crate) use super::weave_doors::*;
 pub(crate) use super::graph_ask_doors::*;
 // The share doors past create (OF-491), likewise.
 pub(crate) use super::share_doors::*;
+// The role-holder decision-ask doors (OF-493), likewise.
+pub(crate) use super::decision_ask_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
 // The owner's learned-setting doors, likewise.
@@ -476,11 +478,21 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.members.invitations"
         | "vault.members.accept"
         | "vault.members.decline"
-        | "vault.members.withdraw_invitation" => {
+        | "vault.members.withdraw_invitation"
+        | "vault.shared.object"
+        | "vault.shared.withdraw_objection"
+        | "vault.shared.started"
+        | "vault.shared.matured"
+        | "vault.shared.erase_ask"
+        | "vault.shared.erase_asks"
+        | "vault.shared.close_erase_ask" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
+        "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {
+            super::decision_ask_doors::holder(auth, verb).map(drop)
+        }
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)

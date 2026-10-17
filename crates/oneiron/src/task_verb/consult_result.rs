@@ -169,6 +169,10 @@ pub(super) struct TaskVerbBody {
     /// `Memory::spawn_task_subproject`. The parent still sees this one task;
     /// the child PROJECT names it back as its `wrapper_task`.
     pub(super) subproject_ref: Option<EntityId>,
+    /// OF-540: the team run this TASK was created in, frozen at its route
+    /// for an external taker. It rides the synced TASK, so a peer's accept
+    /// freezes it into its try; `None` is no team run.
+    pub(super) team: Option<crate::agent_dispatch::TeamRunStamp>,
 }
 
 impl TaskVerbBody {

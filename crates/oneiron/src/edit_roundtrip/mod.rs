@@ -103,7 +103,7 @@ pub use self::docx::run_docx_revision;
 pub(crate) use self::docx::{docx_parts_match_replay, validate_docx_passthrough};
 pub use self::folder_review::{FolderAsk, FolderItem};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
-pub use self::judgment::{SheetAnswerBundle, SheetCellAnswer, SheetRowsAsk};
+pub use self::judgment::{SheetAnswerBundle, SheetCellAnswer, SheetRowReads, SheetRowsAsk};
 pub use self::manifest::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
 };

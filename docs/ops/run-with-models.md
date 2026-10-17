@@ -1338,7 +1338,12 @@ question waits and is tried again later. Each pass also moves every open ask
 whose role has no live holder left to the next role that has one. A role
 holder lists the asks at its role at `GET /v1/core/decisions/asks` and
 answers one at `POST /v1/core/decisions/asks/answer` (`{"seq", "answer"}`).
-The holder is checked again when the answer lands. The owner can answer any
+The holder is checked again when the answer lands. The same calls are the
+SDK and MCP verbs `self.decisions.asks` and `vault.decisions.asks.answer`.
+`vault.decisions.asks.climb` (`{"seq"}`) passes an open ask up to the next
+role with a live holder. It may be called by a holder of the ask's role, the
+ask's principal or an owner. From the CLI, use
+`oneiron api raw POST /v1/core/facade/<verb> --data -`. The owner can answer any
 of them at `/v1/owner/decisions/asks`. A one-off graph ask still holds
 `human` at Big. Each unit has its own
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
@@ -1408,9 +1413,29 @@ abstains, no proposal is made.
 receipt and the file version it read. Keep's receipt carries the sheet
 answers and paragraph judgments next to the slide judgments.
 
-**Stale answers.** A folder column refuses Keep when a file it read has
-changed since; ask again. Answers never go to the owner's queue: the slide
-door holds its ceiling at Big. On a server the engine's
+**Units that change while an answer waits.** Somebody may edit a row, a
+paragraph or a file after its answer was judged and before Keep. Keep then
+lands only the answers whose units are untouched, carried onto the current
+head, and withdraws the rest. A row is changed when a cell it read, its
+header row or its answer cell changed; a paragraph when its text changed or it
+is gone; a folder file when it has a newer version. Keep's receipt names the
+revision each kept answer was judged against (`judged_version` and its
+evidence hash), and lists each withdrawn answer under `withdrawn_units`, with
+that revision and the version it changed in. If no answer stands, nothing is
+appended and the receipt's reason is `units_withdrawn`.
+
+After a quiet interval the proposer is woken with the changed units. The
+interval is the `artifact_answer_quiet_seconds` policy row, 60 seconds as
+shipped, measured from the last change to what they read. The same question
+is asked again of those units on the head, as the ask's principal, and the
+answers wait as a fresh proposal for Keep (its ref is `reask:<…>`). A unit
+that changes while its proposal still waits is withdrawn and asked again the
+same way. A wake never keeps anything, and a discarded proposal's units are
+not asked again. Only the vault's home node runs the wakes, in the
+standing-question pump. A wake that fails is held for five minutes. Slide
+reviews are not split: a moved head strands the whole review, as before.
+Answers never go to the owner's queue: the slide door holds its ceiling at
+Big. On a server the engine's
 `Memory::artifacts_ask_through` answers these asks. Until its door is in the
 SDK table, `vault.artifacts.review_slides` is the only door that serves one.
 
