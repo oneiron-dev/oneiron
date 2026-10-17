@@ -8783,7 +8783,7 @@
      "path": "src/channel_identity_provider/member_mail.rs",
      "purpose": "Member-mailbox send predicates (OF-374)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -10597,7 +10597,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -15450,7 +15450,7 @@
      "path": "src/counterparty_contact/lifecycle.rs",
      "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -15472,7 +15472,7 @@
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -28786,8 +28786,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 37,
-      "fn": 16,
+      "crate-vis": 38,
+      "fn": 17,
       "struct": 2
      }
     },
