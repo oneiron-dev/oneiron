@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 262 facade rows, 992 declarations.
+Census: 262 facade rows, 993 declarations.
 Inputs: 218 of 262 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 212 of 262 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
@@ -976,7 +976,7 @@ class AttemptView(TypedDict):
     yours: bool
     claimed_at: NotRequired[int | None]
     backoff_until: NotRequired[int | None]
-TaskAskHoldReason = Literal["NoLiveRoute"]
+TaskAskHoldReason = Literal["NoLiveRoute", "ApprovalRequired"]
 TaskAskEffectAuthorization = Literal["not_evaluated_by_ask"]
 class TaskAskCoverage(TypedDict):
     met: bool
@@ -3096,6 +3096,11 @@ class TaskAskShort(TypedDict):
     until: NotRequired[int | None]
     default: NotRequired[TaskAskDefault]
 TaskAskRequest = TaskAskSpec | TaskAskShort
+class TaskAskLaunchHold(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    surface_ref: str
+    denied: bool
 class TaskAskReceipt(TypedDict):
     handle: TaskAskHandle
     task_refs: list[EntityId]
@@ -3103,6 +3108,7 @@ class TaskAskReceipt(TypedDict):
     idempotent_replay: bool
     statement: NotRequired[FanoutStatement | None]
     task_records: list[RecordRef]
+    launch: NotRequired[TaskAskLaunchHold | None]
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
