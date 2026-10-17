@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use crate::batch::export::{
     ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, ArchiveSecretCustody,
-    VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path, blake3_hex,
+    VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path, archive_slot_rows,
+    blake3_hex,
 };
 use crate::error::{Error, Result};
 
@@ -61,6 +62,7 @@ pub(super) fn write_vault_archive(
             ArchiveRecordKind::ResultBody,
             &["run_results", "bodies"][..],
         ),
+        (ArchiveRecordKind::EmbeddingSpace, &["embedding_spaces"][..]),
     ] {
         let fixed = kind
             .fixed_path()
@@ -74,6 +76,13 @@ pub(super) fn write_vault_archive(
         for secret in secrets {
             let row = serde_json::to_value(secret).map_err(|_| encode_failed())?;
             push(path.to_owned(), ArchiveRecordKind::SecretCustody, &row)?;
+        }
+    }
+    // OF-370: one row per kind slot, cut from the nulled document; an export
+    // that carries no embedding setup has none.
+    if let Some(path) = ArchiveRecordKind::SlotBinding.fixed_path() {
+        for row in archive_slot_rows(&mut document) {
+            push(path.to_owned(), ArchiveRecordKind::SlotBinding, &row)?;
         }
     }
     let manifest = document
