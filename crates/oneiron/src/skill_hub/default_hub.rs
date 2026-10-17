@@ -70,6 +70,10 @@ pub const fn default_skill_hub_commit() -> &'static str {
 }
 
 pub(crate) fn seed_default_skill_hub(vault: &Vault) -> Result<()> {
+    // The other registries-family seed rides this open-time call: the
+    // compiled `comm.*` claim-class descriptors (type 91), each at a fixed id
+    // with a fixed body, so every node seeds the same rows.
+    crate::comm::seed_claim_class_descriptors(vault)?;
     let id = default_skill_hub_id()?;
     let mut txn = vault.store.env.write_txn()?;
     // Reopens never revert an owner's endpoint, trust, or policy changes. Nor
