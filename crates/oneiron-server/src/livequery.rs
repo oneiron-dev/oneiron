@@ -44,11 +44,7 @@ pub(crate) fn decode_sub(payload: &[u8]) -> Result<SubRequest, ProtocolError> {
     wire::sub(payload)
 }
 
-pub(crate) fn ping_result(id: u64, payload: Value) -> Result<Vec<u8>, ProtocolError> {
-    wire::frame(TAG_RPC, "ping", id, 0, true, payload)
-}
-
-/// [`ping_result`] stating the connection's receipt for it (FIX 811).
+/// A `ping` reply, stating the connection's receipt for it (FIX 811).
 pub(crate) fn stamped_ping_result(
     id: u64,
     payload: Value,
