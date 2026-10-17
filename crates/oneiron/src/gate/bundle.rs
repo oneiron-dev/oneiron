@@ -184,6 +184,8 @@ impl Vault {
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
             )?;
+            // The host's timers re-read the claims this resolution moved.
+            crate::batch::queue_proactivity_change(self, wtxn);
 
             Ok((
                 SessionClaimBundle {
@@ -519,6 +521,8 @@ impl Vault {
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
             )?;
+            // The host's timers re-read the claims this resolution moved.
+            crate::batch::queue_proactivity_change(self, wtxn);
 
             for id in &member_claim_ids {
                 if action == GateConsentBundleAction::Approve {
