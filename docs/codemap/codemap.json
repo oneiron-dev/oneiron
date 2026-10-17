@@ -63269,7 +63269,7 @@
      "path": "src/ai_host/coach_heal.rs",
      "purpose": "The host Coach (ARCH-0066 #coach, OF-418)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -66543,7 +66543,7 @@
      "path": "src/big_rung.rs",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -67940,7 +67940,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 20,
+      "fn": 22,
       "struct": 1
      }
     },
