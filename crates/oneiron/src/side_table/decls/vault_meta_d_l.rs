@@ -304,6 +304,9 @@ side_tables! {
     EDIT_SETTLE_STRANDED_PROPOSAL: VaultMeta b"edit_settle:stranded:v1:" Named;
     /// The once-only undo of one kept proposal: the version it restored. Key: id16 + hash32.
     EDIT_SETTLE_UNDO: VaultMeta b"edit_settle:undo:v1:" Named;
+    /// The answers of one held answer proposal whose units changed under it (ARCH-0075 §4): each
+    /// with the revision it was judged against, and its proposer's wake. Key: id16 + hash32.
+    EDIT_SETTLE_UNIT_WITHDRAWAL: VaultMeta b"edit_settle:withdrawal:v1:" Named;
     /// The device family and runtime that computed the current embedding vector, outside the space
     /// identity (ARCH-0036). Key: id16.
     EMBEDDING_DEVICE: VaultMeta b"embedding/device/" Named;

@@ -583,7 +583,7 @@ fn graph_proposal(
 }
 
 /// The principal as the writer of its own question's answers.
-fn principal_actor(vault: &Vault, principal: EntityId) -> Result<WriteActor> {
+pub(crate) fn principal_actor(vault: &Vault, principal: EntityId) -> Result<WriteActor> {
     let txn = vault.store.env.read_txn()?;
     let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &principal)?
         .ok_or(Error::EntityNotFound)?;

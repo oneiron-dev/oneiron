@@ -1240,7 +1240,7 @@ edit or resume, or a claim write). It also re-reads its due work at least
 once a minute, because an arrival on a unit that is not a claim does not wake
 it. It answers each unit as the question's own principal, reading under that
 principal's grants, and climbs the question's own dial. A ceiling of `human`
-is held at Big, so the pump never queues an owner ask. Each unit has its own
+lets a unit's ask reach the next authorised role. Each unit has its own
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
 names none.
 
@@ -1303,9 +1303,29 @@ abstains, no proposal is made.
 receipt and the file version it read. Keep's receipt carries the sheet
 answers and paragraph judgments next to the slide judgments.
 
-**Stale answers.** A folder column refuses Keep when a file it read has
-changed since; ask again. Answers never go to the owner's queue: the slide
-door holds its ceiling at Big. On a server the engine's
+**Units that change while an answer waits.** Somebody may edit a row, a
+paragraph or a file after its answer was judged and before Keep. Keep then
+lands only the answers whose units are untouched, carried onto the current
+head, and withdraws the rest. A row is changed when a cell it read, its
+header row or its answer cell changed; a paragraph when its text changed or it
+is gone; a folder file when it has a newer version. Keep's receipt names the
+revision each kept answer was judged against (`judged_version` and its
+evidence hash), and lists each withdrawn answer under `withdrawn_units`, with
+that revision and the version it changed in. If no answer stands, nothing is
+appended and the receipt's reason is `units_withdrawn`.
+
+After a quiet interval the proposer is woken with the changed units. The
+interval is the `artifact_answer_quiet_seconds` policy row, 60 seconds as
+shipped, measured from the last change to what they read. The same question
+is asked again of those units on the head, as the ask's principal, and the
+answers wait as a fresh proposal for Keep (its ref is `reask:<…>`). A unit
+that changes while its proposal still waits is withdrawn and asked again the
+same way. A wake never keeps anything, and a discarded proposal's units are
+not asked again. Only the vault's home node runs the wakes, in the
+standing-question pump. A wake that fails is held for five minutes. Slide
+reviews are not split: a moved head strands the whole review, as before.
+Answers never go to the owner's queue: the slide door holds its ceiling at
+Big. On a server the engine's
 `Memory::artifacts_ask_through` answers these asks. Until its door is in the
 SDK table, `vault.artifacts.review_slides` is the only door that serves one.
 

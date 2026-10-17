@@ -50,15 +50,13 @@ pub(crate) struct LadderGraphAnswerer<'s> {
 
 impl<'s> LadderGraphAnswerer<'s> {
     /// An answerer for `asker`, climbing `dial` with `budget` per unit. A
-    /// ceiling of `human` is held at `big`: a graph answer never queues an
-    /// owner ask.
+    /// ceiling of `human` lets a unit's ask reach the next authorised role.
     pub(crate) fn new(
         server: &'s SyncServer,
         asker: WriteActor,
-        mut dial: DecisionDial,
+        dial: DecisionDial,
         budget: Duration,
     ) -> Result<Self> {
-        dial.ceiling = dial.ceiling.min(DecisionRung::Big);
         if dial.first > dial.ceiling {
             return Err(Error::InvalidConfig(
                 "a graph question's dial starts at the owner ask".into(),
@@ -304,7 +302,9 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
             };
             let next = tokio::task::spawn_blocking(move || {
                 pump_due(&server, oneiron_vault_contract::now_ts())?;
-                server.vault().next_question_refresh_at()
+                let question = server.vault().next_question_refresh_at()?;
+                let wake = server.vault().next_answer_wake_at()?;
+                Ok::<_, oneiron::Error>(question.into_iter().chain(wake).min())
             })
             .await;
             let next = match next {
@@ -359,7 +359,7 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             "a standing question was not refreshed; it is held, then runs again"
         );
     }
-    Ok(())
+    crate::decision_artifact::pump_answer_wakes(server, now)
 }
 
 /// Whether this server is the vault's home: the elected home names this

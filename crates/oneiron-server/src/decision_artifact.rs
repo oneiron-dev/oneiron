@@ -81,3 +81,34 @@ impl HostUnitDecider<'_> {
         }
     }
 }
+
+/// Wakes the proposer of every held artifact answer whose changed units
+/// have been quiet for the vault's interval (ARCH-0075 §4): its question is
+/// asked again of those units on the head, as its principal on the host's
+/// ladder, and the answers wait as a fresh proposal for Keep. The caller
+/// runs this on the vault's home node only. A failed wake is held, then
+/// tried again; its error logs by kind, as its text can quote the vault.
+pub(crate) fn pump_answer_wakes(server: &SyncServer, now: u64) -> Result<()> {
+    let vault = server.vault();
+    let host = server.decision_host();
+    for wake in vault.due_answer_wakes(now)? {
+        let woke = vault.answer_wake_actor(&wake).and_then(|actor| {
+            vault.wake_answer_proposer(
+                &wake,
+                actor,
+                &HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask"),
+                host.dial(DecisionRung::Big),
+                &host.bands(),
+                now,
+            )
+        });
+        if let Err(error) = woke {
+            tracing::warn!(
+                artifact = %wake.artifact.to_hex(),
+                kind = ?error.kind(),
+                "a held answer's proposer was not woken; the wake is held, then runs again"
+            );
+        }
+    }
+    Ok(())
+}
