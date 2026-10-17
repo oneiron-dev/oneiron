@@ -36,6 +36,7 @@ mod shared_act;
 mod shared_creation;
 pub(crate) use own_device::is_own_device_grant;
 pub use own_device::own_device_residence_scope;
+pub(crate) mod vault_id_decimal;
 pub use pending_act::{
     ActExecution, PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActPolicy,
     SharedActPrecedence,
