@@ -13,6 +13,7 @@ mod message_stream;
 mod oversight;
 mod presence;
 mod read_shape;
+mod reader_runner;
 mod recall;
 mod recall_rerank;
 mod resident_pump;
@@ -28,6 +29,9 @@ pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub use self::oversight::OversightStartError;
 pub use self::read_shape::RetrievalQueryCheck;
 pub(crate) use self::read_shape::{QueryDoor, query_caller};
+pub(crate) use self::reader_runner::{
+    READER_CHILD_READ_ONLY, ReaderRunner, ReaderSeats, run_launch_scope,
+};
 pub(crate) use self::recall::blocking;
 pub(crate) use self::windows::withheld_from_peers;
 
