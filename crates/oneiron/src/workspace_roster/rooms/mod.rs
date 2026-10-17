@@ -2,6 +2,8 @@
 mod history;
 mod hosting;
 mod liveness;
+mod offer_settle;
+mod offers;
 mod participants;
 mod participation;
 #[cfg(test)]
@@ -17,12 +19,16 @@ use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
 pub(in crate::workspace_roster) use history::thread_turns_in;
-pub use hosting::{RoomHosting, RoomSpeakingRole, RoomStanding};
+pub use hosting::{
+    HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
+};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
 pub(in crate::workspace_roster) use liveness::{thread_root_map, thread_task_bindings};
+pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
+pub use offers::{OfferCard, OfferDraft, OfferState, OffersPage, OffersRequest};
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
 pub(super) use participation::record_bound_task_in_txn;

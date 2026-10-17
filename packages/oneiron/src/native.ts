@@ -125,12 +125,17 @@ vaultProjectsConfirm(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
+vaultRoomsOffer(input: unknown): unknown
+vaultRoomsOfferAnswer(input: unknown): unknown
+vaultRoomsOffers(input: unknown): unknown
 vaultProjectsGoalRevisions(input: unknown): unknown
 vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
+vaultRoomsHostPin(input: unknown): unknown
+vaultRoomsHostHand(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
 vaultCompanionsSharingSet(input: unknown): unknown
