@@ -1732,6 +1732,9 @@ impl AgentVerb {
                 | Self::VaultClaimsSeed
         )
     }
+    pub const fn is_task_work(self) -> bool {
+        matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
+    }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
@@ -2393,7 +2396,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => "The reader's own outcome notices for a shared vault.",
             Self::VaultSharedDeletion => "The executed delete-the-vault act, if any.",
             Self::VaultMembersAdd => {
-                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept."
+                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
             }
             Self::VaultMembersChange => {
                 "An Admin assigns another non-root role to a member who is not an Owner."

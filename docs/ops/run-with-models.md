@@ -897,9 +897,12 @@ The verbs, each the owner's and checked against the vault's inference policy:
   `{"kind": "image" | "audio", "media_type": ..., "data": "<base64>"}`. The
   answer is `{"model", "parts", "usage"}`.
 - `POST /v1/ai/video` answers `202` with a job ticket; `GET
-  /v1/ai/video/{job}` polls it (a finished job answers with its clip, once)
-  and `DELETE` stops it. A job's permit is held while it renders and settled
-  when it ends.
+  /v1/ai/video/{job}` polls it, and `DELETE` stops it or drops it once it
+  ended. A job's permit is held while it renders and settled when it ends.
+  The server keeps each job in the vault: a restart loses none (the next
+  poll takes a running job up again on a fresh permit, and sends nothing
+  again), and a finished job answers with its clip on every poll, a lost
+  reply's included, until it is deleted.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
@@ -1394,6 +1397,10 @@ version = "2026-10"            # the revision the rung's pin names
 wording = "You answer one typed question about the state you are given."
 reply = "json"                 # or "lines"
 budget_units = 50000           # its own meter; models.raw_budget_units when unset
+
+[models.decisions.booking_parse]
+role = "checker"        # the cheap seat a booking page's free text is parsed on
+max_input_bytes = 4096  # the longest text one parse reads (the default and the most)
 ```
 
 The Big rung asks each question as one model call on that seat. The call is
@@ -1404,6 +1411,18 @@ one JSON object `{"answer", "probability"}`, or two lines `answer:` and
 `probability:`. A reply that names nothing the question takes, or no
 probability from 0 to 1, abstains, and the ladder moves on. The rung takes
 noul, choice and score questions, not boxes.
+
+A booking page's free-text constraint ("tuesday afternoons, not before 2")
+is parsed on the `booking_parse` seat, then solved like an object. The parse
+asks the ladder whether the text is a scheduling preference at all, with the
+seat's read first, and a text that is not one is refused. Then one extraction
+call returns the constraint object and, when the text names one, the visitor's
+timezone. The sentence never reaches the slot oracle. Each call is admitted as
+a call of the seat's role against the vault's live model policy. An
+authenticated caller's parse is paid on its principal's line. An anonymous
+visitor's parse is paid on the owner's line, since the owner publishes the
+page. Without the row, free text is refused, and a constraint object still
+works.
 
 The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The

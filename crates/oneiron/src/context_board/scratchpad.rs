@@ -194,6 +194,29 @@ fn parse_line(line: &str) -> PadLine<'_> {
         })
 }
 
+/// A sealed pad's markdown as the Dreamer's after-seal review reads it
+/// (ARCH-0032 #scratchpad-marks): every `scratch` line blanked to spaces, so
+/// it never reaches the model and every byte offset still indexes the stored
+/// markdown. The flag says whether any line is marked `keep`.
+pub(crate) fn sealed_pad_review_text(markdown: &str) -> (String, bool) {
+    let mut text = String::with_capacity(markdown.len());
+    let mut keep = false;
+    for line in markdown.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        match parse_line(body).mark {
+            Some(ScratchpadMark::Scratch) => {
+                text.extend(std::iter::repeat_n(' ', body.len()));
+                text.push_str(&line[body.len()..]);
+            }
+            mark => {
+                keep |= mark == Some(ScratchpadMark::Keep);
+                text.push_str(line);
+            }
+        }
+    }
+    (text, keep)
+}
+
 fn mark_token(mark: Option<ScratchpadMark>) -> &'static str {
     match mark {
         None => "",
@@ -203,7 +226,7 @@ fn mark_token(mark: Option<ScratchpadMark>) -> &'static str {
 }
 
 /// At most `max` bytes of `text`, cut on a char boundary.
-fn clip(text: &str, max: usize) -> &str {
+pub(super) fn clip(text: &str, max: usize) -> &str {
     let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
         end -= 1;
@@ -239,7 +262,11 @@ fn fold_row(line: &PadLine<'_>) -> String {
 /// Pinned and newest lines in full, older lines folded to their first words
 /// and the rest counted as `older: +N`. The reader line is the section's
 /// pinned floor: the agent always sees who can read its pad.
-fn pad_section(pad: EntityId, text: &str) -> Result<BoardSection, BoardFrameError> {
+fn pad_section(
+    pad: EntityId,
+    text: &str,
+    readers: String,
+) -> Result<BoardSection, BoardFrameError> {
     let lines: Vec<PadLine<'_>> = text
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -265,7 +292,7 @@ fn pad_section(pad: EntityId, text: &str) -> Result<BoardSection, BoardFrameErro
     );
     BoardSection::new(
         "SCRATCHPAD",
-        vec!["readers: owner-only".to_owned()],
+        vec![readers],
         rows,
         vec![format!("count: {}", lines.len())],
         SectionPolicy {
@@ -353,6 +380,15 @@ impl crate::Vault {
     pub fn scratchpad_sealed(&self, pad: EntityId) -> crate::error::Result<bool> {
         let txn = self.store.env.read_txn()?;
         PAD.contains(&self.store, &txn, &PadKey::Sealed { pad })
+    }
+
+    /// [`Self::scratchpad_sealed`] inside the caller's read.
+    pub(crate) fn scratchpad_sealed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pad: EntityId,
+    ) -> crate::error::Result<bool> {
+        PAD.contains(&self.store, txn, &PadKey::Sealed { pad })
     }
 }
 
@@ -549,7 +585,8 @@ impl Memory<'_> {
         let Some(text) = self.pad_markdown(pad)? else {
             return Ok(None);
         };
-        let section = pad_section(pad, &text).map_err(|error| {
+        let readers = super::readers::sealed_pad_readers_line(&self.sealed_pad_readers()?);
+        let section = pad_section(pad, &text, readers).map_err(|error| {
             MemoryError::new(
                 MEMORY_CODE_INTERNAL,
                 error.to_string(),
