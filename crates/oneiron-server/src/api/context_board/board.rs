@@ -189,9 +189,29 @@ pub(super) fn board_parts(
 
     // WORLDS: the tiers the caller's planner reads, over the WORLD bodies
     // its read admits.
-    let authority = vault
+    let mut authority = vault
         .board_world_authority(targets.actor(), None)
         .map_err(|error| core_engine_error("board world authority failed", error))?;
+    // A room board actually reads inside its members' met world set
+    // (ARCH-0067 §8), the ceiling the pack's audience applies: the active
+    // tier the board renders and records is that met set, never the
+    // caller's wider one. A room that only rides the retrieval request
+    // and does not resolve bounds nothing here, as its ROOM section does.
+    if let Some(room) = &targets.room {
+        let met = vault
+            .room_audience_members_under(read, room.id, targets.actor())
+            .and_then(|members| vault.room_world_set(&members));
+        match met {
+            Ok(Some(room_worlds)) => {
+                authority.active_set = authority.active_set.meet(&room_worlds);
+            }
+            Ok(None) => {}
+            Err(error) if room.explicit => {
+                return Err(core_engine_error("board room worlds failed", error));
+            }
+            Err(_) => {}
+        }
+    }
     let allowed: Vec<EntityId> = authority.allowed_set.worlds().iter().copied().collect();
     let presences = oneiron::context_board::WorldPresence::read_admitted(read, &allowed)
         .map_err(|error| core_engine_error("board worlds failed", error))?;

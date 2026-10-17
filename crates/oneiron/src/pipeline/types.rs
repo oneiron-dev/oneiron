@@ -634,7 +634,7 @@ impl WorldAuthoritySet {
     /// What both sets admit: the meet on the Scope worlds axis. It holds no
     /// more worlds than either, so it stays inside the cap.
     #[must_use]
-    pub(crate) fn meet(&self, other: &Self) -> Self {
+    pub fn meet(&self, other: &Self) -> Self {
         // Two named sets meet at a named set or bottom, never the open axis.
         Self::from_scope_axis(&self.scope_axis().meet(&other.scope_axis()))
             .ok()

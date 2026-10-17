@@ -712,13 +712,15 @@ pub(super) fn mint_epoch_summary_guarded(
         }
         // The compacted turns leave their boards' retained history in the
         // same act: reconstructing one now fails explicitly (ARCH-0067).
-        if request.log == WindowLog::Conversation {
-            crate::context_board::fold_board_turns_in_txn(
-                vault,
-                wtxn,
-                request.window.iter().map(|message| message.turn_id),
-            )?;
-        }
+        // Every host's window names its covered TURNs the same way, so a
+        // host-numbered log's mint folds its turns' boards here too; this
+        // mint is the one landing every production host's epochs pass
+        // through.
+        crate::context_board::fold_board_turns_in_txn(
+            vault,
+            wtxn,
+            request.window.iter().map(|message| message.turn_id),
+        )?;
         extra(
             wtxn,
             &EpochMint {

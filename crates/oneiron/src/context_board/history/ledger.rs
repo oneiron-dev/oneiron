@@ -165,9 +165,11 @@ impl Vault {
     ///
     /// `worlds` is the world authority the board resolved: its allowed,
     /// default and active world ids become the selection's world tiers. A
-    /// world `caller` cannot read is no document it was shown, so it carries
-    /// no history. Base reality is no entity: each tier records it as its
-    /// own flag.
+    /// host that resolved none records the tiers `owner`'s planner actually
+    /// reads now, folded here, never empty tiers in their place. A world
+    /// `caller` cannot read is no document it was shown, so it carries no
+    /// history. Base reality is no entity: each tier records it as its own
+    /// flag.
     ///
     /// `owner` must be `caller`'s own actor, and the TURN must carry it as
     /// the author its door stamped, so a reader of someone else's turn cannot
@@ -192,6 +194,14 @@ impl Vault {
         }
         let mut selection =
             memories.map_or_else(BoardSelection::default, BoardSelection::from_memories);
+        let resolved;
+        let worlds = match worlds {
+            Some(worlds) => Some(worlds),
+            None => {
+                resolved = self.board_world_authority(Some(owner), None)?;
+                Some(&resolved)
+            }
+        };
         if let Some(worlds) = worlds {
             let readable = |set: &crate::pipeline::WorldAuthoritySet| {
                 let mut kept = std::collections::BTreeSet::new();
@@ -691,6 +701,28 @@ impl Vault {
             ));
         }
         HORIZON.put(&self.store, &mut txn, owner, &retained_from)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// The owner's retained board window as it stands: a turn anchored
+    /// before it refuses with [`BoardHistoryError::BeyondCompactionHorizon`].
+    /// `None` retains every anchored turn. A host driving the horizon reads
+    /// this before advancing it, which never moves backward.
+    pub fn board_compaction_horizon(&self, owner: &EntityId) -> Result<Option<u64>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(HORIZON.get(&self.store, &txn, owner)?)
+    }
+
+    /// A production host that folded `turns` into a summary outside an
+    /// epoch mint marks exactly those turns' boards folded, in one write:
+    /// reconstructing one fails explicitly from here on, and every other
+    /// turn's board stays whole. The epoch mint folds its own window in
+    /// its transaction; this is the same mark for a host that lands its
+    /// compaction elsewhere.
+    pub fn fold_board_turns(&self, turns: impl IntoIterator<Item = EntityId>) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        fold_board_turns_in_txn(self, &mut txn, turns)?;
         txn.commit()?;
         Ok(())
     }
