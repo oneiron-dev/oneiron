@@ -47,11 +47,36 @@ pub struct AuthorityCheckpointRow {
     pub parents: Vec<AuthorityEntryHash>,
     /// The world of a side-branch row.
     pub world: Option<EntityId>,
-    /// The canonical signed body of a row a fold past the image reads whole
-    /// (an approval, a revocation, a handoff, a machine profile, a world-key
-    /// record); None for every other row.
+    /// Whether the row is a slip op (a mint, a slip revocation or a
+    /// consumption): a store door counts a slip issuer's slip ops toward no
+    /// bound.
+    pub slip_op: bool,
+    /// The canonical signed body of a row a fold or a store door past the
+    /// image reads whole (an approval, a binding, a confirm, a revocation, a
+    /// handoff, an enrollment, the genesis, a root record, a machine profile,
+    /// a world edit or a world-key record); None for every other row.
     #[serde(with = "body_bytes")]
     pub body: Option<Vec<u8>>,
+}
+
+/// Whether an image carries the canonical signed body of a covered row of
+/// `op`'s kind: each row a fold past the image reads whole
+/// ([`super::fold_resume::is_projected`]: an approval, a binding, a confirm,
+/// a device revocation, a handoff, a machine profile, a world-key record),
+/// and each row a store door past it reads whole to judge a new row: the
+/// genesis and each device enrollment the consent structure rests on, the
+/// root records that name owner anchors, the actor revocations a signer's
+/// revocations count, and the world edits that may be a stranger's.
+pub(super) fn carries_body(op: &AuthorityOp) -> bool {
+    super::fold_resume::is_projected(op)
+        || matches!(
+            op,
+            AuthorityOp::Genesis { .. }
+                | AuthorityOp::EnrollDevice { .. }
+                | AuthorityOp::OwnerRoot(_)
+                | AuthorityOp::RevokeActor { .. }
+                | AuthorityOp::WorldPrivacy(_)
+        )
 }
 
 /// The fold the image commits: the settled once fold before any install's
@@ -430,8 +455,8 @@ impl AuthorityCheckpointV2 {
     }
 }
 
-/// A carried body is the canonical signed row its summary names, and a row a
-/// fold past the image reads whole.
+/// A carried body is the canonical signed row its summary names, and a row
+/// the image carries whole.
 fn row_body_matches(
     hash: &AuthorityEntryHash,
     row: &AuthorityCheckpointRow,
@@ -443,7 +468,8 @@ fn row_body_matches(
         || entry.seq != row.seq
         || entry.parent_hashes != row.parents
         || super::world_privacy::side_world(&entry.op) != row.world
-        || !super::fold_resume::is_projected(&entry.op)
+        || super::log_budget::is_slip_op(&entry.op) != row.slip_op
+        || !carries_body(&entry.op)
     {
         return Err(refused("checkpoint image row body"));
     }
@@ -620,7 +646,8 @@ impl Vault {
                     seq: entry.seq,
                     parents: entry.parent_hashes.clone(),
                     world: super::world_privacy::side_world(&entry.op),
-                    body: super::fold_resume::is_projected(&entry.op).then(|| body.clone()),
+                    slip_op: super::log_budget::is_slip_op(&entry.op),
+                    body: carries_body(&entry.op).then(|| body.clone()),
                 };
                 Ok((*hash, row))
             })
