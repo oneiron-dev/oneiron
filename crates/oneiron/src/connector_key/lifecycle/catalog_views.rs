@@ -8,6 +8,7 @@ use super::super::record::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeyRecord, ConnectorKeyStatus,
     normalize_connector_key,
 };
+use super::super::slate::{ConnectorGrantSlate, read_connector_slate_in_txn};
 use super::super::slate_setting::callable_verbs_in_txn;
 use super::super::txn::{CATALOG_NAME_INDEX, governing_connector_key, read_connector_key_in_txn};
 
@@ -30,6 +31,17 @@ pub struct ConnectorDescription {
     /// Entry-wide ARCH-0054 classification: `call_class.debits_sends()`.
     pub budgeted_as_sends: bool,
 }
+/// An actor's live connector registration (ARCH-0028: a connector "registers
+/// with its own key and takes an ARCH-0072 grant slate at admission"): the
+/// Active key bound to the actor, and the owner-stamped slate it admitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActorConnectorRegistration {
+    pub key_ref: EntityId,
+    pub key: ConnectorKeyRecord,
+    pub slate_ref: EntityId,
+    pub slate: ConnectorGrantSlate,
+}
+
 /// The EXECUTION lens over one catalogued connector. Produced only while the
 /// governing key is Active.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +79,49 @@ impl Vault {
             &normalize_connector_key(connector),
             actor_entity_ref,
         )
+    }
+    /// The live registration `actor` holds on `connector`: a key bound to
+    /// that actor (an actor-agnostic key does not count), Active, whose
+    /// slate's owner stamp still holds at the revision the key admitted.
+    /// `None` when any of those is missing; a caller admitting the actor
+    /// refuses it then.
+    pub fn live_connector_registration(
+        &self,
+        connector: &str,
+        actor: &EntityId,
+    ) -> Result<Option<ActorConnectorRegistration>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some((key_ref, key)) = governing_connector_key(
+            &self.store,
+            &rtxn,
+            &normalize_connector_key(connector),
+            Some(actor),
+        )?
+        else {
+            return Ok(None);
+        };
+        if key.actor_entity_ref.as_ref() != Some(actor) || key.status != ConnectorKeyStatus::Active
+        {
+            return Ok(None);
+        }
+        let Some(slate_ref) = key.slate_ref else {
+            return Ok(None);
+        };
+        let Some(slate) = read_connector_slate_in_txn(self, &rtxn, slate_ref)? else {
+            return Ok(None);
+        };
+        if slate.owner_actor().is_none()
+            || !slate.stamp_holds()
+            || key.slate_revision != Some(slate.revision())
+        {
+            return Ok(None);
+        }
+        Ok(Some(ActorConnectorRegistration {
+            key_ref,
+            key,
+            slate_ref,
+            slate,
+        }))
     }
     /// Engine-catalog search — the DISCOVERY lens, Active keys only.
     ///

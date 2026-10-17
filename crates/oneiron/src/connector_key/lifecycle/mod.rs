@@ -7,7 +7,9 @@ mod registration;
 mod status;
 mod tool_grant;
 
-pub use self::catalog_views::{ConnectorCallRoute, ConnectorDescription};
+pub use self::catalog_views::{
+    ActorConnectorRegistration, ConnectorCallRoute, ConnectorDescription,
+};
 pub use self::manifest_ops::{ConnectorManifestQualifier, ProbeManifestQualifier};
 pub use self::qualification::ConnectorQualificationError;
 pub(crate) use self::tool_grant::catalog_charter_in_txn;

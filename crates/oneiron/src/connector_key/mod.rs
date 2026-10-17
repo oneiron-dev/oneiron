@@ -37,10 +37,11 @@ pub use self::codec::{
     encode_connector_key_body,
 };
 pub use self::lifecycle::{
-    CONNECTOR_CONSENT_ORIGIN_ACTION_ID, CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID, ConnectorCallRoute,
-    ConnectorConsentRowView, ConnectorConsentTarget, ConnectorConsentView, ConnectorDescription,
-    ConnectorManifestQualifier, ConnectorQualificationError, ConnectorToolConsent,
-    ConnectorToolConsentRow, ConnectorToolGrant, ProbeManifestQualifier,
+    ActorConnectorRegistration, CONNECTOR_CONSENT_ORIGIN_ACTION_ID,
+    CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID, ConnectorCallRoute, ConnectorConsentRowView,
+    ConnectorConsentTarget, ConnectorConsentView, ConnectorDescription, ConnectorManifestQualifier,
+    ConnectorQualificationError, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
+    ProbeManifestQualifier,
 };
 pub use self::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
