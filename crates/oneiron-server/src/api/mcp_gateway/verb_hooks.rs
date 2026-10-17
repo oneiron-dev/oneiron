@@ -208,6 +208,7 @@ impl McpCallContext {
         mcp_rewrite_admit(server, &call.verb, &context)(&call.verb, &call.args)
             .map_err(|_| VerbAskRefusal::ScopeRefused)?;
         let mut served = Vec::new();
+        let mut board_hooks = None;
         let ran = super::tasks_response::execute_agent_verb_input(
             server,
             &call.verb,
@@ -215,6 +216,7 @@ impl McpCallContext {
             &context,
             None,
             &mut served,
+            &mut board_hooks,
         )
         .await;
         Ok(ran.map(|(output, ..)| output).map_err(mcp_saved_error))
