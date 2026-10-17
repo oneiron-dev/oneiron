@@ -122,6 +122,24 @@
       "section": false
     },
     {
+      "name": "self.inbox.concern",
+      "input": "crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest",
+      "output": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView",
+      "call": "memory.concern_card(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.inbox.concern.outcome",
+      "input": "crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest",
+      "output": "crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary",
+      "call": "memory.concern_outcome(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.people.list",
       "description": "One page of the people the caller reads, in handle order.",
       "input": "crate::memory::PeopleListRequest",
@@ -293,10 +311,10 @@
     {
       "name": "tasks.update",
       "description": "Records the owner's acknowledgement of a failed TASK; any other task stays as it was.",
-      "input": "TaskRequest",
+      "input": "TaskUpdateRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
-      "call": "memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "call": "memory.tasks_update_request(&input)?",
       "scope": "Write",
       "mcp_scope": "addressed",
       "mcp_fields": {
@@ -2476,6 +2494,215 @@
       "section": false
     },
     {
+      "name": "self.desktop.open",
+      "description": "Opens an app of the run's own desktop guest by app:name and observes its window.",
+      "input": "oneiron_browser::OpenInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.open(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.observe",
+      "description": "Observes the current window of the run's desktop guest.",
+      "input": "oneiron_browser::ObserveInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.observe(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.find",
+      "description": "Finds the window rows whose role and name match.",
+      "input": "oneiron_browser::FindInput",
+      "output": "oneiron_browser::FindOutput",
+      "call": "driver.find(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.click",
+      "description": "Clicks one window target and observes the result.",
+      "input": "oneiron_browser::ClickInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.click_at",
+      "description": "Clicks a point of a held screenshot, mapped onto the window.",
+      "input": "oneiron_browser::PointInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click_at(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.type",
+      "description": "Types text into one window target and observes the result.",
+      "input": "oneiron_browser::TypeInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.type_text(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.select",
+      "description": "Sets the value of a combo box or list target by its option label.",
+      "input": "oneiron_browser::SelectInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.select(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.key",
+      "description": "Presses one key, with modifiers, on a window target or the window's focus.",
+      "input": "oneiron_browser::KeyInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.press_key(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.hotkey",
+      "description": "Presses a key combination in the current window.",
+      "input": "oneiron_browser::HotkeyInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.hotkey(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.scroll",
+      "description": "Scrolls a window target, or the window, by steps.",
+      "input": "oneiron_browser::ScrollInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.scroll(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.wait_for",
+      "description": "Waits until some window row matches a role and name.",
+      "input": "oneiron_browser::WaitForInput",
+      "output": "oneiron_browser::WaitForOutput",
+      "call": "driver.wait_for(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.expect",
+      "description": "Checks that a window row is present or absent, and holds a given value.",
+      "input": "oneiron_browser::ExpectInput",
+      "output": "oneiron_browser::ExpectOutput",
+      "call": "driver.expect(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.screenshot",
+      "description": "Takes a screenshot of the window the session holds, by image ref and never captioned.",
+      "input": "oneiron_browser::ScreenshotInput",
+      "output": "oneiron_browser::ScreenshotOutput",
+      "call": "driver.screenshot(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.view",
+      "description": "Reads back a held image by its ref.",
+      "input": "oneiron_browser::ViewInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.view(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.crop",
+      "description": "Crops a held image to a rectangle.",
+      "input": "oneiron_browser::CropInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.crop(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.zoom",
+      "description": "Zooms into a rectangle of a held image.",
+      "input": "oneiron_browser::ZoomInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.zoom(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.batch",
+      "description": "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails.",
+      "input": "oneiron_browser::BatchInput",
+      "output": "oneiron_browser::BatchOutput",
+      "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.windows",
+      "description": "Lists the desktop guest's windows, or one app's.",
+      "input": "oneiron_browser::WindowsInput",
+      "output": "oneiron_browser::WindowsOutput",
+      "call": "driver.windows(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.window",
+      "description": "Moves the session onto another desktop window and observes it.",
+      "input": "oneiron_browser::WindowInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.window(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
       "description": "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist.",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
@@ -3098,6 +3325,20 @@
       "scope": "Write",
       "context": "run",
       "effect": "SkillsCall"
+    },
+    {
+      "name": "self.spawn",
+      "input": "crate::code_run::ReaderSpawnInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ReaderSpawn"
+    },
+    {
+      "name": "tasks.wait",
+      "input": "crate::code_run::TaskWaitSetRequest",
+      "scope": "Read",
+      "context": "run",
+      "effect": "TasksWaitSet"
     }
   ]
 }

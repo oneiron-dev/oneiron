@@ -437,11 +437,29 @@ pub struct Memory<'v> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostWriteOrigin {
     envelope: crate::WriteEnvelope,
+    /// The running agent attempt the dispatcher bound as the call's TASK
+    /// creator (OF-532), read from its live lease, never from the guest.
+    task_host: Option<crate::task_verb::HostBinding>,
 }
 
 impl HostWriteOrigin {
     pub(crate) const fn new(envelope: crate::WriteEnvelope) -> Self {
-        Self { envelope }
+        Self {
+            envelope,
+            task_host: None,
+        }
+    }
+
+    /// This origin with the run's TASK creator binding, if it has one.
+    pub(crate) fn with_task_host(mut self, binding: Option<crate::task_verb::HostBinding>) -> Self {
+        self.task_host = binding;
+        self
+    }
+
+    /// The TASK creator the dispatcher bound, if any.
+    #[must_use]
+    pub const fn task_host(&self) -> Option<&crate::task_verb::HostBinding> {
+        self.task_host.as_ref()
     }
 
     /// The source every claim written under this origin carries.
@@ -674,6 +692,9 @@ impl Memory<'_> {
     /// source and the gate decides.
     #[must_use]
     pub fn with_host_origin(mut self, origin: HostWriteOrigin) -> Self {
+        if let Some(binding) = &origin.task_host {
+            self.task_host = Some(binding.clone());
+        }
         self.host_origin = Some(origin);
         self
     }
