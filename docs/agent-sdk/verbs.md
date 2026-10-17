@@ -60,6 +60,10 @@ both bindings and their export-census tests in one change.
 - `vault.weave.item.wrong`
 - `vault.weave.owner.item.wrong`
 - `vault.packs.put`
+- `vault.packs.remove`
+- `vault.connectors.subscriptions.put`
+- `vault.connectors.subscriptions.list`
+- `vault.connectors.subscriptions.revoke`
 - `vault.packs.setup.prepare`
 - `vault.packs.setup.get`
 - `vault.packs.setup.answer`

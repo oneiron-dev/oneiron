@@ -215,6 +215,18 @@ impl OneironClient {
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
+                "vault.packs.remove" => remote_agent_verb_output::<
+                    oneiron::skill_hub::pack_catalog::PackInstallReceipt,
+                >(client, verb, &input),
+                "vault.connectors.subscriptions.put" => remote_agent_verb_output::<
+                    oneiron::connector_key::ChannelMessageSubscription,
+                >(client, verb, &input),
+                "vault.connectors.subscriptions.list" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ChannelSubscriptions,
+                >(client, verb, &input),
+                "vault.connectors.subscriptions.revoke" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ChannelSubscriptionRevoked,
+                >(client, verb, &input),
                 "vault.packs.setup.prepare" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackSetupReceipt,
                 >(client, verb, &input),
@@ -1634,6 +1646,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.put", value)
+    }
+    pub fn vault_packs_remove(
+        &self,
+        input: &oneiron::task_verb::sdk::PackRemoveRequest,
+    ) -> Result<oneiron::skill_hub::pack_catalog::PackInstallReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.remove", value)
+    }
+    pub fn vault_connectors_subscriptions_put(
+        &self,
+        input: &oneiron::task_verb::sdk::ChannelSubscriptionRequest,
+    ) -> Result<oneiron::connector_key::ChannelMessageSubscription, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.subscriptions.put", value)
+    }
+    pub fn vault_connectors_subscriptions_list(
+        &self,
+        input: &oneiron::task_verb::sdk::ChannelSubscriptionsRequest,
+    ) -> Result<oneiron::task_verb::sdk::ChannelSubscriptions, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.subscriptions.list", value)
+    }
+    pub fn vault_connectors_subscriptions_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::ChannelSubscriptionRevokeRequest,
+    ) -> Result<oneiron::task_verb::sdk::ChannelSubscriptionRevoked, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.subscriptions.revoke", value)
     }
     pub fn vault_packs_setup_prepare(
         &self,
