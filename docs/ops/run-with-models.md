@@ -114,7 +114,11 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
-`reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
+`assistant_prefill`, `reasoning`; `assistant_prefill` lets Continue send the
+saved reply as an open trailing assistant message instead of an instruction to
+go on, and only counts when every rung of the ladder has it: list it only for a
+model whose endpoint and serving template continue a trailing assistant message
+(no model has it by default); `audio_input` sends a chat message's audio clips as `input_audio`,
 WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
 the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
 `reasoning` unless the list is written out), `model_capabilities` (one wire
@@ -1126,12 +1130,24 @@ A speech call can name its voice: `"voice": {"kind": "stock", "name":
 "voice_id": "...", "include_generated": false}` for a banked identity. A
 banked voice lives in the vault's reference bank. A provider sees only the id
 of the clone recorded for its target, and the target is the rung's provider
-name in `[models.providers]`. The call renders on the first rung of its
-ladder whose target holds a current clone, and on that rung alone. With no
-such rung the call answers `409 voice_not_provisioned`. If the voice is
-withdrawn or its clone re-recorded while the call renders, it answers `409
-voice_withdrawn` and the audio is not returned. A call that names a voice
-names no `voice` param, and only a speech call names one.
+name in `[models.providers]`. The call binds the voice on every rung of its
+ladder whose target already holds a current clone (or, on a rung that
+renders from the bank's refs, the identity's fenced clip) under consent still
+in force. It goes only to those rungs, in ladder order, each in its own
+binding. When one is down, rate-limited or out of quota, the call moves to the
+next rung that holds the voice, never to one that does not. No voice is cloned
+and no consent is asked mid-call, and the owner's fallback (`use_fallback`)
+takes no voiced call. When no rung that holds the voice answers within the
+vault's longest wait, the call ends with the provider's failure (`502
+provider_unavailable` here), and a repeat call after recovery renders. With no
+rung holding the voice, the call answers `409 voice_not_provisioned`. Each
+rung's binding is checked again before the call goes out on it. If the voice
+is withdrawn or its clone re-recorded while the call renders, or everywhere
+while it waits, it answers `409 voice_withdrawn` and no audio is returned. A
+stock voice (or a raw `voice` param) is one provider's name: it stays on the
+first rung whose row serves the call. A call that names a voice names no
+`voice` param, and only a speech call names one. Each receipt lists a rung
+it skipped for the voice as `voice_not_held`.
 
 The speech seat also takes the hosted voice tiers, which are not
 OpenAI-compatible. A `cartesia` provider speaks Cartesia's `POST /tts/bytes`
@@ -1372,17 +1388,32 @@ The same seat answers `ai.verdict` over an image: name its view handle as
 caller's own scoped read, the image rides the receipt as an evidence ref
 with its body version, and the call starts at the Local rung on a run of its
 own. There the seat answers a Choice (`{"choice", "confidence"}`), a yes/no
-(`{"p_yes"}`) or, with `"locate": true`, a Box. A Score abstains. A rung
-above Local that reads no image is skipped.
+(`{"p_yes"}`) or a Box; a Point is the Box's centre. A rung above Local that
+reads no image is skipped.
+
+The request's `contract` says what the answer is: `{"kind": "noul"}` (yes or
+no with P(yes), when absent), `{"kind": "choice", "options": [...]}`,
+`{"kind": "score", "min": 1, "max": 5}` (one number in that range, in the
+units and direction the question names), or `{"kind": "box"}` /
+`{"kind": "point"}` (where the target sits in `image`, as fractions of it
+from its top left). The call starts at the first rung whose provider takes
+its contract over its images, so a Score starts above the rungs that read
+none. No image seat reads a score: a score over an image is refused, never
+asked without its image. A Box or Point asks the host's presence question
+first. A confident no answers `{"kind": "box", "value": null}` (or `point`),
+and the answer carries `presence`, that step with its own P(yes); `p` is
+the coordinates' confidence, and empty when they were not read.
 
 A code-mode program drives a routine browser or computer step through the
-same verb (the CUA-S1 pattern): `"routine": true` makes `options` the step's
-candidates (1 to 61), and the ladder also offers `NONE`, `reobserve` and
-`too complicated, ask up`. The answer gains an `outcome`: one of
+same verb (the CUA-S1 pattern): `"routine": true` makes a Choice's
+`options` the step's candidates (1 to 61), and the ladder also offers
+`NONE`, `reobserve` and `too complicated, ask up`; a routine Box or Point
+acts where it finds the target. The answer gains an `outcome`: one of
 `{"outcome": "act", "candidate"}`, `{"outcome": "point", "x", "y", "found"}`
-(a routine Box's centre, as fractions of the image), `{"outcome": "none"}`,
-`{"outcome": "reobserve"}` or `{"outcome": "ask_up", "reason"}`. A routine
-step's Box that finds no target reads as `none`. A ladder abstain reads as
+(a routine Point, or a Box's centre, as fractions of the image),
+`{"outcome": "none"}`, `{"outcome": "reobserve"}` or
+`{"outcome": "ask_up", "reason"}`. A routine step's Box or Point that finds
+no target reads as `none`. A ladder abstain reads as
 `ask_up`, with the ladder's reason (uncertain, deadline, no rung). The
 program passes the count of NONE and reobserve outcomes in a row as
 `"misses"`, and `"screenshot": true` says the next observation takes a

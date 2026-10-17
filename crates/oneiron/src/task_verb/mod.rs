@@ -54,6 +54,10 @@ pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
 mod lifecycle_facade;
+mod lifecycle_receipt;
+pub(crate) use lifecycle_receipt::{
+    erase_in_txn as erase_lifecycle_receipts_in_txn, task_lifecycle_receipts,
+};
 mod linear_store;
 mod owner_index;
 mod policy_change_followup;
@@ -112,8 +116,9 @@ pub use dormant_magistrate::{
 pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
 pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
 pub(crate) use room_thread::{
-    open_thread_tasks_in as room_open_thread_tasks_in, task_ids_in as room_thread_task_ids_in,
-    task_roster_in as room_thread_task_roster_in, thread_tasks as room_thread_tasks,
+    context_refs as room_thread_context_refs, open_thread_tasks_in as room_open_thread_tasks_in,
+    task_ids_in as room_thread_task_ids_in, task_roster_in as room_thread_task_roster_in,
+    thread_tasks as room_thread_tasks,
 };
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
@@ -242,6 +247,7 @@ mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_mesh;
 mod sdk_record_erase;
+mod sdk_research;
 mod sdk_scratchpad;
 mod sdk_secret;
 mod sdk_secret_use;

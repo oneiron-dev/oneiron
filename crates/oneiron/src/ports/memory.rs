@@ -507,16 +507,18 @@ impl ClaimStore for Memory {
         subject: &EntityId,
         predicate: &str,
     ) -> Result<Option<(EntityId, ClaimBody)>> {
-        Ok(self
+        let heads = self
             .port_claim_predicate_history(txn, subject, predicate)?
             .into_iter()
             .rev()
-            .find(|(id, body)| {
+            .filter(|(id, body)| {
                 body.lifecycle == ClaimLifecycleStatus::Active
                     && !body.stale
                     && !txn.stale.contains(id)
                     && !txn.tombstones.contains_key(id)
-            }))
+            })
+            .collect();
+        Ok(super::lmdb_claim::current_claim_head(heads))
     }
     fn port_claim_supersede_chain(&self, txn: &Snapshot, id: &EntityId) -> Result<Vec<EntityId>> {
         let mut rows = Vec::new();
