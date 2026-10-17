@@ -42,6 +42,7 @@ mod judge_swap;
 mod local_vision;
 mod policy;
 pub(crate) mod self_heal_detectors;
+mod skill_author;
 mod status;
 mod step;
 mod step_failure;

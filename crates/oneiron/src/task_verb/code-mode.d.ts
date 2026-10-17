@@ -268,6 +268,7 @@ declare const vault: {
     add(input: { holder_key?: string | null; member: string; role?: string | null; vault_id: number }): Promise<unknown>;
     change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
     decline(input: { invitation: string; vault_id: number }): Promise<unknown>;
+    invitation_slip(input: { holder_key: string; invitation: string; member: string; vault_id: number }): Promise<unknown>;
     invitations(input: { vault_id: number }): Promise<unknown>;
     leave(input: { vault_id: number }): Promise<unknown>;
     remove(input: { member: string; vault_id: number }): Promise<unknown>;
@@ -318,6 +319,10 @@ declare const vault: {
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
+  records: {
+    erase_confirm(input: { also_same_bytes?: boolean; preview_digest: string; record: string }): Promise<unknown>;
+    erase_preview(input: { record: string }): Promise<unknown>;
+  };
   refs: {
     links(input: { after?: string | null; limit?: number | null; text?: string | null; turn_ref?: string | null }): Promise<unknown>;
     resolve(input: { reference: string }): Promise<unknown>;
@@ -335,8 +340,10 @@ declare const vault: {
     join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
-    offer: ((input: { agent: string; artifact_ref?: string | null; branch?: string | null; intent_key: string; room: string; spend_scope?: string | null; what: string }) => Promise<unknown>) & {
+    offer: ((input: { agent: string; artifact_ref?: string | null; branch?: string | null; intent_key: string; room: string; spend_scope?: string | null; until?: number | null; what: string }) => Promise<unknown>) & {
       answer(input: { action: "join" | "not_now"; intent_key: string; offer_id: string }): Promise<unknown>;
+      reopen(input: { expected_last_engaged_at: number; offer_id: string; until?: number | null }): Promise<unknown>;
+      vote(input: { action: "join" | "not_now"; offer_id: string }): Promise<unknown>;
     };
     offers(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     participants(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
@@ -360,6 +367,11 @@ declare const vault: {
     wake_policy: {
       set(input: { policy: unknown; idempotency_key: string }): Promise<unknown>;
     };
+  };
+  shape: {
+    apply(input: { approve?: number[]; plan: object }): Promise<unknown>;
+    plan(input: { seed?: object | null }): Promise<unknown>;
+    read(input: object): Promise<unknown>;
   };
   shared: {
     close_erase_ask(input: { act_id?: string | null; ask_id: string; erased: boolean }): Promise<unknown>;

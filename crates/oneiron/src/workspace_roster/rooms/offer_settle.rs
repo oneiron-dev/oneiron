@@ -346,7 +346,8 @@ fn decline_in_diary_in_txn(
 }
 
 /// Answers `request` as `caller` in the caller's write. `ended` says the
-/// card's thread has ended, read before the write from the room's fold.
+/// card's thread has ended, read before the write from the room's fold; a
+/// room-wide card's own time is read here, from the stored card.
 fn answer_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -374,11 +375,13 @@ fn answer_in_txn(
     if !matches!(stored.card.state, OfferState::Open { .. }) {
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
     }
-    if ended {
+    if ended || super::offer_activity::room_offer_expired(&stored.card, now) {
         stored.card.state = OfferState::AgedOut;
         OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
     }
+    // An answer engages the card: one that holds keeps it open from now.
+    stored.card.last_engaged_at = stored.card.last_engaged_at.max(now);
     let join = rooms_consent_in_txn(
         vault,
         txn,
