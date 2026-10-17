@@ -166,12 +166,7 @@ fn rewrite(
 ) -> Result<Done> {
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     let body_hit = write_payload_hit(body).is_some();
-    // Text staged for the live revision's idle publication is the text its
-    // publication indexes: it goes through the door, masked, in its place.
-    let fields = match record_text::staged_live(vault, txn, id)? {
-        Some(staged) => staged,
-        None => index_text(vault, txn, id)?,
-    };
+    let fields = index_inputs(vault, txn, id)?;
     crate::bm25::deindex_text(&vault.store, txn, id)?;
     let mut batch = vault.batch_in();
     if body_hit {
@@ -197,7 +192,8 @@ fn rewrite(
 
 /// A file keeps its bytes. Put again as they are, the batch door marks each
 /// key in them with its custody record and raises the file's band; a file
-/// already marked is left as it is.
+/// already marked is left as it is. Its index text is text, not its bytes,
+/// and is lifted first ([`lift_file_text`]).
 fn mark_file(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -205,6 +201,7 @@ fn mark_file(
     header: &EntityMetadataHeader,
     raw: &[u8],
 ) -> Result<()> {
+    lift_file_text(vault, txn, id)?;
     let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     let hash = *blake3::hash(bytes).as_bytes();
     if crate::secret_custody::masked_file_in_txn(&vault.store, txn, &hash)?.is_some() {
@@ -248,4 +245,33 @@ pub(super) fn exists(vault: &Vault, txn: &RoTxn<'_>, key: &[u8]) -> Result<bool>
         Some(id) => Ok(crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()),
         None => Ok(false),
     }
+}
+
+/// The text a record's index reads next: what it staged for its live
+/// revision's idle publication, which that publication indexes, else the
+/// text it was indexed with.
+fn index_inputs(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<(String, String)>> {
+    match record_text::staged_live(vault, txn, id)? {
+        Some(staged) => Ok(staged),
+        None => index_text(vault, txn, id),
+    }
+}
+
+/// A file's index text that holds a hit goes through the batch door again,
+/// masked, as an ordinary record's does; staged text that still holds one is
+/// dropped. The file's bytes are [`mark_file`]'s.
+fn lift_file_text(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    let fields = index_inputs(vault, txn, id)?;
+    if fields
+        .iter()
+        .any(|(_, text)| write_payload_hit(text.as_bytes()).is_some())
+    {
+        crate::bm25::deindex_text(&vault.store, txn, id)?;
+        let fields = fields
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect::<Vec<_>>();
+        vault.batch_in().text(id, &fields).apply(txn)?;
+    }
+    record_text::settle_staged(vault, txn, id)
 }
