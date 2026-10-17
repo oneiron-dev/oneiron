@@ -57,7 +57,10 @@ pub(crate) async fn vault_records_erase_preview(
     const VERB: &str = "vault.records.erase_preview";
     let caller = person(server, auth, VERB)?;
     off_runtime(server, VERB, move |server| {
-        let memory = server.vault().memory(caller.actor(), EdgeActorClass::Human);
+        let memory = server.vault().memory(
+            caller.revalidate_person(server.vault())?,
+            EdgeActorClass::Human,
+        );
         sdk::preview_record_erase(&memory, input)
     })
     .await
@@ -74,7 +77,10 @@ pub(crate) async fn vault_records_erase_confirm(
     const VERB: &str = "vault.records.erase_confirm";
     let caller = person(server, auth, VERB)?;
     off_runtime(server, VERB, move |server| {
-        let memory = server.vault().memory(caller.actor(), EdgeActorClass::Human);
+        let memory = server.vault().memory(
+            caller.revalidate_person(server.vault())?,
+            EdgeActorClass::Human,
+        );
         sdk::confirm_record_erase(&memory, &caller, input)
     })
     .await
