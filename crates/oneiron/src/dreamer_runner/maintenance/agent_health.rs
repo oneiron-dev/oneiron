@@ -8,7 +8,8 @@
 //! cards and proposed moves, and an agent-health event never feeds the auto
 //! arm (`Vault::is_signed_tripwire`). It reads no diary. A card's recipient
 //! settles it (`self.inbox.concern.outcome`), as the owner does through
-//! `/v1/owner/inbox/concern/outcome`.
+//! `/v1/owner/inbox/concern/outcome`, and may ask the Coach for a proposal
+//! (`self.inbox.concern.move`, `ask`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -41,6 +42,13 @@ use crate::self_heal::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+
+mod ask;
+pub use ask::{
+    AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
+    AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
+    ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
+};
 
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
 /// deduped per wake.
@@ -307,6 +315,9 @@ pub struct AgentHealthCard {
     pub watermark: usize,
     pub opened_at: u64,
     pub updated_at: u64,
+    /// The newest ask of the Coach (`ask_coach`), and its answer once drafted.
+    #[serde(default)]
+    pub coach: Option<AgentHealthCoachAsk>,
 }
 
 impl AgentHealthCard {
@@ -418,27 +429,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         now,
     )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(widen_denial_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &dials,
-        since,
-    )?);
-    findings.extend(unsupported_done_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        since,
-    )?);
-    findings.extend(cost_spike_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &dials,
-        since,
-        now,
-    )?);
+    findings.extend(widen_denial_findings(vault, &dispatched, &attempts, &dials, since)?);
+    findings.extend(unsupported_done_findings(vault, &dispatched, &attempts, since)?);
+    findings.extend(cost_spike_findings(vault, &dispatched, &attempts, &dials, since, now)?);
     // What each agent said itself, for its card.
     for finding in &mut findings {
         let began = finding
@@ -1153,10 +1146,7 @@ fn widen_denial_findings(
             task: task_of(record),
             attempt: Some(record.id),
             evidence: vec![attempt],
-            window: (
-                record.claimed_at.unwrap_or(record.created_at),
-                record.updated_at,
-            ),
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
             actual: count,
             dial: dials.widen_denials as i64,
             measured: count,
@@ -1208,10 +1198,7 @@ fn unsupported_done_findings(
             task: Some(task),
             attempt: Some(record.id),
             evidence: vec![attempt, task],
-            window: (
-                record.claimed_at.unwrap_or(record.created_at),
-                record.updated_at,
-            ),
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
             actual: count,
             dial: 0,
             measured: count,
@@ -1395,6 +1382,7 @@ fn merge(
         watermark: 0,
         opened_at: now,
         updated_at: now,
+        coach: None,
     });
     keep_newest(&mut card.evidence, &finding.evidence, MAX_CARD_EVIDENCE);
     keep_newest(&mut card.diagnostics, &[diagnostic], MAX_CARD_DIAGNOSTICS);

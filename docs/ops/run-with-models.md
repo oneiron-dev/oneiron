@@ -636,7 +636,13 @@ yes/no question lists no before yes, as test 6b's side questions did; its
 readout still reports yes first), the single-token label verbalizers
 (`tokens`, at least four), the end token (`eos`), `n_probs` (how many of the
 top probabilities come back), `n_probs_full` (the whole vocabulary, for the
-retry below) and, for the owner's probe, `[probe] paired` and `person`.
+retry below) and, for the owner's probe, `[probe] paired` and `person`. An
+optional `[probe] presence` words the presence question every Box or Point
+call asks first, over the same images and clock, with the coordinate
+question's wording in the `locate` state field ("is that target in the image
+at all?"). Only a confident yes, with no person asked, starts the
+coordinates; a confident no answers that the target is absent; anything else
+abstains. Without it, the coordinates are asked directly.
 
 A question and "does this need more thinking?" stay joint (ARCH-0076
 `#ask-a-person`): the question renders the joint template, its text as
@@ -744,7 +750,8 @@ Image, video, speech, transcription and embedding calls have their own seats,
 outside the text tiers: one ladder per operation in `[models.media]`, each rung
 `"<provider>:<model>"` on an OpenAI-compatible provider (`openai-compat` or
 `local-openai-compat`, keyed by `key_env`; the credential broker sends chat
-calls only). A media call is admitted, sent and settled like a text call:
+calls only), or an image or video rung on a `gemini` provider (below). A
+media call is admitted, sent and settled like a text call:
 each rung it reaches gets its own permit on the media meter, an offer refused
 for a limit rests and the call goes to the next rung, and the run's receipts
 show every rung.
@@ -769,6 +776,37 @@ rungs = ["local:whisper-large-v3"]
 
 [models.media.embed]             # POST /v1/embeddings
 rungs = ["local:qwen3-embedding"]
+```
+
+A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
+key in `key_env` (sent as `x-goog-api-key`). It serves the image and video
+seats only. An image is `models/{model}:generateContent` asked for image
+output: the instruction and each reference image go inline, a `size`
+(`"WxH"`) or `width`/`height` becomes the nearest drawn `aspectRatio` and an
+`imageSize` (`1K` up to 1024 px a side, `2K` up to 2048, else `4K`),
+`aspect_ratio` / `image_size` name them outright, and any other param joins
+`generationConfig`. It is charged the tokens the answer counts. A video is a
+Veo job (`models/{model}:predictLongRunning`; one reference image is its first
+frame). `seconds` becomes `durationSeconds`, a `size` an `aspectRatio` and
+`resolution`, and other params go as `parameters`. The poll reads the
+operation, and a finished job's clips are fetched from the file URIs it names:
+the key goes to the API's origin only, and the one redirect to storage is
+followed without it. The operation names no clip length, so a clip is charged
+its call's reservation. The API has no cancel for a Veo job, so a cancel lets
+the job go here and the provider finishes it unread.
+
+```toml
+[models.providers.gemini]
+kind = "gemini"
+base_url = "https://generativelanguage.googleapis.com"
+key_env = "GEMINI_API_KEY"
+
+[models.media.image]
+rungs = ["gemini:gemini-2.5-flash-image"]
+max_references = 3
+
+[models.media.video]
+rungs = ["gemini:veo-3.1-generate-preview"]
 ```
 
 A provider that counts tokens is charged them; one that counts images,

@@ -559,9 +559,9 @@ fn validate_ladders(
                     rung.model.provider
                 )
             })?;
-            if provider.kind.speech_only() {
+            if provider.kind.media_only() {
                 anyhow::bail!(
-                    "models.roles.{key}: {} is on a speech provider, which serves [models.media.speech] only",
+                    "models.roles.{key}: {} is on a media provider, which serves [models.media] seats only",
                     rung.model
                 );
             }

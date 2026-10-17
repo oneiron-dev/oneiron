@@ -62,6 +62,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.inbox.concern.move",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+                >(),
+            ),
+            (
                 "vault.people.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
             ),
@@ -1074,6 +1080,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.inbox.concern.outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.concern.move" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2250,6 +2263,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest =
                 decode(value.clone())?;
         }
+        "self.inbox.concern.move" => {
+            let _input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest =
+                decode(value.clone())?;
+        }
         "vault.people.list" => {
             let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
         }
@@ -2897,6 +2914,7 @@ pub fn invoke(
         "self.identity.settle" => encode(self_identity_settle(memory, decode(value)?)?),
         "self.inbox.concern" => encode(self_inbox_concern(memory, decode(value)?)?),
         "self.inbox.concern.outcome" => encode(self_inbox_concern_outcome(memory, decode(value)?)?),
+        "self.inbox.concern.move" => encode(self_inbox_concern_move(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
@@ -3346,6 +3364,12 @@ pub fn self_inbox_concern_outcome(
     input: crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest,
 ) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary> {
     memory.concern_outcome(&input)
+}
+pub fn self_inbox_concern_move(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome> {
+    memory.concern_move(&input)
 }
 pub fn vault_people_list(
     memory: &Memory<'_>,
