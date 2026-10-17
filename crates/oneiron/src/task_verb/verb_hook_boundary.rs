@@ -17,7 +17,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::runtime_hooks::verb::VerbAskCredential;
+use crate::runtime_hooks::verb::{HOOK_RESULT_NOT_RETAINED, VerbAskCredential};
 use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::sdk::{AgentVerb, masked_reveal_reply, revealed_hook_view, validate_input};
 use crate::{EntityId, Vault};
@@ -146,9 +146,9 @@ pub fn row(
         .resume_bounds()
         .filter(|_| verb != AgentVerb::RevealWait.as_str())
         .map(|(session, room)| VerbResume::Row { session, room });
-    let credential = VerbCall::may_run(memory.vault(), verb)
-        .then(|| memory.verb_ask_credential())
-        .flatten();
+    // Bound on every call: a retry of a call an ask parked meets its saved
+    // reference whether or not a hook takes the verb now.
+    let credential = memory.verb_ask_credential();
     let pre = match row_pre_resumable(memory, verb, args, resume, credential)? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop),
@@ -228,12 +228,25 @@ fn stopped(stop: VerbHookStop) -> MemoryError {
 /// A row's answer to a pre-chain stop: what a call settlement already ran
 /// returned, as the row's output. Any other stop is the refusal the caller
 /// reads; the error a settled call failed with, or was refused with, keeps
-/// its code and rides in `hook` with its receipt.
+/// its code and rides in `hook` with its receipt. A call that completed with
+/// a result too large to keep says so, and not to call again.
 fn completed<O: DeserializeOwned>(verb: &str, stop: VerbHookStop) -> MemoryResult<O> {
     match stop {
         VerbHookStop::Completed { result, .. } => serde_json::from_value(result).map_err(|error| {
             MemoryError::bad_request(format!("{verb}'s saved result does not decode: {error}"))
         }),
-        stop => Err(stopped(stop)),
+        stop => {
+            let not_retained = matches!(
+                &stop,
+                VerbHookStop::CompletedWithError { code, .. } if code == HOOK_RESULT_NOT_RETAINED
+            );
+            let mut error = stopped(stop);
+            if not_retained {
+                error.suggestions = vec![format!(
+                    "{verb} ran once its hook's ask was answered; only its result was not kept. Do not call it again: read what it changed instead."
+                )];
+            }
+            Err(error)
+        }
     }
 }

@@ -32,6 +32,8 @@ thread_local! {
 
 type InFlight = Arc<Mutex<HashMap<InvocationId, Holder>>>;
 type Claims = Arc<Mutex<HashMap<InvocationId, Arc<ClaimSlot>>>>;
+/// The process's sandbox, or why it did not build.
+type Sandbox = std::result::Result<Arc<dyn HookBodyRuntime>, String>;
 
 /// The vault's verb-hook state.
 #[derive(Default)]
@@ -47,9 +49,9 @@ pub(crate) struct VerbHookState {
     in_flight: InFlight,
     /// Client-named invocations a door is serving, each with its call.
     claims: Claims,
-    /// The process's one sandbox: the host's, when it installed one before
-    /// the first hooked call, else built on that call.
-    runtime: OnceLock<std::result::Result<Arc<dyn HookBodyRuntime>, String>>,
+    /// The process's one sandbox, set once through [`Self::sandbox`] or
+    /// [`Vault::install_hook_runtime`]: the host's, or built on first use.
+    runtime: OnceLock<Sandbox>,
     /// The host's check that runs a credential caller's settled call again;
     /// serve installs it once, before its hook runner starts.
     credential: OnceLock<CredentialCheck>,
@@ -60,6 +62,8 @@ pub(crate) struct VerbHookState {
 pub(super) struct Bindings {
     loaded: Instant,
     generation: u64,
+    /// `hooks.enabled` as of the read.
+    pub(super) enabled: bool,
     pub(super) verb: Vec<(EntityId, PackHookBinding)>,
 }
 
@@ -130,7 +134,8 @@ impl VerbHookState {
             return Ok(cached);
         }
         let mut verb = Vec::new();
-        if vault.hooks_enabled()? {
+        let enabled = vault.hooks_enabled()?;
+        if enabled {
             verb = vault
                 .pack_hook_bindings()?
                 .into_iter()
@@ -149,6 +154,7 @@ impl VerbHookState {
         let fresh = Arc::new(Bindings {
             loaded: Instant::now(),
             generation,
+            enabled,
             verb,
         });
         *self
@@ -191,11 +197,17 @@ impl VerbHookState {
     /// verb hooks then pass through. A sandbox that did not build fails each
     /// run, so blocking hooks still fail safe.
     pub(super) fn runtime(&self) -> Option<std::result::Result<&dyn HookBodyRuntime, &str>> {
+        self.sandbox()
+            .map(|runtime| runtime.as_deref().map_err(String::as_str))
+    }
+
+    /// The one get-or-initialize step every reader of the sandbox takes: the
+    /// one set, else, with the sandbox feature, one built now on the
+    /// caller's thread. `None` without the feature and none installed.
+    fn sandbox(&self) -> Option<&Sandbox> {
         #[cfg(feature = "code-sandbox-wasmtime")]
-        let runtime = Some(self.runtime.get_or_init(build_sandbox));
-        #[cfg(not(feature = "code-sandbox-wasmtime"))]
-        let runtime = self.runtime.get();
-        runtime.map(|runtime| runtime.as_deref().map_err(String::as_str))
+        let _ = self.runtime.get_or_init(build_sandbox);
+        self.runtime.get()
     }
 
     /// Marks `invocation` in flight for `actor`. The same actor's id in
@@ -256,6 +268,15 @@ impl VerbHookState {
             },
         );
         Some(self.mark(invocation))
+    }
+
+    /// Whether the drain holds `invocation` now, running its settled call.
+    pub(super) fn drain_holds(&self, invocation: InvocationId) -> bool {
+        self.in_flight
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&invocation)
+            .is_some_and(|holder| holder.drain.is_some())
     }
 
     /// The host's credential check, if it installed one.
@@ -424,11 +445,43 @@ impl Vault {
             .store(true, Ordering::Release);
     }
 
-    /// Hands verb hooks the host's sandbox, so the process runs one. Serve
-    /// installs its fact-hook runner's before any call; once a hooked call
-    /// has built its own, this does nothing.
-    pub fn install_hook_runtime(&self, runtime: Arc<dyn HookBodyRuntime>) {
-        let _ = self.verb_hook_state.runtime.set(Ok(runtime));
+    /// The process's one hook sandbox, for a host that runs hooks of its own
+    /// on it too (serve's fact-hook runner, `vault.hooks.replay`): the one
+    /// installed or already built, else one built now. Building compiles the
+    /// component, so a host on an async runtime calls this off it.
+    ///
+    /// # Errors
+    ///
+    /// Why the sandbox did not build, the same on every call; without the
+    /// sandbox feature, that none is installed.
+    pub fn hook_runtime(&self) -> std::result::Result<Arc<dyn HookBodyRuntime>, String> {
+        self.verb_hook_state
+            .sandbox()
+            .cloned()
+            .unwrap_or_else(|| Err("this build has no hook sandbox".to_owned()))
+    }
+
+    /// Hands verb hooks the host's sandbox, so the process runs one, through
+    /// the same get-or-initialize step as [`Self::hook_runtime`].
+    ///
+    /// # Errors
+    ///
+    /// When the vault already holds another sandbox, or one that did not
+    /// build: that one stands and `runtime` goes unused, so a host takes
+    /// [`Self::hook_runtime`]'s instead.
+    pub fn install_hook_runtime(
+        &self,
+        runtime: Arc<dyn HookBodyRuntime>,
+    ) -> std::result::Result<(), String> {
+        match self
+            .verb_hook_state
+            .runtime
+            .get_or_init(|| Ok(Arc::clone(&runtime)))
+        {
+            Ok(installed) if Arc::ptr_eq(installed, &runtime) => Ok(()),
+            Ok(_) => Err("verb hooks already run on another sandbox".to_owned()),
+            Err(reason) => Err(reason.clone()),
+        }
     }
 
     /// Installs the host's check that runs a credential caller's call again
