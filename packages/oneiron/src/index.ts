@@ -332,6 +332,8 @@ export class Oneiron {
     members: {
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
       add: (input: Facade.SharedMemberAddRequest): Facade.SharedMemberInvited => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedMemberInvited),
+      /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
+      invitation_slip: (input: Facade.InvitationSlipRequest): Facade.InvitationSlip => this.#call(() => this.#client.vaultMembersInvitationSlip(input) as Facade.InvitationSlip),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
       /** An Admin removes one member from a shared vault. */
@@ -520,10 +522,14 @@ export class Oneiron {
       join: (input: Facade.JoinRequest): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsJoin(input) as Facade.JoinOutcome),
       /** One party's answer to a join that waits on it, after which the join is decided again. */
       consent: (input: Facade.ConsentAnswer): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsConsent(input) as Facade.JoinOutcome),
-      /** Publishes an agent's offer card to join a room or one of its threads. */
+      /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
       offer: Object.assign((input: Facade.OfferDraft): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOffer(input) as Facade.OfferCard), {
         /** The room's host answers an offer card: join, or not now. */
         answer: (input: Facade.OfferAnswerRequest): Facade.OfferSettlement => this.#call(() => this.#client.vaultRoomsOfferAnswer(input) as Facade.OfferSettlement),
+        /** Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits. */
+        vote: (input: Facade.OfferVoteRequest): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOfferVote(input) as Facade.OfferCard),
+        /** The room's owner or delegated host reopens its aged-out room-wide offer card. */
+        reopen: (input: Facade.OfferReopenRequest): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOfferReopen(input) as Facade.OfferCard),
       }),
       /** One page of the current offer cards in a room or one of its threads. */
       offers: (input: Facade.OffersRequest): Facade.OffersPage => this.#call(() => this.#client.vaultRoomsOffers(input) as Facade.OffersPage),

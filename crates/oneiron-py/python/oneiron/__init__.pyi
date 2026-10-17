@@ -536,6 +536,8 @@ class Oneiron:
     class _VaultMembersVerbs:
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+        def invitation_slip(self, spec: Facade.InvitationSlipRequest) -> Facade.InvitationSlip:
+            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:
@@ -712,9 +714,13 @@ class Oneiron:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
     class _VaultRoomsOfferVerbs:
         def __call__(self, spec: Facade.OfferDraft) -> Facade.OfferCard:
-            """Publishes an agent's offer card to join a room or one of its threads."""
+            """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""
         def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferSettlement:
             """The room's host answers an offer card: join, or not now."""
+        def vote(self, spec: Facade.OfferVoteRequest) -> Facade.OfferCard:
+            """Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits."""
+        def reopen(self, spec: Facade.OfferReopenRequest) -> Facade.OfferCard:
+            """The room's owner or delegated host reopens its aged-out room-wide offer card."""
     class _VaultRoomsHostVerbs:
         def __call__(self, spec: Facade.RoomHostRequest) -> Facade.RoomStanding:
             """Who hosts a room now, and the caller's own speaking role there."""

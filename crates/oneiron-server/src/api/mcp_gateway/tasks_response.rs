@@ -695,6 +695,7 @@ fn mcp_agent_verb_input(
         "vault.shared.outcomes" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.deletion" => Ok(Value::Object(serde_json::Map::new())),
         "vault.members.add" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.invitation_slip" => a.spec.clone().ok_or_else(invalid),
         "vault.members.change" => a.spec.clone().ok_or_else(invalid),
         "vault.members.remove" => a.spec.clone().ok_or_else(invalid),
         "vault.members.leave" => a.spec.clone().ok_or_else(invalid),
@@ -881,6 +882,8 @@ fn mcp_agent_verb_input(
             Ok(input)
         }
         "vault.rooms.offer.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.offer.vote" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.offer.reopen" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.offers" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
             let map = input.as_object_mut().ok_or_else(invalid)?;
@@ -1184,6 +1187,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         }
         "vault.shared.deletion" => {}
         "vault.members.add" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.members.invitation_slip" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.change" => {
@@ -1503,6 +1509,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "vault.rooms.offer.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.offer.vote" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.offer.reopen" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.offers" => {
@@ -2534,6 +2546,19 @@ async fn execute_agent_verb_row(
             let output = crate::api::facade::host_doors::vault_members_add(server, auth, input)
                 .await
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.members.invitation_slip" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.members.invitation_slip", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::InvitationSlipRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_members_invitation_slip(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -3626,6 +3651,22 @@ async fn execute_agent_verb_row(
             server
                 .ai
                 .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.offer.vote" => {
+            let input: oneiron::workspace_roster::OfferVoteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_offer_vote(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.offer.reopen" => {
+            let input: oneiron::workspace_roster::OfferReopenRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_offer_reopen(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

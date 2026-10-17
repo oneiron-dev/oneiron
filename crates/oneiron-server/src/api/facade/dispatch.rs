@@ -1293,6 +1293,30 @@ async fn vault_members_add(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_members_invitation_slip(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.invitation_slip")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.invitation_slip", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.members.invitation_slip", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_invitation_slip(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_members_change(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -3470,6 +3494,50 @@ async fn vault_rooms_offer_answer(
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_offer_vote(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.offer.vote",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_offer_reopen(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.offer.reopen",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_rooms_offers(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4969,6 +5037,7 @@ pub(crate) async fn call_verb(
         "vault.shared.outcomes" => vault_shared_outcomes(server, call, input).await,
         "vault.shared.deletion" => vault_shared_deletion(server, call, input).await,
         "vault.members.add" => vault_members_add(server, call, input).await,
+        "vault.members.invitation_slip" => vault_members_invitation_slip(server, call, input).await,
         "vault.members.change" => vault_members_change(server, call, input).await,
         "vault.members.remove" => vault_members_remove(server, call, input).await,
         "vault.members.leave" => vault_members_leave(server, call, input).await,
@@ -5103,6 +5172,8 @@ pub(crate) async fn call_verb(
         "vault.rooms.consent" => vault_rooms_consent(server, call, input).await,
         "vault.rooms.offer" => vault_rooms_offer(server, call, input).await,
         "vault.rooms.offer.answer" => vault_rooms_offer_answer(server, call, input).await,
+        "vault.rooms.offer.vote" => vault_rooms_offer_vote(server, call, input).await,
+        "vault.rooms.offer.reopen" => vault_rooms_offer_reopen(server, call, input).await,
         "vault.rooms.offers" => vault_rooms_offers(server, call, input).await,
         "vault.projects.goal.revisions" => vault_projects_goal_revisions(server, call, input).await,
         "vault.projects.goal.dismiss" => vault_projects_goal_dismiss(server, call, input).await,

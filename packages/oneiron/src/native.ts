@@ -84,6 +84,7 @@ vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
 vaultSharedDeletion(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
+vaultMembersInvitationSlip(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
@@ -182,6 +183,8 @@ vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
 vaultRoomsOffer(input: unknown): unknown
 vaultRoomsOfferAnswer(input: unknown): unknown
+vaultRoomsOfferVote(input: unknown): unknown
+vaultRoomsOfferReopen(input: unknown): unknown
 vaultRoomsOffers(input: unknown): unknown
 vaultProjectsGoalRevisions(input: unknown): unknown
 vaultProjectsGoalDismiss(input: unknown): unknown

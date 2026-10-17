@@ -708,6 +708,9 @@ class Oneiron:
         def add(self, spec):
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
+        def invitation_slip(self, spec):
+            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
+            return json.loads(_translate(lambda: self._client.vault_members_invitation_slip(json.dumps(spec))))
         def change(self, spec):
             """An Admin assigns another non-root role to a member who is not an Owner."""
             return json.loads(_translate(lambda: self._client.vault_members_change(json.dumps(spec))))
@@ -1024,11 +1027,17 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, spec):
-            """Publishes an agent's offer card to join a room or one of its threads."""
+            """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""
             return json.loads(_translate(lambda: self._client.vault_rooms_offer(json.dumps(spec))))
         def answer(self, spec):
             """The room's host answers an offer card: join, or not now."""
             return json.loads(_translate(lambda: self._client.vault_rooms_offer_answer(json.dumps(spec))))
+        def vote(self, spec):
+            """Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_offer_vote(json.dumps(spec))))
+        def reopen(self, spec):
+            """The room's owner or delegated host reopens its aged-out room-wide offer card."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_offer_reopen(json.dumps(spec))))
     class _VaultRoomsHostVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

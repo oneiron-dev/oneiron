@@ -280,6 +280,11 @@ export_facade! {
     let output = client.vault_members_add(&input)?;
     crate::codec::lift_record("vault.members.add", &output)
 };
+"vault.members.invitation_slip" => fn vault_members_invitation_slip(&self, input: InvitationSlipRequest) -> InvitationSlip = |client| {
+    let input: oneiron::task_verb::sdk::InvitationSlipRequest = crate::codec::lower_record("vault.members.invitation_slip", input)?;
+    let output = client.vault_members_invitation_slip(&input)?;
+    crate::codec::lift_record("vault.members.invitation_slip", &output)
+};
 "vault.members.change" => fn vault_members_change(&self, input: SharedMemberRoleRequest) -> SharedActExecutionReceipt = |client| {
     let input: oneiron::task_verb::sdk::SharedMemberRoleRequest = crate::codec::lower_record("vault.members.change", input)?;
     let output = client.vault_members_change(&input)?;
@@ -769,6 +774,16 @@ export_facade! {
     let input: oneiron::workspace_roster::OfferAnswerRequest = crate::codec::lower_record("vault.rooms.offer.answer", input)?;
     let output = client.vault_rooms_offer_answer(&input)?;
     crate::codec::lift_record("vault.rooms.offer.answer", &output)
+};
+"vault.rooms.offer.vote" => fn vault_rooms_offer_vote(&self, input: OfferVoteRequest) -> OfferCard = |client| {
+    let input: oneiron::workspace_roster::OfferVoteRequest = crate::codec::lower_record("vault.rooms.offer.vote", input)?;
+    let output = client.vault_rooms_offer_vote(&input)?;
+    crate::codec::lift_record("vault.rooms.offer.vote", &output)
+};
+"vault.rooms.offer.reopen" => fn vault_rooms_offer_reopen(&self, input: OfferReopenRequest) -> OfferCard = |client| {
+    let input: oneiron::workspace_roster::OfferReopenRequest = crate::codec::lower_record("vault.rooms.offer.reopen", input)?;
+    let output = client.vault_rooms_offer_reopen(&input)?;
+    crate::codec::lift_record("vault.rooms.offer.reopen", &output)
 };
 "vault.rooms.offers" => fn vault_rooms_offers(&self, input: OffersRequest) -> OffersPage = |client| {
     let input: oneiron::workspace_roster::OffersRequest = crate::codec::lower_record("vault.rooms.offers", input)?;
