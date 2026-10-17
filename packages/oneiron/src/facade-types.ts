@@ -1553,7 +1553,7 @@ export type ImagePin = { provider: ProviderPin; name: string; evidence: Evidence
 /** `oneiron::llm::decision::types::DecisionReceipt` */
 export type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[] }
 /** `oneiron::llm::decision::types::HumanAskReason` */
-export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline"
+export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget"
 /** `oneiron::llm::decision::routine::RoutineOutcome` */
 export type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null }
 /** `oneiron::task_verb::sdk_host::AiVerdict` */
