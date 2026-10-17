@@ -78,11 +78,14 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     if crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())? {
         return Ok(Done::Propose(LiftCause::Held, reason));
     }
+    // A record's prose lives in its document, whose history no door
+    // rewrites: its keys are marked through the document's own door.
     #[cfg(feature = "sync")]
     if header.entity_type != ENTITY_TYPE_NOTE
         && crate::entity_doc::has_record_head(&vault.store, txn, &id)?
     {
-        return Ok(Done::Propose(LiftCause::NoDoor, reason));
+        return crate::entity_doc::lift_entity_text_in_txn(vault, txn, &id)
+            .map(super::retained::text_done);
     }
     match header.entity_type {
         ENTITY_TYPE_NOTE => {
