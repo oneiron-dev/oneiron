@@ -5,6 +5,7 @@ pub enum AgentVerb {
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
+    SelfFocusScratchpadRecall,
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
@@ -114,6 +115,9 @@ pub enum AgentVerb {
     VaultLensesList,
     VaultLensesDefault,
     VaultDisclosureOffer,
+    Reveal,
+    RevealWait,
+    RevealDescribe,
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
@@ -254,6 +258,10 @@ pub enum AgentVerb {
     VaultHabitsCheckin,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
+    VaultConversationsCreate,
+    VaultConversationsTurnsCreate,
+    VaultConversationsRecordsAppend,
+    VaultBatch,
     VaultArtifactsPut,
     VaultArtifactsAppend,
     VaultArtifactsRead,
@@ -271,6 +279,7 @@ impl AgentVerb {
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
+        Self::SelfFocusScratchpadRecall,
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
@@ -380,6 +389,9 @@ impl AgentVerb {
         Self::VaultLensesList,
         Self::VaultLensesDefault,
         Self::VaultDisclosureOffer,
+        Self::Reveal,
+        Self::RevealWait,
+        Self::RevealDescribe,
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
@@ -520,6 +532,10 @@ impl AgentVerb {
         Self::VaultHabitsCheckin,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
+        Self::VaultConversationsCreate,
+        Self::VaultConversationsTurnsCreate,
+        Self::VaultConversationsRecordsAppend,
+        Self::VaultBatch,
         Self::VaultArtifactsPut,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
@@ -540,6 +556,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
+            Self::SelfFocusScratchpadRecall => "self.focus.scratchpad.recall",
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
@@ -653,6 +670,9 @@ impl AgentVerb {
             Self::VaultLensesList => "vault.lenses.list",
             Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultDisclosureOffer => "vault.disclosure.offer",
+            Self::Reveal => "reveal",
+            Self::RevealWait => "reveal.wait",
+            Self::RevealDescribe => "reveal.describe",
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
@@ -793,6 +813,10 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
+            Self::VaultConversationsCreate => "vault.conversations.create",
+            Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
+            Self::VaultConversationsRecordsAppend => "vault.conversations.records.append",
+            Self::VaultBatch => "vault.batch",
             Self::VaultArtifactsPut => "vault.artifacts.put",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
@@ -809,6 +833,7 @@ impl AgentVerb {
         matches!(
             self,
             Self::Report
+                | Self::SelfFocusScratchpadRecall
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -918,6 +943,9 @@ impl AgentVerb {
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
+                | Self::RevealWait
+                | Self::RevealDescribe
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1022,6 +1050,10 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultConversationsCreate
+                | Self::VaultConversationsTurnsCreate
+                | Self::VaultConversationsRecordsAppend
+                | Self::VaultBatch
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1082,6 +1114,7 @@ impl AgentVerb {
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
+                | Self::SelfFocusScratchpadRecall
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -1191,6 +1224,9 @@ impl AgentVerb {
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
+                | Self::RevealWait
+                | Self::RevealDescribe
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1295,6 +1331,10 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultConversationsCreate
+                | Self::VaultConversationsTurnsCreate
+                | Self::VaultConversationsRecordsAppend
+                | Self::VaultBatch
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1386,7 +1426,8 @@ impl AgentVerb {
     pub const fn requires_unscoped(self) -> bool {
         matches!(
             self,
-            Self::SelfMemoryDiary
+            Self::SelfFocusScratchpadRecall
+                | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
@@ -1489,6 +1530,9 @@ impl AgentVerb {
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
+                | Self::RevealWait
+                | Self::RevealDescribe
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1621,6 +1665,10 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultConversationsCreate
+                | Self::VaultConversationsTurnsCreate
+                | Self::VaultConversationsRecordsAppend
+                | Self::VaultBatch
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1708,6 +1756,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
@@ -1780,6 +1829,10 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultConversationsCreate
+                | Self::VaultConversationsTurnsCreate
+                | Self::VaultConversationsRecordsAppend
+                | Self::VaultBatch
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
@@ -1798,6 +1851,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
                 | Self::VaultGraphAsk
                 | Self::VaultCommit
                 | Self::VaultRemember
@@ -1814,6 +1868,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -1923,6 +1978,9 @@ impl AgentVerb {
             Self::VaultLensesList => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
+            Self::Reveal => &["spec"],
+            Self::RevealWait => &["spec"],
+            Self::RevealDescribe => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2063,6 +2121,10 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
+            Self::VaultConversationsCreate => &["spec"],
+            Self::VaultConversationsTurnsCreate => &["spec"],
+            Self::VaultConversationsRecordsAppend => &["spec"],
+            Self::VaultBatch => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
@@ -2081,6 +2143,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -2190,6 +2253,9 @@ impl AgentVerb {
             Self::VaultLensesList => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
+            Self::Reveal => &["spec"],
+            Self::RevealWait => &["spec"],
+            Self::RevealDescribe => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2330,6 +2396,10 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
+            Self::VaultConversationsCreate => &["spec"],
+            Self::VaultConversationsTurnsCreate => &["spec"],
+            Self::VaultConversationsRecordsAppend => &["spec"],
+            Self::VaultBatch => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
@@ -2354,6 +2424,9 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => "Subscribes the run's board stream to the named scopes.",
             Self::SelfFocusUnsubscribe => {
                 "Unsubscribes the run's board stream from the named scopes."
+            }
+            Self::SelfFocusScratchpadRecall => {
+                "Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."
             }
             Self::SelfMemoryDiary => {
                 "Writes one private entry in the bound actor's own diary, as an actor-private NOTE."
@@ -2653,6 +2726,15 @@ impl AgentVerb {
             }
             Self::VaultDisclosureOffer => {
                 "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."
+            }
+            Self::Reveal => {
+                "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."
+            }
+            Self::RevealWait => {
+                "Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."
+            }
+            Self::RevealDescribe => {
+                "What a secret handle names, where it was found and what a reveal of it would do now; never the value."
             }
             Self::VaultSharesCreate => {
                 "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."
@@ -2983,6 +3065,18 @@ impl AgentVerb {
             }
             Self::VaultArtifactsCreate => {
                 "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run."
+            }
+            Self::VaultConversationsCreate => {
+                "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."
+            }
+            Self::VaultConversationsTurnsCreate => {
+                "Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once."
+            }
+            Self::VaultConversationsRecordsAppend => {
+                "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."
+            }
+            Self::VaultBatch => {
+                "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."
             }
             Self::VaultArtifactsPut => {
                 "Registers one blob artifact; its bytes ride vault.artifacts.append."

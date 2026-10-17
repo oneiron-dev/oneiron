@@ -78,9 +78,16 @@ pub enum WithdrawReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WithdrawnUnit {
-    SheetRow { row: u32 },
-    Paragraph { block: String },
-    FolderItem { file: EntityId, row: u32 },
+    SheetRow {
+        row: u32,
+    },
+    Paragraph {
+        block: String,
+    },
+    FolderItem {
+        file: EntityId,
+        row: u32,
+    },
     /// A slide by its managed identity, and the shape on it a shape unit
     /// names by creation id.
     Slide {
@@ -1045,7 +1052,11 @@ impl Vault {
                     .answers
                     .iter()
                     .filter_map(|answer| match &answer.unit {
-                        WithdrawnUnit::Slide { part, sld_id, shape } => slides
+                        WithdrawnUnit::Slide {
+                            part,
+                            sld_id,
+                            shape,
+                        } => slides
                             .iter()
                             .find(|slide| slide.part == *part && slide.sld_id == *sld_id)
                             .map(|slide| PptxCommentTarget {

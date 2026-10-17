@@ -223,6 +223,9 @@ class Oneiron:
     @property
     def tasks(self) -> "Oneiron._TasksVerbs":
         return Oneiron._TasksVerbs(self._client)
+    @property
+    def reveal(self) -> "Oneiron._RevealVerbs":
+        return Oneiron._RevealVerbs(self._client)
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""
         return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))
@@ -250,6 +253,9 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def focus(self) -> "Oneiron._SelfFocusVerbs":
+            return Oneiron._SelfFocusVerbs(self._client)
+        @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
         @property
@@ -270,6 +276,18 @@ class Oneiron:
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
             return Oneiron._SelfDecisionsVerbs(self._client)
+    class _SelfFocusVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs":
+            return Oneiron._SelfFocusScratchpadVerbs(self._client)
+    class _SelfFocusScratchpadVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def recall(self, spec):
+            """Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."""
+            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_recall(json.dumps(spec))))
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -508,6 +526,9 @@ class Oneiron:
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs":
             return Oneiron._VaultHabitsVerbs(self._client)
+        def batch(self, spec):
+            """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
+            return json.loads(_translate(lambda: self._client.vault_batch(json.dumps(spec))))
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
             return Oneiron._VaultConsolidationVerbs(self._client)
@@ -1089,6 +1110,15 @@ class Oneiron:
         @property
         def turn(self) -> "Oneiron._VaultConversationsTurnVerbs":
             return Oneiron._VaultConversationsTurnVerbs(self._client)
+        def create(self, spec):
+            """Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."""
+            return json.loads(_translate(lambda: self._client.vault_conversations_create(json.dumps(spec))))
+        @property
+        def turns(self) -> "Oneiron._VaultConversationsTurnsVerbs":
+            return Oneiron._VaultConversationsTurnsVerbs(self._client)
+        @property
+        def records(self) -> "Oneiron._VaultConversationsRecordsVerbs":
+            return Oneiron._VaultConversationsRecordsVerbs(self._client)
     class _VaultConversationsTurnVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1098,6 +1128,18 @@ class Oneiron:
         def retry(self, spec):
             """Queues a new answer to the user turn an assistant turn answered; the old reply stays."""
             return json.loads(_translate(lambda: self._client.vault_conversations_turn_retry(json.dumps(spec))))
+    class _VaultConversationsTurnsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once."""
+            return json.loads(_translate(lambda: self._client.vault_conversations_turns_create(json.dumps(spec))))
+    class _VaultConversationsRecordsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def append(self, spec):
+            """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
+            return json.loads(_translate(lambda: self._client.vault_conversations_records_append(json.dumps(spec))))
     class _VaultMessagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1239,6 +1281,18 @@ class Oneiron:
         def outcomes(self, handle):
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
             return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+    class _RevealVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+            return json.loads(_translate(lambda: self._client.reveal(json.dumps(spec))))
+        def wait(self, spec):
+            """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
+            return json.loads(_translate(lambda: self._client.reveal_wait(json.dumps(spec))))
+        def describe(self, spec):
+            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+            return json.loads(_translate(lambda: self._client.reveal_describe(json.dumps(spec))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
