@@ -141,5 +141,6 @@ fn mesh_offer(peer: MachineId, entry: &LlmCatalogEntry) -> Option<OfferBinding> 
         catalog_revision: Some(entry.model.revision().to_owned()),
         custody: KeyCustody::Keyless,
         rates: Vec::new(),
+        payer_person: None,
     })
 }
