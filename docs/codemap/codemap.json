@@ -2157,13 +2157,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/authority/fold_resume.rs",
      "purpose": "A resumed fold: the stored log's reference fold carried over a chain of new rows off its one main head…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 17
      }
     },
     {
@@ -2309,7 +2309,7 @@
      "path": "src/authority/install_fold.rs",
      "purpose": "The strict fold as this install reads it, once its handoffs settle: its own sequence floors, the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -2322,7 +2322,7 @@
      "purpose": "The authority log's fold bounds, and the store-door checks that keep a stored log inside them (H72)",
      "surface": {
       "const": 7,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 3,
       "struct": 1
      }
@@ -2521,7 +2521,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -2578,7 +2578,7 @@
      "path": "src/authority/sequence_observation.rs",
      "purpose": "Durable signer sequence maxima and content-addressed first-observation receipts",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -15455,7 +15455,7 @@
      "path": "src/counterparty_contact/doors.rs",
      "purpose": "Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -50563,7 +50563,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 133,
+   "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3053,
    "test_files": 903
