@@ -967,15 +967,16 @@ impl Memory<'_> {
     /// Coach unless the agent is a companion.
     pub fn sealed_pad_readers(&self) -> MemoryResult<Vec<SealedPadReader>> {
         super::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let coach = self
             .vault
-            .read_agent_definition_in_txn(&txn, &self.actor)
+            .get_agent_definition(&self.actor)
             .is_ok_and(|definition| {
-                !matches!(
-                    definition.wake_cadence,
-                    Some(crate::agent_def::AgentWakeCadence::Companion { .. })
-                )
+                definition.is_some_and(|definition| {
+                    !matches!(
+                        definition.wake_cadence,
+                        Some(crate::agent_def::AgentWakeCadence::Companion { .. })
+                    )
+                })
             });
         Ok(std::iter::once(SealedPadReader::Owner)
             .chain(coach.then_some(SealedPadReader::Coach))
