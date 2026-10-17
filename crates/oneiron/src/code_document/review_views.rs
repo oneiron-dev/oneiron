@@ -344,7 +344,7 @@ impl Memory<'_> {
                 Some(old.path.clone()),
             ),
             (Some(old), Some(new)) if old.text == new.text => return Ok(None),
-            (_, Some(new)) if old.is_some() => (new.path.clone(), CodeFileChange::Modified, None),
+            (Some(_), Some(new)) => (new.path.clone(), CodeFileChange::Modified, None),
             (None, Some(new)) => (new.path.clone(), CodeFileChange::Added, None),
             (Some(old), None) => (old.path.clone(), CodeFileChange::Removed, None),
             (None, None) => return Ok(None),
