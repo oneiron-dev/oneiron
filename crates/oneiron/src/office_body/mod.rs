@@ -49,10 +49,11 @@ pub use pptx::{
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
 pub use verbs::{
-    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitsRequest,
-    OfficeBodyEditRequest, OfficeBodyExportVerbRequest, OfficeBodyExportView,
-    OfficeBodyForkEditRequest, OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest,
-    OfficeBodyForkRequest, OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyProposalRequest,
+    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap,
+    OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,
+    OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
+    OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest, OfficeBodyForkRequest,
+    OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyProposalRequest,
     OfficeBodyProposalSettleRequest, OfficeBodyReadRequest, OfficeBodyReviewedFork, OfficeBodyView,
     XlsxBodyView, XlsxSheetView,
 };
@@ -315,24 +316,25 @@ impl Vault {
         xlsx::read(&self.loro_body(&txn, artifact, OfficeBodyKind::Xlsx, at)?.1)
     }
 
-    /// Every commit receipt of the body, in commit order, a landed fork's
-    /// included; with `actor`, that actor's alone. A commit with no honoured
-    /// receipt fails the read: who made the body is never told short.
+    /// Every commit of the body in commit order, a landed fork's included,
+    /// each with its receipt. A commit with no honoured receipt is listed
+    /// with no actor, never dropped. With `actor`, that actor's commits alone.
     pub fn office_body_commits(
         &self,
         artifact: &EntityId,
         actor: Option<&EntityId>,
-    ) -> Result<Vec<TextCommitReceipt>> {
-        let receipts = self
+    ) -> Result<Vec<OfficeBodyCommitView>> {
+        Ok(self
             .typed_body_receipts(artifact)?
             .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .ok_or(Error::InvariantViolation(
-                "a live body commit has no honoured receipt",
-            ))?;
-        Ok(receipts
-            .into_iter()
-            .filter(|receipt| actor.is_none_or(|actor| receipt.made_by.process.actor == *actor))
+            .filter(|receipt| {
+                actor.is_none_or(|actor| {
+                    receipt
+                        .as_ref()
+                        .is_some_and(|receipt| receipt.made_by.process.actor == *actor)
+                })
+            })
+            .map(OfficeBodyCommitView::of)
             .collect())
     }
 

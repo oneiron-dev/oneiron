@@ -42,6 +42,42 @@ pub struct OfficeBodyCommitsRequest {
     pub actor_ref: Option<String>,
 }
 
+/// One commit of a live body, in commit order: who made it and its receipt,
+/// or why it names no one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeBodyCommitView {
+    /// The actor whose receipt it carries; `None` when it carries none.
+    pub actor: Option<String>,
+    pub receipt: Option<TextCommitReceipt>,
+    /// Why `actor` is `None`.
+    pub reason: Option<OfficeBodyCommitGap>,
+}
+
+/// Why a body commit names no actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfficeBodyCommitGap {
+    /// It carries no receipt the engine honours.
+    ReceiptMissing,
+}
+
+impl OfficeBodyCommitView {
+    pub(super) fn of(receipt: Option<TextCommitReceipt>) -> Self {
+        match receipt {
+            Some(receipt) => Self {
+                actor: Some(receipt.made_by.process.actor.to_hex()),
+                receipt: Some(receipt),
+                reason: None,
+            },
+            None => Self {
+                actor: None,
+                receipt: None,
+                reason: Some(OfficeBodyCommitGap::ReceiptMissing),
+            },
+        }
+    }
+}
+
 /// `vault.artifacts.body.import`: one DOCX, XLSX or PPTX version (the head
 /// when `version` is absent) imported as the artifact's live body.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -376,13 +412,13 @@ impl Memory<'_> {
         })
     }
 
-    /// `vault.artifacts.body.commits`: every commit receipt, in commit order,
-    /// each naming its actor and its MadeBy; with `actor_ref`, that actor's
-    /// alone.
+    /// `vault.artifacts.body.commits`: every commit, in commit order, with
+    /// its actor and receipt, or why it has none; with `actor_ref`, that
+    /// actor's alone.
     pub fn artifacts_body_commits(
         &self,
         input: &OfficeBodyCommitsRequest,
-    ) -> MemoryResult<Vec<TextCommitReceipt>> {
+    ) -> MemoryResult<Vec<OfficeBodyCommitView>> {
         let artifact = self.body_ref(&input.artifact_ref)?;
         let actor = input
             .actor_ref

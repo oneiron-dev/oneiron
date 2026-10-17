@@ -562,7 +562,7 @@ export class Oneiron {
         /** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */
         read: (request: Facade.OfficeBodyReadRequest): Facade.OfficeBodyView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyRead(keyedJson(request))) as Facade.OfficeBodyView; return result }),
         /** Every commit receipt of a live body, in commit order, or one actor's. */
-        commits: (request: Facade.OfficeBodyCommitsRequest): Facade.TextCommitReceipt[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyCommits(keyedJson(request))) as Facade.TextCommitReceipt[]; return result.map(item => item) }),
+        commits: (request: Facade.OfficeBodyCommitsRequest): Facade.OfficeBodyCommitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyCommits(keyedJson(request))) as Facade.OfficeBodyCommitView[]; return result.map(item => item) }),
         /** A person's typed operations on the live body. */
         edit: (request: Facade.OfficeBodyEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
         fork: {

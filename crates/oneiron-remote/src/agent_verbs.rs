@@ -783,7 +783,7 @@ impl OneironClient {
                     oneiron::office_body::OfficeBodyView,
                 >(client, verb, &input),
                 "vault.artifacts.body.commits" => remote_agent_verb_output::<
-                    Vec<oneiron::provenance::text_commit::TextCommitReceipt>,
+                    Vec<oneiron::office_body::OfficeBodyCommitView>,
                 >(client, verb, &input),
                 "vault.artifacts.body.edit" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyEdit,
@@ -3930,7 +3930,7 @@ impl OneironClient {
     pub fn vault_artifacts_body_commits(
         &self,
         input: &oneiron::office_body::OfficeBodyCommitsRequest,
-    ) -> Result<Vec<oneiron::provenance::text_commit::TextCommitReceipt>, MemoryError> {
+    ) -> Result<Vec<oneiron::office_body::OfficeBodyCommitView>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

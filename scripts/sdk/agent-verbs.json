@@ -4264,12 +4264,12 @@
     },
     {
       "name": "vault.artifacts.body.commits",
-      "description": "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; with actor_ref, that actor's alone. A commit with no honoured receipt fails the read.",
+      "description": "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone.",
       "refs": [
         "/artifact_ref"
       ],
       "input": "crate::office_body::OfficeBodyCommitsRequest",
-      "output": "Vec<crate::provenance::text_commit::TextCommitReceipt>",
+      "output": "Vec<crate::office_body::OfficeBodyCommitView>",
       "call": "memory.artifacts_body_commits(&input)?",
       "scope": "Read",
       "admission": {

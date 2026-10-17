@@ -7358,7 +7358,7 @@ pub fn vault_artifacts_body_read(
 pub fn vault_artifacts_body_commits(
     memory: &Memory<'_>,
     input: crate::office_body::OfficeBodyCommitsRequest,
-) -> MemoryResult<Vec<crate::provenance::text_commit::TextCommitReceipt>> {
+) -> MemoryResult<Vec<crate::office_body::OfficeBodyCommitView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.artifacts.body.commits",

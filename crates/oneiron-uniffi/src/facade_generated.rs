@@ -1206,7 +1206,7 @@ export_facade! {
     let output = client.vault_artifacts_body_read(&input)?;
     crate::codec::lift_record("vault.artifacts.body.read", &output)
 };
-"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyCommitsRequest) -> Vec<TextCommitReceipt> = |client| {
+"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyCommitsRequest) -> Vec<OfficeBodyCommitView> = |client| {
     let input: oneiron::office_body::OfficeBodyCommitsRequest = crate::codec::lower_record("vault.artifacts.body.commits", input)?;
     let output = client.vault_artifacts_body_commits(&input)?;
     crate::codec::lift_record("vault.artifacts.body.commits", &output)
