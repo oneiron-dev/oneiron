@@ -26,6 +26,7 @@ mod agent_verbs;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 pub(super) mod role_picks;
+mod share_doors;
 mod shared_act_doors;
 mod weave_doors;
 #[cfg(test)]

@@ -41,6 +41,8 @@ pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The share doors past create (OF-491), likewise.
+pub(crate) use super::share_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the

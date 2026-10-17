@@ -318,6 +318,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shares.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.shares.view",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareViewRequest,
+                >(),
+            ),
+            (
                 "vault.hooks.replay",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::HooksReplayRequest,
@@ -1298,6 +1310,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.shares.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shares.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.hooks.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2182,6 +2208,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shares.create" => {
             let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
         }
+        "vault.shares.revoke" => {
+            let _input: crate::task_verb::sdk::ShareRevokeRequest = decode(value.clone())?;
+        }
+        "vault.shares.view" => {
+            let _input: crate::task_verb::sdk::ShareViewRequest = decode(value.clone())?;
+        }
         "vault.hooks.replay" => {
             let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
             input.limit()?;
@@ -2611,6 +2643,8 @@ pub fn invoke(
         "vault.lenses.default" => encode(vault_lenses_default(memory, decode(value)?)?),
         "vault.disclosure.offer" => encode(vault_disclosure_offer(memory, decode(value)?)?),
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
+        "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
+        "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
@@ -3362,6 +3396,18 @@ pub fn vault_shares_create(
     input: crate::task_verb::sdk::ShareCreateRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ShareCreated> {
     crate::task_verb::sdk::create_share_as_caller(memory, input)
+}
+pub fn vault_shares_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareRevokeRequest,
+) -> MemoryResult<crate::receipt::ShareRevokeReceipt> {
+    crate::task_verb::sdk::revoke_share_as_caller(memory, input)
+}
+pub fn vault_shares_view(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareViewRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>> {
+    crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)
 }
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,

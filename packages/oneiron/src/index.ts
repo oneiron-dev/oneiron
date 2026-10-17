@@ -263,6 +263,8 @@ export class Oneiron {
     },
     shares: {
       create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesCreate(input) as unknown),
+      revoke: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesRevoke(input) as unknown),
+      view: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesView(input) as unknown),
     },
     hooks: {
       replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),
