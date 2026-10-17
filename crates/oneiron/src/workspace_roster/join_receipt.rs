@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::join_consent::{ConsentPart, ConsentSet, JoinDecision, JoinRequest, JoinSubject};
 use crate::agent_dispatch::SpendScopeId;
+use crate::conversation::HistoryChoice;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
@@ -215,6 +216,7 @@ pub(super) struct JoinFiling {
     pub(super) join_ref: String,
     pub(super) intent_digest: String,
     pub(super) request: JoinRequest,
+    pub(super) history: HistoryChoice,
     pub(super) filed_by: EntityId,
     pub(super) principal: Option<EntityId>,
     pub(super) answers: Vec<RecordedAnswer>,
@@ -228,6 +230,10 @@ pub struct JoinReceipt {
     pub join_ref: String,
     pub intent_digest: String,
     pub request: JoinRequest,
+    /// The history a person's first entry into an ordinary room sees until
+    /// the owner's P5 answer moves it (OF-365); a rejoin keeps the room's.
+    #[serde(default)]
+    pub history: HistoryChoice,
     /// The authenticated actor that filed it: the subject or its principal.
     pub filed_by: EntityId,
     /// For the vault's own agent: the live owner who filed for it, through
@@ -257,6 +263,7 @@ impl JoinReceipt {
             join_ref: self.join_ref,
             intent_digest: self.intent_digest,
             request: self.request,
+            history: self.history,
             filed_by: self.filed_by,
             principal: self.principal,
             answers: self.answers,
@@ -275,6 +282,7 @@ impl JoinReceipt {
             join_ref: filing.join_ref,
             intent_digest: filing.intent_digest,
             request: filing.request,
+            history: filing.history,
             filed_by: filing.filed_by,
             principal: filing.principal,
             answers: filing.answers,

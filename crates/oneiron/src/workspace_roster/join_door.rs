@@ -20,7 +20,9 @@ use super::join_receipt::{
     intent_digest, is_join_ref, join_ref, ready_key,
 };
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState, payer_binds_in_txn};
-use crate::conversation::{HistoryChoice, room_host_in_txn};
+use crate::conversation::{
+    ContainerAttendee, ContainerAttendeeEvent, HistoryChoice, room_host_in_txn,
+};
 use crate::error::{ClaimError, Error, Result};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
@@ -78,11 +80,22 @@ impl JoinOutcome {
 impl Memory<'_> {
     /// Files and decides a join for the bound actor. See [`rooms_join_in_txn`].
     pub fn rooms_join(&self, request: &JoinRequest) -> MemoryResult<JoinOutcome> {
+        self.rooms_join_entering(request, HistoryChoice::Inherit)
+    }
+
+    /// [`Self::rooms_join`] naming the history a person's first entry into
+    /// an ordinary room sees until the owner's P5 answer moves it (OF-365).
+    /// Any other join refuses a choice other than the room's own rule.
+    pub fn rooms_join_entering(
+        &self,
+        request: &JoinRequest,
+        history: HistoryChoice,
+    ) -> MemoryResult<JoinOutcome> {
         let vault = self.vault();
         let caller = WriteActor::new(self.actor(), self.actor_class());
         vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            Ok(rooms_join_in_txn(vault, txn, request, caller, now)?)
+            Ok(file_join_in_txn(vault, txn, request, history, caller, now)?)
         })
     }
 
@@ -136,6 +149,18 @@ pub fn rooms_join_in_txn(
     caller: WriteActor,
     now: u64,
 ) -> Result<JoinOutcome> {
+    file_join_in_txn(vault, txn, request, HistoryChoice::Inherit, caller, now)
+}
+
+/// [`rooms_join_in_txn`] with the history a first entry asked for.
+fn file_join_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: &JoinRequest,
+    history: HistoryChoice,
+    caller: WriteActor,
+    now: u64,
+) -> Result<JoinOutcome> {
     if request.intent_key.is_empty()
         || request.intent_key.len() > 128
         || !request
@@ -149,10 +174,15 @@ pub fn rooms_join_in_txn(
     }
     vault.verify_write_actor_in_txn(txn, &caller)?;
     let principal = caller_stands_for_in_txn(vault, txn, caller, &request.subject, now)?;
+    if history != HistoryChoice::Inherit && !first_entry_in_txn(vault, txn, request)? {
+        return Err(Error::InvalidConfig(
+            "only a person's first entry into an ordinary room chooses its history; this join keeps the room's own rule".into(),
+        ));
+    }
     let join_ref = join_ref(request)?;
     let intent_digest = intent_digest(request)?;
     let mut filing = match JOINS.get(&vault.store, txn, &join_ref)? {
-        Some(stored) if stored.intent_digest != intent_digest => {
+        Some(stored) if stored.intent_digest != intent_digest || stored.history != history => {
             return Err(Error::InvalidConfig(
                 "this intent_key already names a different join".into(),
             ));
@@ -163,6 +193,7 @@ pub fn rooms_join_in_txn(
             join_ref,
             intent_digest,
             request: request.clone(),
+            history,
             filed_by: caller.entity_ref(),
             principal,
             answers: Vec::new(),
@@ -316,7 +347,13 @@ fn settle_in_txn(
             &filing.join_ref,
         )?;
         Some(participate_in_txn(
-            vault, txn, request, &consents, actor, now,
+            vault,
+            txn,
+            request,
+            filing.history,
+            &consents,
+            actor,
+            now,
         )?)
     } else {
         None
@@ -342,10 +379,16 @@ fn settle_in_txn(
 /// The participation a Ready join commits. Only a person joining an ordinary
 /// room on standing of her own takes a ledger seat; everyone else's evidence
 /// is the receipt.
+///
+/// A person's first entry also records its P5 entry fact (ILDF2 P5, OF-365),
+/// the one the owner's clearance answer names (`/v1/owner/disclosure/entry/*`),
+/// and sees `history` until that answer moves it. A rejoin keeps the room's
+/// own rule.
 fn participate_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     request: &JoinRequest,
+    history: HistoryChoice,
     consents: &ConsentSet,
     actor: WriteActor,
     now: u64,
@@ -372,15 +415,51 @@ fn participate_in_txn(
     ) {
         return Ok(JoinParticipation::PrincipalReceipt);
     }
+    let first = first_entry_in_txn(vault, txn, request)?;
     vault.join_member_in_txn(
         txn,
         request.room,
         person,
         actor,
         now,
-        HistoryChoice::Inherit,
+        if first {
+            history
+        } else {
+            HistoryChoice::Inherit
+        },
     )?;
+    if first {
+        crate::task_verb::admit_attendee_entry_in_txn(
+            vault,
+            txn,
+            actor.entity_ref(),
+            &ContainerAttendeeEvent {
+                container: request.room,
+                attendee: ContainerAttendee::Person(person),
+                roster_revision: now.max(1),
+                trigger_turn: None,
+                candidates: Vec::new(),
+                until: now,
+                history,
+            },
+        )?;
+    }
     Ok(JoinParticipation::LedgerSeat)
+}
+
+/// Whether `request` is a person's first entry into an ordinary room: no
+/// thread, no project room, and never yet in the room's ledger.
+fn first_entry_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &JoinRequest,
+) -> Result<bool> {
+    let JoinSubject::Person(person) = request.subject else {
+        return Ok(false);
+    };
+    Ok(request.branch.is_none()
+        && super::project_room_audience_in(vault, txn, request.room, &[])?.is_none()
+        && !vault.ever_members_in_txn(txn, request.room)?.contains(&person))
 }
 
 /// Whom `caller` may file a join for: the subject itself, or its principal.
