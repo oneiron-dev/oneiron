@@ -1220,10 +1220,6 @@ impl FacadeApiError {
 /// the call ran, and must not be sent again.
 const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
 
-/// The status a retry reads when its drained call completed but the result
-/// was not kept (OF-580): final, and not a server failure.
-const HOOK_RESULT_NOT_RETAINED_STATUS: StatusCode = StatusCode::GONE;
-
 /// The engine's refusal, forwarded whole.
 ///
 /// The status is derived from the code; the code, message, and suggestions are
@@ -1274,10 +1270,6 @@ impl From<MemoryError> for FacadeApiError {
             // to correct, and a missing record and an unreadable one are this
             // same status.
             oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE => StatusCode::UNPROCESSABLE_ENTITY,
-            // OF-580: the call ran once its hook's ask was answered, but its
-            // result was too large to keep. Nothing failed here and a retry
-            // must not run it again, so the result is gone, not a 5xx.
-            HOOK_RESULT_NOT_RETAINED => HOOK_RESULT_NOT_RETAINED_STATUS,
             // A credential call settlement refused before it ran (ARCH-0080
             // §3 Ask): the caller's credential no longer admits it, or this
             // host could not run it again. Either way a new invocation.
@@ -1287,6 +1279,10 @@ impl From<MemoryError> for FacadeApiError {
                 StatusCode::FORBIDDEN
             }
             code if VerbAskRefusal::from_code(code).is_some() => StatusCode::CONFLICT,
+            // OF-580: the call ran once its ask settled, and only its result
+            // was not kept. A conflict with the call's own record, not this
+            // server's failure, and no retry runs it again.
+            HOOK_RESULT_NOT_RETAINED => StatusCode::CONFLICT,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
