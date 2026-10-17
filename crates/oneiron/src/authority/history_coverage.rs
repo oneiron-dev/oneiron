@@ -57,8 +57,21 @@ pub(crate) fn authority_missing_history_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityHistoryRequest> {
+    authority_history_request_in_txn(store, txn, &BTreeSet::new())
+}
+
+/// [`Vault::authority_history_request`] on the caller's snapshot: what a
+/// held row names as a parent, the local checkpoint covers, the fold this
+/// snapshot resumes from has folded, or `required` names, that no held row
+/// has. The fold's own refusal for missing history names no hash outside it.
+pub(crate) fn authority_history_request_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    required: &BTreeSet<AuthorityEntryHash>,
+) -> Result<AuthorityHistoryRequest> {
     let mut held = BTreeSet::new();
-    let mut named = BTreeSet::new();
+    let mut named = required.clone();
+    named.extend(super::readonly_fold::resumed_hashes_in_txn(store, txn)?);
     let mut vault_id = None;
     for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
         let entry = decode_authority_log_entry_body(&body)?;
@@ -113,6 +126,20 @@ impl Vault {
     pub fn authority_missing_history(&self) -> Result<AuthorityHistoryRequest> {
         let txn = self.store.env.read_txn()?;
         authority_missing_history_in_txn(&self.store, &txn)
+    }
+
+    /// [`Vault::authority_missing_history`], also naming the rows the fold
+    /// this vault resumes from has folded and the `required` hashes an
+    /// evaluation or delivery needs (a tail manifest's expectations, a
+    /// refused row's parents), each that this vault does not hold. A fold
+    /// that refuses for missing history asks for nothing outside it, so
+    /// delivery asks here before and after each page. Complete when empty.
+    pub fn authority_history_request(
+        &self,
+        required: &BTreeSet<AuthorityEntryHash>,
+    ) -> Result<AuthorityHistoryRequest> {
+        let txn = self.store.env.read_txn()?;
+        authority_history_request_in_txn(&self.store, &txn, required)
     }
 
     /// Which of `requested` this vault holds, by evidence. A gap is reported
