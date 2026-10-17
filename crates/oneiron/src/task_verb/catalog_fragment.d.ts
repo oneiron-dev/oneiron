@@ -500,11 +500,11 @@ declare namespace Sdk {
   type WidthCheckClass = { kind: "auto_clear"; policy_ref?: string | null } | { kind: "asked"; row_ref: string };
   type ExceptionalWidthCheck = { count: number; threshold: number; classification: WidthCheckClass };
   type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
-  type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null };
+  type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[] };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
   type TaskAskEffectAuthorization = "not_evaluated_by_ask";
   type TaskAskCoverage = { met: boolean; required: number; responded: EntityId[]; unknown: EntityId[]; unmet_people: EntityId[] };
-  type TaskAskAnswer = { task_ref: EntityId; actor_ref: EntityId; result_ref: EntityId; word_ref: EntityId };
+  type TaskAskAnswer = { task_ref: EntityId; actor_ref: EntityId; result_ref: EntityId; word_ref: EntityId; task_record: RecordRef; actor_record: RecordRef; result_record: RecordRef; word_record: RecordRef };
   type TaskAskDecision = "collected" | { first: TaskAskAnswer } | { answer: TaskAskOptionId } | "no" | "conflict" | "unknown";
   type TaskAskFallback = { branch: TaskAskDefault; surface: TaskAskSurface };
   type TaskAskSource = "human" | "foreign_stated" | "companion" | "inform" | "executor";

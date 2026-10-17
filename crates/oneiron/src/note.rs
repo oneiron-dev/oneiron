@@ -83,6 +83,7 @@ pub use documents::{
     NoteAnchor, NoteDocument as NoteProgramDocument, NoteEdit as NoteProgramEdit,
     NoteEditOutcome as NoteProgramEditOutcome, NoteVersion,
 };
+pub(crate) use kinds::descriptor_in_txn;
 pub use kinds::{ContextDefault, ExtractionDefault, NoteKindDescriptor, RetentionDefault};
 pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
 const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];

@@ -2424,6 +2424,7 @@ class TaskAskReceipt(TypedDict):
     hold: NotRequired[TaskAskHoldReason | None]
     idempotent_replay: bool
     statement: NotRequired[FanoutStatement | None]
+    task_records: list[RecordRef]
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
@@ -2439,6 +2440,10 @@ class TaskAskAnswer(TypedDict):
     actor_ref: EntityId
     result_ref: EntityId
     word_ref: EntityId
+    task_record: RecordRef
+    actor_record: RecordRef
+    result_record: RecordRef
+    word_record: RecordRef
 class TaskAskDecisionFirst(TypedDict):
     first: TaskAskAnswer
 class TaskAskDecisionAnswer(TypedDict):
