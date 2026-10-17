@@ -693,3 +693,135 @@ fn mcp_compaction_value(report: &oneiron::engine_executor::CompactionReport) -> 
     }
     value
 }
+
+/// A pumped run's `self.focus.*` and keyed `describe` (OF-533): the engine's
+/// own board dispatcher over the run's own board connection and its agent's
+/// board, as [`execute_mcp_board_verb`] serves a connector's. Answers the
+/// verb's wire value and every row the board was derived from. A refresh's
+/// frame is the answer, so the queue behind it is superseded and drained.
+pub(crate) async fn execute_run_board_verb(
+    server: &Arc<SyncServer>,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+    call: oneiron::board_verb::BoardVerbCall,
+) -> Result<(Value, Vec<oneiron::EntityId>), oneiron::memory::MemoryError> {
+    let board = super::board_setup::run_current_board(server, actor, connection)
+        .await
+        .map_err(run_board_error)?;
+    let world = actor.entity_ref();
+    let source = McpLiveBoard {
+        world,
+        view: live_board_view(&board).map_err(run_board_error)?,
+    };
+    let scope = oneiron::board_verb::BoardWorldScope::single(world);
+    let output = {
+        let mut registry = server.mcp_registry.lock().await;
+        let mut context = oneiron::board_verb::BoardVerbContext {
+            connection,
+            scope: &scope,
+            source: &source,
+            streams: registry.streams_mut(),
+            budget: oneiron::context_board::BoardBudgetRequest {
+                harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+                caller_limit_tok: None,
+                explicit_override_tok: None,
+            },
+        };
+        oneiron::board_verb::dispatch_board_verb(&mut context, call)
+    }
+    .map_err(|error| run_board_error(mcp_board_verb_error(error)))?;
+    let output = match output {
+        oneiron::board_verb::BoardVerbOutput::Frame(frame) => {
+            let frame = board
+                .changes
+                .ride(Some(frame))
+                .expect("rider preserves an existing frame");
+            let keyframe = matches!(frame.kind, oneiron::context_board::FrameKind::Keyframe(_));
+            super::board_observations::run_delivered(
+                server,
+                actor,
+                connection,
+                &board.changes,
+                keyframe,
+                frame.epoch,
+            )
+            .await;
+            let _superseded = server
+                .mcp_registry
+                .lock()
+                .await
+                .next_carrier_frame(connection);
+            oneiron::board_verb::BoardVerbOutput::Frame(frame)
+        }
+        other => other,
+    };
+    Ok((mcp_board_verb_output_value(&output), board.rows))
+}
+
+/// Drops a pumped run's board connection, snapshot and read set.
+pub(crate) async fn drop_run_board(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+) {
+    server.mcp_registry.lock().await.drop_run_board(connection);
+    server.memories_cursors.lock().await.read_sets.remove(
+        &super::board_observations::run_read_set_key(actor, connection),
+    );
+}
+
+/// [`mcp_live_board`]'s view of one rendered board.
+fn live_board_view(
+    board: &McpBoardState,
+) -> Result<oneiron::board_verb::LiveBoardView, McpGatewayError> {
+    let header = oneiron::context_board::BoardBlockHeader {
+        epoch: board.epoch,
+        scope: board.scope_label.clone(),
+    };
+    let render = oneiron::board_verb::render_current_keyframe(
+        &header,
+        &board.sections,
+        oneiron::context_board::BoardBudgetRequest {
+            harness_default_tok: crate::mcp::MCP_BOARD_BUDGET_TOK,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        },
+    )
+    .map_err(mcp_board_frame_error)?;
+    let mut rows = std::collections::BTreeMap::new();
+    let mut expansions = std::collections::BTreeMap::new();
+    for section in &board.sections {
+        let lines = section
+            .pinned_rows()
+            .iter()
+            .chain(section.detail_rows())
+            .cloned()
+            .collect::<Vec<_>>();
+        for (index, line) in lines.iter().enumerate() {
+            rows.insert(format!("{}:{index}", section.name()), line.clone());
+        }
+        expansions.insert(section.name().to_owned(), lines);
+    }
+    Ok(oneiron::board_verb::LiveBoardView {
+        snapshot: oneiron::context_board::BoardSnapshot {
+            epoch: board.epoch,
+            keyframe: render.text,
+            rows,
+        },
+        expansions,
+    })
+}
+
+/// A board refusal as the run's door states it: the verb's own refusal is
+/// the caller's, anything else the host's.
+fn run_board_error(error: McpGatewayError) -> oneiron::memory::MemoryError {
+    if error.kind == "verb_dispatch_failed" {
+        oneiron::memory::MemoryError::bad_request(error.message)
+    } else {
+        oneiron::memory::MemoryError::new(
+            oneiron::memory::MEMORY_CODE_INTERNAL,
+            error.message,
+            &["Report this host-door failure."],
+        )
+    }
+}

@@ -391,14 +391,18 @@ impl Vault {
         })
     }
 
-    /// Open a fork of the live body at its head for `actor`'s machine work.
+    /// Open a fork of the live body at its head for `actor`'s machine work in
+    /// the run `run_root`. A deck fork carries the root, so that run's
+    /// approve-all scope covers it; DOCX and XLSX forks merge through the
+    /// opener-excluded merge door, which takes no approve scope.
     pub fn open_office_body_fork(
         &self,
         artifact: &EntityId,
         actor: WriteActor,
+        run_root: Option<&EntityId>,
     ) -> Result<OfficeBodyFork> {
         self.with_write_txn_grouped(|wtxn| match source(&self.store, wtxn, artifact)?.kind {
-            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor, None),
+            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor, run_root),
             kind => Ok(fork_view(open_typed_body_fork_in_txn(
                 self,
                 wtxn,
