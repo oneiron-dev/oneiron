@@ -17985,8 +17985,9 @@
      "path": "src/dreamer_runner/maintenance/code_fix.rs",
      "purpose": "The Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 7,
       "trait": 1
      }
