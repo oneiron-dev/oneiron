@@ -23,7 +23,6 @@ use crate::llm::{
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
 };
-use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
 use crate::receipt::ReceiptQuery;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Vault, WriteActor};
@@ -445,23 +444,23 @@ pub async fn run_resident_dream(
     if entry.is_empty() {
         return Ok(charges.park("the model wrote an empty diary entry"));
     }
-    let landed = ctx
-        .vault
-        .memory(resident_id, EdgeActorClass::Agent)
-        .author_note(&NoteWriteEnvelope {
-            kind: NoteKind::Diary,
-            scope: NoteScope::ActorPrivate {
-                owner_ref: resident_id,
-            },
-            markdown: entry.to_owned(),
-            source_revision_ref: *attempt_id.as_bytes(),
-            mask: None,
-        })
-        .map_err(|error| invalid(&format!("diary entry: {error}")))?;
-    let entry_id = EntityId::from_hex(&landed.id_hex)
-        .map_err(|_| invalid("the diary entry id is not an entity id"))?;
     let now = ctx.now_ms / 1_000;
+    // The entry, its landing marker and the progress it read commit in one
+    // write: a crash between them neither drops the progress nor lands the
+    // entry twice.
     ctx.vault.with_write_txn_grouped(|txn| {
+        if LANDED.contains(&ctx.vault.store, txn, &attempt_id)? {
+            return Ok(());
+        }
+        let at = crate::ports::recorded_at_in_txn(&ctx.vault.store, txn)?;
+        let entry_id = crate::memory::append_agent_diary_in_txn(
+            ctx.vault,
+            txn,
+            resident,
+            entry.to_owned(),
+            at,
+        )
+        .map_err(|error| invalid(&format!("diary entry: {error}")))?;
         LANDED.put(&ctx.vault.store, txn, &attempt_id, &entry_id)?;
         for pad in &cut.pads {
             PADS.put(&ctx.vault.store, txn, &(resident_id, *pad), &[1])?;
