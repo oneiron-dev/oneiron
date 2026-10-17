@@ -43,9 +43,10 @@ impl From<Error> for AppendFailure {
 }
 
 /// What a public append does before its write transaction: `writer` must be
-/// this vault's surface for the byline `input` names, an AI writer's prose
-/// links are receipted, and the writer's read lane is opened here, since it
-/// takes its own snapshot and so never runs inside the writer.
+/// this vault's surface for the byline `input` names, and the writer's read
+/// lane is opened here, since it takes its own snapshot and so never runs
+/// inside the writer. An AI writer's prose links are receipted only once the
+/// append has landed ([`settle_append`]).
 pub(super) fn open_append<'m>(
     vault: &Vault,
     writer: &'m Memory<'_>,
@@ -60,7 +61,6 @@ pub(super) fn open_append<'m>(
             "the append's byline is not its writer's",
         ));
     }
-    admit_append_prose(writer, row, input);
     writer.read_lane(ClaimReadStatus::Recorded)
 }
 
@@ -142,10 +142,16 @@ pub(crate) fn require_append_references_in_txn(
 pub(super) fn settle_append(
     writer: &Memory<'_>,
     row: &'static str,
+    input: &AppendRecord,
     outcome: std::result::Result<AppendedRecord, AppendFailure>,
 ) -> MemoryResult<AppendedRecord> {
     match outcome {
-        Ok(appended) => Ok(appended),
+        // The unlinked-prose receipt means landed speech only (Engine ruling
+        // 10-18): an append that never landed leaves none.
+        Ok(appended) => {
+            admit_append_prose(writer, row, input);
+            Ok(appended)
+        }
         Err(AppendFailure::Engine(error)) => Err(append_engine_error(error)),
         Err(AppendFailure::Unresolved(pointer)) => {
             Err(receipt_append_refusal(writer, row, &pointer))
