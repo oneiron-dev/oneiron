@@ -171,3 +171,19 @@ requires it byte for byte. Regenerate it after a table edit with:
 ```
 ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron --lib code_mode_declarations_file_is_the_verb_table
 ```
+
+`crates/oneiron/src/task_verb/catalog_fragment.d.ts` is the code-mode catalog
+fragment (ONE-2510 S2, EIRI-ARCH-0002 §The contract). This script writes it
+from the table and the Rust types its rows name (`catalog_fragment.py`). It
+covers every row code mode serves, at its SDK path, and lays the verbs out as
+`code_mode_declarations` does. Each row has its typed input and its typed
+reply: `Sdk.Reply<T>`, the `{output}` envelope a code-mode call resolves with.
+Every type the rows reach is written out once in the `Sdk` namespace, nested
+types included. A run row's reply is `Sdk.Reply<unknown>`, because the table
+names no output for it. The coordination rows `ask` and `wait` resolve with
+`unknown`, because code mode answers them with the run's own reply, not the
+row's output. The fragment's revision is `CATALOG_FRAGMENT_REVISION` in
+`catalog_fragment_revision.rs`: `sha256:` and the hex digest of the text, for
+the executor to restate after compaction. The engine reads both through
+`task_verb::sdk::code_mode_catalog_fragment()`, and `--check` flags either
+file when it falls behind the table.

@@ -7,6 +7,7 @@ import keyword
 import re
 import subprocess
 from facade_types import Inventory
+from catalog_fragment import catalog_fragment
 from uniffi_types import UniffiTypes
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
@@ -1284,6 +1285,10 @@ def outputs():
     files['packages/oneiron/src/facade-types.ts'] = facade_types
     files['packages/oneiron-client/src/facade-types.ts'] = facade_types
     files['crates/oneiron-py/python/oneiron/facade_types.pyi'] = INVENTORY.python(census)
+    # ONE-2510 S2: the code-mode catalog fragment over every row code mode
+    # serves, with its revision; its own inventory leaves the facade types above
+    # as they are.
+    files.update(catalog_fragment(ROOT, ROWS + RUN_ROWS, HEADER))
     for path, text in list(files.items()):
         if path.endswith('.rs'):
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)
