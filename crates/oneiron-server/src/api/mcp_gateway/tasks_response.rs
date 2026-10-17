@@ -652,6 +652,7 @@ fn mcp_agent_verb_input(
             }
             Ok(Value::Object(map))
         }
+        "tasks.wave" => a.spec.clone().ok_or_else(invalid),
         "tasks.update" => {
             let mut map = serde_json::Map::new();
             map.insert(
@@ -747,6 +748,8 @@ fn mcp_agent_verb_input(
         "vault.shares.view" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.replay" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.diff" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.blame" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.born_from" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
@@ -1068,6 +1071,9 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("assignee".to_owned(), value.clone());
             }
         }
+        "tasks.wave" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "tasks.update" => {
             if let Some(value) = input.get("task_ref") {
                 arguments.insert("task_ref".to_owned(), value.clone());
@@ -1318,6 +1324,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.view" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.diff" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.blame" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.export" => {
@@ -2064,6 +2076,18 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 oneiron::task_verb::sdk::tasks_create(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.wave" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("tasks.wave", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TaskWaveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::tasks_wave(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -3157,6 +3181,22 @@ async fn execute_agent_verb_row(
             let input: oneiron::blob_artifact::ArtifactRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_view(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.diff" => {
+            let input: oneiron::code_document::CodeDiffRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_diff(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.blame" => {
+            let input: oneiron::code_document::CodeStateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_blame(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

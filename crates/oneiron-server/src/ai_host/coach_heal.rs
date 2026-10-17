@@ -41,10 +41,12 @@ const DECIDE_BUDGET: Duration = Duration::from_secs(20);
 
 /// Starts the worker. Each round runs on a blocking thread: the ladder's
 /// model rungs block on the server's runtime. `publisher` is
-/// `FailureSignalsConfig::publisher_candidates`.
+/// `FailureSignalsConfig::publisher_candidates`. A tick `admit` refuses is
+/// skipped; its pass holds what `admit` returns.
 pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     publisher: Arc<[PublisherCandidate]>,
+    admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
@@ -55,8 +57,16 @@ pub(crate) fn spawn(
             let Some(server) = weak.upgrade() else {
                 break;
             };
+            let Some(pass) = admit() else {
+                continue;
+            };
             let publisher = Arc::clone(&publisher);
-            match tokio::task::spawn_blocking(move || round(&server, &publisher)).await {
+            match tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                round(&server, &publisher)
+            })
+            .await
+            {
                 // By kind only: an engine error can quote the vault.
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "the Coach's heal queue waits for the next round");

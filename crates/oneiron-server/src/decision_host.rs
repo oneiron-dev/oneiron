@@ -40,7 +40,7 @@ use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::TaskDecisions;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationDecisions, EntityId, HostingPrivacyPosture,
-    Vault,
+    ModelLocality, Vault,
 };
 
 use crate::config::models::{
@@ -67,6 +67,11 @@ const PLACEMENT_WORDING: &str = "Which node of the task-type tree is this task? 
 specific live node whose kind fits the task's subgoal and site, or the root when none fits.";
 /// How long one placement may take before the rule rung's reading stands.
 pub(crate) const PLACEMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+/// The planner's shape question (OF-541, OF-389): this host's wording.
+const PLANNER_WORDING: &str = "Which team shape should take this need? Pick the option whose \
+model, pattern and width fit the need and its care level at the least expected spend.";
+/// How long one shape pick may take before the planner's deterministic pick stands.
+const PLANNER_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -86,6 +91,9 @@ pub struct DecisionHost {
     person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
     image_pick: Option<ImagePickSettings>,
+    /// The owner's explicit opt-in to send unit text off the host,
+    /// `[models.decisions.system_one].remote_opt_in`.
+    remote_opt_in: bool,
 }
 
 impl DecisionHost {
@@ -113,6 +121,7 @@ impl DecisionHost {
             person_refresh: Arc::default(),
             auto_checker: None,
             image_pick: None,
+            remote_opt_in: false,
         }
     }
 
@@ -171,6 +180,7 @@ impl DecisionHost {
             meter.clone(),
             &probe.paired,
             self.ladder.person.clone(),
+            door.connector().locality == ModelLocality::ThirdParty,
         ) {
             Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
             Err(error) => {
@@ -189,6 +199,7 @@ impl DecisionHost {
         runtime: tokio::runtime::Handle,
     ) -> Self {
         self.ladder.system_one = None;
+        self.remote_opt_in = settings.is_some_and(|settings| settings.remote_opt_in);
         let Some(settings) = settings else {
             return self;
         };
@@ -258,6 +269,13 @@ impl DecisionHost {
     #[must_use]
     pub fn ladder(&self) -> &HeldLadder {
         &self.ladder
+    }
+
+    /// Whether the owner opted in to sending unit text off the host, for
+    /// [`oneiron::llm::decision::DecisionLadder::under_posture`].
+    #[must_use]
+    pub fn remote_opt_in(&self) -> bool {
+        self.remote_opt_in
     }
 
     /// The ladder's last rung: the vault owner's durable ask queue. A caller
@@ -362,6 +380,25 @@ impl DecisionHost {
             bands: self.bands.clone(),
             wording: PLACEMENT_WORDING.to_owned(),
             deadline,
+        }
+    }
+
+    /// A leased agent run's planner ladder (OF-541, OF-389): the shape pick
+    /// and the type placement for `principal`, up to the Big rung, each call
+    /// on its own fresh clock.
+    pub(crate) fn host_planner_decisions(
+        &self,
+        principal: EntityId,
+    ) -> oneiron::code_run::HostPlannerDecisions<'_> {
+        oneiron::code_run::HostPlannerDecisions {
+            ladder: &self.ladder,
+            principal,
+            bands: self.bands.clone(),
+            planner_wording: PLANNER_WORDING.to_owned(),
+            planner_budget: PLANNER_BUDGET,
+            placement_dial: self.dial(DecisionRung::Big),
+            placement_wording: PLACEMENT_WORDING.to_owned(),
+            placement_budget: PLACEMENT_BUDGET,
         }
     }
 
@@ -666,6 +703,8 @@ struct HouseRead {
     guard: BudgetGuard,
     paired: DecisionQuestion,
     person: Option<DecisionQuestion>,
+    /// The reader's provider is a third party's.
+    leaves: bool,
 }
 
 impl HouseRead {
@@ -674,6 +713,7 @@ impl HouseRead {
         guard: BudgetGuard,
         paired: &str,
         person: Option<DecisionQuestion>,
+        leaves: bool,
     ) -> oneiron::Result<Self> {
         let read = Self {
             pin: pin(DecisionRung::Escalation, reader.model(), reader.revision()),
@@ -681,6 +721,7 @@ impl HouseRead {
             person,
             reader,
             guard,
+            leaves,
         };
         read.provider()?;
         Ok(read)
@@ -705,6 +746,10 @@ impl DecisionProvider for HouseRead {
     fn capability(&self) -> ProviderCapability {
         self.provider()
             .map_or_else(|_| ProviderCapability::default(), |read| read.capability())
+    }
+
+    fn leaves_host(&self) -> bool {
+        self.leaves
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
@@ -780,6 +825,11 @@ impl DecisionProvider for SystemOneRung {
 
     fn image_edge(&self) -> Option<u32> {
         self.seat.image_edge()
+    }
+
+    /// The seat is remote: every call leaves the host.
+    fn leaves_host(&self) -> bool {
+        true
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
