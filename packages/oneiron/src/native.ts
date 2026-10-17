@@ -128,6 +128,10 @@ vaultLegalHoldsWiden(input: unknown): unknown
 vaultLegalHoldsList(input: unknown): unknown
 vaultLegalHoldsLog(input: unknown): unknown
 vaultLegalHoldsLiftAndErase(input: unknown): unknown
+vaultCourtesyDeleteSend(input: unknown): unknown
+vaultCourtesyDeleteSent(input: unknown): unknown
+vaultCourtesyDeleteIncoming(input: unknown): unknown
+vaultCourtesyDeleteAnswer(input: unknown): unknown
 vaultEmbeddingSpacesList(input: unknown): unknown
 vaultEmbeddingSpacesDeclare(input: unknown): unknown
 vaultEmbeddingSpacesBind(input: unknown): unknown

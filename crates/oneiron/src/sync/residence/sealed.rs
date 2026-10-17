@@ -250,7 +250,7 @@ pub fn sealed_shelf_after(
 /// # Errors
 ///
 /// An unproved peer; storage errors.
-pub fn sealed_shelf_packet(
+fn sealed_shelf_packet(
     vault: &Vault,
     peer: PeerMachine,
     id: &SealedContentId,

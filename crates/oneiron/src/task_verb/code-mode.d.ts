@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 337 code-mode rows (318 host rows, 19 run rows), 1173 declarations.
-// Replies: 275 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 341 code-mode rows (322 host rows, 19 run rows), 1181 declarations.
+// Replies: 279 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
 declare namespace Sdk {
@@ -247,7 +247,7 @@ declare namespace Sdk {
   type QuoteSpan = { message: EntityId; start: number; end: number };
   type WitnessAuthor = "user" | "companion" | "system";
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number };
-  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; messages: WitnessMessage[]; occurred_at: number };
+  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number };
   type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
@@ -504,6 +504,13 @@ declare namespace Sdk {
   type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending" } | { state: "kept_by_legal_order" } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[] };
+  type CourtesyDeleteSendRequest = { pact: string; worlds?: string[]; epoch_cutoff?: number | null; peer: string; signed?: string | null };
+  type CourtesyDeleteSent = { request: string; pact: string; recipient: string; status: string; created: string; updated: string };
+  type CourtesyDeleteAskedWorld = { world: string; stale?: string | null; stale_epoch?: number | null };
+  type CooperativeDeletionDispositionKind = "delete" | "redact" | "restrict_pending_review" | "retain_under_basis" | "legal_hold" | "decline";
+  type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string };
+  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null };
+  type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null };
   type InputKind = "text" | "image" | "audio";
   type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: unknown };
   type SpaceRef = "text_index" | { declared: string };
@@ -672,7 +679,8 @@ declare namespace Sdk {
   type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
   type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
   type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
-  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null };
+  type HostRuleRef = { id: string; revision: number };
+  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null };
   type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
   type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null };
@@ -901,7 +909,7 @@ declare namespace Sdk {
   type HolderKind = "person" | "agent";
   type RoleHolder = { actor: string; kind: HolderKind };
   type ResolvedRole = { role: AskRole; holders: RoleHolder[] };
-  type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean };
+  type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null };
   type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation?: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null };
   type DecisionAskClimbRequest = { seq: number };
   type ConnectorListRequest = { query?: string | null };
@@ -995,7 +1003,7 @@ declare namespace Sdk {
   type ConversationTurnCreateInput = { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreDagAddressMode = "broadcast" | "direct";
   type CoreDagQuoteInput = { message: string; start: number; end: number };
-  type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null };
+  type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null; thread_audience?: string[] | null };
   type DagRecordAppendReceipt = { id: string; head?: string | null; parent?: string | null };
   type CoreBatchEntityInput = { id?: string | null; entity_type: number; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreBatchWriteInput = { entities: CoreBatchEntityInput[] };
@@ -1593,6 +1601,16 @@ declare const vault: Sdk.VaultHost & {
       create(input: Sdk.ConversationTurnCreateInput): Promise<Sdk.CoreEntityWriteReceipt | StoredResult>;
     };
   };
+  courtesy_delete: {
+    /** The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where. */
+    answer(input: Sdk.CourtesyDeleteAnswerRequest): Promise<Sdk.CourtesyDeleteIncoming | StoredResult>;
+    /** Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer. */
+    incoming(input: Sdk.EmptyRequest): Promise<Sdk.CourtesyDeleteIncoming[] | StoredResult>;
+    /** The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery. */
+    send(input: Sdk.CourtesyDeleteSendRequest): Promise<Sdk.CourtesyDeleteSent | StoredResult>;
+    /** Every courtesy delete ask this vault sent, with its delivery status, for the owner. */
+    sent(input: Sdk.EmptyRequest): Promise<Sdk.CourtesyDeleteSent[] | StoredResult>;
+  };
   critic: {
     /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
     review(input: Sdk.CriticReviewSubmit): Promise<Sdk.CriticReviewOutcome | StoredResult>;
@@ -1884,7 +1902,7 @@ declare const vault: Sdk.VaultHost & {
     reply_strips(input: Sdk.ReplyStripsRequest): Promise<Sdk.ReplyStripsPage | StoredResult>;
     /** A room's effective sharing scope and why it is clamped, for a member of the room. */
     sharing(input: Sdk.RoomRefRequest): Promise<Sdk.RoomSharingView | StoredResult>;
-    /** Speaks one turn into the current room turn's room, through the normal witness gate. */
+    /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later. */
     speak(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;
