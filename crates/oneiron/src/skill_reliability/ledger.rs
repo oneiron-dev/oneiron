@@ -550,6 +550,24 @@ pub(crate) fn attributed_outcome_results(
         .collect())
 }
 
+/// `receipt`'s outcome for `skill` as the ledger holds it now, amendments,
+/// displacement and late credit applied; `None` while it holds none. A live
+/// pull reads its run's result here, not off the attempt alone.
+///
+/// # Errors
+///
+/// As [`attributed_outcome_results`].
+pub fn effective_skill_outcome(
+    vault: &Vault,
+    skill: &EntityId,
+    receipt: &str,
+) -> Result<Option<bool>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(attributed_outcomes_weighted(vault, &rtxn, skill)?
+        .into_iter()
+        .find_map(|(kept, outcome)| (kept == receipt).then_some(outcome.win)))
+}
+
 /// One attributed outcome as a fold reads it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct AttributedOutcome {
