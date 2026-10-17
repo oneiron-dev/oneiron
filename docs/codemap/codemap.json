@@ -9885,7 +9885,7 @@
      "surface": {
       "crate-vis": 6,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -26641,7 +26641,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -26655,7 +26655,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -26698,6 +26698,19 @@
       "enum": 1,
       "fn": 7,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensRegenEnactment"
+     ],
+     "path": "src/lens/regen.rs",
+     "purpose": "Enacting a regeneration outcome through the lens lifecycle (OF-250)",
+     "surface": {
+      "enum": 1,
+      "fn": 5
      }
     },
     {
@@ -51770,7 +51783,7 @@
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
     "lens": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52514,7 +52527,7 @@
    },
    "over_bar": 152,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3176,
+   "source_files": 3177,
    "test_files": 903
   },
   "oneiron-android": {
