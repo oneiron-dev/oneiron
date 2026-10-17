@@ -87,7 +87,8 @@ impl HostSelfDispatcher<'_> {
     /// off-record session runs no hook: its receipts would land on record.
     /// A call no binding can take passes before its args are built. A hook
     /// reads under `read_as`, the key the run's door admitted the call with,
-    /// and as the run's actor when its host binds no door.
+    /// and as the run's actor when its host binds no door. The call's scope
+    /// is the room that key reads inside, if any.
     pub(crate) fn enter_verb_hooks(
         &self,
         call: SelfCall,
@@ -105,12 +106,16 @@ impl HostSelfDispatcher<'_> {
             return Ok(Ok((call, HookedCall(None))));
         }
         let args = hook_args(&call)?;
+        let scope = read_as
+            .as_ref()
+            .and_then(ScopedReadActorKey::room_turn)
+            .map(|turn| format!("room:{}", turn.room.to_hex()));
         let hook_call = VerbCall {
             verb: effect.as_str().to_owned(),
             invocation: self.verb_invocation(&call, site)?,
             actor: self.actor.entity_ref(),
             class: hook_class(self.actor.actor_class()),
-            scope: None,
+            scope,
             board_epoch: None,
             domain: hook_domain(&call),
             reader: read_as,

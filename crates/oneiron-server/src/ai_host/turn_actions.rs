@@ -175,9 +175,17 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
     // before its stream opens: a skip, or an ask, ends the turn with its
     // reason. Its post chain runs once the reply's producer ends.
     // A queued action carries no credential: its hooks read as its actor.
-    let generating = turn_generate_pre(vault, actor, None, None, &action.conversation.to_hex())
-        .map_err(|error| error.to_string())?
-        .map_err(|stop| stop.to_string())?;
+    // Its room is the conversation the action's context resolved.
+    let generating = turn_generate_pre(
+        vault,
+        actor,
+        None,
+        None,
+        &action.conversation.to_hex(),
+        Some(action.conversation),
+    )
+    .map_err(|error| error.to_string())?
+    .map_err(|stop| stop.to_string())?;
     let open = match action.action {
         TurnAction::Continue => AnswerOpen::Continue(action.message),
         TurnAction::Retry => AnswerOpen::Turn(witness_turn(

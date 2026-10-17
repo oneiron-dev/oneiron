@@ -25,9 +25,11 @@ const MAX_BODIES: usize = 256;
 thread_local! {
     /// This thread's hook depth: 1 while a chain runs or an outcome applies.
     static DEPTH: Cell<u8> = const { Cell::new(0) };
+    /// The invocation this thread's drain runs again, while it runs.
+    static DRAINING: Cell<Option<InvocationId>> = const { Cell::new(None) };
 }
 
-type InFlight = Arc<Mutex<HashMap<InvocationId, EntityId>>>;
+type InFlight = Arc<Mutex<HashMap<InvocationId, Holder>>>;
 type Claims = Arc<Mutex<HashMap<InvocationId, Arc<ClaimSlot>>>>;
 
 /// The vault's verb-hook state.
@@ -40,7 +42,7 @@ pub(crate) struct VerbHookState {
     bindings: RwLock<Option<Arc<Bindings>>>,
     /// Bodies by their BLAKE3; `pack_hook_body` checked each against it.
     bodies: Mutex<HashMap<String, Arc<str>>>,
-    /// Invocations whose chain is running, with the actor that holds each.
+    /// Invocations whose chain is running, with who holds each.
     in_flight: InFlight,
     /// Client-named invocations a door is serving, each with its call.
     claims: Claims,
@@ -57,12 +59,25 @@ pub(super) struct Bindings {
     pub(super) verb: Vec<(EntityId, PackHookBinding)>,
 }
 
+/// Who holds an invocation in flight.
+#[derive(Debug)]
+struct Holder {
+    actor: EntityId,
+    /// Set while the drain runs a settled call again: the ask it resumes,
+    /// and whether the drain's own boundary entered yet.
+    drain: Option<(EntityId, bool)>,
+}
+
 /// How a call enters the in-flight set.
 pub(super) enum Entered {
     /// The same actor's invocation is in flight: a nested boundary.
     Nested,
+    /// The drain runs this call again, resumed on ask `.0`: a retry waits
+    /// for what it returns.
+    Draining(EntityId),
     /// The call holds the mark until it drops; `None` when another actor
-    /// holds this id, whose own call keeps it.
+    /// holds this id, whose own call keeps it, or when the drain's hold
+    /// keeps it.
     Fresh(Option<InFlightMark>),
 }
 
@@ -183,22 +198,66 @@ impl VerbHookState {
     /// flight is a nested boundary of one call: a concurrent request naming
     /// it never reaches here, since each door that takes a client's id claims
     /// it first ([`Vault::claim_invocation`]), and an id the engine mints is
-    /// its own.
+    /// its own. The one other holder is the drain ([`Self::hold_for_drain`]):
+    /// its own first boundary enters fresh, and the caller's retry meanwhile
+    /// waits on it.
     pub(super) fn enter(&self, invocation: InvocationId, actor: EntityId) -> Entered {
         let mut set = self
             .in_flight
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        match set.get(&invocation) {
-            Some(holder) if *holder == actor => Entered::Nested,
+        match set.get_mut(&invocation) {
+            Some(holder) if holder.actor == actor => match &mut holder.drain {
+                None => Entered::Nested,
+                Some((_, entered)) if draining() == Some(invocation) => {
+                    if *entered {
+                        Entered::Nested
+                    } else {
+                        *entered = true;
+                        Entered::Fresh(None)
+                    }
+                }
+                Some((ask, _)) => Entered::Draining(*ask),
+            },
             Some(_) => Entered::Fresh(None),
             None => {
-                set.insert(invocation, actor);
-                Entered::Fresh(Some(InFlightMark {
-                    set: Arc::clone(&self.in_flight),
-                    invocation,
-                }))
+                set.insert(invocation, Holder { actor, drain: None });
+                Entered::Fresh(Some(self.mark(invocation)))
             }
+        }
+    }
+
+    /// Holds `invocation` for the drain's run of `actor`'s call stopped on
+    /// `ask`, until the mark drops: from before the call to after its
+    /// outcome is saved. `None` when a call of it is in flight already: the
+    /// check and the hold are one step, so no retry starts between them.
+    pub(super) fn hold_for_drain(
+        &self,
+        invocation: InvocationId,
+        actor: EntityId,
+        ask: EntityId,
+    ) -> Option<InFlightMark> {
+        let mut set = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if set.contains_key(&invocation) {
+            return None;
+        }
+        set.insert(
+            invocation,
+            Holder {
+                actor,
+                drain: Some((ask, false)),
+            },
+        );
+        Some(self.mark(invocation))
+    }
+
+    fn mark(&self, invocation: InvocationId) -> InFlightMark {
+        InFlightMark {
+            set: Arc::clone(&self.in_flight),
+            invocation,
         }
     }
 }
@@ -305,6 +364,29 @@ fn build_sandbox() -> std::result::Result<Arc<dyn HookBodyRuntime>, String> {
 /// This thread's hook depth.
 pub(super) fn depth() -> u8 {
     DEPTH.with(Cell::get)
+}
+
+/// The invocation this thread's drain runs again, if any.
+pub(super) fn draining() -> Option<InvocationId> {
+    DRAINING.with(Cell::get)
+}
+
+/// Marks this thread as the drain's run of one invocation while held.
+pub(super) struct DrainScope(Option<InvocationId>, PhantomData<*const ()>);
+
+impl DrainScope {
+    pub(super) fn enter(invocation: InvocationId) -> Self {
+        Self(
+            DRAINING.with(|draining| draining.replace(Some(invocation))),
+            PhantomData,
+        )
+    }
+}
+
+impl Drop for DrainScope {
+    fn drop(&mut self) {
+        DRAINING.with(|draining| draining.set(self.0));
+    }
 }
 
 /// Raises this thread's hook depth while held: no verb hook runs under it,

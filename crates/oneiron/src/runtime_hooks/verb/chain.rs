@@ -62,8 +62,10 @@ pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
 /// The pre chain of `call`. It passes through with hooks off or suppressed,
 /// at hook depth 1, inside the same actor's call of this invocation, without
 /// the sandbox, and when no binding matches; the cached binding list keeps
-/// that last case free of reads. `resume` is how settlement could run the
-/// call again without its caller: an ask saves it.
+/// that last case free of reads. A retry while the drain runs the call again
+/// gets the ask's Pending, and the retry after it what the call returned.
+/// `resume` is how settlement could run the call again without its caller:
+/// an ask saves it.
 pub(super) fn pre(
     vault: &Vault,
     call: VerbCall,
@@ -85,6 +87,7 @@ pub(super) fn pre(
     };
     let mark = match state.enter(call.invocation, call.actor) {
         Entered::Nested => return through(call, args),
+        Entered::Draining(group) => return Ok(Err(ask::pending(call.invocation, group))),
         Entered::Fresh(mark) => mark,
     };
     let carry = Carry {

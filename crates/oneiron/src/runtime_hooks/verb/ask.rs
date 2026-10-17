@@ -62,8 +62,14 @@ struct VerbAsk {
     resume: Option<VerbResume>,
     /// When the ask settled.
     settled_at: Option<u64>,
+    /// Whether it settled proceed.
+    proceeds: bool,
     /// Settled proceed with a resume target: the drain runs the call.
     ready: bool,
+    /// The drain took the call and has not saved its outcome yet. A retry
+    /// waits on the drain's in-flight hold, not on this mark, which a crash
+    /// can leave set.
+    running: bool,
     /// What the drained call returned, for the caller's retry.
     outcome: Option<SavedOutcome>,
 }
@@ -286,7 +292,9 @@ pub(super) fn open(
             consumed_at: None,
             resume: resume.cloned(),
             settled_at: None,
+            proceeds: false,
             ready: false,
+            running: false,
             outcome: None,
         })
     };
@@ -344,7 +352,8 @@ pub(super) fn settled_in_txn(
         return Ok(());
     }
     row.settled_at = Some(now);
-    row.ready = row.resume.is_some() && proceeds(result);
+    row.proceeds = proceeds(result);
+    row.ready = row.resume.is_some() && row.proceeds;
     ASKS.put(&vault.store, txn, &key, &row)?;
     if row.ready {
         // The hook runner wakes on the commit, not only on its tick.
@@ -397,10 +406,42 @@ pub(super) fn ready(vault: &Vault) -> Result<Vec<Ready>> {
     Ok(ready)
 }
 
-/// Saves what the drained call of ask `group` returned and uses the answer
-/// up, unless a newer ask stands under the key or an outcome is saved.
-/// `transient` (a storage error) leaves a row the call did not use up ready
-/// for the next pass.
+/// Marks ask `group`'s ready call running, just before the drain calls it
+/// again; false when it is no longer Open and ready.
+pub(super) fn mark_running(vault: &Vault, key: [u8; 16], group: EntityId) -> Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut row) = ASKS.get(&vault.store, txn, &key)? else {
+            return Ok(false);
+        };
+        if row.ask != group || row.state != VerbAskState::Open || !row.ready {
+            return Ok(false);
+        }
+        if !row.running {
+            row.running = true;
+            ASKS.put(&vault.store, txn, &key, &row)?;
+        }
+        Ok(true)
+    })
+}
+
+/// Clears ask `group`'s running mark when the drained call saved nothing.
+pub(super) fn idle(vault: &Vault, key: [u8; 16], group: EntityId) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut row) = ASKS.get(&vault.store, txn, &key)? else {
+            return Ok(());
+        };
+        if row.ask != group || !row.running {
+            return Ok(());
+        }
+        row.running = false;
+        ASKS.put(&vault.store, txn, &key, &row)
+    })
+}
+
+/// Saves what the drained call of ask `group` returned, uses the answer up
+/// and clears the running mark, unless a newer ask stands under the key or
+/// an outcome is saved. `transient` (a storage error) leaves a row the call
+/// did not use up ready for the next pass.
 pub(super) fn finish(
     vault: &Vault,
     key: [u8; 16],
@@ -416,8 +457,9 @@ pub(super) fn finish(
         if row.ask != group || row.outcome.is_some() {
             return Ok(());
         }
+        row.running = false;
         if transient && row.state == VerbAskState::Open {
-            return Ok(());
+            return ASKS.put(&vault.store, txn, &key, &row);
         }
         row.state = VerbAskState::Consumed;
         row.consumed_at.get_or_insert(now);
@@ -439,13 +481,80 @@ pub(super) fn unready(vault: &Vault, key: [u8; 16], group: EntityId) -> Result<(
             return Ok(());
         }
         row.ready = false;
+        row.running = false;
         ASKS.put(&vault.store, txn, &key, &row)
     })
 }
 
+/// Deletes at most `max` rows `cutoff` (vault-clock seconds) left behind:
+/// used ones used before it, and open ones opened before it whose ask
+/// settled without a proceed. An open one no settlement marked yet is read
+/// through its ask first, as its author: the read settles a lapsed ask, and
+/// settlement marks the row. Returns how many it deleted.
+pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
+    let mut old = Vec::new();
+    let mut unsettled = Vec::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        for entry in ASKS.iter_raw_from(&vault.store, &rtxn, &[])? {
+            if old.len() + unsettled.len() >= max {
+                break;
+            }
+            let (key, value) = entry?;
+            let (Ok(key), Ok(row)) = (
+                <[u8; 16]>::try_from(key.as_slice()),
+                ASKS.decode_value(&value),
+            ) else {
+                continue;
+            };
+            if outlived(&row, cutoff) {
+                old.push(key);
+            } else if row.state == VerbAskState::Open
+                && row.created_at < cutoff
+                && row.settled_at.is_none()
+            {
+                unsettled.push((key, row.author, row.author_class, row.ask));
+            }
+        }
+    }
+    for (key, author, class, ask) in unsettled {
+        let status = vault
+            .memory(author, super::super::filter::edge_class(class))
+            .tasks_ask_status(TaskAskHandle { group_ref: ask });
+        if matches!(status, Ok(TaskAskStatus::Settled(_))) {
+            old.push(key);
+        }
+    }
+    if old.is_empty() {
+        return Ok(0);
+    }
+    vault.with_write_txn_grouped(|txn| {
+        let mut deleted = 0;
+        for key in &old {
+            if ASKS
+                .get_lenient(&vault.store, txn, key)?
+                .is_some_and(|row| outlived(&row, cutoff))
+            {
+                ASKS.delete(&vault.store, txn, key)?;
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    })
+}
+
+/// Whether `row` is past `cutoff`: used before it, or opened before it on an
+/// ask that settled without a proceed.
+fn outlived(row: &VerbAsk, cutoff: u64) -> bool {
+    match row.state {
+        VerbAskState::Consumed => row.consumed_at.unwrap_or(row.created_at) < cutoff,
+        VerbAskState::Open => row.created_at < cutoff && row.settled_at.is_some() && !row.proceeds,
+    }
+}
+
 /// The caller's Pending: the invocation to retry and the ask handle's
 /// group, both as lowercase hex.
-fn pending(invocation: InvocationId, ask: EntityId) -> VerbHookStop {
+pub(super) fn pending(invocation: InvocationId, ask: EntityId) -> VerbHookStop {
     VerbHookStop::Pending {
         invocation: invocation.to_hex(),
         ask: ask.to_hex(),

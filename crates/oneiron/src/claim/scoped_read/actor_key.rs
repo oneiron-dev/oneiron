@@ -420,6 +420,11 @@ impl ScopedReadActorKey {
         self
     }
 
+    /// The room turn this key reads inside, when a host bound one.
+    pub(crate) fn room_turn(&self) -> Option<&RoomTurnCeiling> {
+        self.room_turn.as_deref()
+    }
+
     /// Read only rows in `worlds`, each where `record_world_in` places it: a
     /// claim by its own world, a TASK and its facts by their birth, any
     /// other record as base reality. The ceiling only narrows: it meets any
