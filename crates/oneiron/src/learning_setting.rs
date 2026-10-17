@@ -154,6 +154,14 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     PLANNER_SOLO_SUCCESS_FLOOR,
     PLANNER_SOLO_MARGIN,
     PLANNER_BIG_PLAN_WIDTH,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_LOOP_REPEATS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_CHECK_FAILS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_WAIT_SHARE,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_WAIT_MINUTES,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_SILENT_MINUTES,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_WIDEN_DENIALS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_ESCALATE_TTL_HOURS,
 ];
 
 /// The catalog row named `key`, if the engine knows it.

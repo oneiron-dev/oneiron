@@ -1,7 +1,9 @@
 //! `/v1/owner/inbox`: the owner's view of the agent inbox lens (ARCH-0063 R4,
 //! INB-03). One view across every agent identity: conversations by thread,
 //! the "Waiting on you" pile and coordination updates, in impact order. The
-//! lens stores nothing; this route only reads it.
+//! Coach's concern cards (OF-568) sit under "Waiting on you" with their own
+//! kind, each naming the agent it is about. The lens stores nothing; this
+//! route only reads it.
 
 use std::sync::Arc;
 
@@ -49,13 +51,24 @@ struct InboxQuery {
 #[derive(Debug, Serialize)]
 struct InboxPage {
     items: Vec<InboxRow>,
+    /// The page's concern rows per agent they are about, in page order.
+    concern_groups: Vec<ConcernGroup>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConcernGroup {
+    agent: String,
+    items: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct InboxRow {
     item_id: String,
-    /// `conversation`, `waiting_on_you` or `coordination_update`.
+    /// `conversation`, `waiting_on_you`, `coordination_update` or `concern`.
     kind: &'static str,
+    /// `conversations`, `waiting_on_you` or `updates`: approvals and concerns
+    /// share "Waiting on you".
+    pile: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     thread_ref: Option<String>,
     identity: String,
@@ -67,8 +80,20 @@ struct InboxRow {
     occurred_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt_ref: Option<String>,
+    /// For a concern, its `health:` card handle.
     #[serde(skip_serializing_if = "Option::is_none")]
     payload_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    concern: Option<ConcernRow>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConcernRow {
+    /// The agent the card is about, as 32 hex.
+    agent: String,
+    signal: &'static str,
+    /// `struggling`, `off_course` or `concern`.
+    tone: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,7 +141,7 @@ async fn read(
                 before,
             })?,
         };
-        let items = items
+        let items: Vec<InboxRow> = items
             .into_iter()
             .map(|item| InboxRow {
                 item_id: item.item_id,
@@ -124,6 +149,14 @@ async fn read(
                     AgentInboxItemKind::Conversation => "conversation",
                     AgentInboxItemKind::ApprovalRequired => "waiting_on_you",
                     AgentInboxItemKind::CoordinationUpdate => "coordination_update",
+                    AgentInboxItemKind::Concern => "concern",
+                },
+                pile: match item.kind {
+                    AgentInboxItemKind::Conversation => "conversations",
+                    AgentInboxItemKind::ApprovalRequired | AgentInboxItemKind::Concern => {
+                        "waiting_on_you"
+                    }
+                    AgentInboxItemKind::CoordinationUpdate => "updates",
                 },
                 thread_ref: item.thread_ref,
                 identity: item.identity_ref.to_hex(),
@@ -141,9 +174,33 @@ async fn read(
                 occurred_at: item.occurred_at,
                 receipt_ref: item.receipt_ref,
                 payload_ref: item.payload_ref,
+                concern: item.concern.map(|concern| ConcernRow {
+                    agent: concern.subject.to_hex(),
+                    signal: concern.signal.as_str(),
+                    tone: concern.tone.as_str(),
+                }),
             })
             .collect();
-        Ok(InboxPage { items })
+        let mut concern_groups: Vec<ConcernGroup> = Vec::new();
+        for row in &items {
+            let Some(concern) = &row.concern else {
+                continue;
+            };
+            match concern_groups
+                .iter_mut()
+                .find(|group| group.agent == concern.agent)
+            {
+                Some(group) => group.items.push(row.item_id.clone()),
+                None => concern_groups.push(ConcernGroup {
+                    agent: concern.agent.clone(),
+                    items: vec![row.item_id.clone()],
+                }),
+            }
+        }
+        Ok(InboxPage {
+            items,
+            concern_groups,
+        })
     })
     .await?;
     Ok(Json(page))

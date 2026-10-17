@@ -30,6 +30,7 @@ impl DeterministicDetector for ConsentDeniedDetector {
             .map(|observation| DiagnosticEvent {
                 detector_id: self.detector_id().to_owned(),
                 event_class: DiagnosticEventClass::ConsentDenied,
+                signal: None,
                 actor_class: "system".to_owned(),
                 actor_ref: None,
                 source: DiagnosticSourceKind::Receipt,

@@ -288,6 +288,9 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// One agent-health card (OF-568): the Coach's merged evidence, routing and outcome for one
+    /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
+    COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
     COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;
