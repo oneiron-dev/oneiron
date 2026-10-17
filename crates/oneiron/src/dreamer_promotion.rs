@@ -466,7 +466,11 @@ fn promote_one(
             Some(evidence) => {
                 evidence.record_message_dependencies_in_txn(vault, wtxn, &candidate.claim_id)?;
                 crate::dreamer_consolidation::strength::record_verified_in_txn(
-                    vault, wtxn, candidate.claim_id, evidence, run.now_ms,
+                    vault,
+                    wtxn,
+                    candidate.claim_id,
+                    evidence,
+                    run.now_ms,
                 )
             }
             None => Ok(()),

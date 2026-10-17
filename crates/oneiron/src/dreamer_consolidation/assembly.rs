@@ -195,7 +195,12 @@ fn selection_input(
     }
     let count = candidate.evidence.count();
     let signals = StrengthSignals::from_evidence(
-        &facts.predicate, count, latest, sessions.len(), now, config,
+        &facts.predicate,
+        count,
+        latest,
+        sessions.len(),
+        now,
+        config,
     );
     Ok(SelectionCandidate {
         claim_id: candidate.claim_id,
