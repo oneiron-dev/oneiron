@@ -2661,7 +2661,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "HostSlipIssuer"
@@ -21560,7 +21560,7 @@
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 5,
+      "fn": 6,
       "re-export": 1
      }
     },
@@ -26815,7 +26815,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -48299,6 +48299,7 @@
      "kind": "src",
      "notable": [
       "NewVaultKeyWrap",
+      "VaultKeyEscrowCapsule",
       "VaultKeyStatus",
       "VaultKeyUnlock",
       "VaultKeyWrapInfo",
@@ -48309,8 +48310,8 @@
      "surface": {
       "crate-vis": 7,
       "enum": 4,
-      "fn": 21,
-      "struct": 1
+      "fn": 23,
+      "struct": 2
      }
     },
     {
@@ -50679,7 +50680,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 134,
+   "over_bar": 135,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3060,
    "test_files": 903
@@ -68871,6 +68872,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EscrowCapsuleReport"
+     ],
+     "path": "src/lib/escrow.rs",
+     "purpose": "The vault's data-key escrow on its way to the registry (CROSS-ARCH-0022 #ov-custody, invariant 03: escrow is…",
+     "surface": {
+      "const": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Host",
       "HostLimits",
       "PreviewPortHost"
@@ -69012,7 +69027,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 7,
+      "mod": 8,
       "re-export": 7
      }
     },
@@ -69117,7 +69132,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69126,7 +69141,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 19,
+   "source_files": 20,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
