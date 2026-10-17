@@ -39,7 +39,9 @@ impl AuthoritySignatureSuite {
 }
 
 /// Authority public key material.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum AuthorityKey {
     /// 32-byte Ed25519 verifying key.
     Ed25519([u8; 32]),
@@ -105,7 +107,9 @@ impl AuthorityAttestation {
 }
 
 /// Authority assurance tier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum AuthorityTier {
     /// Passphrase-derived or otherwise software-held authority key.
     Software,
