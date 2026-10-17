@@ -2,6 +2,7 @@
 mod history;
 mod hosting;
 mod liveness;
+mod offer_liveness;
 mod offer_settle;
 mod offers;
 mod participants;

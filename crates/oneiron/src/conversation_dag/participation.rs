@@ -4,14 +4,17 @@
 use super::AppendRecord;
 use super::graph;
 use super::topology::RecordKind;
+use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::store::Store;
-use crate::workspace_roster::{Admitted, JoinCause};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::workspace_roster::{Admitted, JoinCause, RoomTurn};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The thread a live append lands in: the root of its chain, the first
 /// thread record walked up `Parent`, never the moving tip. A thread append
@@ -116,4 +119,110 @@ pub(crate) fn erased_thread_room_in_txn(
         (None, None) => return Ok(None),
     };
     Ok(Some(room))
+}
+
+/// Every live DAG record of the ordinary room `room`, as the transient turn
+/// rows an open offer card's thread fold reads (OF-530). A thread record
+/// names the trunk record its thread hangs off and answers its `Parent`, so
+/// its root is the one [`thread_root_in_txn`] keys its branch by; a trunk
+/// record answers nothing, since the fold places a thread by its trunk and
+/// walks no trunk chain. A thread whose walk meets no trunk record, or an
+/// ancestor no row or pin still knows, is left out: its branch is unknown.
+/// Nothing is stored and no text is copied; the fold reads no author, so a
+/// record without one carries none. Every examined row counts toward `count`.
+pub(crate) fn offer_turns_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    room: EntityId,
+    count: &mut crate::scan_check::ScanCount,
+) -> Result<Vec<RoomTurn>> {
+    let store = &vault.store;
+    let mut records = BTreeMap::new();
+    for row in store.port_edges(txn, &room, EdgeDirection::In, Some(EdgeKind::ChildOf), None)? {
+        count.row();
+        let id = row?.target;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_TURN,
+            body,
+        } = live_entity_row_in_txn(store, txn, &id)?
+        else {
+            continue;
+        };
+        let Some(kind) = super::topology::record_kind(&body)? else {
+            continue;
+        };
+        let at = store
+            .port_entity_record(txn, &id)?
+            .ok_or(Error::EntityNotFound)?
+            .occurred
+            .start;
+        let actor = crate::conversation::record_author(&body)?
+            .map_or_else(String::new, |author| author.to_hex());
+        records.insert(id, (kind == RecordKind::Thread, at, actor));
+    }
+    let mut branches = BTreeMap::new();
+    let mut turns = Vec::with_capacity(records.len());
+    for (id, (thread, at, actor)) in records {
+        let (reply_to, thread_of) = if thread {
+            let Some((_, trunk)) = branch_in_txn(store, txn, id, &mut branches)? else {
+                continue;
+            };
+            (graph::parent(store, txn, &id)?, Some(trunk))
+        } else {
+            (None, None)
+        };
+        turns.push(RoomTurn {
+            turn_id: id.to_hex(),
+            room_id: room.to_hex(),
+            actor,
+            addressed_agents: BTreeSet::new(),
+            message_ids: Vec::new(),
+            reply_to: reply_to.map(|id| id.to_hex()),
+            thread_of: thread_of.map(|id| id.to_hex()),
+            at,
+            task_ids: Vec::new(),
+            converted_project: None,
+        });
+    }
+    Ok(turns)
+}
+
+/// The root and trunk anchor of thread record `record`'s branch: walked up
+/// `Parent` through thread records to the first record that is none, at the
+/// shared ancestor cap. `None` when the walk meets no trunk record or an
+/// ancestor no row or pin still knows. `known` holds each thread record's
+/// answer already walked.
+fn branch_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    record: EntityId,
+    known: &mut BTreeMap<EntityId, Option<(EntityId, EntityId)>>,
+) -> Result<Option<(EntityId, EntityId)>> {
+    let mut root = record;
+    let mut path = vec![record];
+    let mut cursor = graph::parent(store, txn, &record)?;
+    let found = loop {
+        let Some(parent) = cursor else {
+            break None;
+        };
+        if let Some(answer) = known.get(&parent) {
+            break *answer;
+        }
+        match graph::is_thread_record(store, txn, &parent) {
+            Ok(true) => {}
+            Ok(false) => break Some((root, parent)),
+            Err(Error::EntityNotFound) => break None,
+            Err(err) => return Err(err),
+        }
+        if path.len() > MAX_ANCESTOR_DEPTH {
+            return Err(Error::IndexOverflow("conversation_dag_walk"));
+        }
+        root = parent;
+        path.push(parent);
+        cursor = graph::parent(store, txn, &parent)?;
+    };
+    for id in path {
+        known.insert(id, found);
+    }
+    Ok(found)
 }
