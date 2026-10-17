@@ -141,7 +141,7 @@ pub(super) fn off_record_routes() -> Router<Arc<SyncServer>> {
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
 /// about which check failed. The proof it returns carries the verified slip.
-pub(super) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, ApiError> {
+pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, ApiError> {
     let refused = || ApiError::forbidden_scope("owner");
     if server.managed_issuer.is_some() || !auth.is_owner_grade() {
         return Err(refused());

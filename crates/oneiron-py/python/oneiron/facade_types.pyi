@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 169 facade rows, 637 declarations.
-Inputs: 147 of 169 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 143 of 169 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 173 facade rows, 641 declarations.
+Inputs: 151 of 173 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 147 of 173 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -1330,6 +1330,29 @@ class SharedVaultChangeMemberAddedBody(TypedDict):
     role: FederationGrantRole
 class SharedVaultChangeMemberAdded(TypedDict):
     member_added: SharedVaultChangeMemberAddedBody
+class SharedVaultChangeMemberInvitedBody(TypedDict):
+    invitation: str
+    member: str
+    role: FederationGrantRole
+    expires_at: int
+class SharedVaultChangeMemberInvited(TypedDict):
+    member_invited: SharedVaultChangeMemberInvitedBody
+class SharedVaultChangeInvitationAcceptedBody(TypedDict):
+    invitation: str
+    member: str
+    role: FederationGrantRole
+class SharedVaultChangeInvitationAccepted(TypedDict):
+    invitation_accepted: SharedVaultChangeInvitationAcceptedBody
+class SharedVaultChangeInvitationDeclinedBody(TypedDict):
+    invitation: str
+    member: str
+class SharedVaultChangeInvitationDeclined(TypedDict):
+    invitation_declined: SharedVaultChangeInvitationDeclinedBody
+class SharedVaultChangeInvitationWithdrawnBody(TypedDict):
+    invitation: str
+    member: str
+class SharedVaultChangeInvitationWithdrawn(TypedDict):
+    invitation_withdrawn: SharedVaultChangeInvitationWithdrawnBody
 SharedVaultChangeMemberRoleChangedBody = TypedDict("SharedVaultChangeMemberRoleChangedBody", {"member": str, "from": FederationGrantRole, "to": FederationGrantRole})
 class SharedVaultChangeMemberRoleChanged(TypedDict):
     member_role_changed: SharedVaultChangeMemberRoleChangedBody
@@ -1344,7 +1367,7 @@ class SharedVaultChangeMemberLeft(TypedDict):
 SharedVaultChangeOwnerRecoveredBody = TypedDict("SharedVaultChangeOwnerRecoveredBody", {"from": str, "to": str})
 class SharedVaultChangeOwnerRecovered(TypedDict):
     owner_recovered: SharedVaultChangeOwnerRecoveredBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
@@ -1396,6 +1419,36 @@ class SharedMemberRoleRequest(TypedDict):
 class SharedMemberRequest(TypedDict):
     vault_id: int
     member: str
+class SharedInvitationStateAcceptedBody(TypedDict):
+    at: int
+class SharedInvitationStateAccepted(TypedDict):
+    accepted: SharedInvitationStateAcceptedBody
+class SharedInvitationStateDeclinedBody(TypedDict):
+    at: int
+class SharedInvitationStateDeclined(TypedDict):
+    declined: SharedInvitationStateDeclinedBody
+class SharedInvitationStateWithdrawnBody(TypedDict):
+    by: str
+    at: int
+class SharedInvitationStateWithdrawn(TypedDict):
+    withdrawn: SharedInvitationStateWithdrawnBody
+SharedInvitationState = Literal["pending"] | SharedInvitationStateAccepted | SharedInvitationStateDeclined | SharedInvitationStateWithdrawn
+class SharedInvitation(TypedDict):
+    id: str
+    vault_id: int
+    inviter: str
+    invitee: str
+    role: FederationGrantRole
+    issued_at: int
+    expires_at: int
+    state: SharedInvitationState
+class SharedInvitationRequest(TypedDict):
+    vault_id: int
+    invitation: str
+class SharedInvitationWithdrawRequest(TypedDict):
+    vault_id: int
+    member: str
+    invitation: str
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
@@ -2109,7 +2162,7 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId

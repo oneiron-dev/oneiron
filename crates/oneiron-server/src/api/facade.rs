@@ -31,6 +31,7 @@ mod setting_doors;
 pub(super) mod role_picks;
 mod share_doors;
 mod shared_act_doors;
+mod shared_member_doors;
 #[cfg(test)]
 pub(super) mod tests;
 mod weave_doors;
