@@ -280,7 +280,7 @@ pub(crate) async fn core_hydrate(
     );
     let reader = hydrate_reader(req.image_input, view);
     let mut served = Vec::new();
-    let project = || {
+    let mut project = || {
         hydrate_short_id_response_with_mode(
             &scoped_read,
             short_id.clone(),
