@@ -5,6 +5,13 @@
 //! runs the tear's pure local leaves for each removable member, then drops
 //! the window's persisted document rows. Nothing replicated is written: no
 //! tombstone, deletion marker, audit row, Loro op, outbox row or receipt.
+//! [`purge_left_shared_env_in_txn`] empties a left shared vault's whole
+//! environment the same way (OF-158).
+
+mod left_env;
+
+#[allow(unused_imports, reason = "L03's OF-158 leave calls these")]
+pub(crate) use left_env::{LEFT_ENV_KEPT_SAMPLE, LeftEnvPurge, purge_left_shared_env_in_txn};
 
 use std::collections::{BTreeSet, HashSet};
 use std::ops::Bound;
