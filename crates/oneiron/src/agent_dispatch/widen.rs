@@ -227,10 +227,9 @@ impl AgentDispatcher<'_> {
         if self.recorded_parent(record.request.intent.parent)? != Some(board) {
             return Err(invalid("widen board is not the immediate board above"));
         }
-        if record.declined.is_some() {
-            return Err(invalid("widen proposal was declined"));
-        }
-        if record.landed.is_some() {
+        // A settled proposal answers as it settled: its landing, or its
+        // refusal once declined.
+        if record.landed.is_some() || record.declined.is_some() {
             return self.widen_outcome(&wtxn, &record);
         }
         let (input, spawn) = record.request.intent.dispatch(&proposal.proposal_id, now)?;
@@ -404,6 +403,8 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         record: &WidenRecord,
     ) -> Result<AgentDispatchOutcome> {
+        // OF-568: a decline is final. A retry of its intent and a later
+        // approval are both refused here; neither reopens the proposal.
         if record.declined.is_some() {
             return Err(invalid("widen proposal was declined"));
         }
