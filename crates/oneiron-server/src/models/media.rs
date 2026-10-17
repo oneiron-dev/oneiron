@@ -14,7 +14,9 @@ use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, MediaVoice,
     Modality,
 };
-use oneiron::llm::run_admission::{HostAccount, MediaGate, RunPermit, RunReceiptSink};
+use oneiron::llm::run_admission::{
+    HostAccount, MediaGate, RunAdmission, RunPermit, RunReceiptSink,
+};
 use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
 use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
@@ -38,7 +40,7 @@ use super::gemini_media::gemini_backend;
 use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
-use super::offer::{ServedOffer, media_offer};
+use super::offer::{ServedOffer, clone_connector, media_offer};
 use super::rerank::transport;
 use super::soniox::{self, SonioxRung};
 use super::status::{RungHealth, RungStatus, SeatState, SeatStatus};
@@ -427,6 +429,18 @@ impl MediaRuntime {
     #[must_use]
     pub fn voice_cloner(&self, target: &str) -> Option<Arc<HostedCloner>> {
         self.cloners.get(target).cloned()
+    }
+
+    /// A run of its own on the media meter for a voice clone's calls (FIX
+    /// 3009): the clone wire admits and settles each one on it.
+    pub fn clone_run(&self) -> LlmResult<RunAdmission> {
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        Ok(undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        ))
     }
 
     /// Whether `target` renders from a banked identity's reference clip on
@@ -1156,6 +1170,14 @@ fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
                 .map(|http| (http, HostedWire::ElevenLabs)),
             _ => continue,
         };
+        // Each clone call is admitted as the provider's clone connector.
+        let connector = match clone_connector(provider, name) {
+            Ok(connector) => connector,
+            Err(error) => {
+                tracing::warn!(provider = %name, %error, "voice clone wire unavailable");
+                continue;
+            }
+        };
         match built {
             Ok((http, wire)) => {
                 cloners.insert(
@@ -1164,6 +1186,7 @@ fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
                         http,
                         wire,
                         locality: provider.locality,
+                        connector,
                     }),
                 );
             }
