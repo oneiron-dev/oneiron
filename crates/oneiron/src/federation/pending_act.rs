@@ -313,17 +313,14 @@ impl Vault {
         // time can bring an expiry forward, never put it back.
         let now = now.max(self.store.clock.now_recorded_at());
         let mut holders = Vec::new();
-        for row in self
-            .store
-            .type_index
-            .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_FEDERATION_GRANT])?
-        {
-            let (index, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&index)?;
-            let raw = self
-                .store
-                .entities
-                .get(txn, id.as_bytes())?
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&raw)
                 .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT)
@@ -454,10 +451,7 @@ impl Vault {
             policies.stored.remove(act);
         }
         let id = crate::gate::default_policy_manifest_id()?;
-        let raw = self
-            .store
-            .entities
-            .get(&txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
             .ok_or_else(invalid)?;
         let body = raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?;
         // Build only on bytes that passed the owner door, never on a received manifest.

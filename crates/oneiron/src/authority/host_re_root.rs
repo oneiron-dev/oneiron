@@ -146,7 +146,8 @@ impl Vault {
         fold: &AuthorityFold,
         target: EntityId,
     ) -> Result<bool> {
-        let Some(raw) = self.store.entities.get(txn, target.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &target)?
+        else {
             return Ok(false);
         };
         if crate::batch::EntityMetadataHeader::parse(&raw)
@@ -226,7 +227,7 @@ fn head_re_roots_to(
     key: &AuthorityKey,
 ) -> Result<bool> {
     let id = authority_log_entity_id_from_hash(head)?;
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
         return Ok(false);
     };
     let body = raw

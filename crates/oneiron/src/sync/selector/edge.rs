@@ -309,7 +309,8 @@ pub(super) fn release_born_stamps(
     let mut stamps = std::collections::BTreeMap::new();
     for (src, blob) in births {
         if !born.contains(src)
-            || vault.store.entities.get(&rtxn, src.as_bytes())?.as_deref() != Some(blob.as_slice())
+            || crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, src)?.as_deref()
+                != Some(blob.as_slice())
         {
             continue;
         }
@@ -496,13 +497,13 @@ fn admitted_addressing_verdict(
             "conversation_dag",
         )))
     };
-    let local = vault.store.entities.get(txn, src.as_bytes())?;
+    let local = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &src)?;
     let staged = if local.is_none() {
         super::loro_support::map_get_bytes(source_entities, &src.to_hex())
     } else {
         None
     };
-    let Some(raw) = local.as_deref().or(staged.as_deref()) else {
+    let Some(raw) = local.as_deref().map(Vec::as_slice).or(staged.as_deref()) else {
         return Ok(AdmittedEdgeVerdict::Copy);
     };
     let Some(header) = EntityMetadataHeader::parse(raw) else {

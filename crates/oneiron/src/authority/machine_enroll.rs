@@ -49,10 +49,7 @@ impl Vault {
         transport_key_binding: [u8; 32],
         sign_binding: impl FnOnce(&[u8]) -> Result<[u8; 64]>,
     ) -> Result<()> {
-        let raw = self
-            .store
-            .entities
-            .get(txn, machine.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(&self.store, txn, &machine)?
             .ok_or(Error::EntityNotFound)?;
         if EntityMetadataHeader::parse(&raw)
             .is_none_or(|header| header.entity_type != ENTITY_TYPE_MACHINE)

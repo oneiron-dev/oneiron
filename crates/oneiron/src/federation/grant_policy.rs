@@ -317,10 +317,7 @@ impl crate::Vault {
             || self
                 .shared_vault_creation_in_txn(txn)?
                 .is_none_or(|row| row.vault_id != vault_id)
-            || self
-                .store
-                .entities
-                .get(txn, member_ref.as_bytes())?
+            || crate::ports::EntityStoreRead::port_entity_raw_wiped(&self.store, txn, &member_ref)?
                 .is_none()
         {
             return Err(Error::InvalidConfig(

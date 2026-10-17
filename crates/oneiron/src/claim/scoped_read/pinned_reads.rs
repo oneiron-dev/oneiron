@@ -2,6 +2,7 @@
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::decode_claim_body;
+use crate::ports::ShortIdStoreRead;
 use crate::{Error, Result};
 
 impl ScopedRead<'_> {
@@ -35,15 +36,10 @@ impl ScopedRead<'_> {
                 suppressed += 1;
                 continue;
             }
-            let Some(encoded) = self
-                .vault
-                .store
-                .short_ids_reverse
-                .get(&txn, id.as_bytes())?
+            let Some((short_id, hash)) = self.vault.store.port_short_id_reference(&txn, &id)?
             else {
                 continue;
             };
-            let (short_id, hash) = crate::batch::parse_short_id_value(&encoded)?;
             value.push(format!("{short_id}:{hash:02x}"));
         }
         Ok(ScopedReadResult {

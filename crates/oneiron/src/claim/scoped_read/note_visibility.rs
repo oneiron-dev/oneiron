@@ -86,14 +86,13 @@ impl ScopedRead<'_> {
     ) -> Result<super::ScopedDiaryCandidates> {
         let (_, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let mut admitted = HashSet::new();
-        for row in self
-            .vault
-            .store
-            .type_index
-            .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_NOTE])?
-        {
-            let (key, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.vault.store,
+            txn,
+            crate::registry::ENTITY_TYPE_NOTE,
+            None,
+        )? {
+            let id = id?;
             let Some(raw) = self.entity_record_in(txn, &id)? else {
                 continue;
             };

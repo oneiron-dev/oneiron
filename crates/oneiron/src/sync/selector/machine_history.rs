@@ -49,7 +49,9 @@ pub(super) fn machine_history_controls(
                 .try_into()
                 .map_err(|_| crate::Error::InvalidClaimBody("machine handoff parent id"))?,
         )?;
-        let Some(raw) = vault.store.entities.get(rtxn, parent_id.as_bytes())? else {
+        let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, rtxn, &parent_id)?
+        else {
             return Ok(None);
         };
         if EntityMetadataHeader::parse(&raw)

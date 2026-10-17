@@ -65,13 +65,13 @@ pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
 /// A guest grant is disjoint from member initialization even though both
 /// records carry the FEDERATION_GRANT kind byte.
 fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    for row in vault
-        .store
-        .type_index
-        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_FEDERATION_GRANT])?
-    {
-        let (key, _) = row?;
-        let id = crate::vault::entity_id_from_type_index_key(&key)?;
+    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        txn,
+        crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+        None,
+    )? {
+        let id = id?;
         let raw = vault.get_raw_in(txn, &id)?.ok_or(Error::EntityNotFound)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("federation grant header"))?;
