@@ -52,7 +52,6 @@ pub use participation::JoinCause;
 pub(super) use participation::record_bound_task_in_txn;
 pub(crate) use participation::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
-    record_participation_in_txn, require_join_covering_in_txn,
 };
 use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thread_reader};
 pub(crate) use replica::{
@@ -65,6 +64,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
+pub(crate) use upkeep::{room_upkeep_host, upkeep_rooms};
 pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
