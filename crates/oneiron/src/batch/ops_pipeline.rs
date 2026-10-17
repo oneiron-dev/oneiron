@@ -207,6 +207,7 @@ pub(super) fn check_decode_point_taint_guard(
             }
         }
         BatchOp::Vector { id, .. }
+        | BatchOp::MediaVector { id, .. }
         | BatchOp::Text { id, .. }
         | BatchOp::Phonetic { id, .. }
         | BatchOp::Delete { id } => check(id)?,
@@ -533,9 +534,23 @@ pub(crate) fn apply_ops_session(
                     "a session target cannot schedule a base graph rebuild"
                 );
             }
+            // OF-370: a room's media vector stages into the view's own
+            // vault-meta rows, under the space, slot and width rules base's
+            // door keeps; promote replays it into base.
+            BatchOp::MediaVector {
+                space,
+                id,
+                kind,
+                text_hash,
+                vector,
+            } => {
+                crate::embed::stage_media_vector_in_txn(
+                    view, wtxn, space, id, *kind, *text_hash, vector,
+                )?;
+            }
             _ => {
                 return Err(Error::InvariantViolation(
-                    "session witness stages only put, edge, text, and vector ops",
+                    "session witness stages only put, edge, text, vector, and media vector ops",
                 ));
             }
         }

@@ -107,6 +107,14 @@ pub(crate) fn zeroize_batch_op_payload(op: &mut BatchOp) {
                 value.zeroize();
             }
         }
+        BatchOp::MediaVector {
+            vector, text_hash, ..
+        } => {
+            vector.zeroize();
+            if let Some(hash) = text_hash {
+                hash.zeroize();
+            }
+        }
         BatchOp::Phonetic { codes, .. } => {
             for code in codes {
                 code.zeroize();
@@ -214,9 +222,10 @@ impl PromotePlan {
 /// is.
 pub(crate) fn replayed_subject(op: &BatchOp) -> Option<EntityId> {
     match op {
-        BatchOp::Put { id, .. } | BatchOp::Text { id, .. } | BatchOp::Vector { id, .. } => {
-            Some(*id)
-        }
+        BatchOp::Put { id, .. }
+        | BatchOp::Text { id, .. }
+        | BatchOp::Vector { id, .. }
+        | BatchOp::MediaVector { id, .. } => Some(*id),
         BatchOp::Edge { src, .. }
         | BatchOp::PublicEdgeWithCreatedAt { src, .. }
         | BatchOp::EdgeWithCreatedAt { src, .. } => Some(*src),
@@ -283,9 +292,14 @@ pub(super) fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
             created_at: entry.learned_at,
             vad: *vad,
         },
-        // Text and Vector ride unchanged — only Put re-stamps the journaled
-        // time range and only Edge re-arms, so these clone verbatim.
-        BatchOp::Text { .. } | BatchOp::Vector { .. } => entry.op.clone(),
+        // Text, Vector and MediaVector ride unchanged — only Put re-stamps the
+        // journaled time range and only Edge re-arms, so these clone verbatim.
+        // A media vector's base arm re-admits it against base's bindings, and
+        // a text one keeps the hash of the text it embeds, so the backfill
+        // embeds again what changed since (OF-370).
+        BatchOp::Text { .. } | BatchOp::Vector { .. } | BatchOp::MediaVector { .. } => {
+            entry.op.clone()
+        }
         BatchOp::ClaimCandidate { .. }
         | BatchOp::ReconcileLexicalQueryHints { .. }
         | BatchOp::Phonetic { .. }
@@ -327,6 +341,16 @@ fn batch_op_payload_bytes(op: &BatchOp) -> usize {
             .map(|(name, value)| name.len().saturating_add(value.len()))
             .sum(),
         BatchOp::Phonetic { codes, .. } => codes.iter().map(String::len).sum(),
+        BatchOp::MediaVector {
+            space,
+            vector,
+            text_hash,
+            ..
+        } => vector
+            .len()
+            .saturating_mul(std::mem::size_of::<f32>())
+            .saturating_add(space.len())
+            .saturating_add(text_hash.map_or(0, |hash| hash.len())),
         BatchOp::Edge { .. }
         | BatchOp::PublicEdgeWithCreatedAt { .. }
         | BatchOp::EdgeWithCreatedAt { .. }

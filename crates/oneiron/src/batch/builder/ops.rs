@@ -103,6 +103,18 @@ pub(crate) enum BatchOp {
         id: EntityId,
         fields: Vec<(String, String)>,
     },
+    /// OF-370: one host-computed vector of `id` in declared embedding space `space`, of input
+    /// `kind`; a text row carries the hash of the text it embeds. Only a room stages it (the
+    /// session media door, `Vault::put_session_media_vector`), so an off-record media write
+    /// stays in the room; promotion replays it into base, where a binding the room no longer
+    /// has leaves it to the backfill.
+    MediaVector {
+        space: String,
+        id: EntityId,
+        kind: crate::embed::InputKind,
+        text_hash: Option<[u8; crate::embed::TEXT_HASH_LEN]>,
+        vector: Vec<f32>,
+    },
     Phonetic {
         id: EntityId,
         codes: Vec<String>,

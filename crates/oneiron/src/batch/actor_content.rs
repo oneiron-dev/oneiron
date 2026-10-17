@@ -79,7 +79,8 @@ impl ContentWriteSet {
                 | BatchOp::Delete { id }
                 | BatchOp::Text { id, .. }
                 | BatchOp::Phonetic { id, .. }
-                | BatchOp::Vector { id, .. } => {
+                | BatchOp::Vector { id, .. }
+                | BatchOp::MediaVector { id, .. } => {
                     ids.insert(*id);
                 }
                 BatchOp::Edge { src, .. }
