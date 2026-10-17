@@ -223,6 +223,23 @@ impl Vault {
         txn.commit()?;
         Ok(true)
     }
+    /// The installed model catalog pack's source row, when one is installed:
+    /// the record [`Self::model_registry_row`] reads a model's row from when
+    /// the registry holds none for it. A host lists it beside an answer
+    /// priced from the catalog (DEC-0005).
+    ///
+    /// # Errors
+    ///
+    /// A read failure, or an install whose source is no id.
+    pub fn model_catalog_source(&self) -> Result<Option<crate::entity_id::EntityId>> {
+        let Some(receipt) = self.installed_pack(crate::skill_hub::MODEL_PACK_NAME)? else {
+            return Ok(None);
+        };
+        Ok(Some(crate::entity_id::EntityId::from_hex(
+            &receipt.source_id,
+        )?))
+    }
+
     pub fn model_registry_row(&self, model: &ModelId) -> Result<Option<ModelRegistryRow>> {
         let stored = {
             let txn = self.store.env.read_txn()?;

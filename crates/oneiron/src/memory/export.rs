@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::authority::VerifiedSlip;
 use crate::claim::CallerLocality;
 use crate::edge::EdgeActorClass;
+use crate::entity_id::EntityId;
 use crate::memory::verify_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
@@ -104,19 +105,23 @@ impl Memory<'_> {
         self.export_routed(opts, Some(proof))
     }
 
+    /// The export, its source rows listed as this surface lists its reads
+    /// ([`Memory::listing_producers`]).
     fn export_routed(
         &self,
         opts: &ExportOptions,
         proof: Option<&VerifiedSlip>,
     ) -> MemoryResult<MemoryExport> {
-        render_export(
+        let (export, sources) = render_export(
             self.vault,
             opts,
             &self.actor.to_hex(),
             self.locality,
             WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| self.export_admitted_in_txn(txn, proof),
-        )
+        )?;
+        self.produced_from(sources);
+        Ok(export)
     }
 
     /// Whether [`Self::export`], or [`Self::export_with_verified_owner`]
@@ -197,6 +202,20 @@ impl Vault {
         proof: &VerifiedSlip,
         locality: CallerLocality,
     ) -> MemoryResult<MemoryExport> {
+        self.export_with_verified_host_owner_listing(opts, proof, locality)
+            .map(|(export, _)| export)
+    }
+
+    /// [`Self::export_with_verified_host_owner`], beside the rows the
+    /// archive is derived from (DEC-0005): each row its snapshot read past
+    /// the caller's locality, whether the archive carries it, counts it or
+    /// folds it into another section. A refusal lists none.
+    pub fn export_with_verified_host_owner_listing(
+        &self,
+        opts: &ExportOptions,
+        proof: &VerifiedSlip,
+        locality: CallerLocality,
+    ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
         // A host-root export reads diaries as the vault's owner (OF-490).
         let reader = WriteActor::new(
             crate::vault::embedded_owner_actor_id()?,
@@ -248,6 +267,7 @@ fn validate_verified_owner(
     Ok(())
 }
 
+/// The export both owner paths render, beside the rows its snapshot read.
 fn render_export(
     vault: &Vault,
     opts: &ExportOptions,
@@ -255,7 +275,7 @@ fn render_export(
     locality: CallerLocality,
     reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
-) -> MemoryResult<MemoryExport> {
+) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
     let export = match name {
@@ -297,11 +317,14 @@ fn render_export(
     }) {
         tracing::warn!(%error, "whole-vault export served without its receipt");
     }
-    Ok(MemoryExport {
-        format,
-        archive: export.bytes,
-        digest,
-    })
+    Ok((
+        MemoryExport {
+            format,
+            archive: export.bytes,
+            digest,
+        },
+        export.sources,
+    ))
 }
 
 fn export_forbidden() -> MemoryError {

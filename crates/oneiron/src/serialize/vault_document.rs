@@ -197,6 +197,7 @@ pub(crate) fn serialize_vault_snapshot(
         bytes,
         manifest,
         diary_reads: snapshot.diary_reads,
+        sources: snapshot.sources,
     })
 }
 
