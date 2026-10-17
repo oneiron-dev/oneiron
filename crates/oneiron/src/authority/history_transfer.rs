@@ -22,6 +22,48 @@ pub(super) fn history_in_txn(
     Ok(history)
 }
 
+/// Refuses the import when an arriving row stands on a key a handoff retired
+/// in `fold` ([`retired_standing`]).
+fn refuse_retired_standing(
+    store: &crate::store::Store,
+    fold: &AuthorityFold,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    arriving: &[AuthorityEntryHash],
+) -> Result<()> {
+    match retired_standing(store, fold, merged, arriving)? {
+        Some(_) => Err(retired_standing_refusal()),
+        None => Ok(()),
+    }
+}
+
+fn retired_standing_refusal() -> Error {
+    Error::Record(RecordError::InvalidAuthorityLogBody(
+        "authority history standing on a key a handoff retired",
+    ))
+}
+
+/// The first arriving row that stands on a key a handoff retired in `fold`:
+/// such a key signs nothing new into this history, and nothing new stands on
+/// a row one signed. `merged` holds the resident and arriving rows.
+fn retired_standing(
+    store: &crate::store::Store,
+    fold: &AuthorityFold,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    arriving: &[AuthorityEntryHash],
+) -> Result<Option<AuthorityEntryHash>> {
+    for hash in arriving {
+        let Some((_, entry)) = merged.get(hash) else {
+            continue;
+        };
+        if super::door_refuses_retired_standing(store, fold, hash, entry, &mut |parent| {
+            Ok(merged.get(parent).map(|(_, row)| row.clone()))
+        })? {
+            return Ok(Some(*hash));
+        }
+    }
+    Ok(None)
+}
+
 fn history_root(
     history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
 ) -> Result<Option<AuthorityVaultId>> {
@@ -96,23 +138,22 @@ impl Vault {
                 .entry(*hash)
                 .or_insert_with(|| (bytes.clone(), entry.clone()));
         }
-        // A key a handoff here retired signs nothing new into this history,
-        // and nothing new stands on a row one signed.
-        let local = self.authority_fold_readonly_in_txn(&txn)?;
-        for (hash, _, entry) in &decoded {
-            if !resident.contains(hash)
-                && super::door_refuses_retired_standing(
-                    &self.store,
-                    &local,
-                    hash,
-                    entry,
-                    &mut |parent| Ok(merged.get(parent).map(|(_, row)| row.clone())),
-                )?
-            {
-                return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-                    "authority history standing on a key a handoff retired",
-                )));
-            }
+        let arriving: Vec<AuthorityEntryHash> = decoded
+            .iter()
+            .map(|(hash, _, _)| *hash)
+            .filter(|hash| !resident.contains(hash))
+            .collect();
+        // A vault missing history it must hold has no fold until an import
+        // closes the gap (OF-469): its arriving rows are judged against the
+        // fold that closes it, after staging, and an import that leaves it
+        // open still refuses there.
+        let local = match self.authority_fold_readonly_in_txn(&txn) {
+            Ok(local) => Some(local),
+            Err(error) if super::readonly_fold::is_history_incomplete(&error) => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(local) = &local {
+            refuse_retired_standing(&self.store, local, &merged, &arriving)?;
         }
         history_root(&merged)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
@@ -158,6 +199,9 @@ impl Vault {
         )?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        if local.is_none() {
+            refuse_retired_standing(&self.store, &fold, &merged, &arriving)?;
+        }
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
         }
@@ -334,7 +378,7 @@ pub fn recover_vaults_independently(
 /// their parents. The store door never needs a row's parents stored, so a
 /// machine that syncs what it opened holds the authority rows its windows
 /// carry, some above a gap a later page closes.
-fn page_root(
+pub(super) fn page_root(
     history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
     resident: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<Option<AuthorityVaultId>> {
@@ -373,37 +417,57 @@ impl Vault {
     /// order and judgement, and the refold before commit. One refused entry
     /// writes nothing.
     pub fn import_signed_authority_page(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
-        let mut decoded = Vec::with_capacity(blobs.len());
-        for bytes in blobs {
-            let entry = decode_authority_log_entry_body(bytes)?;
-            decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
+        match self.import_page_in(decode_page(blobs)?, false)? {
+            PageVerdict::Landed(ids) => Ok(ids),
+            PageVerdict::Retired(_) => Err(retired_standing_refusal()),
         }
+    }
+
+    /// [`Self::import_signed_authority_page`] for `decoded`. With `staged`,
+    /// the rows a repair staged earlier arrive beside the page
+    /// ([`super::history_repair`]), and the stage empties as they land.
+    /// A row refused for retired standing writes nothing and is named.
+    pub(super) fn import_page_in(
+        &self,
+        mut decoded: Vec<DecodedRow>,
+        staged: bool,
+    ) -> Result<PageVerdict> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
+        if staged {
+            let paged: BTreeSet<AuthorityEntryHash> =
+                decoded.iter().map(|(hash, _, _)| *hash).collect();
+            decoded.extend(
+                super::history_repair::staged_rows_in_txn(&self.store, &txn)?
+                    .into_iter()
+                    .filter(|(hash, _, _)| !resident.contains(hash) && !paged.contains(hash)),
+            );
+        }
         for (hash, bytes, entry) in &decoded {
             merged
                 .entry(*hash)
                 .or_insert_with(|| (bytes.clone(), entry.clone()));
         }
-        // A key a handoff here retired signs nothing new into this history,
-        // and nothing new stands on a row one signed.
-        let local = self.authority_fold_readonly_in_txn(&txn)?;
-        for (hash, _, entry) in &decoded {
-            if !resident.contains(hash)
-                && super::door_refuses_retired_standing(
-                    &self.store,
-                    &local,
-                    hash,
-                    entry,
-                    &mut |parent| Ok(merged.get(parent).map(|(_, row)| row.clone())),
-                )?
-            {
-                return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-                    "authority history standing on a key a handoff retired",
-                )));
-            }
+        let arriving: Vec<AuthorityEntryHash> = decoded
+            .iter()
+            .map(|(hash, _, _)| *hash)
+            .filter(|hash| !resident.contains(hash))
+            .collect();
+        // A vault missing history it must hold has no fold until an import
+        // closes the gap (OF-469): its arriving rows are judged against the
+        // fold that closes it, after staging, and an import that leaves it
+        // open still refuses there.
+        let local = match self.authority_fold_readonly_in_txn(&txn) {
+            Ok(local) => Some(local),
+            Err(error) if super::readonly_fold::is_history_incomplete(&error) => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(local) = &local
+            && let Some(refused) = retired_standing(&self.store, local, &merged, &arriving)?
+        {
+            return Ok(PageVerdict::Retired(refused));
         }
         page_root(&merged, &resident)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
@@ -449,8 +513,16 @@ impl Vault {
         )?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        if local.is_none()
+            && let Some(refused) = retired_standing(&self.store, &fold, &merged, &arriving)?
+        {
+            return Ok(PageVerdict::Retired(refused));
+        }
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
+        }
+        if staged {
+            super::history_repair::clear_stage_in_txn(&self.store, &mut txn)?;
         }
         txn.commit()?;
         watch.finish()?;
@@ -458,6 +530,28 @@ impl Vault {
         // live mirror.
         #[cfg(feature = "sync")]
         self.note_committed_rows(ids.iter().copied().collect());
-        Ok(ids)
+        Ok(PageVerdict::Landed(ids))
     }
+}
+
+/// What a page import found, short of an error.
+pub(super) enum PageVerdict {
+    /// The page landed: the rows written.
+    Landed(Vec<EntityId>),
+    /// This arriving row stands on a key a handoff retired; nothing landed.
+    Retired(AuthorityEntryHash),
+}
+
+/// One signed authority row as a page carries it: its hash, its original
+/// bytes and the entry they decode to.
+pub(super) type DecodedRow = (AuthorityEntryHash, Vec<u8>, AuthorityLogEntry);
+
+/// A page's rows, decoded and hashed, in the caller's order.
+pub(super) fn decode_page(blobs: &[Vec<u8>]) -> Result<Vec<DecodedRow>> {
+    let mut decoded = Vec::with_capacity(blobs.len());
+    for bytes in blobs {
+        let entry = decode_authority_log_entry_body(bytes)?;
+        decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
+    }
+    Ok(decoded)
 }

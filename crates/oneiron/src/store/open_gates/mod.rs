@@ -29,8 +29,9 @@ pub use self::open_version_keys::{
     STORAGE_SCHEMA_VERSION, StorageMigrationPlan,
 };
 pub(crate) use self::open_version_keys::{
-    DefaultPolicySeedMode, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HnswCompatibilityState,
-    MODEL_ID_KEY, TEXT_INDEX_SCHEMA_VERSION, VECTOR_VERSION_KEY,
+    DefaultPolicySeedMode, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY,
+    HnswCompatibilityState, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
+    TEXT_INDEX_SCHEMA_VERSION, VECTOR_VERSION_KEY,
 };
 pub(in crate::store) use self::read_only_door::not_an_existing_root;
 pub(crate) use self::read_only_door::read_existing_embedding_model;
@@ -47,10 +48,6 @@ pub(in crate::store) use self::open_version_keys::{
     HNSW_COMPATIBILITY_LEN, HNSW_COMPATIBILITY_V2_LEN, HNSW_COMPATIBILITY_V2_VERSION,
     HNSW_COMPATIBILITY_VERSION, HNSW_DISTANCE_METRIC_COSINE, HNSW_INDEX_STRUCTURE_FLAT_NSW,
     RECEIPT_FAMILY_INDEX_VERSION, RECEIPT_FAMILY_INDEX_VERSION_KEY,
-};
-#[cfg(test)]
-pub(crate) use self::open_version_keys::{
-    HNSW_CONFIG_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
 };
 #[cfg(test)]
 pub(crate) use self::open_version_keys::{

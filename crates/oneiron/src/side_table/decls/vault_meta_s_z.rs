@@ -50,12 +50,29 @@ side_tables! {
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;
+    /// The keys a mask on write lifted out of one record or file, each with its handle, its kind,
+    /// where it sat and what the owner did about it (OF-560's found-key notice). Holds no value.
+    /// Key: id16 (the record, or the file's ASSET).
+    SECRET_FOUND_KEY: VaultMeta b"secret_found_key:v1:" Named;
+    /// A record whose found keys still owe the owner their needs-you notice: raised at the next
+    /// write's commit boundary, then removed. Key: id16 (the record).
+    SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named;
     /// T1/T2 secret-materialization lease row (escalation ladder to local registration). Key:
     /// hex32(lease id).
     SECRET_LEASE: VaultMeta b"secret_lease:v1:" Raw;
     /// Durable receipt written before a secret value is returned from materialization. Key:
     /// hex32(receipt id).
     SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw;
+    /// A hit the historical lift sweep could not place, filed for the owner: the record or row
+    /// that holds it, the detector's reason and why the sweep left it (OF-067). Holds no value.
+    /// Key: the family's code, a zero byte, then the record's key.
+    SECRET_LIFT_PROPOSAL: VaultMeta b"secret_lift:proposal:v1:" Named;
+    /// One finished lift sweep run's owner receipt: counts per family, never a value or a digest
+    /// (OF-067). Key: id16 (run id).
+    SECRET_LIFT_RECEIPT: VaultMeta b"secret_lift:receipt:v1:" Named;
+    /// The lift sweep run in progress: its trigger and its `(family, last key)` cursor (OF-067).
+    /// Key: ().
+    SECRET_LIFT_RUN: VaultMeta b"secret_lift:run:v1" Named;
     /// T2 local-file registration for a materialized secret, read wholesale for snapshot exclusion.
     /// Key: hex32(lease id).
     SECRET_LOCAL_REGISTRATION: VaultMeta b"secret_local:v1:" Raw;

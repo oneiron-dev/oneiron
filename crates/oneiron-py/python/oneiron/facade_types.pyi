@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 258 facade rows, 943 declarations.
-Inputs: 214 of 258 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 210 of 258 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 259 facade rows, 976 declarations.
+Inputs: 215 of 259 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 209 of 259 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
@@ -305,10 +305,43 @@ class PersonRequest(TypedDict):
     pr: str
 class EmptyRequest(TypedDict):
     ...
+ShapePreset = Literal["personal", "family", "team", "org", "community"]
+ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
+ShapeSkillSourceLibrary = TypedDict("ShapeSkillSourceLibrary", {"from": Literal["library"], "subtree": str})
+ShapeSkillSourceHub = TypedDict("ShapeSkillSourceHub", {"from": Literal["hub"], "hub": str, "folder": str, "pin_type": str, "pin_value": str, "publisher": str})
+ShapeSkillSource = ShapeSkillSourceLibrary | ShapeSkillSourceHub
+ShapeSelfHeld = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
+ShapeMailScope = Literal["mail.read", "mail.metadata", "mail.send"]
+class ShapeChannelCustodySelfHeld(TypedDict):
+    held: Literal["self_held"]
+    shape: ShapeSelfHeld
+class ShapeChannelCustodyDelegated(TypedDict):
+    held: Literal["delegated"]
+    custody_record_ref: str
+    scopes: list[ShapeMailScope]
+ShapeChannelCustody = ShapeChannelCustodySelfHeld | ShapeChannelCustodyDelegated
+class ShapeChannelBindingActor(TypedDict):
+    to: Literal["actor"]
+    agent_id: str
+    facet: NotRequired[str | None]
+class ShapeChannelBindingVault(TypedDict):
+    to: Literal["vault"]
+    vault_id: int
+ShapeChannelBinding = ShapeChannelBindingActor | ShapeChannelBindingVault
+ShapeChannelFulfillment = Literal["api", "manual", "review"]
+class ShapeChannelProvision(TypedDict):
+    custody: ShapeChannelCustody
+    binding: ShapeChannelBinding
+    fulfillment: ShapeChannelFulfillment
 ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
 ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
 ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
+class ShapeTargetShared(TypedDict):
+    kind: Literal["shared"]
+class ShapeTargetMember(TypedDict):
+    kind: Literal["member"]
+    member: str
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -331,7 +364,15 @@ class ShapeTargetGrant(TypedDict):
 class ShapeTargetSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
-ShapeTarget = ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+class ShapeRowShared(TypedDict):
+    kind: Literal["shared"]
+    vault_id: int
+    preset: NotRequired[ShapePreset | None]
+class ShapeRowMember(TypedDict):
+    kind: Literal["member"]
+    member: str
+    role: ShapeMemberRole
 class ShapeRowWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -348,10 +389,12 @@ class ShapeRowSkill(TypedDict):
     kind: Literal["skill"]
     skill_id: str
     version: NotRequired[str | None]
+    source: NotRequired[ShapeSkillSource | None]
 class ShapeRowChannel(TypedDict):
     kind: Literal["channel"]
     channel: str
     address: str
+    provision: NotRequired[ShapeChannelProvision | None]
 class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: NotRequired[str]
@@ -363,7 +406,7 @@ class ShapeRowSync(TypedDict):
 class ShapeRowRetire(TypedDict):
     kind: Literal["retire"]
     target: ShapeTarget
-ShapeRow = ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
 class ShapeSeed(TypedDict):
     rows: list[ShapeRow]
 class StoredShapeSeed(TypedDict):
@@ -410,8 +453,16 @@ class ShapeRead(TypedDict):
     seed: NotRequired[StoredShapeSeed | None]
     live: ShapeSeed
     applies: list[ShapeApplyReceipt]
+class ShapePresetMember(TypedDict):
+    member: str
+    role: NotRequired[ShapeMemberRole | None]
+class ShapePresetPick(TypedDict):
+    preset: ShapePreset
+    vault_id: int
+    members: NotRequired[list[ShapePresetMember]]
 class ShapePlanRequest(TypedDict):
     seed: NotRequired[ShapeSeed | None]
+    preset: NotRequired[ShapePresetPick | None]
 class ShapePlanSummary(TypedDict):
     changes: int
     needs_word: int
@@ -2417,6 +2468,53 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+class SecretLiftRequest(TypedDict):
+    start: NotRequired[bool]
+SecretScanMode = Literal["on", "off"]
+LiftTrigger = Literal["switch", "owner"]
+LiftFamily = Literal["records", "side_rows", "carriers"]
+class LiftCounts(TypedDict):
+    family: LiftFamily
+    read: int
+    masked: int
+    proposals: int
+    failed: int
+class SecretLiftProgress(TypedDict):
+    run_id: str
+    trigger: LiftTrigger
+    requested_at: int
+    family: LiftFamily
+    retrying: int
+    counts: list[LiftCounts]
+class SecretLiftReceipt(TypedDict):
+    receipt_id: str
+    trigger: LiftTrigger
+    requested_by: NotRequired[str | None]
+    requested_at: int
+    finished_at: int
+    families: list[LiftCounts]
+    masked: int
+    proposals: int
+    failed: int
+LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "history"]
+class SecretLiftProposal(TypedDict):
+    path: str
+    detector_reason: str
+    suggested_secret_name: str
+    project_id: str
+class SecretLiftHistoryProposal(TypedDict):
+    family: LiftFamily
+    cause: LiftCause
+    proposal: SecretLiftProposal
+    run_id: str
+    filed_at: int
+class SecretLiftStatus(TypedDict):
+    mode: SecretScanMode
+    paused: bool
+    running: NotRequired[SecretLiftProgress | None]
+    last: NotRequired[SecretLiftReceipt | None]
+    open_proposals: int
+    proposals: list[SecretLiftHistoryProposal]
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):
     state: NotRequired[WidenProposalState | None]
@@ -2513,9 +2611,29 @@ class LensDefaultRequest(TypedDict):
     ledger: NotRequired[list[str]]
     dossiers: NotRequired[list[LensDossierSource]]
     threads: NotRequired[list[str]]
+    as_of: NotRequired[int | None]
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt
+GeneratedUiCatalog = Literal["lens_atom_kit"]
+GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
+GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
+class GeneratedUiActionDeclaration(TypedDict):
+    elementId: str
+    actionId: str
+    tier: GeneratedUiActionTier
+    action: SelfUiAction
+GeneratedUiCardPhase = Literal["generating", "active", "responded", "archived"]
+GeneratedUiArchiveReason = Literal["completed", "expired", "dismissed", "superseded"]
+class GeneratedUiCardLifecycle(TypedDict):
+    phase: GeneratedUiCardPhase
+    revision: int
+    archiveReason: NotRequired[GeneratedUiArchiveReason | None]
+GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+class LensFrameCard(TypedDict):
+    card_id: str
+    render: GeneratedUiRender
+    lens: GeneratedLens
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):
@@ -2823,6 +2941,7 @@ class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
     travel: NotRequired[TravelChoice | None]
+    why: NotRequired[str | None]
 class ArtifactExportFile(TypedDict):
     artifact_ref: str
     version: int
@@ -4090,6 +4209,7 @@ class DecisionAsk(TypedDict):
     correlation: NotRequired[str | None]
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
+    withdrawn_at: NotRequired[int | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
 class ConnectorListRequest(TypedDict):
@@ -4369,6 +4489,10 @@ class OfficeBodyReadRequest(TypedDict):
 class BodyBlockKindHeading(TypedDict):
     heading: int
 BodyBlockKind = Literal["paragraph", "table", "opaque"] | BodyBlockKindHeading
+DocxMark = Literal["bold", "italic", "underline", "strike", "subscript", "superscript"]
+class DocxRun(TypedDict):
+    text: str
+    marks: NotRequired[list[DocxMark]]
 class DocxCellView(TypedDict):
     row: int
     col: int
@@ -4380,6 +4504,7 @@ class DocxBlockView(TypedDict):
     imported: bool
     locked: bool
     text: str
+    runs: list[DocxRun]
     cells: list[DocxCellView]
 class DocxBodyView(TypedDict):
     blocks: list[DocxBlockView]
@@ -4540,7 +4665,14 @@ class DocxBodyOpMove(TypedDict):
     op: Literal["move"]
     block: str
     after: NotRequired[str | None]
-DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove
+class DocxBodyOpMark(TypedDict):
+    op: Literal["mark"]
+    block: str
+    at: int
+    len: int
+    mark: DocxMark
+    on: bool
+DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark
 class XlsxBodyOpSetValue(TypedDict):
     op: Literal["set_value"]
     sheet: str
@@ -4611,13 +4743,23 @@ class DeckOpSetGeometryBody(TypedDict):
     geometry: GeometryProps
 class DeckOpSetGeometry(TypedDict):
     set_geometry: DeckOpSetGeometryBody
+class DeckOpSetPresetBody(TypedDict):
+    node: NodeId
+    preset: Preset
+class DeckOpSetPreset(TypedDict):
+    set_preset: DeckOpSetPresetBody
+class DeckOpSetPayloadBody(TypedDict):
+    node: NodeId
+    payload: NodePayload
+class DeckOpSetPayload(TypedDict):
+    set_payload: DeckOpSetPayloadBody
 class DeckOpReplaceOpaqueBody(TypedDict):
     part: str
     expected: list[int]
     replacement: list[int]
 class DeckOpReplaceOpaque(TypedDict):
     replace_opaque: DeckOpReplaceOpaqueBody
-DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpReplaceOpaque
+DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpSetPreset | DeckOpSetPayload | DeckOpReplaceOpaque
 class OfficeBodyOpsDocx(TypedDict):
     format: Literal["docx"]
     ops: list[DocxBodyOp]
@@ -4763,7 +4905,11 @@ class ConflictBothReplacedOpaqueBody(TypedDict):
     part: str
 class ConflictBothReplacedOpaque(TypedDict):
     both_replaced_opaque: ConflictBothReplacedOpaqueBody
-Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque
+class ConflictPayloadVsPayloadBody(TypedDict):
+    node: NodeId
+class ConflictPayloadVsPayload(TypedDict):
+    payload_vs_payload: ConflictPayloadVsPayloadBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload
 class RelationshipChange(TypedDict):
     source: str
     id: str
@@ -4793,6 +4939,7 @@ class DeckDiff(TypedDict):
     text_changed: list[NodeId]
     formatting_changed: list[NodeId]
     geometry_changed: list[NodeId]
+    payload_changed: list[NodeId]
     opaque_changed: list[OpaqueChange]
     affected_slides: list[NodeId]
     head_only: list[NodeId]
@@ -4845,6 +4992,7 @@ class DeckExportView(TypedDict):
     noop: bool
     changed_parts: list[str]
     record: NotRequired[OfficeBodyExportRecord | None]
+    proposed: NotRequired[PendingProposalView | None]
 class DeckGateRequest(TypedDict):
     profile: NotRequired[str | None]
 class StepOutcomeFailed(TypedDict):
