@@ -9,7 +9,11 @@ use super::*;
 
 use serde::{Deserialize, Serialize};
 
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimReadStatus, PointRead, ScopedReadResult};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimReadStatus, ClaimSource, PointRead,
+    ScopedReadResult,
+};
+use crate::context_pack::source_ranking::{SourceRankingPolicy, clamp_order, source_outranks};
 fn served_value_json(value: &rmpv::Value) -> serde_json::Value {
     crate::batch::export::served_messagepack_json(value.clone())
 }
@@ -246,6 +250,9 @@ impl Memory<'_> {
 
     /// Lists claims by subject/predicate/lifecycle, bounded by
     /// `filter.limit`. History and proposed claims are part of this verb.
+    /// An Active list is the current truth, so a stated claim lists above an
+    /// observed mate on its question before the cut (OF-023); every other
+    /// list keeps its recorded order.
     pub fn claim_list(
         &self,
         filter: &ClaimListFilter,
@@ -272,10 +279,22 @@ impl Memory<'_> {
             }
             None => self.vault.entities_by_type(ENTITY_TYPE_CLAIM)?,
         };
+        // Held both (OF-023): the pack's clamp orders an Active list, and a
+        // proposal keeps its place in it. The list reads past its limit only
+        // once a row a stated claim outranks falls inside it.
+        let current = lifecycle == Some(ClaimLifecycleStatus::Active);
+        let policy = SourceRankingPolicy::default();
+        let settled = |body: &ClaimBody| {
+            matches!(
+                body.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+        };
+        let mut cap = filter.limit;
         let mut receipt = None;
-        let mut views = Vec::new();
+        let mut rows = Vec::new();
         for chunk in ids.chunks(CLAIM_LIST_READ_CHUNK) {
-            if views.len() >= filter.limit {
+            if rows.len() >= cap {
                 break;
             }
             let reads: Vec<_> = chunk.iter().copied().map(PointRead::id).collect();
@@ -285,7 +304,7 @@ impl Memory<'_> {
             } = lane.read(&reads, None)?;
             fold_receipt(&mut receipt, read);
             for row in value.into_iter().flatten() {
-                if views.len() >= filter.limit {
+                if rows.len() >= cap {
                     break;
                 }
                 let Some(bytes) = row.body.as_deref() else {
@@ -300,8 +319,24 @@ impl Memory<'_> {
                 {
                     continue;
                 }
-                views.push(self.claim_view(&row.id, &body)?);
+                if current
+                    && settled(&body)
+                    && source_outranks(&policy, Some(ClaimSource::UserStated), body.source)
+                {
+                    cap = usize::MAX;
+                }
+                rows.push((row.id, body));
             }
+        }
+        if current {
+            clamp_order(&mut rows, &policy, |(_, body)| {
+                settled(body).then_some(body)
+            })?;
+        }
+        rows.truncate(filter.limit);
+        let mut views = Vec::with_capacity(rows.len());
+        for (id, body) in &rows {
+            views.push(self.claim_view(id, body)?);
         }
         let receipt = match receipt {
             Some(receipt) => receipt,
