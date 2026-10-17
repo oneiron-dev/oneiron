@@ -14,7 +14,7 @@
 
 use axum::http::{HeaderMap, HeaderValue};
 use axum::response::Response;
-use oneiron::receipt::CallReceiptInput;
+use oneiron::receipt::{ActionInputs, CallReceiptInput};
 use serde_json::{Map, Value};
 
 use crate::auth::CoreAuth;
@@ -151,6 +151,23 @@ pub(crate) fn call_actor(auth: &CoreAuth) -> (String, String) {
 /// The presented credential's revocable id: a slip's id, when it has one.
 pub(crate) fn credential_ref(auth: &CoreAuth) -> Option<String> {
     auth.jti().map(str::to_owned)
+}
+
+/// The input versions a call of `verb` on `request` reads, captured before
+/// it runs (OF-568): the vault's state and each entity the request names.
+/// `None` for a call that reads the world, or when the capture failed.
+pub(crate) fn action_inputs(
+    server: &SyncServer,
+    verb: &str,
+    request: Option<&Value>,
+) -> Option<ActionInputs> {
+    if oneiron::receipt::call_reads_world(verb) {
+        return None;
+    }
+    let named = request
+        .map(oneiron::receipt::json_entity_refs)
+        .unwrap_or_default();
+    server.vault().action_inputs(&named).ok().flatten()
 }
 
 /// Writes one call's receipt, or states the anonymous exception without

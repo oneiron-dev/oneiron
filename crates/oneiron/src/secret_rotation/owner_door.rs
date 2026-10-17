@@ -17,14 +17,22 @@ use crate::side_table::HexId;
 use zeroize::Zeroize;
 
 impl Vault {
-    /// Rotates a secret on the vault owner's behalf: [`Vault::rotate_secret`]
-    /// behind the owner proof, rechecked in the committing transaction.
+    /// Rotates a secret on the vault owner's behalf, behind the owner proof,
+    /// rechecked in the committing transaction: the vault-side value update
+    /// of ARCH-0069 S6 (the module docs). In one write transaction the
+    /// record's `rotation_generation` advances by one, `rotated_at` is
+    /// stamped, the value is replaced, a [`RotationReceipt`] lands, and a
+    /// portable record's signed transition is written (OF-422). It kills no
+    /// lease and touches no build exhaust. It is the only served rotation.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof belongs to
     /// another vault, its slip or person is no longer live, or the actor is no
-    /// longer an owner of this vault; otherwise every error
-    /// [`Vault::rotate_secret`] returns.
+    /// longer an owner of this vault; [`SecretError::SecretRefNotFound`] for a
+    /// name custody does not hold; [`SecretError::SecretCustodyNotActive`] for
+    /// a record that is not `Active`; [`SecretError::ManifestWidensFloor`]
+    /// when its bindings no longer fit the live custody floor; otherwise the
+    /// store's errors.
     pub fn rotate_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -47,15 +55,17 @@ impl Vault {
         Ok(receipt)
     }
 
-    /// Revokes a secret on the vault owner's behalf: [`Vault::revoke_secret`]
-    /// behind the owner proof, rechecked in the committing transaction. A
+    /// Revokes a secret on the vault owner's behalf: terminal value death,
+    /// the record and every lease over it revoked with a
+    /// [`RotationKind::Revoked`] receipt, behind the owner proof, rechecked in
+    /// the committing transaction. It is the only served revocation. A
     /// portable record's revocation reaches the owner's other machines as a
     /// signed transition (OF-422).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
-    /// the live owner's; otherwise every error [`Vault::revoke_secret`]
-    /// returns.
+    /// the live owner's; [`SecretError::SecretRefNotFound`] for a name
+    /// custody does not hold; otherwise the store's errors.
     pub fn revoke_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,

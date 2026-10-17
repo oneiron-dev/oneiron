@@ -12,7 +12,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 #[cfg(feature = "sync")]
 use crate::error::{Error, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation};
-use crate::ports::{DocumentRowStore, DocumentUpdateKey, UpdateSeq};
+use crate::ports::{DocumentRowStore, DocumentUpdateKey, UpdateSeq, WindowDeletionRows};
 use crate::side_table::{self, Raw, SideTable};
 #[cfg(feature = "sync")]
 use crate::sync::window_rows::{
@@ -41,24 +41,13 @@ enum CompactOutcome {
     HeldDefer,
 }
 
-/// Window snapshot carriers (`d:w:{key}`). Key: string (the window label).
+/// Unacknowledged local text-document edit frames (`qd:e:{id}:{seq:08x}`).
 ///
-/// Bound here over the ungated declarations rather than read through the
-/// typed doors in `crate::sync`: [`persisted_window_labels`] and the finalize
-/// fence run in both the `#[cfg(feature = "sync")]` and
-/// `#[cfg(not(feature = "sync"))]` builds, and `crate::sync` does not exist
-/// without the feature.
-const SNAPSHOT_CARRIERS: SideTable<String, Vec<u8>, Raw> =
-    SideTable::new(&side_table::WINDOW_SNAPSHOT);
-
-/// Window update carriers (`u:w:{key}:{seq:08x}`), bound for the same reason
-/// as [`SNAPSHOT_CARRIERS`]. Key: string (the text after the prefix, parsed by
-/// the reader so a malformed key is reported rather than refused).
-pub(super) const UPDATE_CARRIERS: SideTable<String, Vec<u8>, Raw> =
-    SideTable::new(&side_table::SYNC_U_W);
-
-/// Unacknowledged local text-document edit frames (`qd:e:{id}:{seq:08x}`), bound for the same
-/// reason as [`SNAPSHOT_CARRIERS`].
+/// Bound here over the ungated declaration rather than read through the
+/// typed doors in `crate::sync`: [`persisted_window_labels`] runs in both the
+/// `#[cfg(feature = "sync")]` and `#[cfg(not(feature = "sync"))]` builds, and
+/// `crate::sync` does not exist without the feature. The window carriers are
+/// read through the window deletion-row port for the same reason.
 const PENDING_EDIT_CARRIERS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QD_E);
 
@@ -68,8 +57,19 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
     let mut labels = BTreeSet::new();
     let mut malformed = false;
     let rtxn = vault.store.env.read_txn()?;
-    labels.extend(SNAPSHOT_CARRIERS.scan_keys(&vault.store, &rtxn, &[])?);
-    for rest in UPDATE_CARRIERS.scan_keys(&vault.store, &rtxn, &[])? {
+    labels.extend(
+        vault
+            .store
+            .port_window_doc_rows_raw(&rtxn, |window, _| window.as_str().to_owned())?
+            .collect::<Result<Vec<_>>>()?,
+    );
+    // Each key as the text after its prefix, parsed here so a malformed key is reported rather
+    // than refused.
+    for rest in vault
+        .store
+        .port_window_update_keys(&rtxn, None, |key| key["u:w:".len()..].to_owned())?
+        .collect::<Result<Vec<_>>>()?
+    {
         match rest.rsplit_once(':') {
             Some((label, _seq)) => {
                 labels.insert(label.to_owned());
@@ -296,18 +296,25 @@ fn compact_window_with(
     erased: &BTreeSet<EntityId>,
     withdrawn: &mut WithdrawnSweep,
 ) -> Result<CompactOutcome> {
+    use crate::ports::WindowAddress;
     use crate::sync::loro_support::{doc_from_snapshot, doc_version_vector, import_doc};
     use crate::sync::schema::create_window_doc;
     use loro::ExportMode;
 
     let window = key.to_string();
+    let address = WindowAddress::new(&window);
     let update_prefix = format!("{window}:");
 
     // Read phase (one read txn, dropped before any Loro work).
     let (snapshot_bytes, update_rows) = {
         let rtxn = vault.store.env.read_txn()?;
-        let snapshot = WINDOW_SNAPSHOT.get(&vault.store, &rtxn, &window)?;
-        let rows = WINDOW_UPDATE.scan_from(&vault.store, &rtxn, update_prefix.as_bytes())?;
+        let snapshot = vault
+            .store
+            .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?;
+        let rows = vault
+            .store
+            .port_window_updates(&rtxn, address, |k, bytes| (k, bytes.to_vec()))?
+            .collect::<Result<Vec<_>>>()?;
         (snapshot, rows)
     };
     if snapshot_bytes.is_none() && update_rows.is_empty() {
@@ -402,7 +409,9 @@ fn compact_window_with(
         // both count as a race. A concurrent persist replaced the snapshot;
         // overwriting it with our stale-based shallow would clobber newer
         // state, so defer.
-        let current_snapshot = WINDOW_SNAPSHOT.get(&vault.store, wtxn, &window)?;
+        let current_snapshot = vault
+            .store
+            .port_window_doc_with_raw(wtxn, address, |raw| Ok(raw.to_vec()))?;
         if current_snapshot != snapshot_bytes {
             raced.set(true);
             return Err(Error::sync_protocol(
@@ -417,8 +426,10 @@ fn compact_window_with(
         // rather than drop a carrier or finalize a window we cannot prove
         // payload-free. (Carrier completeness stays local here, not reliant
         // on any sibling d:w: co-write.)
-        let current_keys: BTreeSet<Vec<u8>> = WINDOW_UPDATE
-            .scan_keys(&vault.store, wtxn, update_prefix.as_bytes())?
+        let current_keys: BTreeSet<Vec<u8>> = vault
+            .store
+            .port_window_updates(wtxn, address, |k, _| k)?
+            .collect::<Result<Vec<_>>>()?
             .iter()
             .map(|k| WINDOW_UPDATE.key_bytes(k))
             .collect();

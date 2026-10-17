@@ -79,6 +79,10 @@ pub const COACH_CODE_FIX_FACET: &str = "coach.code_fix";
 /// its own kept judgments, or another judge's shadow pass over them, which
 /// rules whether that judge takes over.
 pub const COACH_JUDGE_SWAP_FACET: &str = "coach.judge_swap";
+/// The seal's checks (ARCH-0079, OF-544): each pending confession recheck
+/// and drawn random audit, checked on the host by a judge other than the
+/// model that produced the result (see [`super::seal_checks`]).
+pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
 /// one of that project's TASKs.
@@ -88,16 +92,17 @@ pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_thresh
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 6] = [
+const HOST_FACETS: [&str; 7] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
     COACH_TRAINING_OFFER_FACET,
     COACH_JUDGE_SWAP_FACET,
     COACH_TRADEOFF_ROUTE_FACET,
+    COACH_SEAL_CHECKS_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 7] = [
+const MAINTENANCE_FACETS: [&str; 8] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -105,6 +110,7 @@ const MAINTENANCE_FACETS: [&str; 7] = [
     COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
+    super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;

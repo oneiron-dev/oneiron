@@ -99,24 +99,26 @@ impl Vault {
     /// would on persisting it.
     #[cfg(feature = "sync")]
     fn backfill_published_delete_fences_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
+        use crate::ports::{WindowAddress, WindowDeletionRows};
         use crate::sync::loro_support::{doc_from_snapshot, import_doc};
 
-        let mut windows = Vec::new();
-        for row in self.store.sync_state.prefix_iter(wtxn, "d:w:")? {
-            windows.push(row?.0["d:w:".len()..].to_owned());
-        }
+        let windows = self
+            .store
+            .port_window_doc_rows_raw(wtxn, |window, _| window.as_str().to_owned())?
+            .collect::<Result<Vec<_>>>()?;
         for window in windows {
-            let Some(snapshot) = self.store.sync_state.get(wtxn, &format!("d:w:{window}"))? else {
+            let address = WindowAddress::new(&window);
+            let Some(doc) =
+                self.store
+                    .port_window_doc_with_raw(wtxn, address, doc_from_snapshot)?
+            else {
                 continue;
             };
-            let doc = doc_from_snapshot(&snapshot)?;
             for row in self
                 .store
-                .sync_state
-                .prefix_iter(wtxn, &format!("u:w:{window}:"))?
+                .port_window_updates_raw(wtxn, address, |_, update| import_doc(&doc, update))?
             {
-                let (_, update) = row?;
-                import_doc(&doc, &update)?;
+                row??;
             }
             self.fence_published_deletes_in_txn(wtxn, &window, &doc)?;
         }

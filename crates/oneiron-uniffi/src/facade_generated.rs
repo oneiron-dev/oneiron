@@ -133,6 +133,11 @@ export_facade! {
     let output = client.vault_fanout_resume(&input)?;
     crate::codec::lift_record("vault.fanout.resume", &output)
 };
+"vault.fanout.resume_as" => fn vault_fanout_resume_as(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume_as", input)?;
+    let output = client.vault_fanout_resume_as(&input)?;
+    crate::codec::lift_record("vault.fanout.resume_as", &output)
+};
 "vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> FanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutAckRequest = crate::codec::lower_record("vault.fanout.ack", input)?;
     let output = client.vault_fanout_ack(&input)?;
@@ -166,9 +171,9 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
-"vault.receipts" => fn vault_receipts(&self, limit: u32) -> Vec<FacadeReceipt> = |client| {
+"vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>) -> Vec<FacadeReceipt> = |client| {
     let limit: usize = limit.lower()?;
-    let output = client.vault_receipts(limit)?;
+    let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default())?;
     Lift::lift(output)
 };
 "vault.images.view" => fn vault_images_view(&self, input: ImageViewRequest) -> PulledImage = |client| {
@@ -1206,8 +1211,8 @@ export_facade! {
     let output = client.vault_artifacts_body_read(&input)?;
     crate::codec::lift_record("vault.artifacts.body.read", &output)
 };
-"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyArtifactRequest) -> Vec<TextCommitReceipt> = |client| {
-    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.commits", input)?;
+"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyCommitsRequest) -> Vec<OfficeBodyCommitView> = |client| {
+    let input: oneiron::office_body::OfficeBodyCommitsRequest = crate::codec::lower_record("vault.artifacts.body.commits", input)?;
     let output = client.vault_artifacts_body_commits(&input)?;
     crate::codec::lift_record("vault.artifacts.body.commits", &output)
 };
@@ -1256,8 +1261,8 @@ export_facade! {
     let output = client.vault_artifacts_body_export(&input)?;
     crate::codec::lift_record("vault.artifacts.body.export", &output)
 };
-"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyArtifactRequest) -> XlsxPreview = |client| {
-    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
+"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyPreviewRequest) -> XlsxPreview = |client| {
+    let input: oneiron::office_body::OfficeBodyPreviewRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
     let output = client.vault_artifacts_body_preview(&input)?;
     crate::codec::lift_record("vault.artifacts.body.preview", &output)
 };

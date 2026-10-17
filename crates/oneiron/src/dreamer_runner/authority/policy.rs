@@ -76,6 +76,7 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_TRAINING_OFFER_FACET => Some(coach::COACH_TRAINING_OFFER_FACET),
         coach::COACH_JUDGE_SWAP_FACET => Some(coach::COACH_JUDGE_SWAP_FACET),
         coach::COACH_TRADEOFF_ROUTE_FACET => Some(coach::COACH_TRADEOFF_ROUTE_FACET),
+        coach::COACH_SEAL_CHECKS_FACET => Some(coach::COACH_SEAL_CHECKS_FACET),
         coach::COACH_OFFER_CHECK_FACET => Some(coach::COACH_OFFER_CHECK_FACET),
         coach::COACH_TRAINING_OFFERS_FACET => Some(coach::COACH_TRAINING_OFFERS_FACET),
         coach::COACH_RESEARCH_SELECT_FACET => Some(coach::COACH_RESEARCH_SELECT_FACET),
@@ -85,6 +86,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         }
         super::super::maintenance::agent_health::COACH_AGENT_HEALTH_ASK_FACET => {
             Some(super::super::maintenance::agent_health::COACH_AGENT_HEALTH_ASK_FACET)
+        }
+        super::super::maintenance::COACH_CALIBRATION_ASKS_FACET => {
+            Some(super::super::maintenance::COACH_CALIBRATION_ASKS_FACET)
         }
         coach::COACH_ISSUES_FACET => Some(coach::COACH_ISSUES_FACET),
         coach::COACH_CODE_FIX_FACET => Some(coach::COACH_CODE_FIX_FACET),

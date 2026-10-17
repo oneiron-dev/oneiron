@@ -94,6 +94,13 @@ pub struct SlateToolManifest {
     pub spends: bool,
     pub sends_outward: bool,
     pub legacy_ask: bool,
+    /// The connector's declared `readOnlyHint` and `idempotentHint`. A call
+    /// to a read-only tool that destroys nothing, or to an idempotent one,
+    /// retries after an ambiguous reply instead of abandoning the intent.
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub idempotent: bool,
 }
 impl SlateToolManifest {
     /// Irreversible or header-bearing: `auto` already asks per call for these.
@@ -469,11 +476,24 @@ fn is_resolved_schema(value: &serde_json::Value) -> bool {
     let Some(schema) = value.as_object() else {
         return false;
     };
+    // Unions stay in a resolved schema, each variant resolved; the call
+    // validator reads them (outbound_consent/tool_schema.rs).
     if schema
         .keys()
-        .any(|key| matches!(key.as_str(), "$ref" | "allOf" | "anyOf" | "oneOf"))
+        .any(|key| matches!(key.as_str(), "$ref" | "allOf"))
     {
         return false;
+    }
+    for key in ["anyOf", "oneOf", "prefixItems"] {
+        if let Some(value) = schema.get(key)
+            && !value.as_array().is_some_and(|variants| {
+                variants
+                    .iter()
+                    .all(|variant| variant.is_boolean() || is_resolved_schema(variant))
+            })
+        {
+            return false;
+        }
     }
     // Names under `properties` are caller-chosen parameter names, not schema
     // operators. Values in defaults/const/enums are instance data; never

@@ -75,6 +75,15 @@ impl HostSlipIssuer {
     pub(crate) fn sign_claim_handoff(&self, transcript: &[u8]) -> [u8; 64] {
         self.signing.sign(transcript).to_bytes()
     }
+    /// The classical half of a checkpoint statement made with this host's own
+    /// root key: a key binding or an attestation (OF-469, checkpoint v2).
+    /// Refused for any transcript outside those two domains.
+    pub(super) fn sign_checkpoint(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        if !checkpoint_statement_domain(transcript) {
+            return Err(invalid_authority());
+        }
+        Ok(self.signing.sign(transcript).to_bytes().to_vec())
+    }
     pub(super) fn sign_slip(&self, transcript: &[u8]) -> Vec<u8> {
         self.signing.sign(transcript).to_bytes().to_vec()
     }

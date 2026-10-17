@@ -3,7 +3,7 @@
 //!
 //! Two halves of ARCH-0069, kept deliberately apart:
 //!
-//! **S6 — rotation is a vault update.** [`Vault::rotate_secret`] bumps the
+//! **S6 — rotation is a vault update.** [`Vault::rotate_secret_as_owner`] bumps the
 //! record's `rotation_generation`, stamps `rotated_at`, and replaces the
 //! value bytes inside ONE write transaction. The next lease materializes the
 //! new value and doored uses rotate invisibly, because the value never lived
@@ -11,7 +11,8 @@
 //! kills NO live lease. An old lease keeps the `value_generation` it minted
 //! at, so its staleness is OBSERVABLE (compare it against the record) rather
 //! than silently repaired. Terminal value death is
-//! [`Vault::revoke_secret`]'s job alone — that one does walk the leases.
+//! [`Vault::revoke_secret_as_owner`]'s job alone — that one does walk the
+//! leases.
 //!
 //! **S7 (amended 2026-08-05) — taint invalidation is READ-TIME.** A consumer
 //! compares an artifact's STORED taint-ref generations against the custody
@@ -677,7 +678,14 @@ impl Vault {
     ///   check purely because this generation moved.
     ///
     /// `at` is the caller's clock (ARCH-0026: the engine owns no timers).
-    pub fn rotate_secret(
+    ///
+    /// Test-only: it writes no signed transition, so a portable record's
+    /// rotation would never reach the owner's other machines. Every served
+    /// rotation goes through [`Vault::rotate_secret_as_owner`], which runs
+    /// the same body and writes the transition in the same transaction
+    /// (OF-422).
+    #[cfg(test)]
+    pub(crate) fn rotate_secret(
         &self,
         secret_ref: &str,
         new_value: &[u8],
@@ -704,14 +712,23 @@ impl Vault {
     ///
     /// The generation does NOT advance: nothing replaced the value. The
     /// receipt's kind is what tells a revoke apart from a no-op.
-    pub fn revoke_secret(&self, secret_ref: &str, at: u64) -> Result<RotationReceipt> {
+    ///
+    /// Test-only: it writes no signed transition, so a portable record's
+    /// revocation would never reach the owner's other machines. Every served
+    /// revocation goes through [`Vault::revoke_secret_as_owner`], which
+    /// writes the transition in the same transaction (OF-422).
+    #[cfg(test)]
+    pub(crate) fn revoke_secret(&self, secret_ref: &str, at: u64) -> Result<RotationReceipt> {
         let mut wtxn = self.store.env.write_txn()?;
         let receipt = self.revoke_secret_in_txn(&mut wtxn, secret_ref, at)?;
         wtxn.commit()?;
         Ok(receipt)
     }
 
-    /// [`Vault::revoke_secret`]'s body, inside the caller's transaction.
+    /// A revocation's body, inside the caller's transaction: the record
+    /// flips `Revoked`, its leases are revoked, and its receipt lands.
+    /// [`Vault::revoke_secret_as_owner`] writes the record's signed
+    /// transition beside it.
     pub(crate) fn revoke_secret_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
