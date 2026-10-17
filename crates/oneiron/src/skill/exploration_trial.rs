@@ -112,7 +112,9 @@ enum TrialState {
     Open,
     AskPending(PendingOverrun),
     /// The owner approved one run of up to `charge` past the slice.
-    Approved { charge: u64 },
+    Approved {
+        charge: u64,
+    },
     Closed(ExplorationTrialClose),
 }
 
@@ -369,9 +371,8 @@ fn slice_answer_in_txn(
             // The owner's yes covers this one run: the approved overrun
             // joins the slice and is spent by it.
             TrialState::Approved { charge: approved } if charge <= approved => {
-                ledger.approved_overrun = ledger
-                    .approved_overrun
-                    .saturating_add(charge - remaining);
+                ledger.approved_overrun =
+                    ledger.approved_overrun.saturating_add(charge - remaining);
                 trial.state = TrialState::Open;
             }
             _ => {
@@ -735,7 +736,9 @@ pub(crate) fn drive_exploration_trial(
     at: u64,
 ) -> Result<ExplorationTrialStatus> {
     if exposure_bound == 0 {
-        return Err(invalid("an exploration trial needs the host's live pull cap"));
+        return Err(invalid(
+            "an exploration trial needs the host's live pull cap",
+        ));
     }
     let (trial, basis) = {
         let txn = vault.store.env.read_txn()?;
@@ -751,8 +754,9 @@ pub(crate) fn drive_exploration_trial(
     let state = match trial.filter(|trial| trial.binds(&basis)) {
         Some(trial) => trial.state,
         None => {
-            let preflight =
-                crate::skill_optimize::preflight_skill_edit_offline_floors(vault, proposal, scorer)?;
+            let preflight = crate::skill_optimize::preflight_skill_edit_offline_floors(
+                vault, proposal, scorer,
+            )?;
             if !preflight.passed {
                 vault.with_write_txn_grouped(|txn| {
                     close_exploration_trial_in_txn(

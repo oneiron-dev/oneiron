@@ -119,6 +119,21 @@ impl Vault {
         Ok(self.store.off_record_sessions.record(session_ref))
     }
 
+    /// Whether a call naming `session_ref` runs inside an anonymous
+    /// off-record session, which keeps nothing (ARCH-0052): the live registry
+    /// holds that session in [`OffRecordMode::Anonymous`]. A session the
+    /// registry cannot be asked about counts as anonymous, so a call that
+    /// might be one records nothing. The one signal OF-538's call receipts
+    /// and OF-063's reference-refusal receipts both read.
+    #[must_use]
+    pub fn off_record_session_is_anonymous(&self, session_ref: &str) -> bool {
+        match self.off_record_session(session_ref.trim()) {
+            Ok(Some(record)) => record.mode == OffRecordMode::Anonymous,
+            Ok(None) => false,
+            Err(_) => true,
+        }
+    }
+
     /// Whether any off-record stretch is open. A host that would write this
     /// process's RAM to disk, a vault VM's snapshot, asks first: no snapshot
     /// while a stretch is open (OFFREC-SNAPSHOT = A).

@@ -68,6 +68,7 @@ pub fn scoped_subscription_receipts(
                 actor_ref: row.actor_ref,
                 content_kind: row.content_kind,
                 claim_ref: row.claim_id.map(|id| bytes_to_hex_lower(&id)),
+                claim: None,
             });
             if output.len() == limit {
                 return Ok(output);

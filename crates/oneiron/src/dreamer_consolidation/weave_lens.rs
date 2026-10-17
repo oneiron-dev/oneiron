@@ -9,8 +9,9 @@
 
 use super::step_charge::StepChargeTally;
 use crate::claim::{WeaveLensPlan, WeaveLensRender, WeaveLiveLens};
-use crate::{Vault, WriteActor};
-use crate::dreamer_runner::{DREAMER_WEAVE_LENS_ATTEMPT_KIND, DreamerAdmittedAttempt};
+use crate::dreamer_runner::{
+    DREAMER_WEAVE_LENS_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
+};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
@@ -22,6 +23,7 @@ use crate::llm::{
     ModelId, ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
     call_as_step,
 };
+use crate::{Vault, WriteActor};
 use std::collections::BTreeMap;
 
 /// Why a weave lens render parks on a host that lends no Dreamer model.
@@ -202,6 +204,7 @@ pub async fn run_weave_lens(
         Ok(StepOutcome::Trapped { .. }) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: "durable step trapped for resume".to_owned(),
+                cause: DreamerParkCause::Signal,
             });
         }
         Err(DurableStepError::SpentFinalizeRefused { usage }) => {
@@ -211,17 +214,20 @@ pub async fn run_weave_lens(
         Err(DurableStepError::DeadlineHardCut) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                cause: DreamerParkCause::Checkpoint,
             });
         }
         Err(DurableStepError::FinalizeRefused) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: "wake pass finalize window".to_owned(),
+                cause: DreamerParkCause::Checkpoint,
             });
         }
         Err(DurableStepError::Engine(error)) => return Err(error),
         Err(other) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
+                cause: DreamerParkCause::of_step(&other),
             });
         }
     };
