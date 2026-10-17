@@ -81,6 +81,9 @@ side_tables! {
     SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
     /// Owner-reviewed T3 finding by family string, colon and diagnostic id16.
     SELF_HEAL_DISTILL: VaultMeta b"self_heal:distill:" Named;
+    /// The T2 the host's detector pass registered for one family from its reviewed T3 findings,
+    /// with the closed-form T1 that graduated it (OF-418). Key: the family string.
+    SELF_HEAL_MINTED: VaultMeta b"self_heal:minted:v1:" Named;
     /// Immutable attempt confession, audit draw and independently checked findings. Key: id16.
     SELF_HEAL_ATTEMPT_SEAL: VaultMeta b"self_heal:seal:v1:" Named;
     /// (diagnostic event id).
