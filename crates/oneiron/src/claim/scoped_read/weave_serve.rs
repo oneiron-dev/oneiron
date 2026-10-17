@@ -379,10 +379,7 @@ impl Memory<'_> {
         let lens = super::weave_lens::compose_weave_lens(&read, &report, &render)?;
         // The render is kept, and the one before it settles on the skill's
         // corrections axis; neither gates the lens.
-        if let Err(error) = self
-            .vault()
-            .keep_live_weave_lens(reader, &report, &render)
-        {
+        if let Err(error) = self.vault().keep_live_weave_lens(reader, &report, &render) {
             tracing::warn!(?error, "the live weave lens render was not kept");
         }
         Ok(lens)

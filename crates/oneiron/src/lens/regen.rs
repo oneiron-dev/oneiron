@@ -134,15 +134,12 @@ impl Memory<'_> {
                 ((*candidate).into_lens(), false)
             }
         };
-        let intent = self
-            .vault()
-            .get_lens_intent(&active_ref)?
-            .ok_or_else(|| {
-                invalid_state(
-                    "the slot's active lens has no stored intent to carry to its candidate",
-                    "Propose the candidate with its intent through vault.lenses.propose.",
-                )
-            })?;
+        let intent = self.vault().get_lens_intent(&active_ref)?.ok_or_else(|| {
+            invalid_state(
+                "the slot's active lens has no stored intent to carry to its candidate",
+                "Propose the candidate with its intent through vault.lenses.propose.",
+            )
+        })?;
         let proposal = self.lenses_propose(LensProposeRequest {
             slot: slot.clone(),
             pack_content_hash,
@@ -171,10 +168,7 @@ impl Memory<'_> {
     }
 
     /// The lens `slot` selects now, rechecked against the live install.
-    fn active_lens_for(
-        &self,
-        slot: &LensSlot,
-    ) -> MemoryResult<(EntityId, super::GeneratedLens)> {
+    fn active_lens_for(&self, slot: &LensSlot) -> MemoryResult<(EntityId, super::GeneratedLens)> {
         let skill_id = slot.skill()?;
         self.vault()
             .active_pack_lens(&slot.pack_name, &skill_id)?

@@ -269,13 +269,7 @@ impl ConsolidationExecutor<'_> {
                 None if went_up(&decision)
                     && decision.human_ask != Some(HumanAskReason::Deadline) =>
                 {
-                    vault.decision_ask_for(
-                        question,
-                        principal,
-                        evidence,
-                        to,
-                        Some(correlation),
-                    )?
+                    vault.decision_ask_for(question, principal, evidence, to, Some(correlation))?
                 }
                 None => None,
             };
