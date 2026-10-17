@@ -400,8 +400,9 @@ pub struct SecretScanArgs {
     pub serve: ServeArgs,
 }
 
-/// The value is read from stdin, exactly as given (`printf %s "$TOKEN" |`
-/// keeps a trailing newline out), and never from the command line.
+/// Register and rotate read the value from stdin, exactly as given
+/// (`printf %s "$TOKEN" |` keeps a trailing newline out), and never from the
+/// command line.
 #[derive(Subcommand, Clone, Debug)]
 pub enum SecretsCommand {
     /// Put a secret into the stopped vault's custody.

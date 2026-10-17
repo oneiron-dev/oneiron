@@ -462,6 +462,9 @@ fn host_row(
                 &HostUnitDecider::new(server, class, "vault.artifacts.review_slides"),
                 host.dial(DecisionRung::Big),
                 &host.bands(),
+                crate::slide_render::host_renderer().map(|renderer| {
+                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+                }),
             )?)
         }
         AgentVerb::VaultArtifactsBodyDeckPreview => encode(memory.artifacts_body_deck_preview(

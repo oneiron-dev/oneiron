@@ -180,8 +180,9 @@ pub(crate) async fn vault_connectors_subscriptions_revoke(
 
 /// `vault.artifacts.review_slides`: reviews an artifact's head through the
 /// host's decide() ladder as the bound actor, from the host's starting dial
-/// and bands, and holds the proposal for Keep or Discard. The ladder runs on
-/// a blocking thread, one call per unit.
+/// and bands, and holds the proposal for Keep or Discard. A unit with no
+/// image is rendered by the host's LibreOffice renderer when it has one. The
+/// ladder and the render run on a blocking thread, one call per unit.
 pub(crate) async fn vault_artifacts_review_slides(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -203,6 +204,9 @@ pub(crate) async fn vault_artifacts_review_slides(
             ),
             host.dial(oneiron::llm::decision::DecisionRung::Big),
             &host.bands(),
+            crate::slide_render::host_renderer().map(|renderer| {
+                renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+            }),
         )
     })
     .await
