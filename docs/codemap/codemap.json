@@ -10655,6 +10655,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/team_verbs.rs",
+     "purpose": "`self.team.start` and `self.team.record` (OF-540): a pattern-skill run's own team, bound to the running…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -38698,7 +38708,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 11
      }
     },
@@ -45167,8 +45177,8 @@
      "path": "src/team/mod.rs",
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
-      "mod": 5,
-      "re-export": 5
+      "mod": 6,
+      "re-export": 6
      }
     },
     {
@@ -45221,6 +45231,27 @@
      "surface": {
       "enum": 1,
       "fn": 8,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SelfTeamCall",
+      "TeamCoverageInput",
+      "TeamDecisionInput",
+      "TeamMemberAnswer",
+      "TeamMemberInput",
+      "TeamRecordInput",
+      "TeamRunAnswer",
+      "TeamStartInput"
+     ],
+     "path": "src/team/run.rs",
+     "purpose": "OF-540: a pattern-skill run's own team, from code mode",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 3,
       "struct": 5
      }
     },
@@ -49376,7 +49407,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50468,7 +50499,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50617,7 +50648,7 @@
    },
    "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3056,
+   "source_files": 3058,
    "test_files": 903
   },
   "oneiron-android": {
