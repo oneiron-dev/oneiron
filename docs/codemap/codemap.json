@@ -1010,7 +1010,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/task_type_tree.rs",
@@ -43595,27 +43595,25 @@
       "const": 9,
       "crate-vis": 1,
       "enum": 5,
-      "fn": 52,
+      "fn": 54,
       "re-export": 2,
       "struct": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "HeuristicPlacer",
+      "PlacementDecisions",
       "PlacementOutcome",
-      "PlacementRequest",
-      "TaskTypePlacer"
+      "PlacementRequest"
      ],
      "path": "src/task_type/placement.rs",
-     "purpose": "Routed placement (OF-543): a task is placed once, at spawn",
+     "purpose": "Routed placement (OF-543, OF-541): a task is placed once, at spawn",
      "surface": {
-      "const": 3,
+      "const": 4,
       "fn": 7,
-      "struct": 3,
-      "trait": 1
+      "struct": 3
      }
     },
     {
