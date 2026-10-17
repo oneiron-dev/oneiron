@@ -372,6 +372,8 @@ pub struct AiHost {
     sieve: Option<SieveDrain>,
     /// A peer's sync apply wakes the running Dreamer.
     sync_wake: Option<sync_wake::SyncWake>,
+    /// The server the Dreamer's timer runs the standing questions on.
+    question_timer: dreamer::QuestionTimer,
 }
 
 /// The sieve's backlog drain and the stop it checks between passes.
@@ -409,6 +411,19 @@ impl AiHost {
         (server, host)
     }
 
+    /// Binds the standing-question pump to the running Dreamer's timer
+    /// (OF-506): its Deadline passes run the pump on the home node. `false`
+    /// when no Dreamer runs, so the caller starts the pump's own sleeper and
+    /// exactly one runner serves the questions.
+    pub(crate) fn bind_question_timer(&self, server: &Arc<SyncServer>) -> bool {
+        if self.dreamer.is_none() {
+            return false;
+        }
+        // A second bind finds the first; the timer still drives the pump.
+        let _ = self.question_timer.set(Arc::downgrade(server));
+        true
+    }
+
     /// Builds every seat from `models` and starts the workers those seats can
     /// serve. Every model call they make is admitted as a run whose receipts
     /// are written to the log.
@@ -440,13 +455,15 @@ impl AiHost {
             workflows: None,
             sieve: None,
             sync_wake: None,
+            question_timer: dreamer::QuestionTimer::default(),
         };
         let Some(models) = models else {
             return host;
         };
         let status = Arc::clone(&handle.status);
         let idle = handle.idle_sample();
-        match start_dreamer(&vault, &runtime, models, host_root, &status, idle).await {
+        let timer = Arc::clone(&host.question_timer);
+        match start_dreamer(&vault, &runtime, models, host_root, &status, idle, timer).await {
             Ok(dreamer) => {
                 handle.hints = Some(dreamer.hints());
                 handle.summaries = models.dreamer.summary_instruction.is_some();
@@ -689,6 +706,7 @@ async fn start_dreamer(
     host_root: bool,
     status: &Arc<StatusCell>,
     idle: IdleSample,
+    question_timer: dreamer::QuestionTimer,
 ) -> Result<DreamerHost, IdleReason> {
     if !models.dreamer.enabled {
         return Err(IdleReason::Disabled);
@@ -753,6 +771,7 @@ async fn start_dreamer(
         status: Arc::clone(status),
         idle,
         windows: dreamer::dream_windows(models),
+        question_timer,
     })
     .await
     .map_err(|error| {
