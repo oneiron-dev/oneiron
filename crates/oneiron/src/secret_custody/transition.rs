@@ -87,11 +87,21 @@ pub(crate) fn custody_portable(record: &SecretCustodyRecord) -> bool {
     record.class == CustodyClass::CustodyPortable && !record.device_only
 }
 
-/// Signs the transition of record `id` as it stands in `record`, with this
-/// machine's install key `signing`, its value sealed to every machine mine
-/// under `fold`'s pin. `None` when the record must stay here: it is not
-/// portable, the vault has no authority genesis, or this machine is not one
-/// of the owner's machines under the pin.
+/// Whether `signer` signs for the owner under `fold`: the pinned root's owner
+/// anchor, or a machine mine under the pin.
+fn owner_signer(fold: &AuthorityFold, signer: &[u8; 32]) -> bool {
+    fold.pinned_root
+        .as_ref()
+        .is_some_and(|root| root.anchor_key == *signer)
+        || fold.mine_machine_by_key(signer).is_some()
+}
+
+/// Signs the transition of record `id` as it stands in `record`, with
+/// `signing`, this machine's install key or the owner anchor, its value
+/// sealed to every machine mine under `fold`'s pin. `None` when the record
+/// must stay here: it is not portable, the vault has no authority genesis, or
+/// `signing` is neither the pinned root's anchor nor a machine mine under the
+/// pin.
 pub(crate) fn sign_custody_transition(
     fold: &AuthorityFold,
     signing: &SigningKey,
@@ -103,7 +113,7 @@ pub(crate) fn sign_custody_transition(
     let Some(vault_id) = fold.vault_id else {
         return Ok(None);
     };
-    if !custody_portable(record) || fold.mine_machine_by_key(&signer).is_none() {
+    if !custody_portable(record) || !owner_signer(fold, &signer) {
         return Ok(None);
     }
     let mut bare = record.clone();
@@ -196,21 +206,22 @@ pub(crate) fn write_custody_transition_in_txn(
 /// Keeps `transition` as this vault's latest of its record when it supersedes
 /// the one held. A machine that took a peer's transition can then seal it
 /// again for a machine the roster gains, and drop the carrier it supersedes
-/// from the window that carrier rides.
+/// from the window that carrier rides. Returns whether it kept it.
 pub(crate) fn remember_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     transition: &CustodyTransition,
-) -> Result<()> {
+) -> Result<bool> {
     let key = HexId(transition.id);
     let held = TRANSITIONS.get(&vault.store, wtxn, &key)?;
     if held
         .and_then(|held| CustodyTransition::decode(&held).ok())
         .is_some_and(|held| !transition.supersedes(&held))
     {
-        return Ok(());
+        return Ok(false);
     }
-    TRANSITIONS.put(&vault.store, wtxn, &key, &transition.encode())
+    TRANSITIONS.put(&vault.store, wtxn, &key, &transition.encode())?;
+    Ok(true)
 }
 
 /// Seals again, in `wtxn`, the latest transition of each portable record this
@@ -370,11 +381,7 @@ impl CustodyTransition {
     /// or by the pinned root's owner anchor.
     pub(crate) fn verify(&self, fold: &AuthorityFold) -> Result<()> {
         self.verify_signed(&fold.vault_id.ok_or_else(unsigned)?)?;
-        let anchor = fold
-            .pinned_root
-            .as_ref()
-            .is_some_and(|root| root.anchor_key == self.signer);
-        if !anchor && fold.mine_machine_by_key(&self.signer).is_none() {
+        if !owner_signer(fold, &self.signer) {
             return Err(unsigned());
         }
         Ok(())
@@ -445,6 +452,88 @@ impl CustodyTransition {
         let payload = envelope.open(OpenKey::Hybrid(secret), &policy).ok()?;
         let value = payload.strip_prefix(VALUE_LABEL)?;
         Some(Zeroizing::new(value.to_vec()))
+    }
+}
+
+impl Vault {
+    /// Signs the current transition of the portable record `secret_ref` names
+    /// with the owner anchor of `seed`, the recovery root this vault pins: the
+    /// owner's door for an install that cannot sign as one of the owner's
+    /// machines (ARCH-0069: a transition comes from the owner anchor or from a
+    /// live machine mine under the pin). The record keeps its generation,
+    /// status and value; the value is sealed to every machine mine now.
+    /// Returns whether it wrote one: none for a record that stays here (device
+    /// bound, cross-vault or "this device only") or a value no machine mine
+    /// here could open.
+    ///
+    /// # Errors
+    /// A remote origin; a proof that is no longer the live vault owner's; a
+    /// seed whose root is not the root this vault pins; a name no record
+    /// holds; storage errors.
+    pub fn sign_custody_with_anchor(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        origin: crate::authority::EditOrigin,
+        seed: &crate::world_keys::RecoveryRootSeed,
+        secret_ref: &str,
+        at: u64,
+    ) -> Result<bool> {
+        if !matches!(origin, crate::authority::EditOrigin::ThisMachine) {
+            return Err(Error::InvalidConfig(
+                "a remote request never signs with the owner anchor".into(),
+            ));
+        }
+        let vault_id = {
+            let rtxn = self.store.env.read_txn()?;
+            self.authority_view_readonly_in_txn(&rtxn)?
+                .vault_id
+                .ok_or_else(unsigned)?
+        };
+        // The anchor is derived before the write transaction opens.
+        let root = seed.public(&vault_id)?;
+        let anchor = seed.anchor();
+        let transition = self.with_write_txn(|wtxn| {
+            owner.revalidate_as_vault_owner_in_txn(self, wtxn)?;
+            let fold = self.authority_view_readonly_in_txn(wtxn)?;
+            if fold.vault_id != Some(vault_id)
+                || fold
+                    .pinned_root
+                    .as_ref()
+                    .is_none_or(|pin| pin.id != root.id || pin.anchor_key != root.anchor_key)
+            {
+                return Err(Error::InvalidConfig(
+                    "the seed's root is not the root this vault pins".into(),
+                ));
+            }
+            let id = super::resolve_secret_ref_in_txn(&self.store, wtxn, secret_ref)?.ok_or_else(
+                || {
+                    Error::Secret(crate::error::SecretError::SecretRefNotFound {
+                        name: secret_ref.to_owned(),
+                    })
+                },
+            )?;
+            let Some(record) = super::read_secret_custody_in_txn(&self.store, wtxn, &id)? else {
+                return Ok(None);
+            };
+            // A transition of the same generation and status is replaced, so
+            // this one is signed after it.
+            let order = (record.rotation_generation, status_rank(record.status));
+            let signed_at = TRANSITIONS
+                .get(&self.store, wtxn, &HexId(id))?
+                .and_then(|held| CustodyTransition::decode(&held).ok())
+                .filter(|held| held.order() == order)
+                .map_or(at, |held| at.max(held.signed_at.saturating_add(1)));
+            let Some(transition) = sign_custody_transition(&fold, &anchor, id, &record, signed_at)?
+            else {
+                return Ok(None);
+            };
+            Ok(remember_custody_transition_in_txn(self, wtxn, &transition)?.then_some(transition))
+        })?;
+        #[cfg(feature = "sync")]
+        if transition.is_some() {
+            self.refresh_custody_in_live_windows();
+        }
+        Ok(transition.is_some())
     }
 }
 
