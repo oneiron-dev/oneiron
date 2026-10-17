@@ -1143,9 +1143,11 @@ oneiron handoff-alarms list                     # every saved alarm, open or ack
 oneiron handoff-alarms acknowledge SUITE:HEX    # you have seen this key's alarm
 ```
 
-Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
+Routes: `GET /v1/owner/authority/handoff-alarms` and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
-signer is 404, and acknowledging an acknowledged alarm changes nothing.
+signer is 404, and acknowledging an acknowledged alarm changes nothing. The list, the CLI and the
+SDK's `vault.authority.handoff_alarms` answer one shape in one order: `raised_at` and an
+acknowledgement's `at` in unix seconds, oldest raised first, then by signer.
 
 ## Learned settings
 

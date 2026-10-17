@@ -172,6 +172,7 @@ pub enum SharedVaultChange {
 #[serde(deny_unknown_fields)]
 pub struct SharedActExecutionReceipt {
     pub id: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     pub act_id: Option<String>,
     pub request_id: Option<String>,
@@ -220,6 +221,7 @@ pub struct SharedActExecution {
 #[serde(deny_unknown_fields)]
 pub struct RemovalExportCopy {
     pub receipt_id: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     /// The removed Owner, PERSON hex.
     pub member: String,
@@ -233,6 +235,7 @@ pub struct RemovalExportCopy {
 pub struct SharedActOutcome {
     pub receipt_id: String,
     pub act_id: Option<String>,
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     pub recipient: String,
     pub change: SharedVaultChange,
@@ -357,6 +360,7 @@ impl TryFrom<SignedOutcomeWire> for SignedSharedActOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedVaultDeletion {
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     pub act_id: String,
     pub receipt_id: String,

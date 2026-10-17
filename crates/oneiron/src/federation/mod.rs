@@ -33,6 +33,7 @@ pub(crate) use ruling_integrity::{
 mod pending_act;
 mod shared_act;
 mod shared_creation;
+pub(crate) mod vault_id_decimal;
 pub use pending_act::{
     ActExecution, PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActPolicy,
     SharedActPrecedence,
