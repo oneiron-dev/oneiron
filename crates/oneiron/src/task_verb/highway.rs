@@ -95,8 +95,9 @@ impl Memory<'_> {
     /// Proves this surface's actor may run `verb` on `task`, in the caller's
     /// snapshot, through L02's rule (OF-220), and answers the TASK's
     /// standing. The proof is the actor's live binding of its own class;
-    /// else the slip its request presented, whose refusal stands; else, for
-    /// the in-process host's own caller, its store truth; else a binding,
+    /// else the slip its request presented, whose refusal stands; else the
+    /// ask guest grant its host admitted, whose refusal stands too; else,
+    /// for the in-process host's own caller, its store truth; else a binding,
     /// which it then lacks. A TASK the actor is no party to is not found; a
     /// party the verb does not admit is told why, with `suggestion`.
     pub(super) fn highway_task_actor_in(
@@ -133,6 +134,11 @@ impl Memory<'_> {
             TaskActorProof::Slip {
                 actor: self.actor(),
                 slip,
+            }
+        } else if let Some(grant) = self.presented_task_grant() {
+            TaskActorProof::Grant {
+                actor: self.actor(),
+                grant,
             }
         } else if self.native_invocation() {
             TaskActorProof::Native(&writer)
