@@ -4893,7 +4893,22 @@ class XlsxBodyOpDeleteName(TypedDict):
     op: Literal["delete_name"]
     name: str
     sheet: NotRequired[str | None]
-XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName
+class XlsxBodyOpAddSheet(TypedDict):
+    op: Literal["add_sheet"]
+    sheet: str
+    at: NotRequired[int | None]
+class XlsxBodyOpRenameSheet(TypedDict):
+    op: Literal["rename_sheet"]
+    sheet: str
+    name: str
+class XlsxBodyOpMoveSheet(TypedDict):
+    op: Literal["move_sheet"]
+    sheet: str
+    at: int
+class XlsxBodyOpDeleteSheet(TypedDict):
+    op: Literal["delete_sheet"]
+    sheet: str
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):

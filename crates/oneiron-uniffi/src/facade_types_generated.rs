@@ -13017,6 +13017,32 @@ pub enum XlsxBodyOp {
         #[serde(rename = "sheet", default, skip_serializing_if = "Option::is_none")]
         sheet: Option<String>,
     },
+    #[serde(rename = "add_sheet")]
+    AddSheet {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "at", default, skip_serializing_if = "Option::is_none")]
+        at: Option<u32>,
+    },
+    #[serde(rename = "rename_sheet")]
+    RenameSheet {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "move_sheet")]
+    MoveSheet {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "at")]
+        at: u32,
+    },
+    #[serde(rename = "delete_sheet")]
+    DeleteSheet {
+        #[serde(rename = "sheet")]
+        sheet: String,
+    },
 }
 
 /// `oneiron_docedit::live::pptx::DeckOp`.
