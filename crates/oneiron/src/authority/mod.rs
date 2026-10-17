@@ -47,6 +47,7 @@ mod fold_project;
 mod fold_resume;
 mod fold_schedule;
 mod fold_state;
+mod guest_revoke;
 mod handoff_equivocation;
 mod history_coverage;
 mod history_transfer;
