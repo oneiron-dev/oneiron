@@ -6,6 +6,7 @@ use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::consult_ladder::LadderTerminalDisposition;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::run_admission::LeaseUnit;
 
 use super::ask_types::TaskAskOptionId;
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef, ConsultRecovery};
@@ -81,6 +82,18 @@ impl ConsultResultKind {
 pub struct ConsultResultInput {
     pub kind: ConsultResultKind,
     pub completed_at: u64,
+    /// A complete measured total from the executor, never a reservation or
+    /// a prior. `None` means unknown, as for an uninstrumented foreign
+    /// harness. A first landing folds it into the peer's consult
+    /// calibration (OF-393); a replay folds nothing and never backfills.
+    pub measured_spend: Option<ConsultMeasuredSpend>,
+}
+
+/// What one consult cost its executor, in one unit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsultMeasuredSpend {
+    pub unit: LeaseUnit,
+    pub units: u64,
 }
 
 /// Receipt for one landed consult result.

@@ -12,7 +12,9 @@
 //! leased attempt. A person's report on the human lane, an acknowledgement
 //! and a brief revision keep their own idempotency. An entry proves nothing:
 //! it is read only after the reporter's own read has admitted the TASK, and
-//! only for the reporter that wrote it.
+//! only for the reporter that wrote it. An entry lives as long as its TASK:
+//! erasing the TASK purges its entries in the erase transaction, and nothing
+//! else expires them.
 
 use serde::{Deserialize, Serialize};
 
@@ -141,5 +143,22 @@ pub(super) fn put_in(
         receipt: receipt.clone(),
     };
     REPORTS.put(&vault.store, txn, &identity.key()?, &entry)?;
+    Ok(())
+}
+
+/// Drops every entry journaled for TASK `id`, in the transaction that erases
+/// it; a no-op for any other entity. The journal keys on the try, so its
+/// entries are found by the TASK each one names, and a row that does not
+/// decode aborts the erase rather than leave a partial purge.
+pub(crate) fn erase_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<()> {
+    for (key, entry) in REPORTS.scan(store, txn)? {
+        if entry.identity.task_ref == *id {
+            REPORTS.delete(store, txn, &key)?;
+        }
+    }
     Ok(())
 }

@@ -11,7 +11,8 @@
 //! or [`Memory::tasks_settle_project_tradeoff_as_agent`] (a bound agent's
 //! pick) hands it to the gate, whose role and digest checks decide it. A
 //! route voided because its question moved cuts its ask Stale in the same
-//! commit, so the old ask stops waiting for its deadline. The pick the
+//! commit, so the old ask stops waiting for its deadline; that question,
+//! asked again, opens a fresh ask after the void one. The pick the
 //! gate learns is proposed for the project's goal record; the project's
 //! members read those proposals here and a vault owner may dismiss one.
 use std::collections::{BTreeMap, BTreeSet};
@@ -142,7 +143,8 @@ impl Memory<'_> {
     /// in that project's home room under the room's speaking rules (once per
     /// question and project), and [`Self::tasks_ask_project`] asks the
     /// project's leader and board with that TURN as its question. A retry for
-    /// the same question replays the same ask.
+    /// the same question replays the same ask; a question that returns after
+    /// its route was voided opens a fresh ask beside the void one.
     pub fn tasks_route_project_tradeoff(
         &self,
         task: EntityId,
@@ -442,6 +444,31 @@ impl Memory<'_> {
             at,
         )
         .map_err(MemoryError::from)
+    }
+}
+
+/// The intent key a tradeoff ask admits under, read in its admission
+/// transaction: `spec`'s own while its group is unrouted, open or settled,
+/// and past every voided generation otherwise. A route voided because its
+/// question moved keeps its Stale ask, never reopened; the same question
+/// asked again opens a fresh ask under `<base>/after/<void group>`, so a
+/// retry finds that fresh ask and no counter or clock picks the key.
+pub(super) fn advance_void_intent_in(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    spec: &mut TaskAskSpec,
+) -> crate::Result<()> {
+    let base = spec.intent_key.clone();
+    loop {
+        let group = super::ask_record::group_id(vault, txn, actor, &spec.intent_key)?;
+        let void = ROUTES
+            .get(&vault.store, txn, &group)?
+            .is_some_and(|route| matches!(route.state, RouteState::Void { .. }));
+        if !void {
+            return Ok(());
+        }
+        spec.intent_key = format!("{base}/after/{}", group.to_hex());
     }
 }
 

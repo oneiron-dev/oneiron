@@ -25,6 +25,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::memory::erase_stream_seeds_in_txn,
     crate::store::legal_hold::erase_in_txn,
     crate::workspace_roster::erase_room_side_rows,
+    crate::task_verb::erase_report_journal_in_txn,
 ];
 
 /// Runs before the record's body and edges go. `physical` is false for a soft

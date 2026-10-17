@@ -329,8 +329,10 @@ impl AgentDispatcher<'_> {
 
     /// The board above refuses an exact, stored proposal (OF-568), on the
     /// same proof as approval: the authenticated owner of the board's TASK,
-    /// a live human, and the immediate board above. Declining writes only the
-    /// refusal: no slice, no enqueue, no consent minted or spent. An approved
+    /// a live human, and the immediate board above. Declining writes the
+    /// refusal and, through the consent denial door, the `denied` decision
+    /// row that closes the proposal's `pending` one on the same effect
+    /// digest: no slice, no enqueue, no consent minted or spent. An approved
     /// proposal cannot be declined; declining a declined one again is a
     /// no-op. The declined proposal stays as the Coach's widen-denial
     /// evidence, and a retry of its intent is refused.
@@ -364,6 +366,10 @@ impl AgentDispatcher<'_> {
             by: actor.to_hex(),
             at,
         });
+        // The owner's refusal lands in the same decision ledger as the
+        // pending row; a failed append declines nothing.
+        self.vault
+            .deny_consent_in_txn(&mut wtxn, owner, proposal.consent.effect_digest)?;
         WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
         wtxn.commit()?;
         Ok(())

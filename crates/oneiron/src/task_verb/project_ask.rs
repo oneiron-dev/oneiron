@@ -32,7 +32,9 @@ impl Memory<'_> {
     /// the ask when `tradeoff` names one. The ask joins the project's list
     /// (and routes) in its admission transaction, or, when the approval mode
     /// holds it, as the owner's approval releases it. A replay has already
-    /// done both and does not do them twice.
+    /// done both and does not do them twice. A tradeoff whose earlier route
+    /// was voided asks past that void generation, in the same transaction,
+    /// so it opens a fresh ask instead of replaying the Stale one.
     pub(super) fn tasks_ask_project_with(
         &self,
         task: EntityId,
@@ -52,15 +54,26 @@ impl Memory<'_> {
         let mut spec = input.clone();
         spec.who = Some(TaskAskTarget::People(holders.clone()));
         spec.intent_key = format!("project.ask/{}/{}", task.to_hex(), input.intent_key);
-        self.tasks_ask_composed(
-            &spec,
-            Some(AskEffect::Project {
-                project,
-                task,
-                holders,
-                tradeoff,
-            }),
-        )
+        self.with_verified_actor_write_txn(|txn| {
+            if tradeoff.is_some() {
+                super::project_tradeoff::advance_void_intent_in(
+                    vault,
+                    txn,
+                    self.actor(),
+                    &mut spec,
+                )?;
+            }
+            self.tasks_ask_composed_in_txn(
+                txn,
+                &spec,
+                Some(AskEffect::Project {
+                    project,
+                    task,
+                    holders,
+                    tradeoff,
+                }),
+            )
+        })
     }
 
     /// A project ask's effect: the project's leader and board are still the
