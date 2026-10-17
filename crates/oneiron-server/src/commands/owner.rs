@@ -1279,10 +1279,8 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
             sdk::EmptyRequest {},
             |_| sdk::read_embedding_spaces(&vault, &owner).map_err(memory_refusal),
         )?,
-        Spaces::Declare(args) => row("vault.embedding_spaces.declare").run(
-            declared_space(*args),
-            sdk::declare_embedding_space_as,
-        )?,
+        Spaces::Declare(args) => row("vault.embedding_spaces.declare")
+            .run(declared_space(*args), sdk::declare_embedding_space_as)?,
         Spaces::Bind(args) => row("vault.embedding_spaces.bind").run(
             sdk::EmbeddingSpaceBindRequest {
                 kind: input_kind(args.kind),
@@ -1310,10 +1308,8 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
             candidate(args.candidate),
             sdk::approve_embedding_space_move_as,
         )?,
-        Spaces::MoveUndo(args) => row("vault.embedding_spaces.move_undo").run(
-            candidate(args.candidate),
-            sdk::undo_embedding_space_move_as,
-        )?,
+        Spaces::MoveUndo(args) => row("vault.embedding_spaces.move_undo")
+            .run(candidate(args.candidate), sdk::undo_embedding_space_move_as)?,
         Spaces::MoveAbandon(args) => row("vault.embedding_spaces.move_abandon").run(
             candidate(args.candidate),
             sdk::abandon_embedding_space_move_as,
@@ -1334,7 +1330,7 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
                 .map(|target| hold_id_arg(target))
                 .collect::<anyhow::Result<Vec<_>>>()?;
             row("vault.embedding_spaces.probes.put").run(
-                    sdk::EmbeddingSpaceProbePutRequest {
+                sdk::EmbeddingSpaceProbePutRequest {
                     kind: input_kind(args.kind),
                     query: args.query,
                     family,

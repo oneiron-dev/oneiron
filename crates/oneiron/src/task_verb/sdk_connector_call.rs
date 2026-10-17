@@ -24,8 +24,8 @@ use serde_json::Value;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::memory::{
-    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
-    MemoryResult,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, Memory,
+    MemoryError, MemoryResult,
 };
 use crate::outbound_consent::{
     ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, ConnectorToolSchema,

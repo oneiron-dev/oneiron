@@ -51,9 +51,13 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let holds = blocking(move || {
         let vault = server.vault();
-        hooked_row(vault, actor, "vault.legal_holds.list", EmptyRequest {}, |_| {
-            Ok(vault.legal_holds(&owner)?)
-        })
+        hooked_row(
+            vault,
+            actor,
+            "vault.legal_holds.list",
+            EmptyRequest {},
+            |_| Ok(vault.legal_holds(&owner)?),
+        )
     })
     .await?;
     Ok(Json(holds))
@@ -115,9 +119,13 @@ async fn log(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRepl
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let events = blocking(move || {
         let vault = server.vault();
-        hooked_row(vault, actor, "vault.legal_holds.log", EmptyRequest {}, |_| {
-            Ok(vault.legal_hold_log(&owner)?)
-        })
+        hooked_row(
+            vault,
+            actor,
+            "vault.legal_holds.log",
+            EmptyRequest {},
+            |_| Ok(vault.legal_hold_log(&owner)?),
+        )
     })
     .await?;
     Ok(Json(events))

@@ -187,10 +187,7 @@ impl LensFrameStore {
     /// was rendered for, giving their bytes back: the run's retirement hook
     /// calls it once the run ends (settled, pruned or cancelled), never when
     /// it parks. Answers how many it closed.
-    #[allow(
-        dead_code,
-        reason = "L09's run-retirement hook calls it (FIX 2612)"
-    )]
+    #[allow(dead_code, reason = "L09's run-retirement hook calls it (FIX 2612)")]
     pub(crate) fn close_run(&self, creator_run: &str) -> usize {
         let mut frames = self.lock();
         let owned: Vec<u64> = frames

@@ -165,9 +165,13 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
-            hooked_row(vault, actor, "vault.embedding_spaces.list", EmptyRequest {}, |_| {
-                spaces(vault)
-            })
+            hooked_row(
+                vault,
+                actor,
+                "vault.embedding_spaces.list",
+                EmptyRequest {},
+                |_| spaces(vault),
+            )
         })
         .await?,
     ))
