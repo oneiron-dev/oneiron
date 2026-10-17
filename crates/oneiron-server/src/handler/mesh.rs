@@ -28,7 +28,7 @@ const RELAYS_ENV: &str = "ONEIRON_MESH_RELAYS";
 
 /// The MACHINE a mesh connection's handshake proved, on every request its
 /// streams carry. A request off the TCP listener has none.
-#[allow(dead_code)] // Admission does not compare it with the request's machine proof yet.
+#[cfg_attr(not(feature = "mesh"), allow(dead_code))] // Only the mesh listener makes one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MeshProvedMachine(pub(crate) oneiron::EntityId);
 

@@ -5,6 +5,11 @@
 //! `POST /v1/core/context-board/scratchpad/recall` serves, in that door's
 //! reply shape. The pad is the handle's own: the engine keys it by the
 //! handle's actor and the session, never by a field naming someone else.
+//!
+//! `self.focus.scratchpad.append` and `self.focus.scratchpad.seal` are the
+//! writes `POST /v1/core/context-board/scratchpad` serves, over the same
+//! engine methods ([`Memory::scratchpad_append`], [`Memory::scratchpad_seal`])
+//! and their checks, answering that door's reply ([`ScratchpadWriteReply`]).
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
@@ -23,13 +28,61 @@ pub struct ScratchpadRecallRequest {
     pub query: String,
 }
 
-/// A recalled line's mark: after the seal `keep` lines extract and
-/// `scratch` lines never do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A pad line's mark: after the seal `keep` lines extract and `scratch`
+/// lines never do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScratchpadRecallMark {
     Keep,
     Scratch,
+}
+
+impl From<ScratchpadRecallMark> for ScratchpadMark {
+    fn from(mark: ScratchpadRecallMark) -> Self {
+        match mark {
+            ScratchpadRecallMark::Keep => Self::Keep,
+            ScratchpadRecallMark::Scratch => Self::Scratch,
+        }
+    }
+}
+
+/// `self.focus.scratchpad.append`'s input: one line for the bound actor's
+/// session pad, which the session's first line opens.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScratchpadAppendRequest {
+    /// The run's session id; one live pad per session.
+    pub session_id: String,
+    /// The line: 1 to [`crate::context_board::SCRATCHPAD_LINE_MAX_BYTES`]
+    /// bytes once folded onto one line and trimmed.
+    pub text: String,
+    /// Optional line mark.
+    #[serde(default)]
+    pub mark: Option<ScratchpadRecallMark>,
+    /// Keep the line in full on the board however old it gets.
+    #[serde(default)]
+    pub pin: bool,
+}
+
+/// `self.focus.scratchpad.seal`'s input: the session whose pad is sealed.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScratchpadSealRequest {
+    /// The run's session id.
+    pub session_id: String,
+}
+
+/// What a scratchpad write did to the session's pad.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScratchpadWriteReply {
+    /// The pad NOTE written or sealed; absent when a seal found no pad.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pad: Option<EntityId>,
+    /// Whether the pad is now sealed.
+    pub sealed: bool,
+    /// The actor's prior pad, sealed because this line opened a new one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed_prior: Option<EntityId>,
 }
 
 /// One pad line a recall matched, in full.
@@ -102,4 +155,40 @@ pub fn scratchpad_recall_reply(
     memory
         .scratchpad_recall(&input.session_id, &input.query)
         .map(ScratchpadRecallReply::from)
+}
+
+/// `self.focus.scratchpad.append`: one line on the bound actor's session
+/// pad through [`Memory::scratchpad_append`], which checks the session and
+/// the line, refuses a sealed pad, and opens the pad (sealing the actor's
+/// prior one) on the session's first line.
+pub fn scratchpad_append_reply(
+    memory: &Memory<'_>,
+    input: &ScratchpadAppendRequest,
+) -> MemoryResult<ScratchpadWriteReply> {
+    let receipt = memory.scratchpad_append(
+        &input.session_id,
+        &input.text,
+        input.mark.map(ScratchpadMark::from),
+        input.pin,
+    )?;
+    Ok(ScratchpadWriteReply {
+        pad: Some(receipt.pad),
+        sealed: false,
+        sealed_prior: receipt.sealed_prior,
+    })
+}
+
+/// `self.focus.scratchpad.seal`: seals the bound actor's session pad
+/// through [`Memory::scratchpad_seal`], which ends the run's pad; a session
+/// with no pad answers no pad, unsealed.
+pub fn scratchpad_seal_reply(
+    memory: &Memory<'_>,
+    input: &ScratchpadSealRequest,
+) -> MemoryResult<ScratchpadWriteReply> {
+    let pad = memory.scratchpad_seal(&input.session_id)?;
+    Ok(ScratchpadWriteReply {
+        pad,
+        sealed: pad.is_some(),
+        sealed_prior: None,
+    })
 }

@@ -229,11 +229,26 @@ pub(super) fn register_foreign_world_for_pact(
     pact_id: &[u8; 32],
     world: ForeignWorldId,
 ) -> Result<()> {
-    let key = federation_world_key(pact_id, world.entity_id());
     vault.with_write_txn_grouped(|wtxn| {
-        FEDERATION_WORLD.put(&vault.store, wtxn, &key, &WorldRegistrationMarker)?;
-        Ok(())
+        register_foreign_world_for_pact_in(vault, wtxn, pact_id, world)
     })
+}
+
+/// [`register_foreign_world_for_pact`] in the caller's writer, so the sync
+/// lane registers a delivered world in the transaction that materializes it
+/// rather than nesting a second writer (FIX 321). The same rule holds: only
+/// the crate's own sync/import path may call it, with the pact the
+/// authenticated grant resolves to.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn register_foreign_world_for_pact_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pact_id: &[u8; 32],
+    world: ForeignWorldId,
+) -> Result<()> {
+    let key = federation_world_key(pact_id, world.entity_id());
+    FEDERATION_WORLD.put(&vault.store, txn, &key, &WorldRegistrationMarker)?;
+    Ok(())
 }
 
 thread_local! {
@@ -401,6 +416,16 @@ fn registered_worlds(
         .into_iter()
         .map(|(key, _marker)| registered_world_from_key(&key, &prefix))
         .collect()
+}
+
+/// The foreign worlds registered as delivered by `pact_id`, in one read
+/// (FIX 321). Presence-only: no record ids or delivery epochs.
+pub fn registered_foreign_worlds_for_pact(
+    vault: &Vault,
+    pact_id: &[u8; 32],
+) -> Result<Vec<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    registered_worlds(&vault.store, &rtxn, pact_id)
 }
 
 /// Reads one world's stale stamp, if it carries one.
