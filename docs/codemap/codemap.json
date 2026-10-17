@@ -40207,7 +40207,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BornWithField",
@@ -45022,7 +45022,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 2
      }
@@ -45036,6 +45036,20 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GrantTravel"
+     ],
+     "path": "src/sync/selector/born_with.rs",
+     "purpose": "Born-with text on a copy to another vault (OF-491)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -45114,8 +45128,8 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 5
+      "crate-vis": 11,
+      "re-export": 6
      }
     },
     {
@@ -53051,7 +53065,7 @@
     "share_travel": {
      "files": 1,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
@@ -53154,7 +53168,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53345,7 +53359,7 @@
    },
    "over_bar": 170,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3237,
+   "source_files": 3238,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63995,7 +64009,7 @@
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
