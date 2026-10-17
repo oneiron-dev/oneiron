@@ -1084,9 +1084,17 @@ width is not its space's declared width.
 
 The verbs, each the owner's and checked against the vault's inference policy:
 
-- `GET /v1/ai/options?operation=image&inputs=text,image`: every row that
-  serves the call (text seats' rungs too), where it runs, what it takes, its
-  rates, and `media_units_left`.
+- `GET /v1/ai/options?operation=image&inputs=text,image`: every row the
+  caller could call now (text seats' rungs too), where it runs, what it
+  takes, its rates, `cost` (its price per million tokens as the vault's model
+  registry holds it; `null` when no registered row prices it), `units_left`
+  (what the meter its call spends has left: the raw routes' for a text row,
+  the media meter for the rest), and `media_units_left`. A caller the `ai.*`
+  doors refuse (anyone not owner-grade, a run's agent too) gets no rows. A row
+  the vault's inference policy refuses is left out, as is a rung whose
+  provider is down, whose one probation request is out, or that a limit
+  holds, until it is back. The facade's and MCP's `ai.options` list the same
+  rows.
 - `POST /v1/ai/image`, `/speech`, `/transcribe`, `/embed`:
   `{"prompt": "...", "input": [parts], "references": [parts], "params": {...},
   "model": "<row or seat id>"}`. A part is `{"kind": "text", "text": ...}` or

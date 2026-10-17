@@ -498,8 +498,9 @@ fn host_row(
     }
 }
 
-/// `ai.options` from the host's model runtime: the rows a call could use and
-/// what the media meter has left.
+/// `ai.options` from the host's model runtime: the rows the agent could call
+/// now (FIX 2942). Each `ai.*` call door is the owner's and refuses the
+/// agent, so it lists none, and no meter.
 fn ai_options(server: &SyncServer, request: AiOptionsRequest) -> MemoryResult<AiOptions> {
     let operation = request
         .operation
@@ -521,16 +522,16 @@ fn ai_options(server: &SyncServer, request: AiOptionsRequest) -> MemoryResult<Ai
             )
         })
         .collect::<MemoryResult<BTreeSet<_>>>()?;
-    let runtime = server.ai.model_runtime();
-    let options = runtime
-        .ai_options(operation, &inputs)
+    let listed = crate::api::ai::caller_options(server, false, operation, &inputs);
+    let options = listed
+        .options
         .into_iter()
         .map(serde_json::to_value)
         .collect::<Result<_, _>>()
         .map_err(|_| internal(AgentVerb::AiOptions))?;
     Ok(AiOptions {
         options,
-        media_units_left: runtime.media().units_left(),
+        media_units_left: listed.media_units_left,
     })
 }
 

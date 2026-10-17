@@ -3216,7 +3216,7 @@
     },
     {
       "name": "ai.options",
-      "description": "The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left.",
+      "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
       "input": "AiOptionsRequest",
       "output": "crate::task_verb::sdk::AiOptions",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",

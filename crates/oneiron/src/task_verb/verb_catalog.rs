@@ -3498,7 +3498,7 @@ impl AgentVerb {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
             }
             Self::AiOptions => {
-                "The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."
+                "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
             }
             Self::AiImage => {
                 "One image out of the host's image model; reference images make it an edit."
