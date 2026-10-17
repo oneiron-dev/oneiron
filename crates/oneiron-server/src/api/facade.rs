@@ -35,6 +35,7 @@ mod graph_ask_doors;
 mod guest_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
+mod widen_proposal_doors;
 mod policy_doors;
 mod reaction_doors;
 pub(super) mod role_picks;

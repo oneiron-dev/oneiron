@@ -326,6 +326,15 @@ impl OneironClient {
                 "vault.settings.learning.clear" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
+                "vault.widen_proposals" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::widen_doors::WidenProposalsView,
+                >(client, verb, &input),
+                "vault.widen_proposals.approve" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::widen_doors::WidenProposalView,
+                >(client, verb, &input),
+                "vault.widen_proposals.decline" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::widen_doors::WidenProposalView,
+                >(client, verb, &input),
                 "vault.settings.wake_policy.set" => remote_agent_verb_output::<
                     oneiron::policy_setting_doors::PolicyActionOutcome,
                 >(client, verb, &input),
@@ -1877,6 +1886,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.settings.learning.clear", value)
+    }
+    pub fn vault_widen_proposals(
+        &self,
+        input: &oneiron::agent_dispatch::widen_doors::WidenProposalsRequest,
+    ) -> Result<oneiron::agent_dispatch::widen_doors::WidenProposalsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.widen_proposals", value)
+    }
+    pub fn vault_widen_proposals_approve(
+        &self,
+        input: &oneiron::agent_dispatch::widen_doors::WidenProposalAnswer,
+    ) -> Result<oneiron::agent_dispatch::widen_doors::WidenProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.widen_proposals.approve", value)
+    }
+    pub fn vault_widen_proposals_decline(
+        &self,
+        input: &oneiron::agent_dispatch::widen_doors::WidenProposalAnswer,
+    ) -> Result<oneiron::agent_dispatch::widen_doors::WidenProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.widen_proposals.decline", value)
     }
     pub fn vault_settings_wake_policy_set(
         &self,
