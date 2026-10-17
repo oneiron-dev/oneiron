@@ -205,10 +205,7 @@ pub(crate) use rooms::{
 };
 pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
 
-pub(crate) use rooms::{
-    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
-    record_participation_in_txn, require_join_covering_in_txn,
-};
+pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
 
 pub use crate::gate::RoomThreadFill;
