@@ -2,10 +2,10 @@
 //! notes, as one batch the owner approves or declines whole (ARCH-0027,
 //! ARCH-0032).
 //!
-//! This is the host's half. It reads every `.md` file under the folder, never
-//! through a link and passing over hidden entries, takes each note's title and
-//! kind from its frontmatter, and resolves its `[[links]]` to the folder's
-//! other notes. It asks the vault where each file stands, writes the batch of
+//! This is the host's half. It reads every `.md` and `.pdf` file under the
+//! folder, never through a link and passing over hidden entries, takes each
+//! note's title and kind from its frontmatter, and resolves its `[[links]]` to
+//! the folder's other notes. It asks the vault where each file stands, writes the batch of
 //! new notes and new links to `--out`, and prints counts and the digest that
 //! `import approve` or `import decline` takes with the file. Nothing lands
 //! before that. Stdout carries counts (per kind, per frontmatter `type`),
@@ -21,14 +21,19 @@
 //! frontmatter decodes to) is left out and counted, so the rest of the batch
 //! can land. A file with another name (a hard link) is passed over: that
 //! name may be outside the folder.
+//!
+//! A PDF's note is the text of its pages, read from its bytes: no frontmatter
+//! and no links out, though a note's link can name it. Its title is its file
+//! name and its kind `--kind`. A PDF with no text layer (a scan) reads as
+//! blank; one that is encrypted or does not parse is passed over and counted.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Component, Path};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
-use oneiron::consent::AuthenticatedOwner;
+use oneiron::ingest::{MAX_PDF_BYTES, PdfTextError, pdf_text};
 use oneiron::note::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteLink, ImportedNoteStanding,
     NOTES_IMPORT_SOURCE,
@@ -75,7 +80,11 @@ enum FolderRefused {
 struct Note {
     /// Under the folder, `/`-separated.
     path: String,
+    /// The file as written; a PDF's text.
     markdown: String,
+    /// The hash of a PDF's bytes: its revision, which its text alone does
+    /// not show.
+    raw_hash: Option<String>,
     written_at: u64,
     /// The frontmatter's `title` or `name`.
     title: Option<String>,
@@ -108,6 +117,8 @@ struct NoteCounts {
     /// Notes whose frontmatter is not YAML: title from the file name, kind
     /// from `--kind`.
     unreadable_frontmatter: usize,
+    /// PDFs passed over: encrypted, or not a PDF the reader parses.
+    unreadable_pdf: usize,
 }
 
 /// Where the new notes' titles came from.
@@ -255,7 +266,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         *types
             .entry(shown_label(note.label.as_deref()).to_owned())
             .or_insert(0) += 1;
-        let title = choose_title(&vault, &owner, note, &mut taken, &mut titles)?;
+        let title = choose_title(&vault, &folder, note, &mut taken, &mut titles)?;
         files.push(ImportedNote {
             path: note.path.clone(),
             kind,
@@ -377,11 +388,35 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
             counts.hard_linked += 1;
             return Ok(());
         }
-        if metadata.len() > MAX_NOTE_BYTES {
+        let pdf = Path::new(&path)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+        if metadata.len() > if pdf { MAX_PDF_BYTES } else { MAX_NOTE_BYTES } {
             counts.too_large += 1;
             return Ok(());
         }
-        let text = super::read_limited(file, shown, MAX_NOTE_BYTES)?;
+        let (text, raw_hash) = if pdf {
+            // Bytes, never the lossy text read: a PDF is binary.
+            let Some(bytes) = read_bytes_within(file, shown, MAX_PDF_BYTES)? else {
+                counts.too_large += 1;
+                return Ok(());
+            };
+            match pdf_text(&bytes) {
+                Ok(text) if u64::try_from(text.len()).unwrap_or(u64::MAX) <= MAX_NOTE_BYTES => {
+                    (text, Some(blake3::hash(&bytes).to_hex().to_string()))
+                }
+                Ok(_) | Err(PdfTextError::TooLarge) => {
+                    counts.too_large += 1;
+                    return Ok(());
+                }
+                Err(_) => {
+                    counts.unreadable_pdf += 1;
+                    return Ok(());
+                }
+            }
+        } else {
+            (super::read_limited(file, shown, MAX_NOTE_BYTES)?, None)
+        };
         if text.trim().is_empty() {
             counts.blank += 1;
             return Ok(());
@@ -398,7 +433,11 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
             .unwrap_or_else(|_| SystemTime::now())
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
-        let (front, body) = markdown::split_frontmatter(&text);
+        let (front, body) = if pdf {
+            (None, text.as_str())
+        } else {
+            markdown::split_frontmatter(&text)
+        };
         let Front {
             title,
             label,
@@ -422,10 +461,15 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
             }
             .into());
         }
-        let links = markdown::wikilinks(body);
+        let links = if pdf {
+            Vec::new()
+        } else {
+            markdown::wikilinks(body)
+        };
         counts.found += 1;
         notes.push(Note {
             path,
+            raw_hash,
             written_at,
             title,
             label,
@@ -436,6 +480,21 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
         Ok(())
     })?;
     Ok(notes)
+}
+
+/// Reads at most `limit` bytes of `reader`, as they are; `None` when there
+/// are more.
+fn read_bytes_within(
+    reader: impl Read,
+    path: &Path,
+    limit: u64,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let mut bytes = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    Ok((u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= limit).then_some(bytes))
 }
 
 /// A frontmatter `type` as stdout shows it: a short name as it is, anything
@@ -484,12 +543,12 @@ fn relative(folder: &Path, shown: &Path) -> Option<String> {
     Some(parts.join("/"))
 }
 
-/// A title for a new note that no other note holds: the frontmatter's, else
-/// the file name, else the path. Titles that differ only in case and spacing
-/// are one title.
+/// A title for a new note that no other note of `folder`'s import holds: the
+/// frontmatter's, else the file name, else the path. Titles that differ only
+/// in case and spacing are one title.
 fn choose_title(
     vault: &oneiron::Vault,
-    owner: &AuthenticatedOwner,
+    folder: &str,
     note: &Note,
     taken: &mut HashSet<String>,
     counts: &mut TitleCounts,
@@ -514,7 +573,7 @@ fn choose_title(
             || candidate.len() > MAX_TITLE_BYTES
             || candidate.chars().any(char::is_control)
             || taken.contains(&normalized)
-            || !vault.note_title_free(owner, candidate)?
+            || !vault.imported_note_title_free(folder, candidate)?
         {
             continue;
         }
@@ -526,18 +585,18 @@ fn choose_title(
     Ok(None)
 }
 
-/// `path` without its `.md`, in any case.
+/// `path` without its `.md` or `.pdf`, in any case.
 fn without_extension(path: &str) -> &str {
-    match path.len().checked_sub(3) {
-        Some(at)
-            if path
+    for extension in [".md", ".pdf"] {
+        if let Some(at) = path.len().checked_sub(extension.len())
+            && path
                 .get(at..)
-                .is_some_and(|end| end.eq_ignore_ascii_case(".md")) =>
+                .is_some_and(|end| end.eq_ignore_ascii_case(extension))
         {
-            &path[..at]
+            return &path[..at];
         }
-        _ => path,
     }
+    path
 }
 
 /// Resolves every note's links. The batch carries the links that start at a

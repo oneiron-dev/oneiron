@@ -206,7 +206,7 @@ system clock moved back), the import is refused until the machine catches up.
 ## Keep a folder of notes attached
 
 `oneiron import notes` reads a folder once. To keep a folder of markdown
-notes (an Obsidian vault, an agent's memory folder) attached instead:
+notes and PDFs (an Obsidian vault, an agent's memory folder) attached instead:
 
 ```sh
 oneiron import folder attach ~/notes [--include 'journal/**/*.md'] [--kind observation]
@@ -227,6 +227,18 @@ and every five minutes (a local vault only). Each rescan:
 - retracts the note of a file that left the folder. The note is archived, a
   local marker that keeps its text, and comes back when the file does. Nothing
   is erased, and a note you deleted or archived yourself is left alone.
+
+A folder's notes come in as imported, never as your own writing (ARCH-0027).
+Each folder has its own import machine: it is the author of the notes the
+folder brings, and its rescans make the edits that follow the files. The notes
+stay yours to read, title and edit, and your edits are yours. Note titles are
+per author, so a folder note may share a title with a note you wrote.
+
+A PDF lands as the text of its pages, titled by its file name, up to 16 MiB of
+file and the 1 MiB a note holds. Only the text layer is read: a scanned PDF
+reads as blank, and an encrypted or unreadable one is passed over and counted
+(`unreadable_pdf`). A PDF whose bytes change while its text does not keeps its
+note as it is.
 
 Nothing is ever written to the folder: it feeds the vault, it is not the vault.
 A folder that is missing retracts nothing. A folder whose last file you

@@ -5,7 +5,10 @@
 //! fixes the batch's digest and lands it. Each file becomes a NOTE whose id
 //! derives from the folder and the file's path, so a re-import finds the
 //! notes an earlier one landed and adds nothing for them. Each resolved link
-//! becomes a `mentions` edge between the two notes. Approve is one write
+//! becomes a `mentions` edge between the two notes. A folder's notes enter
+//! as imported content, never as the owner's own writing (ARCH-0027): their
+//! author is the folder's import MACHINE, which writes them as a system actor
+//! and names the owner it imports for. Approve is one write
 //! transaction: the approve-once receipt, the batch's decision slot, every
 //! note and every link. Decline is a denial receipt and admits nothing.
 //!
@@ -26,7 +29,7 @@ use crate::entity_id::derived_domains;
 use crate::error::{Error, Result};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
-use crate::registry::ENTITY_TYPE_NOTE;
+use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_NOTE};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
@@ -35,6 +38,9 @@ use crate::{EntityId, TimeRange, Vault};
 pub const NOTES_IMPORT_SOURCE: &str = "markdown";
 
 const REVIEW: &str = "notes.import.review";
+
+/// The name a note-import MACHINE's body carries.
+const IMPORT_MACHINE_NAME: &str = "notes folder importer";
 
 /// The longest path a note keeps as its name in the folder.
 const MAX_PATH_BYTES: usize = 4096;
@@ -121,6 +127,17 @@ impl Vault {
         )
     }
 
+    /// The MACHINE that writes the notes of `folder`, one per folder: their
+    /// author, as a calendar feed's rows are its importer's. Its id derives
+    /// in the notes' own domain from the folder alone, where a note's id
+    /// derives from the folder and a path, so no note can take it.
+    ///
+    /// # Errors
+    /// Only if id derivation fails.
+    pub fn imported_note_author(folder: &str) -> Result<EntityId> {
+        EntityId::derive(derived_domains::IMPORTED_NOTE, &[folder.as_bytes()])
+    }
+
     /// Where each file of `folder` stands against the vault.
     ///
     /// # Errors
@@ -173,6 +190,23 @@ impl Vault {
                 }
             })
             .collect()
+    }
+
+    /// Whether `title` is free among the notes an import of `folder` wrote:
+    /// its notes' titles are their author's, the folder's import MACHINE.
+    /// Titles that differ only in case and spacing are one title.
+    ///
+    /// # Errors
+    /// A storage error.
+    pub fn imported_note_title_free(&self, folder: &str, title: &str) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(super::title_index::holder_in_txn(
+            &self.store,
+            &txn,
+            Self::imported_note_author(folder)?,
+            title,
+        )?
+        .is_none())
     }
 
     /// Whether `title` is free among the notes `owner` wrote. Titles that
@@ -273,8 +307,10 @@ impl Vault {
     }
 
     /// Lands `notes` (with their `kinds` and `ids`, in order) and `links` as
-    /// `owner_actor` wrote them: an approved batch, or the new files of an
-    /// attached folder (OF-554). Returns how many links landed.
+    /// the folder's import MACHINE wrote them, for `importer`: an approved
+    /// batch, or the new files of an attached folder (OF-554). Each note's
+    /// author is that MACHINE and its birth is Stated, the file's own text.
+    /// Returns how many links landed.
     ///
     /// # Errors
     /// An id that is no longer new, a link whose end is not a note, or a
@@ -283,14 +319,16 @@ impl Vault {
     pub(super) fn land_imported_notes_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner_actor: EntityId,
+        importer: EntityId,
         folder: &str,
         notes: &[ImportedNote],
         kinds: Vec<super::NoteKind>,
         ids: &[EntityId],
         links: &[ImportedNoteLink],
     ) -> Result<usize> {
-        let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
+        let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let author = self.import_machine_in_txn(txn, folder, importer, at)?;
+        let actor = WriteActor::new(author, EdgeActorClass::System);
         for id in ids {
             if self.local_hard_delete_marker_exists_in_txn(txn, id)?
                 || self.get_raw_in(txn, id)?.is_some()
@@ -323,12 +361,11 @@ impl Vault {
             .iter()
             .map(|link| Ok((end(&link.from)?, end(&link.to)?)))
             .collect::<Result<Vec<_>>>()?;
-        let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
         for ((note, kind), id) in notes.iter().zip(kinds).zip(ids) {
             let body = encode_note_body(&NoteBody {
                 kind,
-                author_ref: owner_actor,
+                author_ref: author,
                 markdown: note.markdown.clone(),
                 source_revision_ref: revision(folder, &note.path, &note.markdown),
             })?;
@@ -336,7 +373,7 @@ impl Vault {
                 self.batch_in()
                     .put_authored_note(
                         id,
-                        &owner_actor,
+                        &author,
                         TimeRange {
                             start: note.written_at,
                             end: note.written_at,
@@ -344,7 +381,7 @@ impl Vault {
                         at,
                         &body,
                     )
-                    .edge(id, EdgeKind::AuthoredBy, &owner_actor, 1.0)
+                    .edge(id, EdgeKind::AuthoredBy, &author, 1.0)
                     .made_by(
                         id,
                         RowBirth::written(actor, MadeByClass::Stated, "note.import", &[], &[], at),
@@ -358,8 +395,8 @@ impl Vault {
                         &doc,
                         &super::NoteAuthorship {
                             operation: self.new_entity_id()?,
-                            actor: owner_actor,
-                            actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
+                            actor: author,
+                            actor_class: EdgeActorClass::System.gate_actor_class().to_owned(),
                             grant: None,
                             command_hash: *blake3::hash(title.as_bytes()).as_bytes(),
                         },
@@ -378,6 +415,63 @@ impl Vault {
         content.finish()?;
         drop(content);
         Ok(edges.len())
+    }
+
+    /// The import MACHINE of `folder`, created on its first import. Its body
+    /// names the folder, the source and trust the files enter under, and the
+    /// owner it imports for, so the notes it writes stay that owner's to read.
+    fn import_machine_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        folder: &str,
+        importer: EntityId,
+        at: u64,
+    ) -> Result<EntityId> {
+        let machine = Self::imported_note_author(folder)?;
+        match self.get_entity_type_in_txn(txn, &machine)? {
+            Some(ENTITY_TYPE_MACHINE) => return Ok(machine),
+            Some(_) => {
+                return Err(Error::InvalidClaimBody(
+                    "a folder's note importer id is taken by another entity",
+                ));
+            }
+            None => {}
+        }
+        let trust = crate::ingest::INGEST_SOURCE_REGISTRY
+            .get_config(NOTES_IMPORT_SOURCE)
+            .map(|config| config.trust_ceiling.claim_source)
+            .ok_or(Error::InvalidClaimBody(
+                "the markdown import source is not registered",
+            ))?;
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &rmpv::Value::Map(
+                [
+                    ("name", IMPORT_MACHINE_NAME),
+                    ("source", NOTES_IMPORT_SOURCE),
+                    ("trust", trust.as_str()),
+                    ("folder", folder),
+                    ("importer", importer.to_hex().as_str()),
+                ]
+                .into_iter()
+                .map(|(key, value)| (rmpv::Value::from(key), rmpv::Value::from(value)))
+                .collect(),
+            ),
+        )
+        .map_err(|_| Error::InvariantViolation("note importer body did not encode"))?;
+        crate::ports::EntityStore::port_entity_put(
+            self,
+            txn,
+            &machine,
+            &crate::ports::EntityRecord {
+                entity_type: ENTITY_TYPE_MACHINE,
+                occurred: TimeRange { start: at, end: at },
+                learned_at: at,
+                body,
+            },
+        )?;
+        Ok(machine)
     }
 
     /// The owner's refusal of the whole batch: one denial receipt, nothing
@@ -400,6 +494,46 @@ impl Vault {
             Ok(receipt)
         })
     }
+}
+
+/// The owner `author` imports for, when it is a folder's note-import
+/// MACHINE: the reader its notes are written for. `None` for every other
+/// author.
+///
+/// # Errors
+/// A storage error.
+pub(crate) fn note_importer_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    author: &EntityId,
+) -> Result<Option<EntityId>> {
+    use crate::ports::EntityStoreRead;
+    let Some(record) = store.port_entity_record(txn, author)? else {
+        return Ok(None);
+    };
+    if record.entity_type != ENTITY_TYPE_MACHINE {
+        return Ok(None);
+    }
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut record.body.as_slice()) else {
+        return Ok(None);
+    };
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .and_then(|(_, value)| value.as_str())
+    };
+    if field("name") != Some(IMPORT_MACHINE_NAME) {
+        return Ok(None);
+    }
+    // Only the id the folder derives is that folder's importer.
+    let Some(folder) = field("folder") else {
+        return Ok(None);
+    };
+    if Vault::imported_note_author(folder)? != *author {
+        return Ok(None);
+    }
+    Ok(field("importer").and_then(|hex| EntityId::from_hex(hex).ok()))
 }
 
 /// Refuses `batch` when the secret scan is on and would refuse a title: the

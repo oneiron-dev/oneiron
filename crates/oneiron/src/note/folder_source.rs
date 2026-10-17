@@ -1,13 +1,15 @@
 //! A local folder that stays attached to the vault (OF-554, ARCH-0027).
 //!
-//! The owner attaches a folder of markdown notes once. Each rescan lands what
-//! changed since the last one, under that standing act:
-//! - a new file lands as the one-shot import lands it, as an owner-written
-//!   NOTE with its title and links;
+//! The owner attaches a folder of markdown notes and PDFs once. Each rescan
+//! lands what changed since the last one, under that standing act:
+//! - a new file lands as the one-shot import lands it, as an imported NOTE
+//!   with its title and links. The folder's import MACHINE writes it, for the
+//!   owner: the file's text is never taken for the owner's own writing;
 //! - a changed file supersedes the text it landed. When the note still holds
 //!   that text, the file's text replaces it through the note edit door, so its
-//!   history is kept. When the owner has edited the note since, the file's
-//!   text lands as a fork for review instead, and the owner's edits stay;
+//!   history is kept. The import MACHINE makes that edit too, so the owner's
+//!   own edits stay the owner's. When the owner has edited the note since, the
+//!   file's text lands as a fork for review instead, and the owner's edits stay;
 //! - a file gone from the folder retracts its note. The note is archived, a
 //!   local marker that keeps its body, and the rescan restores it when the
 //!   file comes back. Never an erase.
@@ -15,6 +17,8 @@
 //! Files only feed the vault. Nothing is written back to the folder: the
 //! vault is the base and files are never it (ENJ-029). A per-file ledger
 //! remembers what each file last held and what the vault took from it.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -90,6 +94,9 @@ pub struct FolderSourceFile {
     pub file_hash: String,
     /// The hash of the text the vault took from the file, when known.
     pub landed_hash: String,
+    /// The hash of the file's bytes, when its text was extracted from them
+    /// (a PDF): its revision. A change to the bytes alone moves no text.
+    pub raw_hash: Option<String>,
     pub state: FolderFileState,
 }
 
@@ -113,6 +120,9 @@ pub struct FolderRescan {
     pub present: Vec<FolderFile>,
     /// Paths in the ledger that left the folder.
     pub missing: Vec<String>,
+    /// By path, the hash of the bytes of each file whose text was extracted
+    /// from them (a PDF).
+    pub raw_hashes: HashMap<String, String>,
 }
 
 /// What one rescan did.
@@ -268,16 +278,18 @@ impl Vault {
             links,
             present,
             missing,
+            raw_hashes,
         } = rescan;
         let key = source_key(&folder);
         if self.folder_source(&folder)?.is_none() {
             return Err(super::document::invalid("the folder is not attached"));
         }
-        let owner_actor = owner.revalidate(self)?;
+        owner.revalidate(self)?;
         let mut report = FolderRescanReport::default();
-        self.land_new_files(owner, &folder, new, links, &mut report)?;
+        self.land_new_files(owner, &folder, new, links, &raw_hashes, &mut report)?;
         for file in &present {
-            self.rescan_present_file(owner_actor, &folder, file, &mut report)?;
+            let raw_hash = raw_hashes.get(&file.path).cloned();
+            self.rescan_present_file(&folder, file, raw_hash, &mut report)?;
         }
         for path in &missing {
             self.retract_missing_file(&folder, path, &mut report)?;
@@ -301,6 +313,7 @@ impl Vault {
         folder: &str,
         notes: Vec<ImportedNote>,
         links: Vec<ImportedNoteLink>,
+        raw_hashes: &HashMap<String, String>,
         report: &mut FolderRescanReport,
     ) -> Result<()> {
         if notes.is_empty() {
@@ -312,7 +325,7 @@ impl Vault {
             notes,
             links,
         };
-        match self.land_folder_batch(owner, &batch) {
+        match self.land_folder_batch(owner, &batch, raw_hashes) {
             Ok(links) => {
                 report.landed += batch.notes.len();
                 report.links += links;
@@ -330,7 +343,7 @@ impl Vault {
                 notes: vec![note.clone()],
                 links: Vec::new(),
             };
-            match self.land_folder_batch(owner, &alone) {
+            match self.land_folder_batch(owner, &alone, raw_hashes) {
                 Ok(_) => report.landed += 1,
                 Err(error) => {
                     report.fail(error);
@@ -374,6 +387,7 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         batch: &ImportedNoteBatch,
+        raw_hashes: &HashMap<String, String>,
     ) -> Result<usize> {
         validate_batch(batch)?;
         let kinds = batch
@@ -405,6 +419,7 @@ impl Vault {
                     note: *id,
                     file_hash: hash.clone(),
                     landed_hash: hash,
+                    raw_hash: raw_hashes.get(&note.path).cloned(),
                     state: FolderFileState::Landed,
                 };
                 FILES.put(&self.store, txn, &file_key(&batch.folder, &note.path), &row)?;
@@ -416,9 +431,9 @@ impl Vault {
     /// One file the folder still holds, against what its note holds.
     fn rescan_present_file(
         &self,
-        owner_actor: EntityId,
         folder: &str,
         file: &FolderFile,
+        raw_hash: Option<String>,
         report: &mut FolderRescanReport,
     ) -> Result<()> {
         let key = file_key(folder, &file.path);
@@ -430,9 +445,17 @@ impl Vault {
             let retracted = row
                 .as_ref()
                 .is_some_and(|row| row.state == FolderFileState::Retracted);
-            if !retracted && row.as_ref().is_some_and(|row| row.file_hash == hash) {
+            if !retracted && let Some(same) = row.as_ref().filter(|row| row.file_hash == hash) {
                 report.unchanged += 1;
-                return Ok(());
+                if same.raw_hash == raw_hash {
+                    return Ok(());
+                }
+                // Only the bytes moved (a PDF's metadata): the ledger takes
+                // their revision, and the note keeps its text.
+                let mut same = same.clone();
+                same.raw_hash = raw_hash;
+                drop(txn);
+                return self.with_write_txn(|txn| FILES.put(&self.store, txn, &key, &same));
             }
             let raw = self.get_raw_in(&txn, &id)?;
             if raw.is_none() {
@@ -462,8 +485,10 @@ impl Vault {
             note: id,
             file_hash: String::new(),
             landed_hash: String::new(),
+            raw_hash: None,
             state: FolderFileState::Landed,
         });
+        row.raw_hash = raw_hash;
         if current == file.markdown {
             row.file_hash = hash.clone();
             row.landed_hash = hash;
@@ -496,7 +521,8 @@ impl Vault {
                 text: file.markdown.clone(),
             }
         };
-        let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
+        // The file's revision is the import's edit, never the owner's.
+        let actor = WriteActor::new(Self::imported_note_author(folder)?, EdgeActorClass::System);
         row.state = match self.edit_note(id, &edit, actor) {
             Ok(NoteEditOutcome::Edited { .. }) => {
                 report.superseded += 1;
