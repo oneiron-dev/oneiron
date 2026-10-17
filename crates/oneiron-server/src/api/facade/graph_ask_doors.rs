@@ -13,16 +13,16 @@
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
-    QuestionRecord, answer_records, artifact_ask_records, create_question, edit_question,
-    pause_question, question_call_budget, read_question, run_graph_ask_receipted,
-    select_graph_units_by_type,
+    QuestionRecord, ScheduledBackfill, answer_records, artifact_ask_records, create_question,
+    edit_question, pause_question, question_call_budget, read_question, run_graph_ask_receipted,
+    schedule_backfill, select_graph_units_by_type,
 };
 use oneiron::llm::decision::{DecisionDial, DecisionRung};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
     GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionAnswersRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest,
+    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest,
+    QuestionPaused, QuestionReadRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -60,8 +60,9 @@ pub(crate) async fn vault_graph_ask(
         let ceiling = input.ceiling.unwrap_or(DecisionRung::Big);
         let budget = question_call_budget(server.vault(), input.unit_deadline_ms)?;
         let dial = server.decision_host().dial(ceiling);
-        let mut answerer =
-            LadderGraphAnswerer::new(&server, asker, dial, budget)?.with_posture(input.posture);
+        let mut answerer = LadderGraphAnswerer::new(&server, asker, dial, budget)?
+            .with_posture(input.posture)
+            .with_criteria(input.criteria.unwrap_or_default());
         match run_graph_ask_receipted(
             &lane,
             asker,
@@ -147,6 +148,32 @@ pub(crate) async fn vault_questions_pause(
             id: input.id,
             paused: input.paused,
         })
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.backfill`: schedules the caller's standing question's
+/// backfill over `expected_version`, due at `at` or now. The pump runs it
+/// as it runs the question's scheduled refresh: once, over each covered
+/// unit that version has not answered.
+pub(crate) async fn vault_questions_backfill(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionBackfillRequest,
+) -> MemoryResult<ScheduledBackfill> {
+    const VERB: &str = "vault.questions.backfill";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<ScheduledBackfill> {
+        let now = oneiron_vault_contract::now_ts();
+        Ok(schedule_backfill(
+            server.vault(),
+            principal,
+            input.id,
+            input.expected_version,
+            input.at.unwrap_or(now),
+        )?)
     })
     .await
     .map_err(|_| internal(VERB))?

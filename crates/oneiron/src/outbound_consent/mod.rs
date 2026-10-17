@@ -8,6 +8,9 @@
 
 mod authority;
 mod connector_call;
+mod connector_call_asks;
+mod connector_call_pending;
+mod connector_call_resume;
 mod execution;
 mod recovery;
 mod result_scrub;
@@ -25,7 +28,7 @@ pub use self::authority::{
 pub(crate) use self::connector_call::held_connector_call_in_txn;
 pub use self::connector_call::{
     CONNECTOR_REPLY_MAX_BYTES, ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome,
-    ConnectorCallRequest, UntrustedToolResult,
+    ConnectorCallRequest, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
 };
 pub use self::execution::ScopedMcpDispatchResult;
 // Test-only execution entry point: the durable lane is driven by recovery in

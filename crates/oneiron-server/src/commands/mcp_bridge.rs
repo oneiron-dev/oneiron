@@ -4,23 +4,29 @@
 //!
 //! Such a client sends no per-request header, and a slip authenticates
 //! nothing without a fresh holder proof. This process is the holder. It reads
-//! one JSON-RPC message per stdin line, POSTs it to the endpoint the operator
+//! one JSON-RPC message per stdin line, sends it to the endpoint the operator
 //! named with the slip and a holder proof signed for that one request, and
-//! writes the server's answer as one stdout line. Transport and signer are
-//! `oneiron api`'s: the host's curl, both headers on curl's config stdin and
-//! never in argv. The credential comes from an owner-only file or the
-//! environment, and nothing here prints it or lets curl inherit it. Every
-//! request ends within its deadline and every message and answer has a size
-//! limit, so a stalled or oversized exchange costs the agent one typed error
-//! for that request, not the session.
+//! writes the server's answer as one stdout line. It holds one connection to
+//! the server for its life ([`link`]): the server's app-tier socket, or one
+//! pooled HTTP client when the server offers no MCP carrier there or
+//! `--transport http` asks for it; never a process per request. The signer is
+//! `oneiron api`'s. The credential comes from an owner-only file or the
+//! environment, and nothing here prints it. Every request ends within its
+//! deadline and every message and answer has a size limit, so a stalled or
+//! oversized exchange costs the agent one typed error for that request, not
+//! the session.
 //!
 //! Every line goes to the server as the client wrote it, but for one
 //! addition: a `tools/call` whose `_meta` names no `oneiron/invocation` gains
 //! a fresh one there (ARCH-0080 §3), every other `_meta` key as the client
-//! sent it; a call that names one goes on byte for byte. Who is calling is
-//! the credential's to say, not the agent's: a tool call that names no actor
-//! runs as the credential's own, and one that names another is refused
-//! (ARCH-0028 #surface).
+//! sent it; a call that names one goes on byte for byte. The bridge keeps a
+//! memory of tool calls the server answered pending on an ask: a later call
+//! naming no invocation that is the same call (same tool, same arguments)
+//! goes under the pending call's invocation, so it reaches that ask instead
+//! of opening a second one (OF-580). Who is calling is the credential's to
+//! say, not the agent's: a tool call that names no actor runs as the
+//! credential's own, and one that names another is refused (ARCH-0028
+//! #surface).
 //!
 //! Unless the operator names `--surface`, the bridge asks the server once,
 //! before the first request, which endpoint to use: `/mcp` (`setup_oneiron`
@@ -29,6 +35,7 @@
 //! `execute_code` admits, and `/mcp/tool-first` otherwise. The listing alone
 //! cannot say it: `/mcp` lists `execute_code` to every credential alike.
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -39,6 +46,8 @@ use serde_json::{Value, json};
 
 use super::api;
 use crate::cli::{McpArgs, McpSurface};
+
+mod link;
 
 /// The one-string form a paired client stores: `v2.cred.{slip}.{seed}`, as
 /// `token agent` and `token read` print it and the SDK's `pair` returns it.
@@ -77,10 +86,11 @@ pub(crate) fn mint_invocation() -> String {
 }
 
 /// The body for a `tools/call` whose `_meta` names no invocation: the same
-/// message with a fresh one added there. `None` sends the client's line as it
-/// wrote it: any other message, a call that names its own, and a malformed
-/// one, which is the server's to refuse.
-fn with_invocation(message: &mut Value) -> Option<Vec<u8>> {
+/// message with `invocation()` added there (a pending call's id, or a fresh
+/// one). `None` sends the client's line as it wrote it: any other message, a
+/// call that names its own, and a malformed one, which is the server's to
+/// refuse.
+fn with_invocation(message: &mut Value, invocation: impl FnOnce() -> String) -> Option<Vec<u8>> {
     if message.get("method").and_then(Value::as_str) != Some("tools/call") {
         return None;
     }
@@ -93,8 +103,71 @@ fn with_invocation(message: &mut Value) -> Option<Vec<u8>> {
     if meta.contains_key(INVOCATION_META) {
         return None;
     }
-    meta.insert(INVOCATION_META.to_owned(), Value::String(mint_invocation()));
+    meta.insert(INVOCATION_META.to_owned(), Value::String(invocation()));
     serde_json::to_vec(message).ok()
+}
+
+/// What the bridge's pending-call memory keys one tool call by.
+type CallKey = [u8; 32];
+
+/// The bridge's pending-call matching rule (OF-580, canon silent; this fn is
+/// the one place a ruling changes it): a `tools/call` is the same call as an
+/// earlier one when it names the same tool with the same `params.arguments`,
+/// every object's keys sorted at every depth. The JSON-RPC id and every
+/// `params._meta` key are not part of it. `None` for any other message.
+fn pending_call_key(message: &Value) -> Option<CallKey> {
+    if message.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    let params = message.get("params")?;
+    let tool = params.get("name").filter(|name| name.is_string())?;
+    let mut hasher = blake3::Hasher::new();
+    hash_sorted(tool, &mut hasher);
+    hash_sorted(params.get("arguments").unwrap_or(&Value::Null), &mut hasher);
+    Some(*hasher.finalize().as_bytes())
+}
+
+/// Feeds `value` to `hasher` as JSON with every object's keys sorted, at
+/// every depth (the workspace's `serde_json` keeps insertion order).
+fn hash_sorted(value: &Value, hasher: &mut blake3::Hasher) {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_unstable();
+            hasher.update(b"{");
+            for key in keys {
+                hasher.update(&serde_json::to_vec(key).unwrap_or_default());
+                hasher.update(b":");
+                hash_sorted(&map[key], hasher);
+                hasher.update(b",");
+            }
+            hasher.update(b"}");
+        }
+        Value::Array(items) => {
+            hasher.update(b"[");
+            for item in items {
+                hash_sorted(item, hasher);
+                hasher.update(b",");
+            }
+            hasher.update(b"]");
+        }
+        scalar => {
+            hasher.update(&serde_json::to_vec(scalar).unwrap_or_default());
+        }
+    }
+}
+
+/// The invocation a server answer names as pending on an ask: a tool-first
+/// hook stop's `result.structuredContent.hook`, or a gateway refusal's
+/// `error.data.hook`, with `status` `pending`. `None` for any other answer.
+fn pending_answer_invocation(answer: &Value) -> Option<&str> {
+    ["/result/structuredContent/hook", "/error/data/hook"]
+        .into_iter()
+        .filter_map(|path| answer.pointer(path))
+        .find(|hook| hook.get("status").and_then(Value::as_str) == Some("pending"))
+        .and_then(|hook| hook.get("invocation"))
+        .and_then(Value::as_str)
+        .filter(|id| oneiron::runtime_hooks::InvocationId::parse_hex(id).is_some())
 }
 
 /// Poll cadence and request bound for this small handoff, independent of
@@ -297,8 +370,8 @@ fn leading_id(head: &[u8]) -> Value {
 }
 
 struct Bridge {
-    /// The server's origin, normalized.
-    base: String,
+    /// The one connection to the server.
+    link: link::Link,
     /// The endpoint every request goes to: the operator's `--surface`, or the
     /// one a probe picked. Unset until then.
     pick: Mutex<Pick>,
@@ -309,9 +382,13 @@ struct Bridge {
     /// How long one request may take, and how long its answer may stall.
     deadline: Duration,
     idle: Duration,
-    /// The two variables the operator named for the credential, which curl
-    /// does not inherit (nor any default credential variable).
+    /// The two variables the operator named for the credential, which no
+    /// wake adapter the bridge runs inherits.
     named_env: Vec<String>,
+    /// Tool calls the server answered pending on an ask, by
+    /// [`pending_call_key`], to the invocation the ask is on. Locked only
+    /// around a lookup or an update, never across a request.
+    pending_calls: Mutex<HashMap<CallKey, String>>,
 }
 
 impl Bridge {
@@ -331,26 +408,24 @@ impl Bridge {
         // Sign once now, so a slip and seed that do not belong together fail
         // at spawn, on the stderr the operator reads, and not on every call.
         api::signed_binding_for_seed(&token, &seed)?;
-        let endpoint = args
-            .surface
-            .map(|surface| format!("{base}{}", surface.path()));
         Ok(Self {
+            link: link::Link::new(&base, args.transport)?,
             pick: Mutex::new(Pick {
-                chosen: endpoint,
+                chosen: args.surface,
                 probing: false,
                 failures: 0,
                 last_failure: None,
             }),
             probed: Condvar::new(),
-            base,
             token,
             seed,
             deadline: Duration::from_secs(args.request_timeout_secs),
             idle: Duration::from_secs(args.idle_timeout_secs),
-            // The slip and seed stay in this process: curl gets the slip and
-            // a signed proof on its config stdin, and no variable either may
-            // be in.
+            // The slip and seed stay in this process: the server gets the
+            // slip and a proof signed for each request, and no variable
+            // either may be in reaches a process the bridge starts.
             named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
+            pending_calls: Mutex::new(HashMap::new()),
         })
     }
 
@@ -382,13 +457,66 @@ impl Bridge {
         }
         // One deadline for the whole request, the endpoint probe included.
         let until = Instant::now() + self.deadline;
-        let body = with_invocation(&mut message).unwrap_or_else(|| line.as_bytes().to_vec());
+        let key = pending_call_key(&message);
+        // A call naming its own invocation keeps it; one naming none goes
+        // under a pending same call's, else a fresh one.
+        let body = with_invocation(&mut message, || {
+            key.as_ref()
+                .and_then(|key| self.pending_call(key))
+                .unwrap_or_else(mint_invocation)
+        })
+        .unwrap_or_else(|| line.as_bytes().to_vec());
+        let sent = message
+            .pointer("/params/_meta")
+            .and_then(|meta| meta.get(INVOCATION_META))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let reply = self.post(body, until);
         let id = message.get("id").cloned()?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
-            Ok(answer) => answer.to_string(),
+            Ok(answer) => {
+                if let Some(key) = key {
+                    self.note_answer(key, sent.as_deref(), &answer);
+                }
+                answer.to_string()
+            }
+            // No answer from the server is no proof the call finished, so
+            // the memory keeps what it holds.
             Err(refusal) => refusal.rpc_error(&id),
         })
+    }
+
+    /// The invocation a pending same call ran under, if one is held.
+    fn pending_call(&self, key: &CallKey) -> Option<String> {
+        self.pending_calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+            .cloned()
+    }
+
+    /// Updates the pending-call memory from the server's answer to a tool
+    /// call sent under `sent`: a pending answer holds its invocation for the
+    /// call; any other answer drops the entry if it still holds `sent`, as
+    /// a later answer may have replaced it meanwhile.
+    fn note_answer(&self, key: CallKey, sent: Option<&str>, answer: &Value) {
+        let pending = pending_answer_invocation(answer);
+        let mut calls = self
+            .pending_calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match pending {
+            Some(invocation) => {
+                calls.insert(key, invocation.to_owned());
+            }
+            None => {
+                if let Some(sent) = sent
+                    && calls.get(&key).is_some_and(|held| held == sent)
+                {
+                    calls.remove(&key);
+                }
+            }
+        }
     }
 
     /// The endpoint this bridge forwards to. With no `--surface`, a request
@@ -397,13 +525,12 @@ impl Bridge {
     /// meanwhile wait for that one probe, each no longer than its own
     /// deadline. A probe that gets no result picks nothing: the calls that
     /// waited on it share its answer, and the next request asks again.
-    fn endpoint(&self, until: Instant) -> Result<String, Refusal> {
-        let primary = format!("{}{}", self.base, McpSurface::Primary.path());
+    fn endpoint(&self, until: Instant) -> Result<McpSurface, Refusal> {
         let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
         let joined = pick.failures;
         loop {
-            if let Some(chosen) = pick.chosen.as_ref() {
-                return Ok(chosen.clone());
+            if let Some(chosen) = pick.chosen {
+                return Ok(chosen);
             }
             if pick.failures != joined
                 && let Some(failure) = pick.last_failure.clone()
@@ -415,7 +542,7 @@ impl Bridge {
             }
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Err(self.refusal_for(&primary, api::CaptureCut::Deadline));
+                return Err(self.refusal_for(McpSurface::Primary, link::Cut::Deadline));
             }
             pick = self
                 .probed
@@ -426,14 +553,13 @@ impl Bridge {
         // No lock is held while the probe runs.
         pick.probing = true;
         drop(pick);
-        let probed = self.probe(&primary, until);
+        let probed = self.probe(until);
         let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
         pick.probing = false;
         let outcome = match probed {
             Ok(surface) => {
-                let chosen = format!("{}{}", self.base, surface.path());
-                pick.chosen = Some(chosen.clone());
-                Ok(chosen)
+                pick.chosen = Some(surface);
+                Ok(surface)
             }
             Err(failure) => {
                 pick.failures += 1;
@@ -447,9 +573,13 @@ impl Bridge {
 
     /// `/mcp` when its `initialize` says this credential may run code there;
     /// `/mcp/tool-first` otherwise, as for a server too old to say.
-    fn probe(&self, primary: &str, until: Instant) -> Result<McpSurface, Refusal> {
+    fn probe(&self, until: Instant) -> Result<McpSurface, Refusal> {
         let answer = self
-            .post_to(primary, SURFACE_PROBE.as_bytes().to_vec(), until)?
+            .post_to(
+                McpSurface::Primary,
+                SURFACE_PROBE.as_bytes().to_vec(),
+                until,
+            )?
             .answer_to(&json!(SURFACE_PROBE_ID))?;
         let Some(result) = answer.get("result").and_then(Value::as_object) else {
             return Err(Refusal::Refused(answer));
@@ -487,64 +617,64 @@ impl Bridge {
     }
 
     fn post(&self, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
-        let endpoint = self.endpoint(until)?;
-        self.post_to(&endpoint, body, until)
+        let surface = self.endpoint(until)?;
+        self.post_to(surface, body, until)
     }
 
-    /// One POST to `endpoint`, signed for this request alone, that ends by
-    /// `until` whatever the server does.
-    fn post_to(&self, endpoint: &str, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
-        let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(self.refusal_for(endpoint, api::CaptureCut::Deadline));
+    /// One request to `surface` over the bridge's connection, signed for this
+    /// request alone, that ends by `until` whatever the server does.
+    fn post_to(
+        &self,
+        surface: McpSurface,
+        body: Vec<u8>,
+        until: Instant,
+    ) -> Result<Reply, Refusal> {
+        if until.saturating_duration_since(Instant::now()).is_zero() {
+            return Err(self.refusal_for(surface, link::Cut::Deadline));
         }
-        let binding = api::signed_binding_for_seed(&self.token, &self.seed)
-            .map_err(|error| Refusal::Unreachable(error.to_string()))?;
-        let bounds = api::CaptureBounds {
-            deadline: left,
+        let sign = || {
+            api::signed_binding_for_seed(&self.token, &self.seed).map_err(|error| error.to_string())
+        };
+        let credential = link::Credential {
+            bearer: &self.token,
+            sign: &sign,
+        };
+        let bounds = link::Bounds {
+            until,
             idle: self.idle,
             max_reply_bytes: MAX_REPLY_BYTES,
         };
-        let credential = api::CurlCredential {
-            secret: Some(&self.token),
-            binding: Some(&binding),
-            env: &self.named_env,
-        };
-        let (output, status) = api::post_json_captured(endpoint, credential, body, &bounds)
-            .map_err(|cut| self.refusal_for(endpoint, cut))?;
-        match output.status.code() {
-            // `--fail-with-body`: an HTTP error status, with the server's body.
-            Some(0 | api::CURL_HTTP_ERROR_EXIT) => Ok(Reply {
-                status,
-                body: output.stdout,
-            }),
-            _ => Err(Refusal::Unreachable(format!(
-                "could not reach {endpoint}: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))),
-        }
+        let exchange = self
+            .link
+            .exchange(surface, &credential, body, &bounds)
+            .map_err(|cut| self.refusal_for(surface, cut))?;
+        Ok(Reply {
+            status: exchange.status,
+            body: exchange.body,
+        })
     }
 
     /// The request's error when its exchange was cut short.
-    fn refusal_for(&self, endpoint: &str, cut: api::CaptureCut) -> Refusal {
+    fn refusal_for(&self, surface: McpSurface, cut: link::Cut) -> Refusal {
+        let endpoint = self.link.endpoint(surface);
         match cut {
-            api::CaptureCut::Curl(error) => Refusal::Unreachable(error.to_string()),
-            api::CaptureCut::Deadline => Refusal::Unreachable(format!(
+            link::Cut::Failed(error) => Refusal::Unreachable(error),
+            link::Cut::Deadline => Refusal::Unreachable(format!(
                 "{endpoint} gave no whole answer within {}s (--request-timeout-secs)",
                 self.deadline.as_secs()
             )),
-            api::CaptureCut::Idle => Refusal::Unreachable(format!(
+            link::Cut::Idle => Refusal::Unreachable(format!(
                 "{endpoint}'s answer stalled for {}s (--idle-timeout-secs)",
                 self.idle.as_secs()
             )),
-            api::CaptureCut::TooLarge => Refusal::TooLarge,
+            link::Cut::TooLarge => Refusal::TooLarge,
         }
     }
 }
 
-/// What the server sent back for one POST.
+/// What the server sent back for one request.
 struct Reply {
-    /// The HTTP status, when curl saw one.
+    /// The HTTP status, when there was one.
     status: Option<u16>,
     body: Vec<u8>,
 }
@@ -588,7 +718,7 @@ impl Reply {
 
 /// The endpoint the bridge picked, and how its probes stand.
 struct Pick {
-    chosen: Option<String>,
+    chosen: Option<McpSurface>,
     /// A probe is running.
     probing: bool,
     /// How many probes ended with no pick, and the last one's failure.

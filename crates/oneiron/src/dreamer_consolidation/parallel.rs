@@ -257,12 +257,20 @@ impl ConsolidationExecutor<'_> {
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
         }
-        let candidates = Self::build_candidates(
+        let (candidates, waiting) = Self::build_candidates(
             parsed, &corrects, skipped, &partition, resources, attempt_id, ctx.now_ms,
         );
         // Assembly verifies and collapses evidence across ALL child slots
         // before counting corroboration or routing coupled conflicts.
-        self.resolve_conflicts(candidates, resources, ctx, (attempt_id, run_id), charges)
-            .await
+        let run = self
+            .resolve_conflicts(candidates, resources, ctx, (attempt_id, run_id), charges)
+            .await?;
+        // A candidate whose correction waits on a role's answer is read again
+        // when the attempt comes back; what the pass took is kept.
+        Ok(if waiting {
+            run.waiting_on_ask(ctx.now_ms)
+        } else {
+            run
+        })
     }
 }

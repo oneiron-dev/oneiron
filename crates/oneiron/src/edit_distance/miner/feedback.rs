@@ -70,6 +70,9 @@ pub(crate) fn record_inbox_learning_in_txn(
     principal: EntityId,
     target: &CompilationTarget,
 ) -> Result<()> {
+    // The owner's verdict on a team's bound deliverable settles that team,
+    // whoever stamped the claim.
+    crate::team::settle_team_owner_verdict_in_txn(vault, txn, record, reviewed)?;
     let Some(actor) = crate::claim::session_claim_producer(reviewed) else {
         // An unstamped generator earns no attribution.
         return Ok(());
