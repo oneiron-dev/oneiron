@@ -1,4 +1,4 @@
-//! The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional retrieval with its MEMORIES projection, the per-session cursor (ARCH-0067 §2), and the one rendered board frame: WORLDS, MEMORIES, TASKS, AGENTS, SKILLS and ROOM (§1), plus an agent run's SCRATCHPAD.
+//! The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional retrieval with its MEMORIES projection, the per-session cursor (ARCH-0067 §2), and the one rendered board frame: WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX (§1), plus an agent run's SCRATCHPAD and an agent's READERS.
 //!
 //! The board renders on every call; without retrieval it carries no MEMORIES section.
 
@@ -120,8 +120,8 @@ pub(crate) struct ContextBoardResponse {
     #[schema(value_type = Option<ContextBoardMemories>)]
     memories: Option<oneiron::MemoriesSection>,
     /// The one rendered board frame (one-way renderer): WORLDS, MEMORIES,
-    /// TASKS, AGENTS, SKILLS and ROOM in canon order, then an agent run's
-    /// SCRATCHPAD, under the board budget. Foreign worlds render as
+    /// TASKS, SKILLS, ROOM and INBOX in canon order, then an agent run's
+    /// SCRATCHPAD and an agent's READERS, under the board budget. Foreign worlds render as
     /// guest-attributed evidence, never first-party memory.
     board: String,
     /// How the board's budget settled and what it shed.
@@ -360,11 +360,12 @@ pub(crate) async fn context_board_hydrate(
                 run_context_pack(&server, &auth, retrieval, Some(memories)).await?;
             (Some(pack), memories, cursor)
         }
-        // OF-579: a board that runs no retrieval still carries its hook
-        // blocks' rows, read under the clamp a pack reads its pins under.
+        // OF-579: a board that runs no retrieval still carries its pins
+        // (explicit, the manifest's and its hook blocks' rows), read under
+        // the clamp a pack reads its pins under.
         None => (
             None,
-            hook_pins_section(
+            board_pins_section(
                 &server,
                 &auth,
                 req.memories.as_ref(),
@@ -470,7 +471,12 @@ pub(crate) async fn context_board_hydrate(
         served.rows
     });
     // An agent's reader list joins it as its READERS section.
-    let readers = served_readers(&server, &auth).map(|(section, rows)| {
+    let readers = served_readers(
+        &server,
+        &auth,
+        &oneiron::context_board::PeopleView::new(&people, &resident),
+    )
+    .map(|(section, rows)| {
         parts.sections.push(section);
         rows
     });

@@ -44,7 +44,9 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// (fail-closed) — without this gate any network peer could pull the full
 /// root snapshot and window exports. When no secret is configured, upgrades
 /// are rejected unless the explicit insecure dev escape hatch is enabled,
-/// matching `auth::require_owner_auth` on the HTTP side.
+/// matching `auth::require_owner_auth` on the HTTP side. An upgrade naming
+/// the MCP subprotocol is the one exception: it opens the MCP carrier
+/// ([`super::mcp_socket`]), which serves none of that state.
 ///
 /// The credential's revocable identity is carried into the connection rather
 /// than discarded with the rest of the `CoreAuth`: the handshake proves the
@@ -54,8 +56,14 @@ async fn ws_upgrade_handler(
     headers: HeaderMap,
     crate::auth::Locality(locality): crate::auth::Locality,
     machine: Option<axum::Extension<oneiron::authority::PeerMachine>>,
+    extensions: axum::http::Extensions,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    // The MCP carrier serves no sync state, so it admits any holder-bound
+    // slip rather than only an owner-grade one.
+    if super::mcp_socket::requested(&ws) {
+        return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
+    }
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let session_jti = auth.jti().map(str::to_owned);
