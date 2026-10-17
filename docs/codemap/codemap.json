@@ -41876,7 +41876,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 16,
       "struct": 1
      }
@@ -42308,6 +42308,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/home_proof.rs",
+     "purpose": "OF-534 G6/G7: the home names itself to the device that dials it",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/ingest/birth_watch.rs",
      "purpose": "The rows a federated import watches for their births",
      "surface": {
@@ -42481,7 +42493,7 @@
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 8,
-      "mod": 21,
+      "mod": 22,
       "re-export": 16
      }
     },
@@ -50354,7 +50366,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 152,
+     "files": 153,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50538,7 +50550,7 @@
    },
    "over_bar": 132,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3051,
+   "source_files": 3052,
    "test_files": 903
   },
   "oneiron-android": {
