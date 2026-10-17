@@ -345,6 +345,27 @@ and anything else the door finds but cannot place still refuse the whole write.
 way. Each change is receipted with its revision, the owner who made it and the previous
 setting. Only a live owner of the vault can switch it.
 
+## Reveal a secret by its handle
+
+An agent never reads a secret as its value, only as its handle. When it needs the value for its
+model it calls `reveal({handle, why})`. If a standing grant covers this agent's connection, this
+class of secret and this project, the value is delivered with a quiet receipt. Otherwise you are
+asked once: approve once, approve and stop asking (a standing grant on exactly that connection,
+class and project), or deny. A doored or cross-vault credential is never revealed to a model.
+
+```sh
+oneiron api raw GET '/v1/owner/secrets/reveals?pending=true'    # asks, each with its card and expected_digest
+oneiron api raw POST /v1/owner/secrets/reveals/answer \
+  --data '{"reveal": "<32 hex>", "expected_digest": "<64 hex>", "outcome": "once"}'
+oneiron secrets reveal --handle sc12 --reason "rotate the deploy token"   # value to stdout, receipt to stderr
+```
+
+`POST /v1/owner/secrets/reveal` with `{"handle"}` or `{"name"}` and `"reason"` returns the value as
+`value_base64`, in that reply only. Each reveal's receipt names the handle, the class, the why or
+reason, the connection and who answered, never the value. An agent's granted reveal is a 15-minute
+lease to its model connection, and an unanswered ask lapses after an hour. A standing grant is
+revoked in the consent registry like any other.
+
 ## Hand a served repository's origin to another host
 
 A repository this vault serves at `/git/<repo>` has no origin authority until you set one. With

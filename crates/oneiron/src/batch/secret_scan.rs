@@ -10,6 +10,7 @@ pub(crate) use self::mask::admit::{
     scan_document_in_txn,
 };
 pub(super) use self::mask::mask_batch_ops;
+pub(crate) use self::mask::mask_origin_in_txn;
 pub(crate) use self::mask::side_row::{
     SidePart, admit_side_parts, admit_side_row, admit_typed, admitted_from, from_named_tree,
     named_tree,

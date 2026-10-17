@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 285 code-mode rows (267 host rows, 18 run rows), 885 declarations.
-// Replies: 230 fully typed, 43 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 288 code-mode rows (270 host rows, 18 run rows), 894 declarations.
+// Replies: 233 fully typed, 43 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 60; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -419,6 +419,15 @@ declare namespace Sdk {
   type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
+  type RevealRequest = { handle: string; why: string };
+  type RevealPending = { reveal: string };
+  type RevealWaitRequest = { reveal: string };
+  type RevealDecision = "pending" | "granted" | "denied" | "expired";
+  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null };
+  type RevealWaitAnswer = { decision: RevealDecision; value?: string | null; value_base64?: string | null; receipt?: RevealReceipt | null };
+  type RevealDescribeRequest = { handle: string };
+  type RevealProvenance = { record: string; place: string; kind: string; masked_at: number };
+  type RevealHandleCard = { handle: string; label: string; class: string; status: string; band: string; provenance?: RevealProvenance | null; reveal: string; grant_ref?: string | null; refusal?: string | null };
   type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
   type TravelChoice = { born_with?: BornWithField[] };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
@@ -939,6 +948,13 @@ declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.Reply<Sdk.Tas
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.Reply<Sdk.TaskAskPersonEvidence[]>>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
 declare function report(input: Sdk.ReportRequest): Promise<Sdk.Reply<Sdk.ReportReceipt>>;
+/** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.Reply<Sdk.RevealPending>>) & {
+  /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+  describe(input: Sdk.RevealDescribeRequest): Promise<Sdk.Reply<Sdk.RevealHandleCard>>;
+  /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
+  wait(input: Sdk.RevealWaitRequest): Promise<Sdk.Reply<Sdk.RevealWaitAnswer>>;
+};
 declare namespace self {
   const agents: {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.Reply<Sdk.AgentSpawnOutput>>;

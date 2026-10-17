@@ -112,6 +112,9 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.list`
 - `vault.lenses.default`
 - `vault.disclosure.offer`
+- `reveal`
+- `reveal.wait`
+- `reveal.describe`
 - `vault.shares.create`
 - `vault.shares.revoke`
 - `vault.shares.view`

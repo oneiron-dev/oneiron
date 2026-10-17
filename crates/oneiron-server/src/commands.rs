@@ -115,7 +115,7 @@ pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
     restore, runs, secret_scan, secrets, vault_key, whoami,
 };
-pub use owner::{guests, revoke_secret};
+pub use owner::{guests, reveal_secret, revoke_secret};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
 mod seat;

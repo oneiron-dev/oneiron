@@ -80,7 +80,8 @@ impl HostSelfDispatcher<'_> {
         // stop goes back to the dispatcher as `Error::VerbHook`.
         let invocation = self.verb_invocation(&SelfCall::AgentVerb(call.clone()), site)?;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
-            return Ok(answered(door.call(&call, &origin, invocation)?));
+            let answer = door.call(&call, &origin, invocation)?;
+            return Ok(answered(self.keep_no_secret_value(call.verb, answer)));
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
@@ -176,6 +177,27 @@ impl HostSelfDispatcher<'_> {
         self.storage
             .put_code_run_replay_record_if_generation_with_heal(&receipt, Some(generation), None)?;
         Ok(outcome)
+    }
+
+    /// A `reveal.wait` answer carries a secret's value (OF-560): the guest
+    /// reads it through this call's view, and the run's record keeps the
+    /// answer without it, so a step row holds the handle, never the value.
+    fn keep_no_secret_value(
+        &self,
+        verb: AgentVerb,
+        answer: std::result::Result<AgentVerbAnswer, AgentVerbRefusal>,
+    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
+        match answer {
+            Ok(mut answer) if verb == AgentVerb::RevealWait => {
+                let kept = crate::task_verb::sdk::kept_reveal_answer(&answer.output);
+                if kept != answer.output {
+                    let output = std::mem::replace(&mut answer.output, kept);
+                    *self.hook_view.borrow_mut() = Some(serde_json::json!({ "output": output }));
+                }
+                Ok(answer)
+            }
+            other => other,
+        }
     }
 
     /// A step past a write that did not meet its receipt can no longer close,

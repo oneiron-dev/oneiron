@@ -722,7 +722,21 @@ impl Vault {
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(row) = GRANTS.get(&self.store, &wtxn, &grant_ref.to_owned())? else {
+        let receipt = self.record_standing_grant_use_in_txn(&mut wtxn, grant_ref, effect_digest)?;
+        wtxn.commit()?;
+        Ok(receipt)
+    }
+
+    /// [`Self::record_standing_grant_use`] inside the caller's write
+    /// transaction, for a door that runs the reuse in that same transaction:
+    /// a secret reveal (OF-560) delivers its value beside its receipt.
+    pub(crate) fn record_standing_grant_use_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        grant_ref: &str,
+        effect_digest: EffectDigest,
+    ) -> Result<ConsentReceipt> {
+        let Some(row) = GRANTS.get(&self.store, &*wtxn, &grant_ref.to_owned())? else {
             return Err(Error::Gate(GateError::ConsentGrantNotFound));
         };
         if !row.is_active() {
@@ -733,8 +747,7 @@ impl Vault {
             grant_ref: grant_ref.to_owned(),
             effect_digest,
         };
-        self.append_consent_gate_decision_in_txn(&mut wtxn, &row.owner_stamp, &receipt, None)?;
-        wtxn.commit()?;
+        self.append_consent_gate_decision_in_txn(wtxn, &row.owner_stamp, &receipt, None)?;
         Ok(receipt)
     }
 
