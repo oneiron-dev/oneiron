@@ -3,10 +3,10 @@ use super::scan::ScanCursorTag;
 use super::{CleanupCandidate, CleanupKind};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
 use crate::error::{Error, MaintenanceError, Result};
+use crate::ports::JobQueueRead;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
-use std::ops::Bound;
 
 const ARCHIVE: SideTable<[u8; 16], [u8; 32], Raw> =
     SideTable::new(&side_table::VAULT_CLEANUP_ATTEMPT_ARCHIVE);
@@ -99,29 +99,23 @@ pub(super) fn scan(
     candidates: &mut Vec<CleanupCandidate>,
 ) -> Result<(ScanCursorTag, Option<EntityId>)> {
     let after = super::scan::SCAN_CURSOR.get(&vault.store, txn, &ScanCursorTag::Attempt)?;
-    let after_bytes = after.map(|id| *id.as_bytes());
-    let lower = after_bytes
-        .as_ref()
-        .map_or(Bound::Unbounded, |bytes| Bound::Excluded(bytes.as_slice()));
+    let after = after
+        .map(|id| AttemptId::from_bytes(id.as_bytes()))
+        .transpose()?;
     // Owner-retained rows are job state at the top of the ledger's key
     // order: the arm stops before them, so they take none of its budget and
     // never become its cursor.
-    let upper: Bound<&[u8]> =
-        Bound::Excluded(&crate::attempt_queue::OWNER_RETAINED_RANGE_START[..]);
     let mut last = None;
     let mut exhausted = true;
-    for (examined, row) in vault
-        .store
-        .attempt_records
-        .range(txn, &(lower, upper))?
-        .enumerate()
-    {
-        let (bytes, raw) = row?;
+    for (examined, row) in JobQueueRead::port_job_rows(&vault.store, txn, after)?.enumerate() {
+        let (attempt, raw) = row?;
+        if crate::attempt_queue::owner_retained_id(&attempt) {
+            break;
+        }
         if examined == limit {
             exhausted = false;
             break;
         }
-        let attempt = AttemptId::from_bytes(&bytes)?;
         let entity = EntityId::from_bytes(*attempt.as_bytes())?;
         last = Some(entity);
         if eligible(vault, txn, attempt, &raw)?.is_some() {
@@ -136,7 +130,7 @@ pub(super) fn scan(
 
 pub(super) fn archive(vault: &Vault, txn: &mut heed::RwTxn<'_>, entity: EntityId) -> Result<bool> {
     let id = AttemptId::from_bytes(entity.as_bytes())?;
-    let Some(raw) = vault.store.attempt_records.get(txn, id.as_bytes())? else {
+    let Some(raw) = JobQueueRead::port_job_row(&vault.store, txn, &id)? else {
         return Ok(false);
     };
     let Some(record) = eligible(vault, txn, id, &raw)? else {
@@ -197,7 +191,7 @@ impl Vault {
         let mut out = Vec::new();
         for (id, _) in ARCHIVE.scan(&self.store, &rtxn)? {
             let attempt = AttemptId::from_bytes(&id)?;
-            if let Some(raw) = self.store.attempt_records.get(&rtxn, &id)?
+            if let Some(raw) = JobQueueRead::port_job_row(&self.store, &rtxn, &attempt)?
                 && attempt_is_archived(&self.store, &rtxn, attempt, &raw)?
             {
                 out.push(attempt);
@@ -213,7 +207,7 @@ impl Vault {
     /// Storage errors.
     pub fn archived_attempt(&self, id: AttemptId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.attempt_records.get(&rtxn, id.as_bytes())? else {
+        let Some(raw) = JobQueueRead::port_job_row(&self.store, &rtxn, &id)? else {
             return Ok(false);
         };
         attempt_is_archived(&self.store, &rtxn, id, &raw)
@@ -236,11 +230,7 @@ pub(super) fn restore_archived_attempt_in_txn(
             entity: crate::entity_id::bytes_to_hex_lower(id.as_bytes()),
         })
     };
-    let raw = vault
-        .store
-        .attempt_records
-        .get(txn, id.as_bytes())?
-        .ok_or_else(not_archived)?;
+    let raw = JobQueueRead::port_job_row(&vault.store, txn, &id)?.ok_or_else(not_archived)?;
     if !attempt_is_archived(&vault.store, txn, id, &raw)? {
         return Err(not_archived());
     }

@@ -247,13 +247,12 @@ fn respond(vault: &Vault, request: ChunkSyncRequest) -> Result<Vec<u8>> {
 /// Whether `id`'s stored row fits one frame, judged on the row in place,
 /// without copying it.
 fn row_fits_a_frame(vault: &Vault, id: &EntityId) -> Result<bool> {
-    use crate::store::ManifestDbs as _;
     let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .entities()
-        .get(&txn, id.as_bytes())?
-        .is_some_and(|row| row.len() <= MAX_CHUNK_SYNC_FRAME))
+    let fits =
+        crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, &txn, id, |row| {
+            Ok(row.len() <= MAX_CHUNK_SYNC_FRAME)
+        })?;
+    Ok(fits.unwrap_or(false))
 }
 
 /// Pulls an object through a bounded authenticated transport exchange. The HAVE

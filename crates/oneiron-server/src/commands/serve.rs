@@ -152,6 +152,12 @@ pub(super) async fn serve_with_config(
                 .as_ref()
                 .map(crate::config::BrowserConfig::guest),
         )
+        .with_desktop_guest(
+            config
+                .desktop
+                .as_ref()
+                .map(crate::config::DesktopConfig::guest),
+        )
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
