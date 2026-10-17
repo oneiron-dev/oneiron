@@ -11,6 +11,7 @@ mod identity_event_stamps;
 mod legal_hold;
 mod publish;
 mod receipt;
+mod receipt_completion;
 mod rendezvous;
 mod sweep_queue;
 mod timeline;
@@ -70,6 +71,9 @@ pub use tombstone::{
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion};
 pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
+pub(crate) use receipt_completion::{
+    append_redaction_sweep_completion_in_txn, redaction_sweep_completion_in_txn,
+};
 #[cfg(feature = "sync")]
 pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;
 pub(crate) use sweep_queue::{

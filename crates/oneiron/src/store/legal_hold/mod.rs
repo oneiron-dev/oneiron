@@ -551,8 +551,9 @@ pub(crate) fn link_erase_in_txn(
     Ok(())
 }
 
-/// "Erase completed" (C4): the deletion receipt over `records` now has both
-/// `hard_purge_complete_at` and `sweep_complete_at`. Logs one event, with
+/// "Erase completed" (C4): the linked receipt pair over `records` is now
+/// complete, the deletion receipt's `hard_purge_complete_at` and its appended
+/// completion row's `sweep_complete_at` both written. Logs one event, with
 /// the receipt's `request_id`, for each hold an owner's confirm lifted or met
 /// on each record, then drops the link, so a retried sweep logs it once.
 pub(crate) fn note_erase_completed_in_txn(
