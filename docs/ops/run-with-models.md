@@ -372,6 +372,15 @@ proposals, with the cleanup view to restore any of them. Each proposal and
 your accept or reject count in the healer oversight receipts
 (`/v1/owner/healer/oversight`).
 
+The Coach's nightly room upkeep (`coach.room_upkeep`) reads only the rooms
+a grant lets the Coach read, and there only turn refs and times, never words.
+A room whose readable turns moved since its last pass gets its summary
+declared on the scope-summary path, when the Coach reads the room's whole
+conversation; the Dreamer writes the summary and nothing is posted. A thread
+with open TASKs that has been quiet for a day gets one Proposed
+`coach.room_upkeep.nudge` finding, addressed to the room's host, in the owner
+run tray. The Coach never speaks in a room; a nudge is the host's to voice.
+
 The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
 detectors (refused Dreamer consolidations, consent storms and denials,
 per-actor write drift) over the last day of Gate receipts, and the read-side
@@ -387,14 +396,21 @@ one.
 ## 4. Chat
 
 `POST /v1/ai/chat` with `{"conversation_ref": "<32-hex>", "text": "…"}` (plus
-optional `history`) streams NDJSON: `accepted`, one `delta` per text chunk,
-`done`, then `saved` with the message receipt. The same deltas reach every
-owner socket on `/ws` as transient presence. Only the final message is written
-to the vault, once. The credential needs read and write scope, and must be
-able to read the answering agent's definition. It is checked for the whole
-turn: once it is revoked or expires, the body sends one
-`{"type":"error","code":"credential_revoked"}` line and ends, the model call
-stops, and the message is cancelled rather than saved as an answer. The seeded
+optional `history`) answers by default with the whole message once it is saved:
+`{conversation_ref, turn_id, message_id, text, incomplete, finish_reason}`.
+`turn_id` is the assistant turn that Continue and Retry name. A reply cut short
+(a crash, a failed stream, a length stop) is still one saved message: it answers
+`incomplete: true` with exactly the text that was saved. With `"stream": true`
+the answer is NDJSON instead: `accepted`, one `delta` per text chunk, `done`,
+then `saved` with the message receipt, and the same deltas reach every owner
+socket on `/ws` as transient presence. A whole answer keeps its partials
+private. Either way each delta is checkpointed in the message before it is
+published, and a client that goes away does not stop the turn. The credential
+needs read and write scope, and must be able to read the answering agent's
+definition. It is checked for the whole turn. Once it is revoked or expires, a
+streamed body sends one `{"type":"error","code":"credential_revoked"}` line
+and ends, a whole answer is refused with 403 `credential_revoked`, and the
+message is cancelled rather than saved as an answer. The seeded
 default agent answers; an owner-grade credential may name another with
 `agent_ref`, which must be live, approved and enabled. A turn still running
 at shutdown gets a grace to finish, then its message is cancelled, not left
