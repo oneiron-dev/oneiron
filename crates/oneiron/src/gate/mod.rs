@@ -21,6 +21,12 @@ pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
 mod default_manifest;
+/// A policy manifest's bytes as the owner's install door stores them, its
+/// optional notification table made explicit. A vault-shape manifest row
+/// (ARCH-0070) reads as landed against these.
+pub(crate) fn owner_policy_manifest_as_stored(data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+    default_manifest::with_default_owner_policy_notifications(data)
+}
 mod definition_ceiling;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
