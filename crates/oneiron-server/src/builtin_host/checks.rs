@@ -89,6 +89,7 @@ fn browser_session_ready(guest: &BrowserGuest) -> Result<PackConnectionEvidence,
             "browser guest {} on {} ({})",
             manifest.image, manifest.runtime, manifest.backend
         ),
+        provider_account: None,
         scopes: Vec::new(),
         evidence: blake3::hash(&proof).to_hex().to_string(),
     })
