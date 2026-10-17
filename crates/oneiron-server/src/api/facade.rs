@@ -92,8 +92,8 @@ use oneiron::memory::{
     MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::runtime_hooks::verb::{
-    InvocationClaim, InvocationEntry, InvocationOutcome, VerbAskCredential, VerbAskDoor,
-    VerbAskDrainPermit, VerbAskRefusal,
+    HOOK_RESULT_NOT_RETAINED, InvocationClaim, InvocationEntry, InvocationOutcome,
+    VerbAskCredential, VerbAskDoor, VerbAskDrainPermit, VerbAskRefusal,
 };
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbHookPre, VerbHookStop, hook_class};
 use oneiron::task_verb::verb_hook_boundary;
@@ -1231,6 +1231,10 @@ impl FacadeApiError {
     }
 }
 
+/// The status a retry reads when its drained call completed but the result
+/// was not kept (OF-580): final, and not a server failure.
+const HOOK_RESULT_NOT_RETAINED_STATUS: StatusCode = StatusCode::GONE;
+
 /// The engine's refusal, forwarded whole.
 ///
 /// The status is derived from the code; the code, message, and suggestions are
@@ -1281,6 +1285,10 @@ impl From<MemoryError> for FacadeApiError {
             // to correct, and a missing record and an unreadable one are this
             // same status.
             oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE => StatusCode::UNPROCESSABLE_ENTITY,
+            // OF-580: the call ran once its hook's ask was answered, but its
+            // result was too large to keep. Nothing failed here and a retry
+            // must not run it again, so the result is gone, not a 5xx.
+            HOOK_RESULT_NOT_RETAINED => HOOK_RESULT_NOT_RETAINED_STATUS,
             // A credential call settlement refused before it ran (ARCH-0080
             // §3 Ask): the caller's credential no longer admits it, or this
             // host could not run it again. Either way a new invocation.

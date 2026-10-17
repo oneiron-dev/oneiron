@@ -39,7 +39,7 @@ pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
 /// The error a retry gets when the drained call completed but its result was
 /// over [`MAX_SAVED_VERB_RESULT_BYTES`]: the call ran, and must not be sent
 /// again.
-pub(crate) const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
+pub const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
 
 /// One stopped call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
