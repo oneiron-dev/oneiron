@@ -3,14 +3,16 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ArchiveFile, ArchiveRecordFile, ExportAgentBundle, ExportBundleOmission, ExportDiaryHold,
-    ExportImportOmission, ExportImportRefusal, ExportManifest, ExportSerializerManifest,
-    ExportSkillBundle, ExportSourceBoundary, VAULT_ARCHIVE_FORMAT, VaultImportReceipt,
+    ArchiveFile, ArchiveRecordFile, EmbeddingSetupImport, EmbeddingSetupWithheld,
+    ExportAgentBundle, ExportBundleOmission, ExportDiaryHold, ExportImportOmission,
+    ExportImportRefusal, ExportManifest, ExportSerializerManifest, ExportSkillBundle,
+    ExportSourceBoundary, PortableEmbeddingSpace, PortableSlotBindings, VAULT_ARCHIVE_FORMAT,
+    VaultImportReceipt,
 };
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 1;
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +41,8 @@ pub struct WholeVaultDocumentManifest {
     /// Whether this archive carries custody secret values (the default for
     /// the owner's own archive) or each custody record as its handle only.
     pub secrets_included: bool,
+    /// OF-370: embedding setup the nulling pass withheld from this archive.
+    pub embedding_setup_withheld: EmbeddingSetupWithheld,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,9 +103,10 @@ impl WholeVaultExport {
     }
 }
 
-/// Seven sections. Entities occur once. Derived evidence is an index into
+/// Nine sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
-/// beside the evidence ledger and carry full value metadata.
+/// beside the evidence ledger and carry full value metadata. The embedding
+/// setup is descriptors only (OF-370): no vector travels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WholeVaultDocument {
@@ -113,6 +118,11 @@ pub struct WholeVaultDocument {
     pub agent_packs: Vec<ExportAgentBundle>,
     pub derivation_envelopes: Vec<ExportDerivationEnvelope>,
     pub run_results: ExportRunResults,
+    /// Every declared embedding space, in id order.
+    pub embedding_spaces: Vec<PortableEmbeddingSpace>,
+    /// The three kind slots; `None` when the export carries no setup (a
+    /// records archive, OKF).
+    pub slot_bindings: Option<PortableSlotBindings>,
 }
 
 /// The code runs' results (OF-190 B++): each run's result manifests, and
@@ -263,6 +273,8 @@ pub struct WholeVaultImportReceipt {
     /// Custody records the archive carried as handles only: secrets to
     /// re-enter through the owner's registration door.
     pub missing_secrets: Vec<crate::secret_custody::SecretCustodyMetadata>,
+    /// What the archive's embedding setup did here (OF-370).
+    pub embedding_setup: EmbeddingSetupImport,
 }
 
 impl WholeVaultDocument {

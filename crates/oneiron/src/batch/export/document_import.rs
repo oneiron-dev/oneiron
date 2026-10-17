@@ -46,6 +46,9 @@ impl Vault {
     /// The manifest explicitly marks hub configuration and foreign skill signals
     /// archive-only. They are never restored as local policy or trusted verdicts;
     /// imported file bundles run the native scanner and Candidate admission door.
+    /// The archive's embedding setup (OF-370) declares the spaces and binds the
+    /// slots this vault lacks; it never overwrites this vault's own setup, and
+    /// a conflict with it is reported, never a refusal of the import.
     pub fn import_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
         self.import_whole_vault_archive_as(bytes, None)
     }
@@ -344,6 +347,10 @@ impl Vault {
             put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
         let (restored_secrets, unchanged_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &secrets, &document)?;
+        // OF-370: the embedding setup declares and binds only what is absent
+        // here; its vectors are recomputed after the commit, never before.
+        let embedding_setup =
+            super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &document)?;
         wtxn.commit()?;
         Ok(WholeVaultImportReceipt {
             authority,
@@ -361,6 +368,7 @@ impl Vault {
             restored_secrets,
             unchanged_secrets,
             missing_secrets,
+            embedding_setup,
         })
     }
 }

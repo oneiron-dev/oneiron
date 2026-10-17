@@ -729,7 +729,32 @@ struct ImportedArchive {
     unchanged_secrets: usize,
     /// Secrets the archive carried as handles only: re-enter each one.
     missing_secrets: Vec<String>,
+    embedding_setup: ImportedEmbeddingSetup,
 }
+
+/// What the archive's embedding setup did (OF-370): descriptors only, so a
+/// stopped vault's media vectors wait for `serve` or the host's own backfill.
+#[derive(Serialize)]
+struct ImportedEmbeddingSetup {
+    /// [`EMBEDDING_SETUP_IMPORTED`] when the archive carried any setup.
+    status: Option<&'static str>,
+    declared_spaces: Vec<String>,
+    unchanged_spaces: Vec<String>,
+    /// Spaces this vault declares otherwise under the same id; its own stay.
+    conflicted_spaces: Vec<String>,
+    bound_slots: Vec<oneiron::embed::InputKind>,
+    unchanged_slots: Vec<oneiron::embed::InputKind>,
+    /// Slots this vault binds otherwise, or cannot bind as the archive did;
+    /// its own stay.
+    conflicted_slots: Vec<oneiron::embed::InputKind>,
+    /// Setup the export withheld as credential-shaped: spaces by count.
+    withheld_spaces: u64,
+    withheld_slots: Vec<oneiron::embed::InputKind>,
+}
+
+/// The archive import's embedding setup status: the setup came in, its
+/// vectors did not.
+const EMBEDDING_SETUP_IMPORTED: &str = "setup imported; vectors pending recompute";
 
 /// Re-imports a whole-vault archive through the vault's import doors.
 fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
@@ -740,6 +765,10 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
     let receipt = vault
         .import_whole_vault_archive(&bytes)
         .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?;
+    let setup = receipt.embedding_setup;
+    let status = setup
+        .vectors_pending_recompute()
+        .then_some(EMBEDDING_SETUP_IMPORTED);
     emit(&ImportedArchive {
         inserted_entities: receipt.inserted_entities,
         unchanged_entities: receipt.unchanged_entities,
@@ -754,6 +783,17 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
             .into_iter()
             .map(|secret| secret.name)
             .collect(),
+        embedding_setup: ImportedEmbeddingSetup {
+            status,
+            declared_spaces: setup.declared_spaces,
+            unchanged_spaces: setup.unchanged_spaces,
+            conflicted_spaces: setup.conflicted_spaces,
+            bound_slots: setup.bound_slots,
+            unchanged_slots: setup.unchanged_slots,
+            conflicted_slots: setup.conflicted_slots,
+            withheld_spaces: setup.withheld.spaces,
+            withheld_slots: setup.withheld.slots,
+        },
     })
 }
 
