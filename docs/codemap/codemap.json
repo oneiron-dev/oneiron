@@ -26602,6 +26602,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedLensRender",
+      "LensFrameCard"
+     ],
+     "path": "src/lens/mediation/hosted_render.rs",
+     "purpose": "Host custody of one generated-lens render (OF-181): the frame that minted a card's backing refs, beside the…",
+     "surface": {
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -26707,7 +26721,7 @@
      "path": "src/lens/mediation/mod.rs",
      "purpose": "Host mediation — the lens security chokepoint",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -26727,7 +26741,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -52017,7 +52031,7 @@
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
     "lens": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52761,7 +52775,7 @@
    },
    "over_bar": 156,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3194,
+   "source_files": 3195,
    "test_files": 903
   },
   "oneiron-android": {
@@ -64339,7 +64353,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -64349,7 +64363,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -64459,7 +64473,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 41
      }
     },
     {
@@ -64569,6 +64583,16 @@
      "path": "src/api/facade/tests/call_mode.rs",
      "purpose": "Call mode at the HTTP recall door (retrieval hub #call-mode)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/ui_action_routes.rs",
+     "purpose": "OF-181: a host-rendered lens card's events, against the frame this server holds for it…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -68283,6 +68307,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/lens_frames.rs",
+     "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/lib.rs",
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
@@ -70219,7 +70253,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SyncServer",
@@ -71187,7 +71221,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 291,
+     "files": 292,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71389,6 +71423,13 @@
      "layout": "file",
      "purpose": "Polling an engine future whose decisions run on the host's ladder"
     },
+    "lens_frames": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "OF-181: the lens frames this server holds for the cards it rendered"
+    },
     "linear_host": {
      "files": 3,
      "impl_vault": false,
@@ -71565,9 +71606,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 42,
+   "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 576,
+   "source_files": 578,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72339,7 +72380,6 @@
       "ScopeAxisString",
       "ScopeAxisU8",
       "ScopedReadReceipt",
-      "ScopedReadResultGeneratedLens",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
       "ScratchpadRecallMark",
@@ -72563,7 +72603,7 @@
      "purpose": "—",
      "surface": {
       "enum": 238,
-      "struct": 584
+      "struct": 583
      }
     },
     {
