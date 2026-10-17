@@ -77,8 +77,10 @@ pub enum StructureEdit<'a> {
         seed: &'a [u8],
     },
     /// The slide leaves the slide list, its section and the presentation's
-    /// relationships; its part stays in the archive, unreachable. A custom
-    /// show that lists it, or another slide that links to it, refuses.
+    /// relationships, and the archive drops every part it leaves unreachable
+    /// from the package root: the slide, its notes and comments, and media or
+    /// charts no other part reaches. A custom show that lists it, or another
+    /// slide that links to it, refuses.
     /// `expected` is the slide's render fingerprint as read.
     DeleteSlide { slide: &'a str, expected: [u8; 32] },
     /// The shape (and its members) to sibling position `index` among the

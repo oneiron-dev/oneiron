@@ -70,19 +70,37 @@ pub(super) fn verify(
 /// The parts whose exported bytes differ from the input's; a removed part
 /// refuses.
 pub(super) fn diff(input: &Package, candidate: &Package) -> Result<Vec<String>, EditRefusal> {
+    diff_removing(input, candidate, &[])
+}
+
+/// The parts whose exported bytes differ from the input's, with the declared
+/// `removed` parts among them: each must be gone from the candidate, and any
+/// other removed part refuses.
+pub(super) fn diff_removing(
+    input: &Package,
+    candidate: &Package,
+    removed: &[String],
+) -> Result<Vec<String>, EditRefusal> {
     let mut changed = Vec::new();
     for part in candidate.names() {
+        if removed.iter().any(|gone| gone == part) {
+            return Err(EditRefusal::ReadBack(
+                "a released part is still in the archive",
+            ));
+        }
         if input.part(part)? != candidate.part(part)? {
             changed.push(part.to_owned());
         }
     }
-    if input
-        .names()
-        .any(|part| candidate.names().all(|name| name != part))
-    {
-        return Err(EditRefusal::PartDiffOutsideTransaction(
-            "a part was removed".to_owned(),
-        ));
+    for part in input.names() {
+        if candidate.names().all(|name| name != part) {
+            if !removed.iter().any(|gone| gone == part) {
+                return Err(EditRefusal::PartDiffOutsideTransaction(
+                    "a part was removed".to_owned(),
+                ));
+            }
+            changed.push(part.to_owned());
+        }
     }
     Ok(changed)
 }

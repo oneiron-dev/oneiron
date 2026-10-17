@@ -4,9 +4,10 @@
 //! A blank slide holds an empty shape tree, the master's colour mapping and
 //! a minted `p14:creationId`; it relates to its layout and takes a slide id
 //! above the caller's high-water mark. A removal takes the slide's list and
-//! section entries and its presentation relationship away and leaves its
-//! part (and the notes and comments it relates to) in the archive,
-//! unreachable, like a released cache.
+//! section entries and its presentation relationship away, then drops from
+//! the archive every part the slide reaches that the package root no longer
+//! does: the slide, its notes slide and comments, and media, charts or
+//! embeddings only it used. A part another survivor still relates to stays.
 
 use super::super::super::check::declared_type;
 use super::super::super::xml::{self, A, P, R};
@@ -176,6 +177,22 @@ fn entry(bytes: &[u8], node: &Node, id: &str, link: &str) -> Result<Vec<u8>, Edi
     copy_with(bytes, node, &[("id", id), (attribute, link)])
 }
 
+/// The parts of `package` that `slide` reaches and the package root does
+/// not: what a slide the presentation no longer lists leaves behind. None
+/// while the root still reaches the slide itself.
+fn released(package: &Package, slide: &str) -> Result<Vec<String>, EditRefusal> {
+    let kept = package.reachable("")?;
+    if kept.contains(slide) {
+        return Ok(Vec::new());
+    }
+    let held: std::collections::BTreeSet<&str> = package.names().collect();
+    Ok(package
+        .reachable(slide)?
+        .into_iter()
+        .filter(|part| !kept.contains(part) && held.contains(part.as_str()))
+        .collect())
+}
+
 pub(in super::super) fn delete(
     next: &mut Package,
     before: &DeckView,
@@ -231,6 +248,9 @@ pub(in super::super) fn delete(
     );
     next.replace_xml_part(&lists.part, xml::splice(&lists.bytes, edits)?)?;
     next.unrelate(&lists.part, &link)?;
+    for part in released(next, slide)? {
+        next.remove_part(&part)?;
+    }
     Ok((
         Plan::Arranged,
         vec![Effect::SlideRemoved {
