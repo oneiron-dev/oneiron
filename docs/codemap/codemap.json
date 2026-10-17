@@ -10908,7 +10908,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 4,
       "re-export": 13
      }
@@ -11158,7 +11158,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 3
      }
     },
@@ -11235,7 +11235,7 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 10,
       "fn": 8,
       "struct": 3
      }
@@ -44766,7 +44766,7 @@
      "path": "src/task_verb/ask_option_link.rs",
      "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6,
       "struct": 2
      }
@@ -45390,8 +45390,8 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
-      "fn": 6
+      "crate-vis": 5,
+      "fn": 7
      }
     },
     {
@@ -45415,7 +45415,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "mod": 2,
       "re-export": 23
      }
