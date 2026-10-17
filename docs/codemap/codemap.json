@@ -37026,7 +37026,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "FactHookRunner",
@@ -37038,7 +37038,8 @@
       "const": 2,
       "crate-vis": 5,
       "fn": 4,
-      "struct": 2
+      "struct": 2,
+      "type": 1
      }
     },
     {
@@ -51404,7 +51405,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 140,
+   "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3107,
    "test_files": 903
@@ -64999,7 +65000,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 12,
       "re-export": 19,
       "struct": 1
@@ -65329,7 +65330,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
