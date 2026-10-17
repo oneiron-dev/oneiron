@@ -4,6 +4,7 @@ use super::types::invalid;
 use super::{DecisionBand, DecisionQuestion};
 use crate::{EntityId, Result};
 use std::collections::BTreeMap;
+use std::sync::{Arc, PoisonError, RwLock};
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -48,11 +49,12 @@ pub struct ThinkThreshold {
 
 /// Vault-owned policy snapshot. No learned row means shadow at the dial's
 /// seed band, not an implicit permission to enforce a global threshold.
-/// No person row means a person reading never routes.
+/// No person row means a person reading never routes. Every clone shares one
+/// person row, so the host's accepted row reaches each caller that cloned it.
 #[derive(Debug, Clone, Default)]
 pub struct DecisionBandPolicy {
     rows: BTreeMap<(EntityId, u32, Reversibility), LearnedBand>,
-    person: Option<PersonThreshold>,
+    person: Arc<RwLock<Option<PersonThreshold>>>,
     think: Option<ThinkThreshold>,
     questions_per_call: Option<usize>,
 }
@@ -80,10 +82,22 @@ impl DecisionBandPolicy {
         if !(threshold > 0.0 && threshold <= 1.0) || version == 0 {
             return Err(invalid("invalid person threshold"));
         }
-        if self.person.is_some_and(|row| row.version >= version) {
+        let mut person = self.person.write().unwrap_or_else(PoisonError::into_inner);
+        if person.is_some_and(|row| row.version >= version) {
             return Err(invalid("person threshold version must advance"));
         }
-        self.person = Some(PersonThreshold { threshold, version });
+        *person = Some(PersonThreshold { threshold, version });
+        Ok(())
+    }
+
+    /// Replaces the shared person row with `row`, for every clone. Unlike
+    /// [`Self::set_person_threshold`] the version may go back: a retracted
+    /// revision gives way to the one before it.
+    pub fn replace_person_threshold(&self, row: PersonThreshold) -> Result<()> {
+        if !(row.threshold > 0.0 && row.threshold <= 1.0) || row.version == 0 {
+            return Err(invalid("invalid person threshold"));
+        }
+        *self.person.write().unwrap_or_else(PoisonError::into_inner) = Some(row);
         Ok(())
     }
 
@@ -103,7 +117,7 @@ impl DecisionBandPolicy {
     }
 
     pub fn person_threshold(&self) -> Option<PersonThreshold> {
-        self.person
+        *self.person.read().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn learn_shadow(
