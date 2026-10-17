@@ -5,7 +5,7 @@
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
 // Census: 313 code-mode rows (295 host rows, 18 run rows), 1041 declarations.
-// Replies: 255 fully typed, 46 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Replies: 254 fully typed, 47 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -974,7 +974,7 @@ declare namespace Sdk {
   type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
   type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] };
   type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null };
-  type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; record?: OfficeBodyExportRecord | null };
+  type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null };
   type DeckGateRequest = { profile?: string | null };
   type StepOutcome = "passed" | { failed: string } | { inconclusive: string } | "not_run";
   type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
@@ -1293,7 +1293,7 @@ declare const vault: Sdk.VaultHost & {
       /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
       commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.TextCommitReceipt[]>>;
       deck: {
-        /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands. */
+        /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep. */
         export(input: Sdk.DeckExportRequest): Promise<Sdk.Reply<Sdk.DeckExportView>>;
         /** The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector. */
         gate(input: Sdk.DeckGateRequest): Promise<Sdk.Reply<Sdk.DeckGateView>>;

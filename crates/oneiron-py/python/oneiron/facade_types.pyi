@@ -6,7 +6,7 @@ are `Any`, and the census below counts them.
 
 Census: 255 facade rows, 936 declarations.
 Inputs: 211 of 255 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 207 of 255 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Results: 206 of 255 fully typed, 41 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
@@ -4835,6 +4835,7 @@ class DeckExportView(TypedDict):
     noop: bool
     changed_parts: list[str]
     record: NotRequired[OfficeBodyExportRecord | None]
+    proposed: NotRequired[PendingProposalView | None]
 class DeckGateRequest(TypedDict):
     profile: NotRequired[str | None]
 class StepOutcomeFailed(TypedDict):

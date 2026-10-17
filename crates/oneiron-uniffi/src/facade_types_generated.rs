@@ -12694,6 +12694,8 @@ pub struct DeckExportView {
     pub changed_parts: Vec<String>,
     #[serde(rename = "record", default, skip_serializing_if = "Option::is_none")]
     pub record: Option<OfficeBodyExportRecord>,
+    #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<PendingProposalView>,
 }
 
 /// `oneiron::office_body::pptx::verbs::DeckGateRequest`.

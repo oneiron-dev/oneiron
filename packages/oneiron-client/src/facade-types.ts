@@ -2,7 +2,7 @@
 // of scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 // Census: 255 facade rows, 936 declarations.
 // Inputs: 211 of 255 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-// Results: 207 of 255 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+// Results: 206 of 255 fully typed, 41 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 // Opaque serde_json::Value leaves: 68; unread shapes: 1.
 /** `oneiron::edit_distance::publisher::vocab::IssueCategory` */
 export type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"
@@ -1823,7 +1823,7 @@ export type LandingReceipt = { proposal: string; proposer: string; settler: stri
 /** `oneiron::office_body::pptx::verbs::DeckExportRequest` */
 export type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null }
 /** `oneiron::office_body::pptx::verbs::DeckExportView` */
-export type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; record?: OfficeBodyExportRecord | null }
+export type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null }
 /** `oneiron::office_body::pptx::verbs::DeckGateRequest` */
 export type DeckGateRequest = { profile?: string | null }
 /** `oneiron_docedit::live::deck_export::StepOutcome` */

@@ -41,6 +41,7 @@ use super::{
 use crate::Vault;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
 use crate::edit_roundtrip::VaultAssets;
+use crate::edit_settle::{NativeOutput, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, LiveDeckRefusal, Result};
 use crate::provenance::made_by::MadeBy;
@@ -499,6 +500,48 @@ impl Vault {
             )?;
             Ok(version)
         })
+    }
+
+    /// Offer a proposal export (its profile's gate closed) to the artifact as
+    /// a waiting proposal under `run_ref`, pinned to the blob head: the Keep
+    /// door lands its bytes as the next blob version under a person's
+    /// consent, and Discard drops it. The deck does not rebind, so its next
+    /// export still projects over its retained package.
+    pub fn propose_pptx_export(
+        &self,
+        artifact: &EntityId,
+        export: &PptxExport,
+        run_ref: &str,
+        actor: WriteActor,
+        made_by: &MadeBy,
+    ) -> Result<PendingProposalView> {
+        if export.authoritative {
+            return Err(invalid("an authoritative export lands; it is not proposed"));
+        }
+        let body = self
+            .get_blob_artifact(artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        let key = &export.outcome.key;
+        self.propose_native_output(
+            artifact,
+            &NativeOutput {
+                run_ref: run_ref.to_owned(),
+                name: body.name,
+                media_type: body.media_type,
+                bytes: export.outcome.bytes.clone(),
+                report: serde_json::json!({
+                    "deck_export": {
+                        "profile": key.profile,
+                        "projector": key.projector,
+                        "document_version": export.outcome.document_version,
+                        "changed_parts": export.outcome.changed_parts,
+                    }
+                }),
+                made_by: Some(made_by.clone()),
+            },
+            actor,
+            self.now_recorded_at(),
+        )
     }
 
     /// The deck at the head of its body, with the head.
