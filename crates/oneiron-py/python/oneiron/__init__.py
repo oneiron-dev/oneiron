@@ -378,6 +378,12 @@ class Oneiron:
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
+        @property
+        def graph(self) -> "Oneiron._VaultGraphVerbs":
+            return Oneiron._VaultGraphVerbs(self._client)
+        @property
+        def questions(self) -> "Oneiron._VaultQuestionsVerbs":
+            return Oneiron._VaultQuestionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
         def remember(self, input: dict[str, Any]) -> Any:
@@ -748,6 +754,24 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_get(json.dumps(spec))))
         def set(self, spec):
             return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_set(json.dumps(spec))))
+    class _VaultGraphVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ask(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_graph_ask(json.dumps(spec))))
+    class _VaultQuestionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_create(json.dumps(spec))))
+        def edit(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_edit(json.dumps(spec))))
+        def pause(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_pause(json.dumps(spec))))
+        def read(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
+        def answers(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

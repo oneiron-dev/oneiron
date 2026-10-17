@@ -1,0 +1,249 @@
+//! OF-506's doors (ARCH-0076): a one-off graph ask through the host's
+//! decision ladder, and the standing-question verbs the 60 s pump
+//! ([`crate::decision_graph`]) serves. The generated HTTP facade handler and
+//! the MCP dispatcher both call these through `host_doors`.
+//!
+//! Each is asked for the caller, by `ai.verdict`'s rule: the slip's
+//! principal with its actor class, or the vault's own owner for an
+//! owner-grade credential that names none; any other credential is refused.
+//! No principal, actor or time comes from the request. The engine reads each
+//! unit under a lane it rebuilds from that principal, not under the
+//! credential's own lane, so every row refuses a narrowed record scope.
+use std::sync::Arc;
+use std::time::Duration;
+
+use oneiron::llm::decision::questions::{
+    AnswerRecord, QuestionRecord, answer_records, create_question, edit_question, pause_question,
+    read_question, run_graph_ask_receipted, select_graph_units_by_type,
+};
+use oneiron::llm::decision::{DecisionDial, DecisionRung};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::receipt::{
+    GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest,
+};
+use oneiron::{EdgeActorClass, EntityId, WriteActor};
+
+use super::host_doors::internal;
+use crate::auth::CoreAuth;
+use crate::decision_graph::LadderGraphAnswerer;
+use crate::server::SyncServer;
+
+/// `vault.graph.ask`: the caller's typed question over graph units, each
+/// unit read under the caller's own access and answered on the host's
+/// ladder from its first filled rung up to the request's ceiling (`big` when
+/// absent), each on its own clock. Every answer lands as a proposed claim
+/// private to the caller, written as the caller; a unit that fails stops the
+/// ask and names itself beside the answers already committed. The ladder
+/// runs on a blocking thread.
+pub(crate) async fn vault_graph_ask(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GraphAskRequest,
+) -> MemoryResult<GraphAskOutcome> {
+    const VERB: &str = "vault.graph.ask";
+    let asker = asker(auth, server, VERB)?;
+    input.validate()?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<GraphAskOutcome> {
+        let vault = server.vault();
+        let principal = asker.entity_ref();
+        let units = match input.select {
+            Some(select) => {
+                select_graph_units_by_type(vault, principal, select.entity_type, select.limit)?
+            }
+            None => input.units,
+        };
+        let ceiling = input.ceiling.unwrap_or(DecisionRung::Big);
+        let budget = Duration::from_millis(
+            input
+                .unit_deadline_ms
+                .unwrap_or(GRAPH_ASK_UNIT_DEADLINE_MS),
+        );
+        let dial = server.decision_host().dial(ceiling);
+        let mut answerer = LadderGraphAnswerer::new(&server, asker, dial, budget)?;
+        match run_graph_ask_receipted(
+            vault,
+            principal,
+            asker,
+            input.question,
+            &units,
+            &mut answerer,
+            oneiron_vault_contract::now_ts(),
+        ) {
+            Ok(receipts) => Ok(GraphAskOutcome::from(receipts)),
+            Err(failure) => GraphAskOutcome::from_failure(failure),
+        }
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.create`: a standing question for the caller, at version
+/// 1, unpaused. Its dial must sit inside the host's; the pump answers it as
+/// the caller from then on.
+pub(crate) async fn vault_questions_create(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionCreateRequest,
+) -> MemoryResult<QuestionRecord> {
+    const VERB: &str = "vault.questions.create";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let mut definition = input.definition;
+    definition.dial = inside_host_dial(server, definition.dial, VERB)?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionRecord> {
+        Ok(create_question(
+            server.vault(),
+            principal,
+            definition,
+            oneiron_vault_contract::now_ts(),
+        )?)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.edit`: the caller's standing question's next version,
+/// from a whole replacement definition over `expected_version`. Its dial
+/// must sit inside the host's.
+pub(crate) async fn vault_questions_edit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionEditRequest,
+) -> MemoryResult<QuestionRecord> {
+    const VERB: &str = "vault.questions.edit";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let mut definition = input.definition;
+    definition.dial = inside_host_dial(server, definition.dial, VERB)?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionRecord> {
+        Ok(edit_question(
+            server.vault(),
+            principal,
+            input.id,
+            input.expected_version,
+            definition,
+            oneiron_vault_contract::now_ts(),
+        )?)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.pause`: pauses the caller's standing question, or
+/// resumes it with `paused: false`. Another principal's question is not
+/// found.
+pub(crate) async fn vault_questions_pause(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionPauseRequest,
+) -> MemoryResult<QuestionPaused> {
+    const VERB: &str = "vault.questions.pause";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionPaused> {
+        pause_question(server.vault(), principal, input.id, input.paused)?;
+        Ok(QuestionPaused {
+            id: input.id,
+            paused: input.paused,
+        })
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.read`: the caller's standing question at its current
+/// version or a past one; none when no such question or version is the
+/// caller's.
+pub(crate) async fn vault_questions_read(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionReadRequest,
+) -> MemoryResult<Option<QuestionRecord>> {
+    const VERB: &str = "vault.questions.read";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<Option<QuestionRecord>> {
+        Ok(read_question(
+            server.vault(),
+            principal,
+            input.id,
+            input.version,
+        )?)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.answers`: every answer receipt of the caller's standing
+/// question, across its versions.
+pub(crate) async fn vault_questions_answers(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionAnswersRequest,
+) -> MemoryResult<Vec<AnswerRecord>> {
+    const VERB: &str = "vault.questions.answers";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<AnswerRecord>> {
+        Ok(answer_records(server.vault(), principal, input.id)?)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// Whom `verb` is asked for, by `ai.verdict`'s rule: the slip's principal
+/// with its actor class, or the vault's own owner (class human) for an
+/// owner-grade credential that names none. The writer is made here, never
+/// read from the request.
+fn asker(auth: &CoreAuth, server: &SyncServer, verb: &str) -> MemoryResult<WriteActor> {
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} is asked for an authenticated principal"),
+            &["Present a slip that names its principal, or the owner's own credential."],
+        )
+    };
+    let principal = match auth.principal_ref() {
+        Some(reference) => EntityId::from_hex(reference).map_err(|_| refused())?,
+        None if auth.is_owner_grade() => server
+            .vault()
+            .ensure_embedded_owner_actor()
+            .map_err(|_| refused())?,
+        None => return Err(refused()),
+    };
+    let class = match auth.actor_class() {
+        Some("agent") => EdgeActorClass::Agent,
+        Some("system") => EdgeActorClass::System,
+        _ => EdgeActorClass::Human,
+    };
+    Ok(WriteActor::new(principal, class))
+}
+
+/// A standing question's dial, checked inside the host's own: the dial the
+/// host's other decisions take, from its first filled rung up to `big`
+/// (`DecisionHost::dial`). A dial that starts below that rung, climbs past
+/// `big` or changes the band is refused, never stored.
+fn inside_host_dial(
+    server: &SyncServer,
+    dial: DecisionDial,
+    verb: &str,
+) -> MemoryResult<DecisionDial> {
+    let host = server.decision_host().dial(DecisionRung::Big);
+    host.narrow(dial).map_err(|_| {
+        let first = serde_json::to_value(host.first)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        MemoryError::bad_request_with(
+            format!(
+                "{verb}'s dial widens the host's: start at or above {first}, end at big or below, \
+                 and keep the band {}..{}",
+                host.band.low, host.band.high
+            ),
+            &["Start the dial at or above the host's first rung, end it at big or below, and keep the host's band."],
+        )
+    })
+}
