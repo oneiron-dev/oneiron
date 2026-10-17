@@ -150,6 +150,8 @@ impl Vault {
             crate::dreamer_runner::maintenance::agent_health::agent_health_inbox_items(self)?,
         );
         items.extend(self.diary_read_inbox_items()?);
+        // A widen proposal waiting on its board's owner (OF-568).
+        items.extend(crate::agent_dispatch::widen_doors::widen_inbox_items(self)?);
         // Filter after folding, so a filtered conversation still names every
         // identity on its thread.
         let mut items = fold_threads(items);
