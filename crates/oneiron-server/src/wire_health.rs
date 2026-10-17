@@ -5,7 +5,9 @@
 //! lock and write path and asks each one typed question on the host's ladder:
 //! "is everything okay: a bot, or a valid burst?". A known actor under a
 //! grant passes at the rule rung, the model rungs answer the rest, and a
-//! crossing they leave in the band waits in the vault owner's ask queue. A
+//! crossing they leave in the band waits in the vault owner's ask queue; an
+//! e-sign burst's goes first to its document's sender and climbs to the
+//! owners (ARCH-0076 #roles-everywhere). A
 //! held check is durable work, never a drop. Each decision binds to its
 //! crossing's unit, so what happened next (the owner's answer, or an outcome
 //! the owner records later) is a label for the loop.
@@ -21,8 +23,9 @@ use oneiron::llm::decision::questions::{
     HEALTH_OUTCOME_PREDICATE, HealthAnswer, OutcomeBinding, OutcomeSource,
 };
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionCall, DecisionProvider, DecisionQuestion, DecisionRung,
-    HeldLadder, ProviderCapability, ProviderDecision, ProviderPin, Reversibility,
+    AnswerContract, AskAct, AskRole, AskTo, DecisionAnswer, DecisionCall, DecisionProvider,
+    DecisionQuestion, DecisionRung, HeldLadder, ProviderCapability, ProviderDecision, ProviderPin,
+    Reversibility, RoleRank,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::scan_check::ScanCheck;
@@ -442,6 +445,32 @@ fn binding() -> OutcomeBinding {
     }
 }
 
+/// Who a check's ask goes to: an e-sign burst's first to its document's
+/// sender, then up the chain to the owners, agent or person; every other
+/// check to the owners. The ladder call stays the owner's, so [`poll`] finds
+/// the answer whoever gave it.
+fn ask_to(vault: &Vault, check: &HealthCheck) -> Result<Option<AskTo>> {
+    if check.source != CrossingSource::Esign {
+        return Ok(None);
+    }
+    let Some(document) = check
+        .crossing
+        .get("document")
+        .and_then(Value::as_str)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(None);
+    };
+    Ok(vault.esign_sender(document)?.map(|actor| AskTo {
+        role: AskRole::Responsible {
+            actor,
+            project: None,
+        },
+        ceiling: RoleRank::Owner,
+        act: AskAct::Judgment,
+    }))
+}
+
 /// Asks one held check on the ladder and binds the decision to its unit.
 fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let vault = server.vault();
@@ -452,7 +481,10 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
         inner: ladder.rule.take(),
     }));
     let dial = host.dial(DecisionRung::Human);
-    let decision = ladder.ladder().run(
+    let to = ask_to(vault, &check)?;
+    let mut rungs = ladder.ladder();
+    rungs.ask_to = to.as_ref();
+    let decision = rungs.run(
         &question,
         owner,
         &[],
@@ -503,7 +535,7 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
     put_check(vault, &check)
 }
 
-/// Looks for the owner's answer to an asked check. The answer is what
+/// Looks for a role holder's answer to an asked check. The answer is what
 /// happened next: it lands as the decision's outcome.
 fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let CheckState::Asked { question, unit } = &check.state else {
@@ -585,9 +617,13 @@ pub fn record_outcome(vault: &Vault, unit: EntityId, outcome: &str) -> Result<En
     vault.record_health_outcome(owner, unit, outcome, oneiron_vault_contract::now_ts())
 }
 
-/// Starts the worker. Each pass runs on a blocking thread: the ladder's
-/// model rungs block on the server's runtime.
-pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+/// Starts the worker. Each pass runs on a blocking thread, held by `admit`
+/// (a managed vault frozen for reap skips the tick): the ladder's model
+/// rungs block on the server's runtime.
+pub(crate) fn spawn(
+    server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(SWEEP_EVERY);
@@ -597,7 +633,15 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            match tokio::task::spawn_blocking(move || sweep(&server)).await {
+            let Some(pass) = admit() else {
+                continue;
+            };
+            match tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                sweep(&server)
+            })
+            .await
+            {
                 Ok(Err(error)) => {
                     tracing::warn!(%error, "wire health sweep failed; it runs again next tick");
                 }
