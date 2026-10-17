@@ -264,8 +264,14 @@ impl Vault {
             if hook.selector.phase != HookPhase::Fact {
                 return Err(invalid("a verb hook has no replay to qualify it yet"));
             }
-            let (id, row) =
-                PackHookBinding::for_hook(pack, source_id, owner_id, HookAuthor::Owner, hook, true)?;
+            let (id, row) = PackHookBinding::for_hook(
+                pack,
+                source_id,
+                owner_id,
+                HookAuthor::Owner,
+                hook,
+                true,
+            )?;
             let entries = self.hooks_replay_binding(runtime, id, &row, None, None, usize::MAX)?;
             passed &= entries.iter().all(|entry| {
                 !matches!(
@@ -304,7 +310,9 @@ impl Vault {
             HookAuthor::Owner => None,
         };
         let disposition = self.with_write_txn_grouped(|txn| {
-            if PACK_CANDIDATE.get(&self.store, txn, &candidate.content_hash)?.as_ref()
+            if PACK_CANDIDATE
+                .get(&self.store, txn, &candidate.content_hash)?
+                .as_ref()
                 != Some(&candidate)
             {
                 return Err(invalid("the Candidate changed during its test"));

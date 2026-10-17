@@ -59,6 +59,7 @@ pub mod tripwires;
 pub use centroid_evidence::CentroidReplay;
 pub use consent_detector::ConsentDeniedDetector;
 
+pub mod detector_pass;
 mod detector_runner;
 mod diagnostic_codec;
 pub mod distillation;
