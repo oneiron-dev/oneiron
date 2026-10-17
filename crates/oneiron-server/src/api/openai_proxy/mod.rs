@@ -44,6 +44,10 @@ const EXCHANGE_PREDICATE: &str = "integration.exchange";
 /// The most recalled items one call injects.
 const RECALL_LIMIT: usize = 8;
 
+/// The connector the proxy registers as (ARCH-0028): the paired actor's key
+/// on it carries the ARCH-0072 grant slate admission reads.
+const PROXY_CONNECTOR: &str = "openai_proxy";
+
 /// What heads the injected block. The rows are the vault's, not the
 /// caller's, and they reach the model as data.
 const MEMORY_PREAMBLE: &str = "Memory recalled from the user's Oneiron vault for the next message. \
@@ -154,7 +158,8 @@ async fn complete(
 /// proposes or writes, over the whole record scope, and binds both verbs
 /// when it binds verbs. The exchange lands Proposed whatever the ceiling,
 /// so either write grant serves. A narrowed credential's bounds are not
-/// projected here: it is refused, never widened.
+/// projected here: it is refused, never widened. The actor also holds a live
+/// key on the proxy's own connector, its grant slate stamped.
 async fn admit_connector(
     headers: &HeaderMap,
     locality: CallerLocality,
@@ -186,6 +191,18 @@ async fn admit_connector(
         return Err(forbidden(
             "verb_unbound",
             "the connector binds verbs without vault.recall and vault.remember",
+        ));
+    }
+    // An Active key bound to this actor, whose slate's owner stamp holds at
+    // the revision the key admitted. A read that fails admits nothing.
+    let registered = server
+        .vault
+        .live_connector_registration(PROXY_CONNECTOR, &actor.actor_ref)
+        .is_ok_and(|registration| registration.is_some());
+    if !registered {
+        return Err(forbidden(
+            "connector_unregistered",
+            "the paired actor holds no live openai_proxy connector key with a stamped grant slate",
         ));
     }
     Ok(actor)
