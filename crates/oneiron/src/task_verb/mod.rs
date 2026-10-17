@@ -64,6 +64,7 @@ mod refusal;
 mod room_thread;
 mod route_receipts;
 mod scheduling;
+mod subproject;
 mod symbol_lease;
 mod terminal_state;
 mod verb_kind;
