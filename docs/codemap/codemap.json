@@ -27114,7 +27114,7 @@
      "purpose": "The generated read: a typed pack answered by one generation on the caller's own backend, for a caller…",
      "surface": {
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
