@@ -337,16 +337,25 @@ fn bounded(text: &str, max_chars: usize) -> String {
 
 /// The longest text `vault.refs.links` takes, in bytes.
 pub const RECORD_LINKS_TEXT_MAX_BYTES: usize = 256 * 1024;
+/// The most bytes the `texts` of one `vault.refs.links` read hold together.
+pub(crate) const RECORD_LINKS_TEXTS_MAX_BYTES: usize = 1024 * 1024;
 
-/// `vault.refs.links`'s one input: a text to read for links, or a TURN whose
-/// messages this reader may read, a page at a time. Exactly one of `text`
-/// and `turn_ref` is named; `after` and `limit` page a turn only.
+/// `vault.refs.links`'s one input: a text to read for links, the texts a
+/// read surface returned, or a TURN whose messages this reader may read, a
+/// page at a time. Exactly one of `text`, `texts` and `turn_ref` is named;
+/// `after` and `limit` page a turn only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecordLinksRequest {
     /// Text to read for `oneiron://` Markdown links.
     #[serde(default)]
     pub text: Option<String>,
+    /// The plain texts a read surface returned (a transcript page's
+    /// messages, a room's, a recall pack's items), each read for links as
+    /// `text` is and answered in order (Engine ruling 10-18): the explicit
+    /// link-span read beside those surfaces, whose own text stays plain.
+    #[serde(default)]
+    pub texts: Option<Vec<String>>,
     /// A TURN ref (short id or 32-hex): each visible message of it this
     /// reader may read is read for links.
     #[serde(default)]
@@ -369,7 +378,9 @@ pub struct RecordLinksRequest {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProseSpan {
     /// Text shown as written. A link the reader cannot follow, missing or
-    /// unreadable alike, is this too: its label, without its ref.
+    /// unreadable alike, is this too: its label, without its ref. So is a
+    /// link reference definition (`[id]: oneiron://<ref>`), with empty
+    /// text: no reader is shown one.
     Plain {
         start: usize,
         end: usize,
@@ -400,8 +411,9 @@ pub struct LinkedText {
     pub spans: Vec<ProseSpan>,
 }
 
-/// `vault.refs.links`'s answer: the given text, or one page of the turn's
-/// readable visible messages, in message order.
+/// `vault.refs.links`'s answer: the given text, each of the given texts in
+/// order, or one page of the turn's readable visible messages, in message
+/// order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordLinks {
     pub texts: Vec<LinkedText>,
@@ -424,6 +436,15 @@ impl Memory<'_> {
     /// under this handle's own read. A turn this reader may not read, and one
     /// that does not exist, give the same `NOT_FOUND`.
     pub fn record_links(&self, input: &RecordLinksRequest) -> MemoryResult<RecordLinks> {
+        if let Some(texts) = &input.texts {
+            if input.text.is_some() || input.turn_ref.is_some() {
+                return Err(MemoryError::bad_request_with(
+                    "name exactly one of `text`, `texts` and `turn_ref`",
+                    &["Pass the texts to read alone."],
+                ));
+            }
+            return self.texts_links(texts, input);
+        }
         match (input.text.as_deref(), input.turn_ref.as_deref()) {
             (Some(text), None) => {
                 if input.after.is_some() || input.limit.is_some() {
@@ -465,31 +486,99 @@ impl Memory<'_> {
                 self.turn_links(turn_ref.trim(), input.after.as_deref(), limit)
             }
             _ => Err(MemoryError::bad_request_with(
-                "name exactly one of `text` and `turn_ref`",
-                &["Pass the text to read, or the TURN whose messages to read."],
+                "name exactly one of `text`, `texts` and `turn_ref`",
+                &["Pass the text to read, the texts to read, or the TURN whose messages to read."],
             )),
         }
     }
 
+    /// `vault.refs.links` over `texts`: each as [`Self::link_spans`] reads it,
+    /// in order, every link under this reader's own read. Each text is
+    /// bounded as one `text` is, and all of them together by
+    /// [`RECORD_LINKS_TEXTS_MAX_BYTES`].
+    fn texts_links(
+        &self,
+        texts: &[String],
+        input: &RecordLinksRequest,
+    ) -> MemoryResult<RecordLinks> {
+        if input.after.is_some() || input.limit.is_some() {
+            return Err(MemoryError::bad_request_with(
+                "`after` and `limit` page a turn's messages; texts are read whole",
+                &["Drop `after` and `limit`, or read a TURN by `turn_ref`."],
+            ));
+        }
+        let total = texts.iter().map(String::len).fold(0usize, usize::saturating_add);
+        if texts.iter().any(|text| text.len() > RECORD_LINKS_TEXT_MAX_BYTES)
+            || total > RECORD_LINKS_TEXTS_MAX_BYTES
+        {
+            return Err(MemoryError::bad_request_with(
+                format!(
+                    "each text read for links is at most {RECORD_LINKS_TEXT_MAX_BYTES} bytes, and one read's texts at most {RECORD_LINKS_TEXTS_MAX_BYTES} together"
+                ),
+                &["Read a long page's texts over more than one read."],
+            ));
+        }
+        let texts = texts
+            .iter()
+            .map(|text| {
+                Ok(LinkedText {
+                    message_id: None,
+                    spans: self.link_spans(text)?,
+                })
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        Ok(RecordLinks {
+            texts,
+            narrowing: None,
+            next_after: None,
+        })
+    }
+
     /// `text` as spans for this reader: each `oneiron://` link it may follow
     /// a [`ProseSpan::Link`] with its read's narrowing, everything else
-    /// plain. A ref the text names twice is read once.
+    /// plain, and each link reference definition an empty plain span. A ref
+    /// the text names twice is read once.
     pub fn link_spans(&self, text: &str) -> MemoryResult<Vec<ProseSpan>> {
-        let links = crate::gate::record_references::parse_record_links(text);
+        let parsed = crate::gate::record_references::parse_prose_links(text);
+        let mut pieces: Vec<(usize, usize, Option<&crate::gate::record_references::ProseLink>)> =
+            parsed
+                .links
+                .iter()
+                .map(|link| (link.start, link.end, Some(link)))
+                .chain(
+                    parsed
+                        .definitions
+                        .iter()
+                        .map(|range| (range.start, range.end, None)),
+                )
+                .collect();
+        pieces.sort_unstable_by_key(|piece| piece.0);
         let mut records: BTreeMap<&str, LinkedRecord> = BTreeMap::new();
-        let mut spans = Vec::with_capacity(links.len() * 2 + 1);
+        let mut spans = Vec::with_capacity(pieces.len() * 2 + 1);
         let mut utf16 = Utf16Offsets::new(text);
         let mut at = 0;
-        for link in &links {
-            if link.start > at {
+        for (start, end, link) in pieces {
+            if start > at {
                 spans.push(ProseSpan::Plain {
                     start: at,
-                    end: link.start,
+                    end: start,
                     start_utf16: utf16.at(at),
-                    end_utf16: utf16.at(link.start),
-                    text: text[at..link.start].to_owned(),
+                    end_utf16: utf16.at(start),
+                    text: text[at..start].to_owned(),
                 });
             }
+            let Some(link) = link else {
+                let (start_utf16, end_utf16) = (utf16.at(start), utf16.at(end));
+                spans.push(ProseSpan::Plain {
+                    start,
+                    end,
+                    start_utf16,
+                    end_utf16,
+                    text: String::new(),
+                });
+                at = end;
+                continue;
+            };
             let resolved = match records.get(link.reference.as_str()) {
                 Some(resolved) => resolved.clone(),
                 None => {

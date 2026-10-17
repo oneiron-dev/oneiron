@@ -46,6 +46,7 @@ pub enum EraseAskStatus {
 #[serde(deny_unknown_fields)]
 pub struct SharedEraseAsk {
     pub id: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     pub kind: EraseAskKind,
     /// The asker's PERSON id, hex.

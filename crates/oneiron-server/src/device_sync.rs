@@ -8,6 +8,12 @@
 //! beside the server's relay to its own clients, never in place of it. Logs
 //! carry machine ids only, never a slip or a key.
 //!
+//! A named `home_node_id` makes the home this machine's elected home before
+//! anything reads the election, and publishes it, with `home_url` as its
+//! endpoint, as the connection's home-node topology. The paired credential
+//! also binds each socket's NOTE session, and the own-device grant it names
+//! selects what residence reads (index, first touch, promotion) may return.
+//!
 //! While the home connection is synced, the device also learns the models
 //! the owner's other nodes offer (OF-575): it asks them on each sync and then
 //! on a cadence, since no mesh signal says a peer's offer changed, and writes
@@ -74,6 +80,7 @@ async fn open(
     config: &DeviceSyncConfig,
     mesh: Option<&MeshHost>,
 ) -> anyhow::Result<DeviceSyncHost> {
+    use oneiron::sync::client::NoteSyncSession;
     use oneiron::sync::{
         ConnectionConfig, SyncClientConfig, SyncConnection, SyncEvent, SyncTransportCredential,
     };
@@ -82,15 +89,36 @@ async fn open(
     let mesh = mesh
         .ok_or_else(|| anyhow::anyhow!("no mesh listener to dial from; set ONEIRON_MESH_BIND"))?;
     let home = config.home()?;
+    let home_node = config.home_node_id;
     let vault = Arc::clone(&server.vault);
-    let machine = tokio::task::spawn_blocking(move || standing(&vault, home)).await??;
+    let machine = tokio::task::spawn_blocking(move || {
+        if let Some(node) = home_node {
+            hold_home(&vault, node)?;
+        }
+        standing(&vault, home)
+    })
+    .await??;
     let credential =
         crate::commands::credential_file::PairedCredentialFile::read(&config.credential_file)?;
     let key = credential.signing_key()?;
+    let selector = residence_selector(&credential.token)?;
+    if selector.is_none() {
+        tracing::info!(
+            "device sync residence reads off: the paired credential names no own-device grant"
+        );
+    }
     let client_config = SyncClientConfig {
         server_url: config.home_url.clone(),
-        transport_credential: Some(SyncTransportCredential::new(credential.token, key)),
+        transport_credential: Some(SyncTransportCredential::new(
+            credential.token.clone(),
+            key.clone(),
+        )),
+        // The paired credential's holder is the residence actor, so it binds
+        // the NOTE session too.
+        note_session: Some(NoteSyncSession::new(credential.token, key)),
+        residence_selector: selector,
         followed_worlds: Some(config.followed_worlds()?),
+        home_node_topology: home_node.map(|node| home_topology(node, &config.home_url)),
         mesh_dialer: Some(Arc::new(MeshSyncDialer::new(mesh.transport(), home))),
         ..SyncClientConfig::default()
     };
@@ -222,6 +250,68 @@ impl MeshCatalog {
     }
 }
 
+/// The candidate a named home stands as: always-on local, the one class a
+/// configured home claims with no cloud attachment to prove.
+#[cfg(feature = "mesh")]
+const fn home_candidate(node: u64) -> oneiron::DreamerHomeNodeCandidate {
+    oneiron::DreamerHomeNodeCandidate::always_on_local(node)
+}
+
+/// Holds `node` as this install's elected home, before `standing` reads the
+/// election: a Dreamer that claimed this install at start yields to the
+/// home the config names.
+#[cfg(feature = "mesh")]
+fn hold_home(vault: &oneiron::Vault, node: u64) -> anyhow::Result<()> {
+    let store = oneiron::DreamerRunnerStore::new(vault);
+    anyhow::ensure!(
+        store.local_home_node_candidate(true, true, false)?.node_id != node,
+        "home_node_id is this machine's own sync node id"
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    store.elect_home_node(&[home_candidate(node)], now)?;
+    Ok(())
+}
+
+/// The connection's home-node topology: the one named home, reached at
+/// `url`. It is the sync URL itself, so residence reads ride the same mesh
+/// dialer.
+#[cfg(feature = "mesh")]
+fn home_topology(node: u64, url: &str) -> oneiron::sync::HomeNodeTopology {
+    let home = home_candidate(node);
+    let topology = oneiron::sync::HomeNodeTopology::new(vec![home]);
+    topology.publish_with_endpoints(
+        vec![home],
+        std::collections::BTreeMap::from([(node, url.to_owned())]),
+    );
+    topology
+}
+
+/// What residence reads select: the own-device member grant the paired
+/// credential names (`grant_ref`, provisioned at the home), for the
+/// credential's holder, over every world that grant admits. `None` when the
+/// credential names no grant.
+#[cfg(feature = "mesh")]
+fn residence_selector(token: &str) -> anyhow::Result<Option<oneiron::sync::SyncSelector>> {
+    let slip = oneiron::authority::CapabilitySlip::from_token(token)?;
+    let claims = &slip.claims;
+    let Some(grant) = claims.grant_ref.as_deref() else {
+        return Ok(None);
+    };
+    let grant = oneiron::EntityId::from_hex(grant)
+        .map_err(|_| anyhow::anyhow!("the paired credential's grant_ref is not an entity id"))?;
+    let holder = oneiron::EntityId::from_hex(&claims.holder_ref)
+        .map_err(|_| anyhow::anyhow!("the paired credential's holder is not an actor"))?;
+    Ok(Some(oneiron::sync::SyncSelector::new(
+        grant,
+        holder,
+        oneiron::sync::SyncSelectorWorld::All,
+        Vec::new(),
+        Vec::new(),
+    )))
+}
+
 /// This install's MACHINE, when it may dial `home`: enrolled and live, not
 /// the elected home, and `home` a live machine with a paired mesh address.
 #[cfg(feature = "mesh")]
@@ -239,7 +329,8 @@ fn standing(vault: &oneiron::Vault, home: oneiron::EntityId) -> anyhow::Result<o
     anyhow::ensure!(local.id != home, "home_machine names this machine");
     anyhow::ensure!(
         !oneiron::sync::residence::local_is_elected_home(vault)?,
-        "this machine is the elected home, which dials no one"
+        "this machine is the elected home, which dials no one (name the home's \
+         sync_node_id as home_node_id to hold it as home instead)"
     );
     anyhow::ensure!(
         vault.mesh_machine(home)?.is_some(),

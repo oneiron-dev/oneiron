@@ -647,6 +647,6 @@ impl Vault {
             }
             Ok(appended)
         });
-        policy::settle_append(writer, policy::REPLY_ROW, replied)
+        policy::settle_append(writer, policy::REPLY_ROW, input, replied)
     }
 }
