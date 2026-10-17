@@ -182,6 +182,7 @@ vaultProjectsPropose(input: unknown): unknown
 vaultProjectsProposals(input: unknown): unknown
 vaultProjectsDismissCard(input: unknown): unknown
 vaultProjectsConfirm(input: unknown): unknown
+vaultProjectsRosterWrite(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
@@ -252,6 +253,18 @@ vaultConversationsTurnsCreate(input: unknown): unknown
 vaultConversationsRecordsAppend(input: unknown): unknown
 vaultBatch(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
+vaultArtifactsBodyImport(requestJson: string): string
+vaultArtifactsBodyHead(requestJson: string): string
+vaultArtifactsBodyRead(requestJson: string): string
+vaultArtifactsBodyCommits(requestJson: string): string
+vaultArtifactsBodyEdit(requestJson: string): string
+vaultArtifactsBodyForkOpen(requestJson: string): string
+vaultArtifactsBodyForkEdit(requestJson: string): string
+vaultArtifactsBodyForkDiff(requestJson: string): string
+vaultArtifactsBodyForkMerge(requestJson: string): string
+vaultArtifactsBodyForkDiscard(requestJson: string): string
+vaultArtifactsBodyExport(requestJson: string): string
+vaultArtifactsBodyPreview(requestJson: string): string
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown

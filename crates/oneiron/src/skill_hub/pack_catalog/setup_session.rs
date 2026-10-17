@@ -444,6 +444,49 @@ impl Vault {
         Ok(sessions)
     }
 
+    /// Ends every session over one exact source once that source stops
+    /// being installed (OF-378, OF-519): each grant a session's permissions
+    /// minted is revoked, and the session is dropped. The owner's removal
+    /// revokes through the consent door with its receipt. An update to
+    /// another source has no owner in hand, so it revokes owner-free;
+    /// reducing authority needs none, and the install receipt records the
+    /// act. Stored credentials stay in custody, where the owner deletes them,
+    /// and bound connector keys stay registered.
+    pub(crate) fn end_pack_setup_sessions_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        owner: Option<&AuthenticatedOwner>,
+        pack: &str,
+        content_hash: &str,
+    ) -> Result<()> {
+        let prefix = format!("{pack}/{content_hash}/");
+        let mut ended = Vec::new();
+        for entry in PACK_SETUP.iter_from(&self.store, &*txn, prefix.as_bytes())? {
+            if ended.len() >= MAX_SOURCE_SESSIONS {
+                return Err(invalid("pack setup sessions exceed bound"));
+            }
+            ended.push(entry?);
+        }
+        for (key, session) in ended {
+            for grant in &session.grants {
+                match owner {
+                    Some(owner) => {
+                        self.revoke_consent_grant_in_txn(txn, owner, &grant.grant_ref)?;
+                    }
+                    None => {
+                        crate::consent::revoke_standing_grant_in_txn(
+                            &self.store,
+                            txn,
+                            &grant.grant_ref,
+                        )?;
+                    }
+                }
+            }
+            PACK_SETUP.delete(&self.store, txn, &key)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn pack_setup_view_in_txn(
         &self,
         txn: &RoTxn<'_>,
