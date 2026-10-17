@@ -674,7 +674,7 @@ class Oneiron:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
             return json.loads(_translate(lambda: self._client.vault_weave_report(json.dumps(spec))))
         def digest(self, spec):
-            """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
+            """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
             return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
         def lens(self, spec):
             """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
@@ -682,12 +682,27 @@ class Oneiron:
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs":
             return Oneiron._VaultWeaveLinkVerbs(self._client)
+        @property
+        def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs":
+            return Oneiron._VaultWeaveOwnerVerbs(self._client)
     class _VaultWeaveLinkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_link_wrong(json.dumps(spec))))
+    class _VaultWeaveOwnerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs":
+            return Oneiron._VaultWeaveOwnerLinkVerbs(self._client)
+    class _VaultWeaveOwnerLinkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_owner_link_wrong(json.dumps(spec))))
     class _VaultPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

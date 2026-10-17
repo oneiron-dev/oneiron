@@ -5,9 +5,9 @@
 //! `weave-report` skill on a lent model. The model sees the period's admitted
 //! items, each under a key, and answers with a [`WeaveLensPlan`]: wording and
 //! grouping that cite those keys and nothing else. The plan is saved on the
-//! period's row. Opening the digest composes it into a [`GeneratedLens`]
-//! under the opener's own read: every row keeps its source refs, and every
-//! link carries the one-tap wrong control (`vault.weave.link.wrong`). The
+//! period's row. Opening the digest composes it into a card under the
+//! opener's own read: every row keeps its source refs, and every link carries
+//! the one-tap wrong control (`vault.weave.link.wrong`). The
 //! model mints no ref, handle or action. When the reader's next period
 //! renders, the previous one settles the skill's two axes as evidence.
 //!
@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReport,
-    WeaveSectionView,
+    PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReader,
+    WeaveReport, WeaveSectionView,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -42,8 +42,10 @@ pub const WEAVE_REPORT_SKILL_NAME: &str = "weave-report";
 /// marked none of the period's links wrong.
 pub const WEAVE_LENS_READ_RATE_AXIS: &str = "read_rate";
 pub const WEAVE_LENS_CORRECTIONS_AXIS: &str = "corrections";
-/// The verb a link's wrong control calls.
+/// The verb a link's wrong control calls: in the owner lens, the owner's
+/// own, which files under the owner reader.
 const WRONG_LINK_VERB: &str = "vault.weave.link.wrong";
+const WRONG_OWNER_LINK_VERB: &str = "vault.weave.owner.link.wrong";
 /// The verb a health card's wrong control calls: it settles the card
 /// dismissed (OF-568).
 const CONCERN_OUTCOME_VERB: &str = "self.inbox.concern.outcome";
@@ -460,24 +462,17 @@ fn wrong_control(
     ))
 }
 
-/// Compose a saved render into the lens under `read`, the opener's own read.
-/// Every row binds the source its read admits now; every link row a human
-/// opens carries the wrong control over its exact link (an agent files no
-/// link label, so its rows carry none).
-pub(super) fn compose_weave_lens(
-    read: &ScopedRead<'_>,
-    report: &WeaveReport,
-    render: &WeaveLensRender,
-) -> Result<GeneratedLens> {
-    Ok(compose_weave_lens_framed(read, report, render)?.card.tree)
-}
-
-/// [`compose_weave_lens`] as a card beside the frame that minted its rows'
-/// backing refs (OF-181): each wrong control is declared in the card's
-/// manifest as the deterministic tool it calls, for a host that holds the
-/// frame and takes the card's events.
+/// Compose a render into the lens under `read`, the opener's own read, as a
+/// card beside the frame that minted its rows' backing refs (OF-181). Every
+/// row binds the source its read admits now; every link row a human opens
+/// carries the wrong control over its exact link (an agent files no link
+/// label, so its rows carry none; the owner lens's call the owner's own
+/// verb). Each wrong control is declared in the card's manifest as the
+/// deterministic tool it calls, for a host that holds the frame and takes
+/// the card's events.
 pub(super) fn compose_weave_lens_framed(
     read: &ScopedRead<'_>,
+    reader: WeaveReader<'_>,
     report: &WeaveReport,
     render: &WeaveLensRender,
 ) -> Result<HostedLensRender> {
@@ -566,7 +561,11 @@ pub(super) fn compose_weave_lens_framed(
                 row.children.push(wrong_control(
                     &id,
                     &plan.wrong_label,
-                    WRONG_LINK_VERB,
+                    if matches!(reader, WeaveReader::Owner(_)) {
+                        WRONG_OWNER_LINK_VERB
+                    } else {
+                        WRONG_LINK_VERB
+                    },
                     input,
                     &mut actions,
                 )?);
