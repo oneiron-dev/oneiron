@@ -315,6 +315,8 @@ pub(in crate::batch) fn apply_put(
         crate::identity_topology::validate_identity_topology_event_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_SKILL_HUB {
         crate::skill_hub::decode_skill_hub_record(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
+        crate::comm::decode_claim_class_descriptor(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::skill::decode_skill_record(data)?;
         crate::skill::resident::validate_owner_put_in_txn(store, wtxn, &id, &decoded, replicated)?;
