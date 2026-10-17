@@ -201,15 +201,19 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
                      `oneiron runs pending` lists the reviews"
                 ));
             }
-            (totals.new + totals.changed > 0).then(|| {
+            if totals.new + totals.changed > 0 {
+                // One inbox row for the batch, never one per conversation.
+                vault.record_history_import_finished(source, *imported_at)?;
                 let run_id =
                     oneiron::ingest::history::history_import_review_id(source, *imported_at);
-                Review {
+                Some(Review {
                     run_ref: crate::owner::runs::run_ref(&run_id),
                     run_id,
                     dreamer_attempts,
-                }
-            })
+                })
+            } else {
+                None
+            }
         }
         Target::Plan(..) => None,
     };
