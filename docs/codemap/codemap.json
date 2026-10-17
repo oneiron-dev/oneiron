@@ -15865,7 +15865,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 9
      }
     },
@@ -33161,15 +33161,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChangeLogStoreRead",
       "DeletionFamily",
+      "DeletionMarker",
       "DeletionState",
       "EdgeStoreRead",
       "EntityStoreRead",
       "EntityTime",
+      "EntityWriteSegmentRead",
       "JobQueueRead",
       "RetrievalIndexRead",
       "ShortIdStoreRead",
@@ -33180,9 +33182,9 @@
      "path": "src/ports/query.rs",
      "purpose": "Read halves of the storage ports",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "struct": 3,
-      "trait": 7,
+      "trait": 8,
       "type": 1
      }
     },
