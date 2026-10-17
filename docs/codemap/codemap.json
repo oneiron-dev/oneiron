@@ -60563,7 +60563,7 @@
      "purpose": "Responses protocol mapping for held sockets: one turn's create frame, the chain a socket keeps, and event…",
      "surface": {
       "const": 2,
-      "fn": 22,
+      "fn": 23,
       "struct": 4
      }
     },
@@ -70604,7 +70604,7 @@
      "path": "src/models/responses_socket.rs",
      "purpose": "Responses over a held socket (ARCH-0081 §5)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
