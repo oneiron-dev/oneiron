@@ -126,6 +126,7 @@ impl Vault {
                     ShapeRow::Skill {
                         skill_id: record.skill_id,
                         version: Some(record.version),
+                        source: None,
                     },
                     Some(id),
                 ));
@@ -144,6 +145,7 @@ impl Vault {
                     ShapeRow::Channel {
                         channel: identity.channel().to_owned(),
                         address: identity.address_or_handle().to_owned(),
+                        provision: None,
                     },
                     Some(id),
                 ));
