@@ -2108,7 +2108,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/autocheck.rs` | src | m | 5 struct · 1 enum · 1 trait · 5 fn · 2 const · 5 crate-vis | AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome, AutoCheckSignals, BoundedAutoChecker | Auto-check seam: candidate types, fail-closed verdicts, the bounded host wrapper, and the request contract |
 | `src/llm/budget/mod.rs` | src | s | 1 re-export | — | Vault-local durable RSI budget ledger |
 | `src/llm/budget/rsi.rs` | src | m | 5 struct · 3 enum · 12 fn | RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose | Vault-local durable reserve/settle/refund ledger for research-loop spend |
-| `src/llm/decision/asks.rs` | src | m | 4 struct · 18 fn · 2 crate-vis | AskAnswer, AskPrior, DecisionAsk, DecisionAsks | The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role… |
+| `src/llm/decision/asks.rs` | src | m | 4 struct · 20 fn · 2 crate-vis | AskAnswer, AskPrior, DecisionAsk, DecisionAsks | The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role… |
 | `src/llm/decision/catalogue.rs` | src | m | 1 struct · 1 fn · 37 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/llm/decision/codec.rs` | src | s | 9 crate-vis | — | Canonical entity references for typed-decision wire records |
 | `src/llm/decision/generated.rs` | src | m | 1 struct · 3 enum · 1 fn | GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep | The generated read: a typed pack answered by one generation on the caller's own backend, for a caller… |
@@ -2784,6 +2784,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/authority_audit.rs` | src | m | 3 struct · 2 enum · 2 fn · 3 const | AuthorityAuditEventKind, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery, AuthorityAuditRow | OF-224: the dated consent/authority audit, a renderer-neutral projection of the stored AUTHORITY_LOG |
 | `src/receipt/brief_share.rs` | src | s | 1 crate-vis | — | The brief-share projection |
 | `src/receipt/call.rs` | src | s | 3 struct · 2 enum · 4 fn · 2 const | CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest, CallTransport | OF-538: one lasting receipt per wire call, reads included |
+| `src/receipt/decision_asks.rs` | src | s | 2 struct | DecisionAskAnswerRequest, DecisionAskClimbRequest | OF-493's role-holder doors (Q3 by role): the wire shapes a person or a bound agent uses to answer a decision… |
 | `src/receipt/direct_dispatch.rs` | src | s | 2 crate-vis | — | Ordinary outbound receipts for hosts that call dispatch directly |
 | `src/receipt/dispatch_observation.rs` | src | s | 9 crate-vis | — | Passive OF-327 per-try audit observations; never resend authority |
 | `src/receipt/family.rs` | src | m | 2 struct · 13 fn · 5 crate-vis | PendingTrayAsk, PendingTrayQuery | — |
@@ -2794,7 +2795,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/kernel.rs` | src | m | 6 struct · 1 enum · 12 fn · 6 const · 93 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | — |
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 15 crate-vis | — | — |
 | `src/receipt/lens.rs` | src | s | 2 struct · 2 enum | LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision | The receipts of the pack lens lifecycle (OF-250): a proposal, and the owner's selection or clearing of a… |
-| `src/receipt/mod.rs` | src | s | 16 re-export · 18 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
+| `src/receipt/mod.rs` | src | s | 17 re-export · 18 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
 | `src/receipt/pack_attribution.rs` | src | s | 6 struct · 1 fn · 4 crate-vis | ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext, SkillContribution, UsedProvenanceEdge | Frozen execution and actual-use facts on an attempt's pack receipt |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
 | `src/receipt/questions.rs` | src | s | 9 struct · 1 enum · 2 fn · 2 const | GraphAskDeclined, GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswersRequest, QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest +2 | OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs |
@@ -3599,7 +3600,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_diary.rs` | src | s | 2 struct · 1 enum · 3 fn | DiaryQueryEntry, DiaryQueryOutcome, DiaryQueryRequest | `self.memory.diary.query`: the caller reads an agent's private diary, stating a reason the agent sees in its… |
 | `src/task_verb/sdk_disclosure.rs` | src | s | 2 struct · 1 fn | DisclosureOfferRequest, DisclosureOffered | `vault.disclosure.offer`: an agent OFFERS the owner a contact clearance (OF-365, the ILDF2 consent channel) |
 | `src/task_verb/sdk_embedding_space.rs` | src | m | 12 struct · 1 enum · 13 fn | EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest, EmbeddingSpaceMoveChecked, EmbeddingSpaceMoveOutcome, EmbeddingSpaceMoveRequest, EmbeddingSpaceProbe, EmbeddingSpaceProbeDeleteRequest +5 | The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 237 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 240 fn · 2 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 20 struct · 5 enum · 16 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +17 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_legal_hold.rs` | src | s | 5 struct · 1 enum · 5 fn | LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest | The inputs and answers of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`… |
