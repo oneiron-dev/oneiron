@@ -9,7 +9,8 @@ use jni::{
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use std::sync::{Arc, MutexGuard};
 
-mod engine;
+// Public so its JNI exports are reachable items, as this file's are.
+pub mod engine;
 
 struct NativeVault {
     vault: Arc<Vault>,
