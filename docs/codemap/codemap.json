@@ -63255,6 +63255,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/home_digests.rs",
+     "purpose": "Due digests on a host that runs no Dreamer (OF-499)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/identity.rs",
      "purpose": "Identity decisions (OF-123, ask rule B): the host side of the Dreamer's identity re-check",
      "surface": {
@@ -63291,7 +63301,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -71271,7 +71281,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71665,7 +71675,7 @@
    },
    "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 579,
+   "source_files": 580,
    "test_files": 182
   },
   "oneiron-spawn": {
