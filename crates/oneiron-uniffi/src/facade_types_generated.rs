@@ -5285,6 +5285,8 @@ pub enum SelfEffect {
     ReaderReport,
     #[serde(rename = "TasksWaitSet")]
     TasksWaitSet,
+    #[serde(rename = "Team")]
+    Team,
 }
 
 /// `oneiron::code_run::types::SelfDurableWaitReason`.
