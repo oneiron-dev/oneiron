@@ -88,10 +88,36 @@ pub(crate) fn stamp_thread(body: &[u8], binding: &ThreadBinding) -> Result<Vec<u
     Ok(out)
 }
 
+/// Whether `ids` names `actor` (FIX 3123, Engine ruling A): by its own id,
+/// or, for a pen, by the PERSON its stored subject anchor names now. Naming
+/// one pen names no other pen of its person, and a pen anchored to an ORG,
+/// or to no one, is named only by its own id. Read in the caller's
+/// snapshot, never at the TURN's birth.
+pub(crate) fn names_actor_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ids: &BTreeSet<EntityId>,
+    actor: EntityId,
+) -> Result<bool> {
+    if ids.contains(&actor) {
+        return Ok(true);
+    }
+    if vault.get_entity_type_in_txn(txn, &actor)? != Some(ENTITY_TYPE_AGENT_DEF) {
+        return Ok(false);
+    }
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+    Ok(
+        crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &actor, at)?
+            .filter(|anchor| anchor.subject_kind == crate::subject_model::SubjectKind::Person)
+            .is_some_and(|anchor| ids.contains(&anchor.subject_ref)),
+    )
+}
+
 /// Refuses a private audience `opener` cannot name for a new thread of
 /// `room`: an empty one, one that leaves the opener out, or one naming
 /// anyone who is not a live PERSON or AGENT_DEF among the room's members
-/// now. A set naming every current member is still narrower than the room,
+/// now. A pen is in a set, and among the members, that names its PERSON
+/// ([`names_actor_in`]). A set naming every current member is still narrower than the room,
 /// since a later member is not in it. The one policy point for what a
 /// private thread may name.
 pub(crate) fn validate_private_audience_in(
@@ -101,12 +127,15 @@ pub(crate) fn validate_private_audience_in(
     opener: EntityId,
     audience: &BTreeSet<EntityId>,
 ) -> Result<()> {
-    if audience.is_empty() || !audience.contains(&opener) {
+    if audience.is_empty() || !names_actor_in(vault, txn, audience, opener)? {
         return Err(invalid());
     }
-    let members = vault.room_audience_members_in_txn(txn, room)?;
+    let members: BTreeSet<_> = vault
+        .room_audience_members_in_txn(txn, room)?
+        .into_iter()
+        .collect();
     for id in audience {
-        if !members.contains(id)
+        if !names_actor_in(vault, txn, &members, *id)?
             || !live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
             || !matches!(
                 vault.get_entity_type_in_txn(txn, id)?,
@@ -174,8 +203,9 @@ pub(crate) fn thread_audience_in(
 
 /// Whether `actor` reads and writes the thread holding `record` in `room`:
 /// always off a private thread; on one, only from its audience and while it
-/// is still one of the room's members. No host, owner, seat or receipt
-/// standing stands in for either.
+/// is still one of the room's members. A pen stands in both through the
+/// PERSON it is anchored to ([`names_actor_in`]). No host, owner, seat or
+/// receipt standing stands in for either.
 pub(crate) fn thread_audience_allows_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -183,15 +213,14 @@ pub(crate) fn thread_audience_allows_in(
     record: EntityId,
     actor: EntityId,
 ) -> Result<bool> {
-    Ok(match thread_audience_in(vault, txn, room, record)? {
-        None => true,
-        Some(ids) => {
-            ids.contains(&actor)
-                && vault
-                    .room_audience_members_in_txn(txn, room)?
-                    .contains(&actor)
-        }
-    })
+    let Some(ids) = thread_audience_in(vault, txn, room, record)? else {
+        return Ok(true);
+    };
+    let members: BTreeSet<_> = vault
+        .room_audience_members_in_txn(txn, room)?
+        .into_iter()
+        .collect();
+    Ok(names_actor_in(vault, txn, &ids, actor)? && names_actor_in(vault, txn, &members, actor)?)
 }
 
 /// Refuses `actor` off the audience of the thread holding `record` in
@@ -213,7 +242,8 @@ pub(crate) fn require_thread_audience_in(
 
 /// `members` narrowed to the audience of the thread holding `record` in
 /// `room`, or all of them off a private thread: the members a private
-/// thread's ceiling binds. It seats no one.
+/// thread's ceiling binds, a pen among them when its PERSON is named. It
+/// seats no one.
 pub(crate) fn thread_members_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -221,14 +251,16 @@ pub(crate) fn thread_members_in(
     record: EntityId,
     members: &[EntityId],
 ) -> Result<Vec<EntityId>> {
-    Ok(match thread_audience_in(vault, txn, room, record)? {
-        None => members.to_vec(),
-        Some(ids) => members
-            .iter()
-            .copied()
-            .filter(|id| ids.contains(id))
-            .collect(),
-    })
+    let Some(ids) = thread_audience_in(vault, txn, room, record)? else {
+        return Ok(members.to_vec());
+    };
+    let mut kept = Vec::new();
+    for &id in members {
+        if names_actor_in(vault, txn, &ids, id)? {
+            kept.push(id);
+        }
+    }
+    Ok(kept)
 }
 
 /// Whether every one of `viewers` reads the thread rooted at `root`,
@@ -260,10 +292,18 @@ pub(crate) fn thread_root_readable_in(
     if viewers.is_empty() {
         return Ok(false);
     }
-    let members = vault.room_audience_members_in_txn(txn, room)?;
-    Ok(viewers
-        .iter()
-        .all(|viewer| ids.contains(viewer) && members.contains(viewer)))
+    let members: BTreeSet<_> = vault
+        .room_audience_members_in_txn(txn, room)?
+        .into_iter()
+        .collect();
+    for &viewer in viewers {
+        if !names_actor_in(vault, txn, &ids, viewer)?
+            || !names_actor_in(vault, txn, &members, viewer)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Whether `actor` may write in the thread the stored record `id` sits in:

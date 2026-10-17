@@ -351,13 +351,13 @@ pub(crate) fn append_in_txn(
                 )?;
                 crate::workspace_roster::thread_audience_in(vault, txn, input.conversation, root)?
             };
-            if let Some(audience) = &audience
-                && input
-                    .recipients
-                    .iter()
-                    .any(|recipient| !audience.contains(recipient))
-            {
-                return Err(invalid("a private thread addresses its audience alone"));
+            // A pen is addressed there through its PERSON (FIX 3123).
+            if let Some(audience) = &audience {
+                for recipient in &input.recipients {
+                    if !crate::workspace_roster::names_actor_in(vault, txn, audience, *recipient)? {
+                        return Err(invalid("a private thread addresses its audience alone"));
+                    }
+                }
             }
             let binding = crate::workspace_roster::ThreadBinding {
                 root,

@@ -1,6 +1,6 @@
 //! Claim-before-speaking guard inside the existing witness transaction.
 use super::audience::{
-    ThreadBinding, thread_audience_allows_in, thread_audience_in, thread_binding,
+    ThreadBinding, names_actor_in, thread_audience_allows_in, thread_audience_in, thread_binding,
     thread_root_readable_in, validate_private_audience_in,
 };
 use super::participation::{
@@ -249,18 +249,19 @@ pub(crate) fn admit_witness(
         now,
     )?;
     // A private thread names only its audience: a mention hands the named
-    // agent the turn.
+    // agent the turn. A pen is named there through its PERSON (FIX 3123).
     let private = match &thread {
         Some(binding) if binding.root == turn_id => binding.audience.clone(),
         Some(binding) => thread_audience_in(vault, txn, room, binding.root)?,
         None => None,
     };
-    if let Some(audience) = &private
-        && mentions
-            .iter()
-            .any(|named| !EntityId::from_hex(named).is_ok_and(|id| audience.contains(&id)))
-    {
-        return Err(invalid());
+    if let Some(audience) = &private {
+        for named in &mentions {
+            let named = EntityId::from_hex(named).map_err(|_| invalid())?;
+            if !names_actor_in(vault, txn, audience, named)? {
+                return Err(invalid());
+            }
+        }
     }
     let standing = match speaker {
         Some(JoinSubject::Agent(agent)) => Some(
