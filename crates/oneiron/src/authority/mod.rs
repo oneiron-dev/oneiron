@@ -84,6 +84,7 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+mod task_actor;
 mod vault_api;
 mod world_key_fold;
 mod world_key_support;
@@ -171,6 +172,7 @@ pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::HostSlipIssuer;
+pub(crate) use task_actor::TaskActorVerb;
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.

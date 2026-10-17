@@ -28,6 +28,7 @@ pub use outcomes::{calibration_pairs, person_changed_pairs, project_bound_outcom
 pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
+pub(crate) use refresh::principal_actor;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions,
     refresh_due_questions_by_role, refresh_due_questions_with, refresh_question,

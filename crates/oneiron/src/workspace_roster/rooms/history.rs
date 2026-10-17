@@ -109,9 +109,28 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
     Ok(())
 }
 
+/// Deletes the rows one thread of `room` owns once its root `thread` is
+/// erased (OF-529): its participation facts, every join receipt filed for it
+/// and its Ready rows, and its offer cards and current-card pointers. The
+/// room's own rows and every other thread's stay; the history and DAG pins
+/// stay as the topology the thread's surviving replies hang off.
+pub(in crate::workspace_roster) fn delete_thread_metadata(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+) -> Result<()> {
+    super::participation::delete_thread_facts(store, txn, room, thread)?;
+    crate::workspace_roster::join_receipt::delete_thread_joins(store, txn, room, thread)?;
+    super::offers::delete_thread_offers(store, txn, room, thread)?;
+    Ok(())
+}
+
 /// [`delete_room_metadata`] for a CONVERSATION whose record leaves, run by
 /// the shared erase doors (`deletion/derived_rows.rs`) before its body goes;
-/// a no-op for any other entity. A project's home room reaches it from
+/// [`delete_thread_metadata`] for a TURN that roots a thread, a project
+/// room's by its stored turn and an ordinary room's by its DAG topology; a
+/// no-op for any other entity. A project's home room reaches it from
 /// `deindex_project_room` as well; the sweep is idempotent.
 pub(crate) fn erase_room_side_rows(
     store: &Store,
@@ -121,10 +140,20 @@ pub(crate) fn erase_room_side_rows(
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(());
     };
-    let is_room = crate::batch::EntityMetadataHeader::parse(&raw)
-        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION);
-    if is_room {
-        delete_room_metadata(store, txn, *id)?;
+    match crate::batch::EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) {
+        Some(crate::registry::ENTITY_TYPE_CONVERSATION) => delete_room_metadata(store, txn, *id)?,
+        Some(crate::registry::ENTITY_TYPE_TURN) => {
+            let room = match TURNS.get(store, txn, id)? {
+                Some(turn) => super::liveness::is_thread_root(&turn)
+                    .then(|| EntityId::from_hex(&turn.room_id))
+                    .transpose()?,
+                None => crate::conversation_dag::erased_thread_room_in_txn(store, txn, id)?,
+            };
+            if let Some(room) = room {
+                delete_thread_metadata(store, txn, room, *id)?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -141,7 +170,10 @@ impl Memory<'_> {
 
     /// [`Self::admitted_turns`] for the room's reader, or, with `thread`,
     /// for a reader of that one thread (OF-529): its own gate and a lane
-    /// bound to that thread, never the room's.
+    /// bound to that thread, never the room's. A trunk turn's quote (OF-460)
+    /// is kept only when the lane admits its target TURN and MESSAGE, or the
+    /// one it does not is no longer live: an erased target reads as redacted,
+    /// never as a hidden live row.
     fn admitted_turns_at(
         &self,
         mut turns: Vec<RoomTurn>,
@@ -183,6 +215,12 @@ impl Memory<'_> {
                     .chain(&turn.converted_project)
             })
             .filter_map(|id| EntityId::from_hex(id).ok())
+            .chain(
+                turns
+                    .iter()
+                    .filter_map(|turn| turn.quote.as_ref())
+                    .flat_map(|quote| [quote.target_turn, quote.anchor.message()]),
+            )
             .collect();
         let ids: Vec<_> = ids.into_iter().collect();
         let projection = match thread {
@@ -207,6 +245,20 @@ impl Memory<'_> {
                     .filter_map(|(id, row)| row.map(|_| *id)),
             );
         }
+        let mut withheld = BTreeSet::new();
+        {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            for quote in turns.iter().filter_map(|turn| turn.quote.as_ref()) {
+                for id in [quote.target_turn, quote.anchor.message()] {
+                    if !admitted.contains(&id)
+                        && crate::vault::live_entity_row_in_txn(&self.vault().store, &txn, &id)?
+                            .is_live()
+                    {
+                        withheld.insert(id);
+                    }
+                }
+            }
+        }
         let readable = |id: &String| EntityId::from_hex(id).is_ok_and(|id| admitted.contains(&id));
         Ok(turns
             .into_iter()
@@ -219,6 +271,10 @@ impl Memory<'_> {
                 turn.message_ids.retain(readable);
                 turn.task_ids.retain(readable);
                 turn.converted_project = turn.converted_project.filter(readable);
+                turn.quote = turn.quote.filter(|quote| {
+                    !withheld.contains(&quote.target_turn)
+                        && !withheld.contains(&quote.anchor.message())
+                });
                 turn
             })
             .collect())
