@@ -207,7 +207,7 @@ class UniffiTypes:
         key = node[1]
         decl = self.inv.decls[key]
         args = [self.close(a, subst) for a in node[2]]
-        if key in self.recursive: return self.leaf(decl['name'], 'a recursive type')
+        if key in self.recursive: return self.leaf(where, f'the recursive type {decl["name"]}')
         inner = dict(zip(decl['params'], args))
         ir, meta = decl['ir'], self.inv.variants.get(decl['name'])
         if meta is None and ir[0] not in ('object', 'and'):

@@ -80,8 +80,9 @@ no generic `call(name, json)`.
 - **`WireJson`** stays only where UniFFI cannot say the shape, as a field
   inside its record and never as the whole argument: each `serde_json::Value`
   (a claim's value, a task spec, an entity body, `ai.*` params and the
-  others `generate.py` lists), and the two recursive types, `LensNode` and
-  `RunTreeNode` (a record cannot hold itself). A row whose type the inventory
+  others `generate.py` lists), and the two recursive types, `LensNode` at
+  `GeneratedLens.root` and `RunTreeNode` at `RunTree.roots` (a record cannot
+  hold itself). A row whose type the inventory
   could not read would cross as `WireJson` whole; on this table there is
   none. The generated file's header carries the census.
 - Where a generated type would take a hand-written record's name it is

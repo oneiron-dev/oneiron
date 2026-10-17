@@ -6,7 +6,7 @@
 // UniFFI census: 166 facade rows, 507 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 137.
 // WireJson rows: none.
-// WireJson leaves inside the generated types, past each serde_json::Value: LensNode (a recursive type), RunTreeNode (a recursive type).
+// WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
