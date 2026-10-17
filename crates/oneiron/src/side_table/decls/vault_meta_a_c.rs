@@ -121,6 +121,9 @@ side_tables! {
     /// One bound autoresearch campaign: its ruler, goal pin, policy digest, cohort and budget
     /// share, written once. Key: id16 (root attempt).
     AUTORESEARCH_BINDING: VaultMeta b"autoresearch:binding:v1:" Named;
+    /// One held-out selection benchmark of an autoresearch parent-selection estimator version
+    /// against the DGM formula, recorded once. Key: string (estimator version).
+    AUTORESEARCH_ESTIMATOR: VaultMeta b"autoresearch:estimator:v1:" Named;
     /// One autoresearch experiment node annotating an existing attempt: lineage, candidate pin,
     /// search and held-out evidence, buggy, weave and prune receipts. Key: id16 (root attempt) +
     /// id16 (node attempt).
@@ -327,6 +330,9 @@ side_tables! {
     /// When the Coach's person-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
+    /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
+    /// unchanged room is not declared again. Key: id16 of the room.
+    COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw;
     /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
     /// rung per reminder window. Key: id16 of the ask's proposal.
     COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;

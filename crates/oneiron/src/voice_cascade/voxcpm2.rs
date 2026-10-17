@@ -1,5 +1,9 @@
 //! VoxCPM2's warm, host-owned rendering seam. The audio worker lives outside
-//! the cascade lock; this adapter only admits bounded work and checks its replies.
+//! the cascade lock; this adapter only admits work and checks its replies.
+//! Nothing is refused for its size or for room (Rule 5): text past the
+//! serving policy's `max_text_bytes` goes as several renders, in order, and
+//! renders past its `max_queued_renders` wait in the adapter until earlier
+//! audio drains.
 //! A host must supply a queue connected to an already-loaded GPU process. Neither
 //! queue admission nor a host readiness claim alone proves a GPU is deployed.
 
@@ -7,7 +11,7 @@ pub use crate::gate::voice_serving::VoiceServingLimits;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, sync::Arc};
 
-use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession};
+use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -153,8 +157,10 @@ pub struct VoxCpm2Adapter<Q> {
     target: Option<RenderTarget>,
     sequence: u64,
     chunk_index: u64,
-    text_bytes: usize,
     buffer: String,
+    /// Renders waiting, in order, for fewer than `max_queued_renders` to
+    /// await their audio.
+    held: VecDeque<String>,
     pending: VecDeque<u64>,
     ended: bool,
     cancelled: bool,
@@ -200,8 +206,8 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
             target: None,
             sequence: 0,
             chunk_index: 0,
-            text_bytes: 0,
             buffer: String::new(),
+            held: VecDeque::new(),
             pending: VecDeque::new(),
             ended: false,
             cancelled: false,
@@ -237,23 +243,32 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
 
     fn boundary(&mut self, generation: GenerationEpoch, end: bool) -> Result<()> {
         if !self.buffer.is_empty() {
-            // Never wait on the ref guard here: GPU work can hold a read lock
-            // while a withdrawal waits to write. The worker checks the exact
-            // revision at dispatch; returned PCM is checked before playback.
-            if self.pending.len() >= self.limits.max_queued_renders as usize {
-                return Err(invalid("responses must drain"));
-            }
-            let submission = self.send(
-                generation,
-                VoxCpm2Operation::Render {
-                    text: self.buffer.clone(),
-                },
-            )?;
-            self.pending.push_back(submission);
+            let max = usize::try_from(self.limits.max_text_bytes).unwrap_or(usize::MAX);
+            let pieces = speakable::pieces(&self.buffer, max);
+            self.held.extend(pieces.into_iter().map(str::to_owned));
             self.buffer.clear();
         }
         if end {
             self.ended = true;
+        }
+        self.release(generation)
+    }
+
+    /// Sends held renders while fewer than `max_queued_renders` await their
+    /// audio; the rest wait for it to drain. A refused send keeps its render
+    /// held for the next boundary or response.
+    fn release(&mut self, generation: GenerationEpoch) -> Result<()> {
+        let window = usize::try_from(self.limits.max_queued_renders).unwrap_or(usize::MAX);
+        // Never wait on the ref guard here: GPU work can hold a read lock
+        // while a withdrawal waits to write. The worker checks the exact
+        // revision at dispatch; returned PCM is checked before playback.
+        while self.pending.len() < window
+            && let Some(text) = self.held.front()
+        {
+            let text = text.clone();
+            let submission = self.send(generation, VoxCpm2Operation::Render { text })?;
+            self.held.pop_front();
+            self.pending.push_back(submission);
         }
         Ok(())
     }
@@ -275,6 +290,7 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
         }
         if !audio.target.is_current_in(&self.vault) {
             self.cancelled = true;
+            self.held.clear();
             self.pending.clear();
             return Err(invalid("owner voice reference withdrawn or replaced"));
         }
@@ -289,6 +305,9 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
             .collect();
         self.chunk_index = next;
         self.pending.pop_front();
+        // A held render takes the room this one left. A refused send stays
+        // held; the queue reports its own failure on the next receive.
+        let _ = self.release(audio.generation);
         Ok(VoxCpm2Pcm {
             vault: Arc::clone(&self.vault),
             frame: PcmFrame {
@@ -364,6 +383,7 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
             // Fail closed before queue admission. A failed cancel permits a retry only.
             self.cancelled = true;
             self.buffer.clear();
+            self.held.clear();
             self.pending.clear();
             self.send(generation, VoxCpm2Operation::Cancel)?;
             return Ok(());
@@ -380,12 +400,10 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
         }
         match command {
             TtsCommand::Text { text, .. } => {
-                if text.trim().is_empty()
-                    || text.len() as u64 > self.limits.max_text_bytes - self.text_bytes as u64
-                {
-                    return Err(invalid("empty or oversized text"));
+                // Long text is split into renders at the boundary, never refused.
+                if text.trim().is_empty() {
+                    return Err(invalid("empty text"));
                 }
-                self.text_bytes += text.len();
                 self.buffer.push_str(&text);
             }
             TtsCommand::Flush { .. } => self.boundary(generation, false)?,
