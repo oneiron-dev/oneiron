@@ -468,6 +468,7 @@ pub fn place_task(
         paired: decisions.ladder.paired,
         person: decisions.ladder.person,
         presence: decisions.ladder.presence,
+        correlation: decisions.ladder.correlation,
     };
     // Unsure is the root, so a placement never queues a person.
     let dial = DecisionDial {

@@ -765,6 +765,7 @@ fn overrun_request(
         // The project's board decides its goal's exploration overrun. With no
         // live holder there, the ask goes up the chain (the parents' boards,
         // then the owners) to the first role that has one.
+        correlation: None,
         to: AskTo {
             role: AskRole::Board {
                 project: trial.project,

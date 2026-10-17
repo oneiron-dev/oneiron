@@ -67,6 +67,7 @@ impl HeldLadder {
             paired: self.paired.as_ref(),
             person: self.person.as_ref(),
             presence: self.presence.as_ref(),
+            correlation: None,
         }
     }
 }

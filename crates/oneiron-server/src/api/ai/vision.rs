@@ -408,6 +408,7 @@ async fn box_answer(
             paired: None,
             person: None,
             presence: host.presence.as_ref(),
+            correlation: None,
         };
         ladder.run_located(
             &question,
