@@ -167,6 +167,10 @@ pub struct SyncServer {
     /// The checked built-in channels this host serves (OF-519), kept by
     /// `builtin_host::spawn` and read by their provider webhooks.
     pub(crate) builtin_handles: Arc<crate::builtin_host::BuiltinHandles>,
+    /// This server's one organ host: the seal worker and the mesh
+    /// listener's `oneiron/organ/1` share its budget and warm processes.
+    #[cfg(unix)]
+    pub(crate) organs: Arc<oneiron_organ_host::OrganHost>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -418,6 +422,10 @@ impl SyncServer {
             decisions,
             hook_runtime: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
+            #[cfg(unix)]
+            organs: Arc::new(oneiron_organ_host::OrganHost::new(
+                oneiron_organ_host::HostConfig::default(),
+            )),
             run_receipts,
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),

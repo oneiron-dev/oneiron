@@ -120,7 +120,9 @@ impl SocketGuard {
             return Ok(());
         };
         match entry_at(&self.directory, &self.name)? {
-            Some((true, dev, ino)) if (dev, ino) == identity => unlink_at(&self.directory, &self.name),
+            Some((true, dev, ino)) if (dev, ino) == identity => {
+                unlink_at(&self.directory, &self.name)
+            }
             // A foreign replacement is not ours to remove, including symlinks.
             Some(_) | None => Ok(()),
         }

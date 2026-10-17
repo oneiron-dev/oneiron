@@ -17,7 +17,7 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::world_keys::{NewVaultKeyWrap, VaultKeyWrapInfo};
+use oneiron::world_keys::{EscrowRetirement, NewVaultKeyWrap, VaultKeyWrapInfo};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -38,6 +38,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault-key/passkeys", post(add_passkey))
         .route("/vault-key/device", post(add_device))
         .route("/vault-key/remove", post(remove))
+        .route("/vault-key/retire-escrow", post(retire_escrow))
 }
 
 /// `GET /v1/owner/vault-key`: whether the vault has a data key, whether this
@@ -225,6 +226,32 @@ async fn remove(
     })
     .await?;
     Ok(Json(removed))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetireEscrowRequest {
+    /// The released escrow recipient's label.
+    label: String,
+}
+
+/// `POST /v1/owner/vault-key/retire-escrow`: retires an escrow recipient
+/// whose secret was released. The vault drops its wrap and never seals to
+/// its label again; the reply is the owner's receipt.
+async fn retire_escrow(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<RetireEscrowRequest>, JsonRejection>,
+) -> OwnerReply<EscrowRetirement> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let retired = blocking(move || -> OwnerResult<EscrowRetirement> {
+        Ok(server
+            .vault()
+            .retire_vault_key_escrow_as(&owner, &request.label)?)
+    })
+    .await?;
+    Ok(Json(retired))
 }
 
 /// The vault, holding its data key: already held, unlocked with this
