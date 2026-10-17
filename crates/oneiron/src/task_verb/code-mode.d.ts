@@ -171,7 +171,7 @@ declare const vault: {
     born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
     create(input: { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null }): Promise<unknown>;
     discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
-    export(input: { artifact_ref: string; version?: number | null }): Promise<unknown>;
+    export(input: { artifact_ref: string; version?: number | null; why?: string | null }): Promise<unknown>;
     keep(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     proposals(input: { artifact_ref: string }): Promise<unknown>;
     propose_deck(input: { artifact_ref: string; context?: unknown; made_by?: unknown; run_ref: string; transaction: unknown }): Promise<unknown>;
@@ -262,6 +262,11 @@ declare const vault: {
     retire(input: { space: string }): Promise<unknown>;
   };
   export(input: { format?: string | null }): Promise<unknown>;
+  fanout: {
+    ack(input: { answer: "ack" | "ack_and_remember"; launch_ref: string; plan_digest: string; remembered_cap?: number | null }): Promise<unknown>;
+    launch(input: { launch_ref: string }): Promise<unknown>;
+    resume(input: { launch_ref: string; plan_digest: string; remembered_cap?: number | null; ruling: "approve_once" | "approve_and_remember" | "deny" }): Promise<unknown>;
+  };
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {
@@ -403,6 +408,9 @@ declare const vault: {
   };
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
+  };
+  secrets: {
+    lift_history(input: { start?: boolean }): Promise<unknown>;
   };
   settings: {
     inference_defaults: ((input: object) => Promise<unknown>) & {

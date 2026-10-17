@@ -709,11 +709,14 @@ fn mcp_compaction_value(report: &oneiron::engine_executor::CompactionReport) -> 
 /// board, as [`execute_mcp_board_verb`] serves a connector's. Answers the
 /// verb's wire value and every row the board was derived from. A refresh's
 /// frame is the answer, so the queue behind it is superseded and drained.
+/// Leaves the hook blocks the answer shows in `hooks`, for
+/// [`deliver_run_board_hooks`] once the answer returns to the run.
 pub(crate) async fn execute_run_board_verb(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
     connection: &oneiron::context_board::StreamConnectionId,
     call: oneiron::board_verb::BoardVerbCall,
+    hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<(Value, Vec<oneiron::EntityId>), oneiron::memory::MemoryError> {
     let board = super::board_setup::run_current_board(server, actor, connection)
         .await
@@ -765,7 +768,29 @@ pub(crate) async fn execute_run_board_verb(
         }
         other => other,
     };
+    *hooks = match &output {
+        oneiron::board_verb::BoardVerbOutput::Frame(_) => Some(board.hooks),
+        oneiron::board_verb::BoardVerbOutput::Expanded { key, .. } => {
+            Some(board.hooks.shown_by(key))
+        }
+        oneiron::board_verb::BoardVerbOutput::Subscription(_) => None,
+    };
     Ok((mcp_board_verb_output_value(&output), board.rows))
+}
+
+/// A pumped run's board answer has returned to the run: the receipt its hook
+/// rows owe is recorded and their blocks spent, as a code-mode board read's
+/// are (OF-579).
+pub(crate) async fn deliver_run_board_hooks(
+    server: &SyncServer,
+    mut hooks: super::board_setup::McpBoardHooks,
+) -> Result<(), oneiron::memory::MemoryError> {
+    hooks
+        .record_receipt(server)
+        .await
+        .map_err(run_board_error)?;
+    hooks.spend(server);
+    Ok(())
 }
 
 /// Drops a pumped run's board connection, snapshot and read set.

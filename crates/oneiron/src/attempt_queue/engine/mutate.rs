@@ -4,6 +4,7 @@ use crate::attempt_queue::annotation_hold::{
     ANNOTATION_HOLD_ACTOR, ERR_ANNOTATION_HOLD_ACTOR_RESERVED,
 };
 use crate::attempt_queue::budget_hold::{BUDGET_HOLD_ACTOR, ERR_BUDGET_HOLD_ACTOR_RESERVED};
+use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_HOLD_ACTOR};
 use crate::attempt_queue::cancel::{
     ATTEMPT_RUNTIME_ACTOR, AttemptCancelState, AttemptLandingReserve, ForceCancelAuthority,
     force_cancel_record, validate_force_authority,
@@ -251,6 +252,13 @@ impl AttemptQueue<'_> {
         if input.actor == BUDGET_HOLD_ACTOR {
             return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_BUDGET_HOLD_ACTOR_RESERVED,
+            )));
+        }
+        // OF-393: so is the fan-out launch hold's; only its lease-fenced
+        // hold door writes it, and only its approval releases it.
+        if input.actor == FANOUT_HOLD_ACTOR {
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_FANOUT_HOLD_ACTOR_RESERVED,
             )));
         }
         self.apply_intervention_in_txn(wtxn, input)

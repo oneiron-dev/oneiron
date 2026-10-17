@@ -8092,6 +8092,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "similar",
  "stemma",
  "thiserror 2.0.20",
  "zip 0.6.6",

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 255 facade rows, 936 declarations.
-Inputs: 211 of 255 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 207 of 255 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 259 facade rows, 967 declarations.
+Inputs: 215 of 259 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 211 of 259 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
@@ -305,10 +305,43 @@ class PersonRequest(TypedDict):
     pr: str
 class EmptyRequest(TypedDict):
     ...
+ShapePreset = Literal["personal", "family", "team", "org", "community"]
+ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
+ShapeSkillSourceLibrary = TypedDict("ShapeSkillSourceLibrary", {"from": Literal["library"], "subtree": str})
+ShapeSkillSourceHub = TypedDict("ShapeSkillSourceHub", {"from": Literal["hub"], "hub": str, "folder": str, "pin_type": str, "pin_value": str, "publisher": str})
+ShapeSkillSource = ShapeSkillSourceLibrary | ShapeSkillSourceHub
+ShapeSelfHeld = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
+ShapeMailScope = Literal["mail.read", "mail.metadata", "mail.send"]
+class ShapeChannelCustodySelfHeld(TypedDict):
+    held: Literal["self_held"]
+    shape: ShapeSelfHeld
+class ShapeChannelCustodyDelegated(TypedDict):
+    held: Literal["delegated"]
+    custody_record_ref: str
+    scopes: list[ShapeMailScope]
+ShapeChannelCustody = ShapeChannelCustodySelfHeld | ShapeChannelCustodyDelegated
+class ShapeChannelBindingActor(TypedDict):
+    to: Literal["actor"]
+    agent_id: str
+    facet: NotRequired[str | None]
+class ShapeChannelBindingVault(TypedDict):
+    to: Literal["vault"]
+    vault_id: int
+ShapeChannelBinding = ShapeChannelBindingActor | ShapeChannelBindingVault
+ShapeChannelFulfillment = Literal["api", "manual", "review"]
+class ShapeChannelProvision(TypedDict):
+    custody: ShapeChannelCustody
+    binding: ShapeChannelBinding
+    fulfillment: ShapeChannelFulfillment
 ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
 ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
 ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
+class ShapeTargetShared(TypedDict):
+    kind: Literal["shared"]
+class ShapeTargetMember(TypedDict):
+    kind: Literal["member"]
+    member: str
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -331,7 +364,15 @@ class ShapeTargetGrant(TypedDict):
 class ShapeTargetSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
-ShapeTarget = ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+class ShapeRowShared(TypedDict):
+    kind: Literal["shared"]
+    vault_id: int
+    preset: NotRequired[ShapePreset | None]
+class ShapeRowMember(TypedDict):
+    kind: Literal["member"]
+    member: str
+    role: ShapeMemberRole
 class ShapeRowWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -348,10 +389,12 @@ class ShapeRowSkill(TypedDict):
     kind: Literal["skill"]
     skill_id: str
     version: NotRequired[str | None]
+    source: NotRequired[ShapeSkillSource | None]
 class ShapeRowChannel(TypedDict):
     kind: Literal["channel"]
     channel: str
     address: str
+    provision: NotRequired[ShapeChannelProvision | None]
 class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: NotRequired[str]
@@ -363,7 +406,7 @@ class ShapeRowSync(TypedDict):
 class ShapeRowRetire(TypedDict):
     kind: Literal["retire"]
     target: ShapeTarget
-ShapeRow = ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
 class ShapeSeed(TypedDict):
     rows: list[ShapeRow]
 class StoredShapeSeed(TypedDict):
@@ -410,8 +453,16 @@ class ShapeRead(TypedDict):
     seed: NotRequired[StoredShapeSeed | None]
     live: ShapeSeed
     applies: list[ShapeApplyReceipt]
+class ShapePresetMember(TypedDict):
+    member: str
+    role: NotRequired[ShapeMemberRole | None]
+class ShapePresetPick(TypedDict):
+    preset: ShapePreset
+    vault_id: int
+    members: NotRequired[list[ShapePresetMember]]
 class ShapePlanRequest(TypedDict):
     seed: NotRequired[ShapeSeed | None]
+    preset: NotRequired[ShapePresetPick | None]
 class ShapePlanSummary(TypedDict):
     changes: int
     needs_word: int
@@ -614,6 +665,70 @@ class TaskWaveRequest(TypedDict):
 class TaskWaveReceipt(TypedDict):
     attempt_ref: str
     state: str
+class FanoutLaunchRequest(TypedDict):
+    launch_ref: EntityId
+class PeerCount(TypedDict):
+    peer: EntityId
+    count: int
+SpendBasis = Literal["calibrated", "prior"]
+class ExpectedSpend(TypedDict):
+    units: int
+    samples: int
+    basis: SpendBasis
+LeaseUnit = str
+SpendScopeId = str
+class SpendCapView(TypedDict):
+    scope: NotRequired[SpendScopeId | None]
+    unit: LeaseUnit
+    cap_units: int
+    available_units: int
+    hard: bool
+class WidthCheckClassAutoClear(TypedDict):
+    kind: Literal["auto_clear"]
+    policy_ref: NotRequired[str | None]
+class WidthCheckClassAsked(TypedDict):
+    kind: Literal["asked"]
+    row_ref: str
+WidthCheckClass = WidthCheckClassAutoClear | WidthCheckClassAsked
+class ExceptionalWidthCheck(TypedDict):
+    count: int
+    threshold: int
+    classification: WidthCheckClass
+class FanoutStatement(TypedDict):
+    agent_count: int
+    consult_count: int
+    task_count: int
+    per_peer: list[PeerCount]
+    expected: ExpectedSpend
+    unit: LeaseUnit
+    cap: NotRequired[SpendCapView | None]
+    over_available: bool
+    more_would_buy: NotRequired[str | None]
+    width_check: NotRequired[ExceptionalWidthCheck | None]
+    stated_at: int
+class FanoutLaunchHold(TypedDict):
+    surface_ref: str
+    denied: bool
+class FanoutLaunchView(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    statement: FanoutStatement
+    held: NotRequired[FanoutLaunchHold | None]
+    check_row_ref: NotRequired[str | None]
+    choice_receipt_ref: NotRequired[str | None]
+    task_refs: list[EntityId]
+FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
+class FanoutResumeRequest(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    ruling: FanoutLaunchRuling
+    remembered_cap: NotRequired[int | None]
+FanoutCheckChoice = Literal["ack", "ack_and_remember"]
+class FanoutAckRequest(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    answer: FanoutCheckChoice
+    remembered_cap: NotRequired[int | None]
 class AttemptHandle(TypedDict):
     task_ref: EntityId
     attempt_ref: str
@@ -2353,6 +2468,53 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+class SecretLiftRequest(TypedDict):
+    start: NotRequired[bool]
+SecretScanMode = Literal["on", "off"]
+LiftTrigger = Literal["switch", "owner"]
+LiftFamily = Literal["records", "side_rows", "carriers"]
+class LiftCounts(TypedDict):
+    family: LiftFamily
+    read: int
+    masked: int
+    proposals: int
+    failed: int
+class SecretLiftProgress(TypedDict):
+    run_id: str
+    trigger: LiftTrigger
+    requested_at: int
+    family: LiftFamily
+    retrying: int
+    counts: list[LiftCounts]
+class SecretLiftReceipt(TypedDict):
+    receipt_id: str
+    trigger: LiftTrigger
+    requested_by: NotRequired[str | None]
+    requested_at: int
+    finished_at: int
+    families: list[LiftCounts]
+    masked: int
+    proposals: int
+    failed: int
+LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "history"]
+class SecretLiftProposal(TypedDict):
+    path: str
+    detector_reason: str
+    suggested_secret_name: str
+    project_id: str
+class SecretLiftHistoryProposal(TypedDict):
+    family: LiftFamily
+    cause: LiftCause
+    proposal: SecretLiftProposal
+    run_id: str
+    filed_at: int
+class SecretLiftStatus(TypedDict):
+    mode: SecretScanMode
+    paused: bool
+    running: NotRequired[SecretLiftProgress | None]
+    last: NotRequired[SecretLiftReceipt | None]
+    open_proposals: int
+    proposals: list[SecretLiftHistoryProposal]
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):
     state: NotRequired[WidenProposalState | None]
@@ -2449,6 +2611,7 @@ class LensDefaultRequest(TypedDict):
     ledger: NotRequired[list[str]]
     dossiers: NotRequired[list[LensDossierSource]]
     threads: NotRequired[list[str]]
+    as_of: NotRequired[int | None]
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt
@@ -2759,6 +2922,7 @@ class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
     travel: NotRequired[TravelChoice | None]
+    why: NotRequired[str | None]
 class ArtifactExportFile(TypedDict):
     artifact_ref: str
     version: int
@@ -2906,45 +3070,6 @@ class TaskAskShort(TypedDict):
     until: NotRequired[int | None]
     default: NotRequired[TaskAskDefault]
 TaskAskRequest = TaskAskSpec | TaskAskShort
-class PeerCount(TypedDict):
-    peer: EntityId
-    count: int
-SpendBasis = Literal["calibrated", "prior"]
-class ExpectedSpend(TypedDict):
-    units: int
-    samples: int
-    basis: SpendBasis
-LeaseUnit = str
-SpendScopeId = str
-class SpendCapView(TypedDict):
-    scope: NotRequired[SpendScopeId | None]
-    unit: LeaseUnit
-    cap_units: int
-    available_units: int
-    hard: bool
-class WidthCheckClassAutoClear(TypedDict):
-    kind: Literal["auto_clear"]
-    policy_ref: NotRequired[str | None]
-class WidthCheckClassAsked(TypedDict):
-    kind: Literal["asked"]
-    row_ref: str
-WidthCheckClass = WidthCheckClassAutoClear | WidthCheckClassAsked
-class ExceptionalWidthCheck(TypedDict):
-    count: int
-    threshold: int
-    classification: WidthCheckClass
-class FanoutStatement(TypedDict):
-    agent_count: int
-    consult_count: int
-    task_count: int
-    per_peer: list[PeerCount]
-    expected: ExpectedSpend
-    unit: LeaseUnit
-    cap: NotRequired[SpendCapView | None]
-    over_available: bool
-    more_would_buy: NotRequired[str | None]
-    width_check: NotRequired[ExceptionalWidthCheck | None]
-    stated_at: int
 class TaskAskReceipt(TypedDict):
     handle: TaskAskHandle
     task_refs: list[EntityId]
@@ -4344,6 +4469,10 @@ class OfficeBodyReadRequest(TypedDict):
 class BodyBlockKindHeading(TypedDict):
     heading: int
 BodyBlockKind = Literal["paragraph", "table", "opaque"] | BodyBlockKindHeading
+DocxMark = Literal["bold", "italic", "underline", "strike", "subscript", "superscript"]
+class DocxRun(TypedDict):
+    text: str
+    marks: NotRequired[list[DocxMark]]
 class DocxCellView(TypedDict):
     row: int
     col: int
@@ -4355,6 +4484,7 @@ class DocxBlockView(TypedDict):
     imported: bool
     locked: bool
     text: str
+    runs: list[DocxRun]
     cells: list[DocxCellView]
 class DocxBodyView(TypedDict):
     blocks: list[DocxBlockView]
@@ -4515,7 +4645,14 @@ class DocxBodyOpMove(TypedDict):
     op: Literal["move"]
     block: str
     after: NotRequired[str | None]
-DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove
+class DocxBodyOpMark(TypedDict):
+    op: Literal["mark"]
+    block: str
+    at: int
+    len: int
+    mark: DocxMark
+    on: bool
+DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark
 class XlsxBodyOpSetValue(TypedDict):
     op: Literal["set_value"]
     sheet: str

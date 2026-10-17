@@ -120,7 +120,10 @@ impl RpcReply {
         result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
     ) -> Result<Self, ProtocolError> {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
+        // A `reveal.wait` reply is digested with its value masked (OF-560).
+        let mut masked = None;
         let packed = result.and_then(|(value, rows)| {
+            masked = oneiron::task_verb::sdk::masked_reveal_reply(&call.method, &value);
             wire::packed(&value)
                 .map(|bytes| (bytes, rows))
                 .map_err(|_| too_large())
@@ -128,7 +131,10 @@ impl RpcReply {
         let (outcome, result_digest, served) = match &packed {
             Ok((bytes, rows)) => (
                 oneiron::receipt::CallOutcome::Ok,
-                Some(oneiron::receipt::call_bytes_digest(bytes)),
+                Some(masked.as_ref().map_or_else(
+                    || oneiron::receipt::call_bytes_digest(bytes),
+                    oneiron::receipt::call_json_digest,
+                )),
                 rows.iter()
                     .flatten()
                     .take(oneiron::receipt::MAX_CALL_RECEIPT_SERVED)
