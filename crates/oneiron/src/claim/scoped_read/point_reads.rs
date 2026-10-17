@@ -254,9 +254,7 @@ impl ScopedRead<'_> {
             value: result
                 .value
                 .into_iter()
-                .map(|row| {
-                    row.filter(|row| row.occurred.start <= as_of && row.learned_at <= as_of)
-                })
+                .map(|row| row.filter(|row| row.occurred.start <= as_of && row.learned_at <= as_of))
                 .collect(),
             receipt: result.receipt,
         })
