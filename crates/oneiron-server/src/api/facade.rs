@@ -331,10 +331,13 @@ async fn facade_call_receipt(
     let bytes = axum::body::to_bytes(body, FACADE_MAX_BODY_BYTES)
         .await
         .unwrap_or_default();
-    let request_digest = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(value) => oneiron::receipt::call_json_digest(&value),
-        Err(_) => oneiron::receipt::call_bytes_digest(&bytes),
+    let request = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
+    let request_digest = match &request {
+        Some(value) => oneiron::receipt::call_json_digest(value),
+        None => oneiron::receipt::call_bytes_digest(&bytes),
     };
+    // OF-568: what the call reads, captured before it runs.
+    let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
     let mut response = next
         .run(Request::from_parts(parts, Body::from(bytes)))
         .await;
@@ -399,6 +402,7 @@ async fn facade_call_receipt(
             outcome,
             request_digest,
             result_digest,
+            inputs,
             served: Vec::new(),
         },
     );
