@@ -96,8 +96,9 @@ impl HeldOutReplayNotes for PassBoundScorer<'_> {
     }
 }
 
-/// The live slice on the wake pass's clock: no pull starts once the pass's
-/// judgment time is spent. A pull already started judges on the host's clock.
+/// The live slice on the wake pass's clock: each pull asks its axis question
+/// of the pass-bound judge, and no pull starts once the pass's judgment time
+/// is spent.
 struct PassBoundBandit<'a> {
     inner: &'a dyn GoalAxisBandit,
     clock: &'a RetrievalDeadline,
@@ -242,7 +243,7 @@ fn optimize(
                 at,
             )? == crate::skill::ExplorationTrialStatus::Measurable
         {
-            let bandit = live.bandits.for_proposal(&proposal)?;
+            let bandit = live.bandits.for_proposal_judged(&proposal, &scorer)?;
             let bandit = PassBoundBandit {
                 inner: &*bandit,
                 clock,
