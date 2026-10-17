@@ -1273,7 +1273,7 @@ export type QuestionAudience = "asker"
 /** `oneiron::config::HostingPrivacyPosture` */
 export type HostingPrivacyPosture = "managed" | "relay" | "self-host"
 /** `oneiron::llm::decision::questions::records::QuestionMedia` */
-export type QuestionMedia = { images: boolean }
+export type QuestionMedia = { images?: boolean; audio?: boolean }
 /** `oneiron::blob_artifact::verbs::FolderItemInput` */
 export type FolderItemInput = { artifact_ref: string; row: number }
 /** `oneiron::blob_artifact::verbs::ArtifactAskUnits` */
