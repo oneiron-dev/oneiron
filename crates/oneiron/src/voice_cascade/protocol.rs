@@ -236,6 +236,13 @@ pub trait Brain {
     /// Called after an accepted tool event, with the full ordered tool context.
     fn update_context(&mut self, request: &BrainRequest) -> Result<()>;
     fn cancel(&mut self, generation: GenerationEpoch) -> Result<()>;
+    /// A safeguard notice said to the person, which the model hears too: a
+    /// brain that keeps the call's history keeps it there, and its next turn
+    /// hears it. A turn already answering is not interrupted for it.
+    fn notice(&mut self, notice: &GateSystemNoticeRecord) -> Result<()> {
+        let _ = notice;
+        Ok(())
+    }
 }
 
 pub trait TtsSeamClient {
