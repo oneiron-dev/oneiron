@@ -8,8 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::super::record::{
-    ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeyRecord, ConnectorKeyStatus,
-    invalid_body,
+    ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeyRecord, ConnectorKeyStatus, invalid_body,
 };
 use super::super::slate::{
     bind_connector_slate_in_txn, read_connector_slate_in_txn, slate_expands,

@@ -30,8 +30,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::consent::AuthenticatedOwner;
 use crate::attempt_queue::AttemptId;
+use crate::consent::AuthenticatedOwner;
 use crate::learning::{
     DivergenceCase, LearningCell, LearningPredicate, Observation, Retest, RetestScore,
     TakeoverVerdict, judge_takeover_verdict, learning_estimate, record_judge_conversion,
@@ -209,7 +209,10 @@ pub enum JudgeSwapSettledBy {
 pub enum JudgeOutcomeLink {
     /// A whole-skill or task-success score: the share of these held-out
     /// receipts the skill won.
-    HeldOut { skill: String, receipts: Vec<String> },
+    HeldOut {
+        skill: String,
+        receipts: Vec<String>,
+    },
     /// A named or live goal axis: the share of these receipts whose anchored
     /// observation on the axis succeeded.
     Axis {
@@ -978,21 +981,24 @@ fn axis_rate(vault: &Vault, skill: &str, axis: &str, receipts: &[String]) -> Res
         return Ok(None);
     };
     let txn = vault.store.env.read_txn()?;
-    let cells: Vec<[u8; 32]> = crate::learning::evidence::cells_for_subject_in_txn(vault, &txn, &skill)?
-        .into_iter()
-        .filter(|row| {
-            row.cell.predicate == LearningPredicate::Reliability
-                && row.cell.axis.as_deref() == Some(axis)
-        })
-        .map(|row| row.cell.digest())
-        .collect();
+    let cells: Vec<[u8; 32]> =
+        crate::learning::evidence::cells_for_subject_in_txn(vault, &txn, &skill)?
+            .into_iter()
+            .filter(|row| {
+                row.cell.predicate == LearningPredicate::Reliability
+                    && row.cell.axis.as_deref() == Some(axis)
+            })
+            .map(|row| row.cell.digest())
+            .collect();
     let mut wins = 0_u32;
     for receipt in receipts {
         let mut seen = BTreeSet::new();
         for digest in &cells {
-            if let Some(row) =
-                crate::learning::evidence::EVIDENCE.get(&vault.store, &txn, &(*digest, receipt.clone()))?
-                && !row.on_judge_model
+            if let Some(row) = crate::learning::evidence::EVIDENCE.get(
+                &vault.store,
+                &txn,
+                &(*digest, receipt.clone()),
+            )? && !row.on_judge_model
                 && let Observation::Success(success) = row.observation
             {
                 seen.insert(success);
@@ -1024,9 +1030,10 @@ fn hidden_flaw(vault: &Vault, receipt: &str) -> Result<Option<bool>> {
     if crate::learning::honesty::seal_assessment(&seal).weighted_hidden_flaws > 0.0 {
         return Ok(Some(true));
     }
-    let audited = seal.checks.iter().any(|check| {
-        check.request.kind == SealCheckKind::RandomAudit && check.outcome.is_some()
-    });
+    let audited = seal
+        .checks
+        .iter()
+        .any(|check| check.request.kind == SealCheckKind::RandomAudit && check.outcome.is_some());
     Ok(audited.then_some(false))
 }
 

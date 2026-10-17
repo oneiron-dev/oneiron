@@ -182,7 +182,14 @@ impl VoiceHost {
         // `session_ended` still goes out on them.
         let (read, mut write) = stream.into_split();
         let result = self
-            .serve_inner(read, &mut write, outputs, bridge.as_deref_mut(), &mut wire, stop)
+            .serve_inner(
+                read,
+                &mut write,
+                outputs,
+                bridge.as_deref_mut(),
+                &mut wire,
+                stop,
+            )
             .await;
         if let Some(bridge) = bridge {
             bridge.stop_hearing();

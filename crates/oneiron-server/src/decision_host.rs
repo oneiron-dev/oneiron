@@ -363,7 +363,10 @@ impl DecisionHost {
     /// routed to that role's seat. Every other slot is empty and no person
     /// is asked: run it with [`MODEL_DIAL`]. Fails when `[models.decisions.big]`
     /// fills no Big rung, or no rung serves the role's seat.
-    pub fn ladder_for_role(&self, role: oneiron::llm::manifest::ModelRole) -> anyhow::Result<HeldLadder> {
+    pub fn ladder_for_role(
+        &self,
+        role: oneiron::llm::manifest::ModelRole,
+    ) -> anyhow::Result<HeldLadder> {
         let big = self
             .big_model
             .as_ref()

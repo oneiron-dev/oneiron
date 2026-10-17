@@ -181,9 +181,9 @@ pub use self::job::{
 pub(crate) use self::judge_swap::run_judge_swap;
 pub use self::judge_swap::{
     JUDGE_SWAP_NOTIFICATION_PRODUCER, JudgeIncumbent, JudgeOutcomeLink, JudgeShadowAnswer,
-    JudgeShadowCase, JudgeShadowHost, JudgeSwapDisagreement, JudgeSwapPick, JudgeSwapPolicy, JudgeSwapReceipt,
-    JudgeSwapReport, JudgeSwapSettledBy, JudgeTieBreaker, judge_incumbent, judge_swap_policy,
-    judge_swap_receipts, pick_judge_swap_case, set_judge_swap_policy,
+    JudgeShadowCase, JudgeShadowHost, JudgeSwapDisagreement, JudgeSwapPick, JudgeSwapPolicy,
+    JudgeSwapReceipt, JudgeSwapReport, JudgeSwapSettledBy, JudgeTieBreaker, judge_incumbent,
+    judge_swap_policy, judge_swap_receipts, pick_judge_swap_case, set_judge_swap_policy,
 };
 pub(crate) use self::labels::take_digest_asks_in_txn;
 pub use self::labels::{
