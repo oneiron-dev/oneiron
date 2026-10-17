@@ -3,13 +3,13 @@ use super::*;
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldedSlip {
     pub action: SlipMintAction,
     pub signer: AuthorityKey,
     pub entry_hash: AuthorityEntryHash,
 }
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SlipAuthorityState {
     pub mints: BTreeMap<[u8; 32], FoldedSlip>,
     /// Denied identifiers: explicit withdrawals AND colliding mint IDs.

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 269 facade rows, 1006 declarations.
+Census: 269 facade rows, 1010 declarations.
 Inputs: 225 of 269 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 218 of 269 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
@@ -1341,6 +1341,7 @@ class CallReceipt(TypedDict):
     outcome: CallOutcome
     request_digest: str
     result_digest: NotRequired[str | None]
+    action_digest: NotRequired[str | None]
     served: list[str]
     served_records: NotRequired[list[RecordRef]]
 class KeyValueAddress(TypedDict):
@@ -3905,12 +3906,21 @@ class AiPartEmbedding(TypedDict):
     kind: Literal["embedding"]
     vector: list[float]
 AiPart = AiPartText | AiPartImage | AiPartAudio | AiPartVideo | AiPartEmbedding
+class AiVoiceStock(TypedDict):
+    kind: Literal["stock"]
+    name: str
+class AiVoiceBank(TypedDict):
+    kind: Literal["bank"]
+    voice_id: str
+    include_generated: NotRequired[bool]
+AiVoice = AiVoiceStock | AiVoiceBank
 class AiCallRequest(TypedDict):
     model: NotRequired[str | None]
     prompt: NotRequired[str | None]
     input: NotRequired[list[AiPart]]
     references: NotRequired[list[AiPart]]
     params: NotRequired[dict[str, Any]]
+    voice: NotRequired[AiVoice | None]
 class MediaUsage(TypedDict):
     input_tokens: NotRequired[int]
     output_tokens: NotRequired[int]
@@ -4725,12 +4735,20 @@ class OfficeBodyViewPptx(TypedDict):
     format: Literal["pptx"]
     body: DeckBodyView
 OfficeBodyView = OfficeBodyViewDocx | OfficeBodyViewXlsx | OfficeBodyViewPptx
+class OfficeBodyCommitsRequest(TypedDict):
+    artifact_ref: str
+    actor_ref: NotRequired[str | None]
 class TextCommitReceipt(TypedDict):
     document: str
     peer: int
     start: int
     end: int
     made_by: MadeBy
+OfficeBodyCommitGap = Literal["receipt_missing"]
+class OfficeBodyCommitView(TypedDict):
+    actor: NotRequired[str | None]
+    receipt: NotRequired[TextCommitReceipt | None]
+    reason: NotRequired[OfficeBodyCommitGap | None]
 class DocxBodyOpSetText(TypedDict):
     op: Literal["set_text"]
     block: str

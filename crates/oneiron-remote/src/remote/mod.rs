@@ -21,7 +21,9 @@ use oneiron::authority::CapabilitySlip;
 use oneiron::memory::MemoryError;
 use reqwest::Url;
 use reqwest::blocking::Client;
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{
+    ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, HeaderMap, HeaderValue,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
