@@ -146,8 +146,8 @@ pub const AI_VERDICT_ROUTINE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
-/// The paired yes/no question every decision read asks beside the labels: does this need
-/// more thinking? Keyed by its wording alone.
+/// The paired yes/no question every decision read asks jointly with each question's labels:
+/// does this need more thinking? Keyed by its wording alone.
 pub const THINK_MORE: QuestionFamily = QuestionFamily {
     name: "decision.think_more",
     version: 1,
@@ -155,7 +155,8 @@ pub const THINK_MORE: QuestionFamily = QuestionFamily {
 };
 
 /// The host's person question, asked beside the call's questions when the dial reaches the
-/// person: ask up to the next authorised role? Keyed by its wording alone.
+/// person and read apart from them: ask up to the next authorised role? Keyed by its wording
+/// alone.
 pub const ASK_UP: QuestionFamily = QuestionFamily {
     name: "decision.ask_up",
     version: 1,

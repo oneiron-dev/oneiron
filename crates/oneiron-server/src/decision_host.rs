@@ -104,16 +104,12 @@ impl DecisionHost {
             );
             return self;
         };
-        match HouseRead::new(door.reader(), meter.clone(), &probe.paired) {
-            Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
-            Err(error) => {
-                tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
-            }
-        }
         if let Some(wording) = &probe.person {
             match ASK_UP.question(&[], wording.clone(), AnswerContract::Noul) {
                 Ok(person) => {
                     let mut bands = DecisionBandPolicy::default();
+                    // Q3's threshold home: an accepted Coach row replaces this
+                    // start value with a higher version, here.
                     match bands
                         .set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
                     {
@@ -125,6 +121,18 @@ impl DecisionHost {
                     }
                 }
                 Err(error) => tracing::warn!(%error, "the recipe's person question is invalid"),
+            }
+        }
+        // The read takes the ladder's person question, which it reads apart.
+        match HouseRead::new(
+            door.reader(),
+            meter.clone(),
+            &probe.paired,
+            self.ladder.person.clone(),
+        ) {
+            Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
+            Err(error) => {
+                tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
             }
         }
         self
@@ -366,6 +374,7 @@ struct HouseRead {
     reader: Arc<dyn LabelReadModel>,
     guard: BudgetGuard,
     paired: DecisionQuestion,
+    person: Option<DecisionQuestion>,
 }
 
 impl HouseRead {
@@ -373,10 +382,12 @@ impl HouseRead {
         reader: Arc<dyn LabelReadModel>,
         guard: BudgetGuard,
         paired: &str,
+        person: Option<DecisionQuestion>,
     ) -> oneiron::Result<Self> {
         let read = Self {
             pin: pin(DecisionRung::Escalation, reader.model(), reader.revision()),
             paired: THINK_MORE.question(&[], paired.to_owned(), AnswerContract::Noul)?,
+            person,
             reader,
             guard,
         };
@@ -390,6 +401,7 @@ impl HouseRead {
             self.reader.as_ref(),
             &self.guard,
             &self.paired,
+            self.person.as_ref(),
         )
     }
 }
@@ -400,10 +412,8 @@ impl DecisionProvider for HouseRead {
     }
 
     fn capability(&self) -> ProviderCapability {
-        ProviderCapability {
-            max_options: self.reader.max_labels(),
-            score: false,
-        }
+        self.provider()
+            .map_or_else(|_| ProviderCapability::default(), |read| read.capability())
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {

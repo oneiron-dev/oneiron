@@ -46,7 +46,9 @@ pub use failure_policy::{
 pub mod image;
 mod label_read;
 pub mod media;
-pub use label_read::{LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet};
+pub use label_read::{
+    LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
+};
 mod model_id;
 mod protocol;
 mod safeguard;

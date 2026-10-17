@@ -2,13 +2,15 @@
 //! `local_reasoner` rung, and the recipe it reads with.
 //!
 //! The recipe is the host's: a TOML file in its prompt package (with the
-//! template file it names) carrying the prompt, a label's row wording, the
+//! template files it names) carrying the prompts, a label's row wording, the
 //! single-token label verbalizers, the end-of-generation token and the owner
 //! probe's paired and person questions. No prompt text lives in the server.
-//! One read is a pack (idle-fold test 6b): each question renders the same
-//! template over the same state with its own text and its own label rows, so
-//! the template's text before `{question}` is the pack's shared prefix, and
-//! each question's labels are read and normalized apart.
+//! One read is a pack: each question renders over the same state with its
+//! own text and label rows. A question read jointly with the paired question
+//! (ARCH-0076 `#ask-a-person`: Q1 and Q2 stay joint) renders the joint
+//! template, one single-token row per (option, paired answer), normalized
+//! once over all of them; the person question renders the plain template,
+//! its own yes and no.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,7 +28,7 @@ const DEFAULT_MAX_RESPONSE_BYTES: u64 = 64 << 20;
 /// The PersonThreshold row's start value: high, so "ask a person?" stays
 /// rare until the Coach tunes it from real overrides.
 const DEFAULT_PERSON_THRESHOLD: f64 = 0.9;
-const RECIPE_FORMAT: u32 = 2;
+const RECIPE_FORMAT: u32 = 3;
 
 /// `[models.decision_read]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -109,17 +111,22 @@ impl DecisionReadFile {
 #[serde(deny_unknown_fields)]
 struct RecipeFile {
     format: u32,
-    /// The prompt template, relative to the recipe file.
+    /// The plain prompt template, relative to the recipe file.
     template: PathBuf,
+    /// The joint prompt template, relative to the recipe file: a question
+    /// and the paired question over one table of joint labels.
+    joint_template: PathBuf,
     /// One label's line.
     row: String,
+    /// One joint label's line: the option and the paired answer (`{think}`).
+    joint_row: String,
     yes: String,
     no: String,
     /// A yes/no question lists no before yes (test 6b's side questions did).
     #[serde(default)]
     no_first: bool,
     /// The label verbalizers, each one token, in row order: a question of
-    /// `n` labels takes the first `n`.
+    /// `n` labels takes the first `n`, a joint one the first `2n`.
     tokens: Vec<String>,
     /// The end-of-generation token the read forces.
     eos: String,
@@ -145,7 +152,9 @@ struct ProbeFile {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecisionReadRecipe {
     template: Vec<Piece>,
+    joint_template: Vec<Piece>,
     row: Vec<Piece>,
+    joint_row: Vec<Piece>,
     yes: String,
     no: String,
     no_first: bool,
@@ -173,11 +182,13 @@ enum Piece {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Slot {
     Question,
+    Paired,
     Labels,
     State,
     StateKey(String),
     Token,
     Label,
+    Think,
 }
 
 /// Why a read's prompt cannot be rendered: the caller's request, not the
@@ -195,6 +206,8 @@ pub struct ReadPrompt<'a> {
     pub question: &'a str,
     /// The options in order; a yes/no question is `None`.
     pub options: Option<&'a [String]>,
+    /// The paired question read jointly with this one, when it is.
+    pub paired: Option<&'a str>,
     pub state: &'a JsonValue,
 }
 
@@ -211,27 +224,39 @@ impl DecisionReadRecipe {
             .map_or_else(|| file.template.clone(), |dir| dir.join(&file.template));
         let template_text = std::fs::read_to_string(&template_path)
             .map_err(|error| anyhow::anyhow!("read {}: {error}", template_path.display()))?;
+        let joint_path = path.parent().map_or_else(
+            || file.joint_template.clone(),
+            |dir| dir.join(&file.joint_template),
+        );
+        let joint_text = std::fs::read_to_string(&joint_path)
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", joint_path.display()))?;
         let template = parse(&template_text)?;
+        let joint_template = parse(&joint_text)?;
         let row = parse(&file.row)?;
-        if !slots_fit(&template, &row) {
+        let joint_row = parse(&file.joint_row)?;
+        if !slots_fit(&template, &row, false) || !slots_fit(&joint_template, &joint_row, true) {
             anyhow::bail!(
-                "the template needs {{question}} and {{labels}}, and holds only those and state slots; row needs exactly {{token}} and {{label}}"
+                "the template needs {{question}} and {{labels}}, the joint template {{paired}} too, and each holds only those and state slots; row needs exactly {{token}} and {{label}}, joint_row {{think}} too"
             );
         }
         if !tokens_fit(&file) {
             anyhow::bail!(
-                "tokens must be at least 2 distinct non-empty labels, eos one other token, n_probs at least the token count, n_probs_full above n_probs, and yes and no two different words"
+                "tokens must be at least 4 distinct non-empty labels, eos one other token, n_probs at least the token count, n_probs_full above n_probs, and yes and no two different words"
             );
         }
         let probe = file.probe.map(ProbeFile::resolve).transpose()?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(&(recipe_bytes.len() as u64).to_le_bytes());
         hasher.update(&recipe_bytes);
+        hasher.update(&(template_text.len() as u64).to_le_bytes());
         hasher.update(template_text.as_bytes());
+        hasher.update(joint_text.as_bytes());
         let fingerprint = hasher.finalize().to_hex().as_str()[..16].to_owned();
         Ok(Self {
             template,
+            joint_template,
             row,
+            joint_row,
             yes: file.yes,
             no: file.no,
             no_first: file.no_first,
@@ -285,26 +310,41 @@ impl DecisionReadRecipe {
     }
 
     /// The prompt for one question of a pack: the template with the
-    /// question, its label rows and the state.
+    /// question, its label rows and the state. A joint question renders the
+    /// joint template, its rows in readout order: row `2i` is option `i`
+    /// with the paired answer no, row `2i + 1` with yes. Its yes/no options
+    /// keep their declared order, yes first.
     pub fn render(&self, read: &ReadPrompt<'_>) -> Result<String, RenderRefusal> {
-        let noul = if self.no_first {
+        let noul = if self.no_first && read.paired.is_none() {
             [self.no.clone(), self.yes.clone()]
         } else {
             [self.yes.clone(), self.no.clone()]
         };
         let options = read.options.unwrap_or(&noul);
-        if options.len() > self.tokens.len() {
+        let thinks = match read.paired {
+            Some(_) => vec![Some(self.no.as_str()), Some(self.yes.as_str())],
+            None => vec![None],
+        };
+        if options.len() * thinks.len() > self.tokens.len() {
             return Err(RenderRefusal::TooManyLabels);
         }
+        let (template, row) = match read.paired {
+            Some(_) => (&self.joint_template, &self.joint_row),
+            None => (&self.template, &self.row),
+        };
         let mut table = String::new();
-        for (r, label) in options.iter().enumerate() {
+        let cells = options
+            .iter()
+            .flat_map(|label| thinks.iter().map(move |think| (label, *think)));
+        for (r, (label, think)) in cells.enumerate() {
             if r > 0 {
                 table.push('\n');
             }
-            fill(&self.row, &mut table, |slot, out| {
-                out.push_str(match slot {
-                    Slot::Token => &self.tokens[r],
-                    Slot::Label => label,
+            fill(row, &mut table, |slot, out| {
+                out.push_str(match (slot, think) {
+                    (Slot::Token, _) => self.tokens[r].as_str(),
+                    (Slot::Label, _) => label.as_str(),
+                    (Slot::Think, Some(think)) => think,
                     _ => return Err(RenderRefusal::MissingState),
                 });
                 Ok(())
@@ -312,9 +352,10 @@ impl DecisionReadRecipe {
         }
         let state = read.state.to_string();
         let mut prompt = String::new();
-        fill(&self.template, &mut prompt, |slot, out| {
+        fill(template, &mut prompt, |slot, out| {
             out.push_str(match slot {
                 Slot::Question => read.question,
+                Slot::Paired => read.paired.ok_or(RenderRefusal::MissingState)?,
                 Slot::Labels => &table,
                 Slot::State => &state,
                 Slot::StateKey(key) => read
@@ -353,26 +394,30 @@ fn slots(pieces: &[Piece]) -> BTreeSet<Slot> {
         .collect()
 }
 
-/// The template holds the question and its label rows, and only prompt
-/// slots; the row holds exactly its own slots.
-fn slots_fit(template: &[Piece], row: &[Piece]) -> bool {
+/// The template holds the question and its label rows (a joint one the
+/// paired question too), and only prompt slots; the row holds exactly its
+/// own slots, a joint row the paired answer too.
+fn slots_fit(template: &[Piece], row: &[Piece], joint: bool) -> bool {
     let in_template = slots(template);
-    let prompt_slots = in_template.iter().all(|slot| {
-        matches!(
-            slot,
-            Slot::Question | Slot::Labels | Slot::State | Slot::StateKey(_)
-        )
+    let prompt_slots = in_template.iter().all(|slot| match slot {
+        Slot::Question | Slot::Labels | Slot::State | Slot::StateKey(_) => true,
+        Slot::Paired => joint,
+        _ => false,
     });
-    let row_slots: BTreeSet<Slot> = [Slot::Token, Slot::Label].into();
+    let mut row_slots: BTreeSet<Slot> = [Slot::Token, Slot::Label].into();
+    if joint {
+        row_slots.insert(Slot::Think);
+    }
     prompt_slots
         && in_template.contains(&Slot::Question)
         && in_template.contains(&Slot::Labels)
+        && (!joint || in_template.contains(&Slot::Paired))
         && slots(row) == row_slots
 }
 
 fn tokens_fit(file: &RecipeFile) -> bool {
     let distinct: BTreeSet<&String> = file.tokens.iter().collect();
-    file.tokens.len() >= 2
+    file.tokens.len() >= 4
         && distinct.len() == file.tokens.len()
         && !file.tokens.iter().any(String::is_empty)
         && !file.eos.is_empty()
@@ -420,10 +465,12 @@ fn parse(text: &str) -> anyhow::Result<Vec<Piece>> {
                 .ok_or_else(|| anyhow::anyhow!("an unclosed {{ in {text:?}"))?;
             let slot = match &open[..end] {
                 "question" => Slot::Question,
+                "paired" => Slot::Paired,
                 "labels" => Slot::Labels,
                 "state" => Slot::State,
                 "token" => Slot::Token,
                 "label" => Slot::Label,
+                "think" => Slot::Think,
                 name => match name.strip_prefix("state.") {
                     Some(key) if !key.is_empty() => Slot::StateKey(key.to_owned()),
                     _ => anyhow::bail!("unknown placeholder {{{name}}}"),
