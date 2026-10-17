@@ -1021,16 +1021,17 @@ pub fn validate_type_ref(
 
 /// One routed typed judgment at spawn: places `request` against the tree
 /// in force and returns the stamp in the learning spelling. Unsure
-/// resolves to the tree root, never to `None`. No host ladder is in hand
-/// here, so the placement skill's rule rung reads alone
-/// ([`place_task`]).
+/// resolves to the tree root, never to `None`. With the host's
+/// `decisions`, the placement ladder routes past the skill's rule rung;
+/// without them, the rule rung reads alone ([`place_task`]).
 pub fn place_type_ref(
     vault: &crate::Vault,
     project: Option<EntityId>,
     request: &PlacementRequest,
+    decisions: Option<&PlacementDecisions<'_>>,
 ) -> Result<TypeRef> {
     let tree = type_tree(vault, project)?;
-    let outcome = place_task(&tree.inner, request, None);
+    let outcome = place_task(&tree.inner, request, decisions);
     Ok(TypeRef::from(&outcome.type_ref))
 }
 
