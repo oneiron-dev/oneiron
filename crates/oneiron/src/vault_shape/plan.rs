@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::{EntityId, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What an item does to the named structure.
@@ -68,6 +69,54 @@ pub struct ShapePlanSummary {
     pub ceremonies: u32,
     /// Items the vault has no door for yet.
     pub no_door: u32,
+}
+
+impl ShapePlanSummary {
+    /// The count over `items`.
+    pub fn of<I>(items: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Borrow<ShapePlanItem>,
+    {
+        let mut summary = Self::default();
+        for item in items {
+            let item = item.borrow();
+            summary.changes += 1;
+            match item.class {
+                ShapeItemClass::Widening => summary.needs_word += 1,
+                ShapeItemClass::Authority => summary.ceremonies += 1,
+                ShapeItemClass::Receipted => {}
+            }
+            if item.door.is_none() {
+                summary.no_door += 1;
+            }
+        }
+        summary
+    }
+
+    /// The resting depth in words: "4 changes, 1 needs your word", then
+    /// the ceremonies and the items with no door, when there are any. One
+    /// policy, so a ruling on the words moves one place.
+    #[must_use]
+    pub fn resting_line(&self) -> String {
+        fn counted(count: u32, one: &str, many: &str, rest: &str) -> String {
+            format!("{count} {}{rest}", if count == 1 { one } else { many })
+        }
+        if self.changes == 0 {
+            return "No changes".to_owned();
+        }
+        let mut parts = vec![counted(self.changes, "change", "changes", "")];
+        if self.needs_word > 0 {
+            parts.push(counted(self.needs_word, "needs", "need", " your word"));
+        }
+        if self.ceremonies > 0 {
+            parts.push(counted(self.ceremonies, "goes", "go", " to a ceremony"));
+        }
+        if self.no_door > 0 {
+            parts.push(counted(self.no_door, "has", "have", " no door yet"));
+        }
+        parts.join(", ")
+    }
 }
 
 /// `vault.shape.plan`'s answer.
@@ -303,20 +352,10 @@ impl Vault {
             (*change == ShapeChange::Retire, target.rank(), *index)
         });
 
-        let mut summary = ShapePlanSummary::default();
         let mut items = Vec::with_capacity(pending.len());
         for (seq, (target, _, change, before, after)) in pending.into_iter().enumerate() {
             let class = classify(change, before, after);
             let door = door(change, &target, after).map(str::to_owned);
-            summary.changes += 1;
-            match class {
-                ShapeItemClass::Widening => summary.needs_word += 1,
-                ShapeItemClass::Authority => summary.ceremonies += 1,
-                ShapeItemClass::Receipted => {}
-            }
-            if door.is_none() {
-                summary.no_door += 1;
-            }
             items.push(ShapePlanItem {
                 seq: u32::try_from(seq).map_err(|_| invalid("plan too long"))?,
                 target,
@@ -327,6 +366,7 @@ impl Vault {
                 door,
             });
         }
+        let summary = ShapePlanSummary::of(&items);
         let named: BTreeSet<ShapeTarget> = seed.rows.iter().map(ShapeRow::target).collect();
         let undeclared = live
             .rows

@@ -1,9 +1,11 @@
 //! The vault shape on code mode and MCP (ARCH-0070): the free reads
 //! `describe(vault)`, `vault.shape.read` and `vault.shape.plan`, over the setup rows the
 //! caller's read admits, and the gated effect `vault.shape.apply`. A caller
-//! who cannot read a world plans as though it were not there.
+//! who cannot read a world plans as though it were not there. The plan card
+//! presents a plan on the gen-UI envelope.
 use super::{Memory, MemoryResult};
 use crate::claim::ClaimReadStatus;
+use crate::genui::ShapePlanCard;
 use crate::vault_shape::{
     ShapeApplier, ShapeApplyReceipt, ShapeApplyRequest, ShapePlan, ShapePlanRequest, ShapeRead,
 };
@@ -47,6 +49,16 @@ impl Memory<'_> {
         Ok(self
             .vault
             .plan_shape_visible(seed.as_ref(), &mut |id| read.is_entity_readable(id))?)
+    }
+
+    /// The plan card over the same plan `vault.shape.plan` answers: its
+    /// resting depth, its reach line and the whole diff, with where each
+    /// item stands once an apply of this plan has opened. Writes nothing;
+    /// [`ShapePlanCard::generated_ui`] puts it on the envelope.
+    pub fn shape_plan_card(&self, input: &ShapePlanRequest) -> MemoryResult<ShapePlanCard> {
+        let plan = self.shape_plan(input)?;
+        let apply = self.vault.shape_apply(&plan.frontier)?;
+        Ok(ShapePlanCard::of(&plan, apply.as_ref()))
     }
 
     /// `vault.shape.apply`: lands a plan. On an embedded handle the vault's
