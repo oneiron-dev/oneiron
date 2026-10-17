@@ -19870,7 +19870,7 @@
       "crate-vis": 8,
       "enum": 3,
       "fn": 8,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 4,
       "trait": 2
      }
@@ -19935,7 +19935,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 2,
       "trait": 1
@@ -19953,10 +19953,53 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 13,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "KindProbeCheck",
+      "NotWorse",
+      "PairedInterval",
+      "SpaceMove",
+      "SpaceMoveCheck",
+      "SpaceMoveOutcome",
+      "SpaceMoveState",
+      "SpaceProbeEncoder",
+      "SpaceRef"
+     ],
+     "path": "src/embed/space_move.rs",
+     "purpose": "A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 6,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SpaceProbe",
+      "SpaceProbeAuthor",
+      "SpaceProbeReport"
+     ],
+     "path": "src/embed/space_probe.rs",
+     "purpose": "The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -49038,7 +49081,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 13,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -49971,7 +50014,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3018,
+   "source_files": 3020,
    "test_files": 903
   },
   "oneiron-android": {
@@ -66366,6 +66409,16 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/space_move.rs",
+     "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -67277,7 +67330,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67342,7 +67395,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 479,
+   "source_files": 480,
    "test_files": 182
   },
   "oneiron-spawn": {
