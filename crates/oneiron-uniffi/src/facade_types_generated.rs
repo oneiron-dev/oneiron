@@ -8533,6 +8533,8 @@ pub struct CourtesyDeleteIncoming {
     pub worlds: Vec<CourtesyDeleteAskedWorld>,
     #[serde(rename = "epoch_cutoff")]
     pub epoch_cutoff: u64,
+    #[serde(rename = "candidates")]
+    pub candidates: Vec<String>,
     #[serde(rename = "requested")]
     pub requested: String,
     #[serde(rename = "received")]

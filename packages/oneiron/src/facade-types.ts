@@ -1159,7 +1159,7 @@ export type CooperativeDeletionDispositionKind = "delete" | "redact" | "restrict
 /** `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteChoice` */
 export type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string }
 /** `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteIncoming` */
-export type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null }
+export type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null }
 /** `oneiron::task_verb::sdk_courtesy_delete::CourtesyDeleteAnswerRequest` */
 export type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null }
 /** `oneiron::embed::space::InputKind` */

@@ -600,7 +600,7 @@ declare namespace Sdk {
   type CourtesyDeleteAskedWorld = { world: string; stale?: string | null; stale_epoch?: number | null };
   type CooperativeDeletionDispositionKind = "delete" | "redact" | "restrict_pending_review" | "retain_under_basis" | "legal_hold" | "decline";
   type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review?: string | null; deleted: string[]; recorded: string };
-  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null };
+  type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null };
   type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null };
   type InputKind = "text" | "image" | "audio";
   type EvidenceFloors = { floor: number; strong: number };
