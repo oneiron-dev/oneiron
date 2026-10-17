@@ -24,12 +24,14 @@ pub(super) mod side_row;
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use heed::RwTxn;
 use rmpv::Value;
 
 use super::container::{
-    self, MAX_FILE_KEYS, REASON_OVER_BUDGET, Stop, holds_spans, masked_copy, walk_members,
+    self, MAX_FILE_KEYS, REASON_OVER_BUDGET, Stop, holds_spans, is_sealed, masked_copy,
+    walk_members,
 };
 use super::shapes::{self, Door, HANDLE_OPEN};
 use super::{REASON_PRIVATE_KEY, provider_token_spans, scan_batch_ops, secret_scan_error};
@@ -39,16 +41,18 @@ use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::secret_custody::{
-    CustodyClass, CustodyWrite, FoundNote, KeptValues, KeyPlaces, KeySpan, MASKED_FILE_BAND,
-    MaskedFile, MemberKeys, MemberStep, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor,
-    SecretCustodyRecord, SecretCustodyStatus, masked_file_in_txn, note_found_keys_in_txn,
-    put_masked_file_in_txn, register_custody_in_txn,
+    CustodyClass, CustodyWrite, FoundNote, KeptValues, KeyPlaces, KeySpan, KnownValues,
+    MASKED_FILE_BAND, MaskedFile, MemberKeys, MemberStep, SECRET_CUSTODY_SCHEMA_VERSION,
+    SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus, masked_file_in_txn,
+    note_found_keys_in_txn, put_masked_file_in_txn, register_custody_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
 const REASON_SENSITIVE_ENV: &str = "gate.secret_scan.sensitive_env";
+/// A file's key that custody already holds (OF-560 C): it keeps that record.
+const REASON_KNOWN_VALUE: &str = "gate.secret_scan.known_value";
 /// The handle a plan leaves: any `sc` handle reads the same to the door.
 const STAND_IN: &str = "sc0";
 
@@ -99,13 +103,25 @@ pub(in crate::batch) fn mask_batch_ops(
     masks: bool,
     at: u64,
 ) -> Result<MaskedFiles> {
+    // A value custody already holds keeps its own handle wherever it comes
+    // back, shape or none (OF-560 C). A replayed batch reads only what it
+    // wrote before.
+    let known = if masks {
+        KnownValues::load_in_txn(store, &*wtxn)?.map(Arc::new)
+    } else {
+        None
+    };
     let refusal = match scan_batch_ops(store, &*wtxn, ops) {
-        Ok(()) => return Ok(MaskedFiles::default()),
-        Err(refusal) => refusal,
+        Ok(()) if known.is_none() => return Ok(MaskedFiles::default()),
+        Ok(()) => None,
+        Err(refusal) => Some(refusal),
     };
     // A value the owner ruled no secret in a record is no hit there.
     let kept = KeptValues::for_records_in_txn(store, &*wtxn, ops.iter().filter_map(op_record))?;
-    if !kept.is_empty() && scan_batch_ops(store, &*wtxn, &screened(&kept, ops)).is_ok() {
+    if known.is_none()
+        && !kept.is_empty()
+        && scan_batch_ops(store, &*wtxn, &screened(&kept, ops)).is_ok()
+    {
         return Ok(MaskedFiles::default());
     }
     let mut planned = ops.to_vec();
@@ -113,11 +129,12 @@ pub(in crate::batch) fn mask_batch_ops(
         marked: marked_files(store, &*wtxn, ops)?,
         mints: masks,
         kept,
+        known: known.clone(),
         ..Masker::default()
     };
     plan.mask_ops(&mut planned)?;
-    if plan.found.is_empty() && plan.file_ids.is_empty() {
-        return Err(refusal);
+    if plan.found.is_empty() && plan.file_ids.is_empty() && !plan.placed_known {
+        return refusal.map_or_else(|| Ok(MaskedFiles::default()), Err);
     }
     // A hit no span places is still in the copy, and refuses as before.
     scan_batch_ops(store, &*wtxn, &screened(&plan.kept, &planned))?;
@@ -143,13 +160,21 @@ pub(in crate::batch) fn mask_batch_ops(
             members: Vec::new(),
         };
         for key in file.keys {
-            let (_, custody) = minted.get(&key.value).ok_or(Error::InvariantViolation(
-                "a file's key has no custody record",
-            ))?;
+            let custody = match key.custody {
+                Some(custody) => custody,
+                None => {
+                    minted
+                        .get(&key.value)
+                        .ok_or(Error::InvariantViolation(
+                            "a file's key has no custody record",
+                        ))?
+                        .1
+                }
+            };
             let span = KeySpan {
                 start: offset(key.span.start)?,
                 end: offset(key.span.end)?,
-                custody: *custody,
+                custody,
                 reason: key.reason.to_owned(),
             };
             if key.path.is_empty() {
@@ -176,6 +201,7 @@ pub(in crate::batch) fn mask_batch_ops(
             .collect(),
         minted: true,
         kept,
+        known,
         ..Masker::default()
     }
     .mask_ops(ops)?;
@@ -276,12 +302,14 @@ struct FoundFile {
 }
 
 /// One key a plan found in a file: the member that holds it (none for the
-/// file's own bytes), its span there, and the key's kind and value.
+/// file's own bytes), its span there, and the key's kind and value. A key
+/// custody already holds names its record, and nothing is minted for it.
 struct FileKey {
     path: Vec<MemberStep>,
     span: Range<usize>,
     reason: &'static str,
     value: Vec<u8>,
+    custody: Option<EntityId>,
 }
 
 /// Each place `keys` sit at, with its spans, in the order they were found.
@@ -325,6 +353,18 @@ struct Masker {
     at: Option<(EntityId, String)>,
     /// The values the owner ruled no secret, by record: left as written.
     kept: KeptValues,
+    /// The values custody already holds (OF-560 C): each keeps its record's
+    /// handle, and nothing is minted for it.
+    known: Option<Arc<KnownValues>>,
+    /// Whether this pass placed a known value's handle.
+    placed_known: bool,
+}
+
+/// What one span of a text is: a value custody holds, by its handle, or a
+/// shape the door's text rules place, by its reason.
+enum TextHit {
+    Known(String),
+    Shape(&'static str),
 }
 
 impl Masker {
@@ -393,7 +433,8 @@ impl Masker {
             self.file_ids.push(id);
             return masked_copy(data, places).map(Some);
         }
-        if !self.mints {
+        // A sealed file is stored as it is and left unmarked.
+        if !self.mints || is_sealed(data) {
             return Ok(None);
         }
         let mut keys = Vec::new();
@@ -423,6 +464,19 @@ impl Masker {
     /// The keys the door's text and field rules place in `leaf` (a file's
     /// own bytes, or one member's), each at `path`.
     fn place(&mut self, path: &[MemberStep], leaf: &[u8], keys: &mut Vec<FileKey>) -> Result<()> {
+        // A value custody already holds is marked with its own record
+        // (OF-560 C); the file's bytes stay as stored, and a read masks it
+        // through the same mark.
+        let known: Vec<(Range<usize>, EntityId)> = match &self.known {
+            Some(known) => known
+                .spans(leaf)
+                .into_iter()
+                .filter(|hit| !self.is_kept(&leaf[hit.span.clone()]))
+                .map(|hit| (hit.span, hit.custody))
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut placed = Vec::new();
         let mut spans = file_spans(leaf);
         // A value a structured reading places (a credential field), wherever
         // its bytes sit in the leaf.
@@ -436,6 +490,12 @@ impl Masker {
             spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
         }
         for (span, reason) in merged(spans) {
+            if known
+                .iter()
+                .any(|(held, _)| held.start < span.end && span.start < held.end)
+            {
+                continue;
+            }
             let value = leaf
                 .get(span.clone())
                 .ok_or(Error::InvariantViolation(
@@ -443,13 +503,32 @@ impl Masker {
                 ))?
                 .to_vec();
             self.handle(&value, reason)?;
-            keys.push(FileKey {
+            placed.push(FileKey {
                 path: path.to_vec(),
                 span,
                 reason,
                 value,
+                custody: None,
             });
         }
+        for (span, custody) in known {
+            let value = leaf
+                .get(span.clone())
+                .ok_or(Error::InvariantViolation(
+                    "a file's known span left its bytes",
+                ))?
+                .to_vec();
+            self.placed_known = true;
+            placed.push(FileKey {
+                path: path.to_vec(),
+                span,
+                reason: REASON_KNOWN_VALUE,
+                value,
+                custody: Some(custody),
+            });
+        }
+        placed.sort_by_key(|key| key.span.start);
+        keys.extend(placed);
         if keys.len() > MAX_FILE_KEYS {
             return Err(secret_scan_error(REASON_OVER_BUDGET));
         }
@@ -544,7 +623,14 @@ impl Masker {
                     if self.is_kept(&secret) {
                         continue;
                     }
-                    *member = Value::from(self.handle(&secret, REASON_SENSITIVE_ENV)?);
+                    let handle = match self.known_whole(&secret) {
+                        Some(handle) => {
+                            self.placed_known = true;
+                            handle
+                        }
+                        None => self.handle(&secret, REASON_SENSITIVE_ENV)?,
+                    };
+                    *member = Value::from(handle);
                     changed = true;
                 }
                 Ok(changed)
@@ -556,20 +642,43 @@ impl Masker {
     /// `text` with each secret span the door's text rules place replaced by
     /// its handle. `None` when it holds none.
     fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
-        let spans = secret_spans(text);
-        if spans.is_empty() {
+        let known = self.known_spans(text);
+        let mut hits: Vec<(Range<usize>, TextHit)> = secret_spans(text)
+            .into_iter()
+            .filter(|(span, _)| {
+                !known
+                    .iter()
+                    .any(|(held, _)| held.start < span.end && span.start < held.end)
+            })
+            .map(|(span, reason)| (span, TextHit::Shape(reason)))
+            .collect();
+        hits.extend(
+            known
+                .into_iter()
+                .map(|(span, handle)| (span, TextHit::Known(handle))),
+        );
+        if hits.is_empty() {
             return Ok(None);
         }
+        hits.sort_by_key(|(span, _)| span.start);
         let mut out = String::with_capacity(text.len());
         let mut from = 0;
         let mut placed = false;
-        for (span, reason) in spans {
-            if self.is_kept(text[span.clone()].as_bytes()) {
-                continue;
-            }
+        for (span, hit) in hits {
+            let handle = match hit {
+                TextHit::Known(handle) => {
+                    self.placed_known = true;
+                    handle
+                }
+                TextHit::Shape(reason) => {
+                    if self.is_kept(text[span.clone()].as_bytes()) {
+                        continue;
+                    }
+                    self.handle(text[span.clone()].as_bytes(), reason)?
+                }
+            };
             placed = true;
             out.push_str(&text[from..span.start]);
-            let handle = self.handle(text[span.clone()].as_bytes(), reason)?;
             out.push_str(HANDLE_OPEN);
             out.push_str(&handle);
             out.push(']');
@@ -588,6 +697,30 @@ impl Masker {
         self.at
             .as_ref()
             .is_some_and(|(record, _)| self.kept.holds(record, value))
+    }
+
+    /// Each value custody holds in `text`, with its record's handle, but a
+    /// value the owner ruled no secret in the record the pass reads: that
+    /// ruling wins over the known-value sweep.
+    fn known_spans(&self, text: &str) -> Vec<(Range<usize>, String)> {
+        let Some(known) = &self.known else {
+            return Vec::new();
+        };
+        known
+            .spans(text.as_bytes())
+            .into_iter()
+            .filter(|hit| !self.is_kept(&text.as_bytes()[hit.span.clone()]))
+            .map(|hit| (hit.span, hit.handle.to_owned()))
+            .collect()
+    }
+
+    /// The handle of the custody record that holds `value` whole, if one
+    /// does.
+    fn known_whole(&self, value: &[u8]) -> Option<String> {
+        match self.known.as_ref()?.spans(value).as_slice() {
+            [hit] if hit.span == (0..value.len()) => Some(hit.handle.to_owned()),
+            _ => None,
+        }
     }
 
     /// The handle `value` takes: one per distinct value in a batch.

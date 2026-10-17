@@ -25,9 +25,11 @@
 //! operations replay onto the head as the same nodes.
 
 mod doc;
+mod preview;
 mod verbs;
 
 pub(super) use doc::{birth, validate};
+pub use preview::{DeckPreview, DeckPreviewRequest, DeckPreviewSlide};
 pub use verbs::{
     DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,
     DeckGateView, DeckNodeView, DeckOracleRequest, DeckReviewView,

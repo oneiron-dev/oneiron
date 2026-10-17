@@ -48,6 +48,7 @@ use oneiron::failure_ladder::{
     HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
 };
 use oneiron::llm::SpentKind;
+use oneiron::llm::seat::ModelSeat;
 use oneiron::llm::{
     DurableStepContext, open_trap, register_wait, trap_for_durable_wait, trap_park_owner,
 };
@@ -58,7 +59,7 @@ use tokio::sync::broadcast;
 use super::run_host_door::RunHostDoor;
 use super::{ReaderSeats, SyncServer};
 use crate::decision_host::DecisionHost;
-use crate::mcp::{EngineRunError, McpCodeModeProvider, enter_engine_native_run};
+use crate::mcp::{EngineRunError, McpCodeModeProvider, engine_run_seat, enter_engine_native_run};
 
 const LEASE_OWNER: &str = "oneiron-server-agent-runs";
 /// The park a run waiting on a durable signal holds its lease under, owned
@@ -312,7 +313,15 @@ impl SyncServer {
             &self.reader_runner.seats(),
             runtime,
         );
-        if let Err(error) = settle(vault, self.decision_host(), &claimed, ran) {
+        // OF-181: the run settles under its live-run guard, and leaves the
+        // host's live runs unless it parked on a durable wait.
+        let waits = ran
+            .as_ref()
+            .is_ok_and(|outcome| matches!(outcome.status, EngineExecutorStatus::Waiting(_)));
+        let run = EntityId::from_bytes(*id.as_bytes()).ok();
+        if let Err(error) = self.live_runs.settle(run, waits, || {
+            settle(vault, self.decision_host(), &claimed, ran)
+        }) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
         false
@@ -366,6 +375,37 @@ fn run_bound(
     let mut config = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
+    // OF-541: the run is born on its seat once, from its own task, before
+    // its skill adds to it, and each entry runs on that seat. A run its
+    // parent planned is born on the model its plan picked. The attempt is
+    // stamped with what runs it: the seat's model, beside the template seat
+    // its host configured, and its pack loads and planner take that model.
+    // A vault with no manifest bears no seat, so the template stays the
+    // stamp its pack loads write.
+    let model_seat = engine_run_seat(
+        vault,
+        provider,
+        &config,
+        format!("agent-run:{}", run_id.to_hex()),
+        status.input.plan.as_ref(),
+    )?;
+    if let Some(seat) = &model_seat {
+        let lease_owner = status
+            .attempt
+            .lease_owner
+            .as_deref()
+            .ok_or_else(|| "a claimed agent run holds no lease".to_owned())?;
+        AttemptQueue::new(vault)
+            .set_executor_stamp(
+                status.attempt.id,
+                lease_owner,
+                status.attempt.attempt_count,
+                seat.model().as_str(),
+                config.model.as_str(),
+            )
+            .map_err(text)?;
+        config.model = seat.model().clone();
+    }
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled.
     let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
@@ -417,10 +457,12 @@ fn run_bound(
             &config,
             &door,
             &seat,
+            model_seat.as_ref(),
             metered.as_ref(),
             compaction.as_mut(),
             &reactor,
             server.decision_host(),
+            &server.live_runs,
         )?;
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
@@ -440,9 +482,9 @@ fn run_bound(
 /// reaches the TASK it realizes, a TASK it creates runs under it, its
 /// program calls the vault's callable skills, its host rows take `door`,
 /// its model calls spend under `spend`, and `seat`, which its reader
-/// children spawn under. With the host's `[models.planner]` seats, its
-/// spawns are planned on `decisions`' ladder and its leader calls answer.
-/// A run its parent planned is born on the model its plan picked.
+/// children spawn under. It runs on `model_seat`, the one `run_bound` bore
+/// it on. With the host's `[models.planner]` seats, its spawns are planned
+/// on `decisions`' ladder and its leader calls answer.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -455,10 +497,12 @@ fn enter_run(
     config: &EngineExecutorConfig,
     door: &Arc<dyn AgentVerbDoor>,
     seat: &SpawnHostSeat,
+    model_seat: Option<&ModelSeat>,
     spend: Option<&SpendScopeId>,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     decisions: &DecisionHost,
+    live_runs: &super::LiveRuns,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
@@ -470,23 +514,24 @@ fn enter_run(
     if let Some(planner) = planner_binding(vault, provider, config, planner)? {
         bound = bound.with_planner(planner);
     }
+    // OF-181: the run's lease proof, registered for the handle a harness
+    // attaches, and its guard, held through the whole entry: an action
+    // through that handle runs only between entries.
+    let proof = bound.live_run_host_binding(config.run_id).map_err(text)?;
+    let _serial = live_runs
+        .register(vault, config.run_id, actor, &status.attempt, proof)
+        .map_err(text)?
+        .enter();
     enter_engine_native_run(
-        vault,
-        provider,
-        &bound,
-        config,
-        format!("agent-run:{}", config.run_id.to_hex()),
-        compaction,
-        reactor,
-        spend,
-        status.input.plan.as_ref(),
+        vault, provider, &bound, config, compaction, reactor, spend, model_seat,
     )
 }
 
 /// The host's planner for one entry of a leased agent run (OF-541, OF-389):
 /// the `[models.planner]` seats whose AGENT_DEF this vault holds, the shipped
-/// planner and leader skills, the run's own `model@revision` as the
-/// executor, and the host's ladder. `None` when no seat resolves.
+/// planner and leader skills, the model the run is stamped with (its seat's
+/// once born, else its template) as the executor, and the host's ladder.
+/// `None` when no seat resolves.
 fn planner_binding<'a>(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
