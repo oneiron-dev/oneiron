@@ -96,8 +96,9 @@ pub(super) fn named_id(decisions: Vec<&TypedDecision>) -> Option<EntityId> {
 
 impl ConsolidationExecutor<'_> {
     /// `questions` over `state` through the host's ladder, the verdict role's generation
-    /// the dial's first read, on the time the pass has left. Each generation's spend joins
-    /// `charges`. None when the step trapped: the attempt is parked.
+    /// the dial's first read, on the time the pass has left. Each generation that finished
+    /// joins `charges`, even when a later one traps or fails. None when the step trapped:
+    /// the attempt is parked.
     #[expect(
         clippy::too_many_arguments,
         reason = "the step, its pass clock and scope join the pack and the charge tally"
@@ -136,11 +137,12 @@ impl ConsolidationExecutor<'_> {
             seal: &seal,
         };
         let asked: Vec<&DecisionQuestion> = questions.iter().collect();
+        let mut spent = Vec::new();
         let decided = self
             .decisions
             .ladder
             .ladder()
-            .run_pack_generated(
+            .run_pack_generated_spent(
                 &rung,
                 &asked,
                 self.actor.entity_ref(),
@@ -153,15 +155,16 @@ impl ConsolidationExecutor<'_> {
                     Instant::now(),
                     Duration::from_millis(pass.remaining_ms()),
                 ),
+                &mut spent,
             )
-            .await?;
-        match decided {
-            GeneratedDecisions::Decided { decisions, steps } => {
-                for (hash, usage) in steps {
-                    charges.record_terminal(vault, step_ctx.attempt_id, hash, &usage)?;
-                }
-                Ok(Some(decisions))
-            }
+            .await;
+        // Every generation that finished is spent, whatever the pack's outcome: a later
+        // step that traps or fails leaves the prefix on the tally.
+        for (hash, usage) in &spent {
+            charges.record_terminal(vault, step_ctx.attempt_id, *hash, usage)?;
+        }
+        match decided? {
+            GeneratedDecisions::Decided { decisions, .. } => Ok(Some(decisions)),
             GeneratedDecisions::Trapped => Ok(None),
             GeneratedDecisions::Unread(_) => {
                 Err(invalid_consolidation("a durable decision read came back unread").into())

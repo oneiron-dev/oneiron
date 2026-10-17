@@ -106,6 +106,42 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> DurableStepResult<GeneratedDecisions> {
+        let mut spent = Vec::new();
+        self.run_pack_generated_spent(
+            rung,
+            questions,
+            principal,
+            evidence,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            &mut spent,
+        )
+        .await
+    }
+
+    /// [`Self::run_pack_generated`], each generation that finished pushed onto `spent`
+    /// (its request hash and usage) as it finishes, so a caller books what the pack spent
+    /// even when a later step traps, misses or fails.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the generated rung joins run_pack's inputs, and the spend it books"
+    )]
+    pub async fn run_pack_generated_spent(
+        &self,
+        rung: &GeneratedRung<'_>,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        spent: &mut Vec<([u8; 32], LlmUsage)>,
+    ) -> DurableStepResult<GeneratedDecisions> {
         validate_pin(&rung.pin, dial.first)?;
         if !matches!(
             dial.first,
@@ -136,7 +172,6 @@ impl DecisionLadder<'_> {
         )?;
         let mut readings = pack.readings();
         let mut first = Vec::with_capacity(questions.len());
-        let mut steps = Vec::new();
         let per_call = policy.questions_per_call();
         for (chunk, readings) in questions
             .chunks(per_call)
@@ -155,7 +190,7 @@ impl DecisionLadder<'_> {
                 first.extend(chunk.iter().map(|_| Some(Read::NotStarted)));
                 continue;
             }
-            let answers = match read(rung, &pack, &call, &mut steps).await? {
+            let answers = match read(rung, &pack, &call, spent).await? {
                 Reply::Answers(answers) => answers,
                 Reply::Trapped => return Ok(GeneratedDecisions::Trapped),
                 Reply::Unread(miss) => return Ok(GeneratedDecisions::Unread(miss)),
@@ -167,7 +202,10 @@ impl DecisionLadder<'_> {
             );
         }
         let decisions = self.close(&pack, first, readings)?;
-        Ok(GeneratedDecisions::Decided { decisions, steps })
+        Ok(GeneratedDecisions::Decided {
+            decisions,
+            steps: spent.clone(),
+        })
     }
 }
 
