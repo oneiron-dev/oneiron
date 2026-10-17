@@ -443,6 +443,22 @@ fn commit_terminal(
                         crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
                         seed.occurred_at,
                     )?;
+                    // A Retry's reply names the reply it answers again, in
+                    // the transaction that writes it.
+                    admission::validate_regeneration(vault, txn, seed).map_err(|error| {
+                        crate::memory::MemoryError::bad_request(error.to_string())
+                    })?;
+                    if let Some(source) = seed.regenerates {
+                        vault
+                            .batch_in()
+                            .edge(
+                                &seed.message_id,
+                                crate::edge::EdgeKind::Regenerates,
+                                &source,
+                                1.0,
+                            )
+                            .apply(txn)?;
+                    }
                     storage::finish(vault, txn, seed, &receipt)?;
                     Ok(())
                 },

@@ -476,6 +476,16 @@ where
                                 tracing::trace!(progressed = pass.progressed,
                                     cursor = ?pass.next_cursor, retry = ?pass.earliest_retry,
                                     "wave dispatch pass");
+                                if let Some(statement) = &pass.statement {
+                                    tracing::info!(
+                                        tasks = statement.task_count,
+                                        agents = statement.agent_count,
+                                        consults = statement.consult_count,
+                                        over_available = statement.over_available,
+                                        ?statement,
+                                        "wave plan applied"
+                                    );
+                                }
                                 for failure in pass.item_failures {
                                     tracing::warn!(task = ?failure.candidate.task,
                                         reason = failure.reason, "wave handoff deferred");

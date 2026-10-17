@@ -23,9 +23,6 @@ use crate::side_table::{self, Named, SideTable};
 /// Team starts. Key: the leader's attempt in hex, `:`, the team reference.
 const TEAM_RUN: SideTable<String, TeamRunBinding, Named> = SideTable::new(&side_table::TEAM_RUN);
 
-/// Most members, or widenings, one start binds.
-const MAX_BOUND: usize = 64;
-
 /// One team start, as the host observed it. Host-only: never guest input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,8 +55,9 @@ fn leader_prefix(leader: AttemptId) -> String {
 /// # Errors
 ///
 /// [`Error::EntityNotFound`] for an unknown leader;
-/// [`Error::InvalidClaimBody`] for an invalid stamp, more than 64 members or
-/// widenings, or a start that names another stamp; storage errors.
+/// [`Error::InvalidClaimBody`] for an invalid stamp or a start that names
+/// another stamp; storage errors. No count caps the members or widenings a
+/// start binds (ARCH-0079).
 pub fn record_team_start(vault: &Vault, run: &TeamRunBinding) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| record_team_start_in_txn(vault, wtxn, run))
 }
@@ -75,11 +73,6 @@ pub fn record_team_start_in_txn(
     run: &TeamRunBinding,
 ) -> Result<()> {
     run.stamp.validate()?;
-    if run.members.len() > MAX_BOUND || run.proposals.len() > MAX_BOUND {
-        return Err(Error::InvalidClaimBody(
-            "a team start binds at most 64 members and 64 widenings",
-        ));
-    }
     let leader = AttemptQueue::new(vault)
         .get_in_txn(txn, run.leader)?
         .ok_or(Error::EntityNotFound)?;
@@ -113,11 +106,6 @@ pub fn record_team_start_in_txn(
         if !row.proposals.contains(proposal) {
             row.proposals.push(proposal.clone());
         }
-    }
-    if row.members.len() > MAX_BOUND || row.proposals.len() > MAX_BOUND {
-        return Err(Error::InvalidClaimBody(
-            "a team start binds at most 64 members and 64 widenings",
-        ));
     }
     TEAM_RUN.put(&vault.store, txn, &key, &row)
 }
