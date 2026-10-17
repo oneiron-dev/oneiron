@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::cli::HookEffort;
+use crate::commands::mcp_bridge::{INVOCATION_META, mint_invocation};
 
 /// One hit's longest text, in characters.
 const ITEM_CHARS: usize = 400;
@@ -109,10 +110,14 @@ impl Recall<'_> {
         bridge.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
         let listed = bridge.call(2, "tools/list", json!({}))?;
         let (name, arguments) = self.tool_call(&listed)?;
+        // One logical call under one invocation id (ARCH-0080 §3): this
+        // process makes it once and never retries it.
+        let mut meta = serde_json::Map::new();
+        meta.insert(INVOCATION_META.to_owned(), Value::String(mint_invocation()));
         bridge.call(
             3,
             "tools/call",
-            json!({"name": name, "arguments": arguments}),
+            json!({"name": name, "arguments": arguments, "_meta": meta}),
         )
     }
 
