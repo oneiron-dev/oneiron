@@ -109,11 +109,6 @@ pub(super) fn walk_notes(
     walk(&open_root(root)?, root, NOTES, visit)
 }
 
-/// The most entries a notes walk lists, every folder together. A walk holds
-/// each folder's whole listing while it sorts and visits it, so neither the
-/// depth cap nor the note count bounds a wide folder.
-const MAX_NOTES_WALK_ENTRIES: usize = 1_000_000;
-
 /// Why a walk is refused whole; nothing under it is imported.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum WalkRefused {
@@ -157,7 +152,9 @@ const NOTES: Wanted = Wanted {
     hidden: false,
     depth: 32,
     refuse_deeper: true,
-    entries: MAX_NOTES_WALK_ENTRIES,
+    // A folder of any width is read (rule 5): its notes and their text are
+    // measured against the import's `[limits]` rows instead.
+    entries: usize::MAX,
 };
 
 impl Wanted {

@@ -90,11 +90,17 @@ pub enum EngineLimit {
     /// continuation parts included. Past it the folder is read and imported
     /// whole.
     ImportFolderNotes,
+    /// Messages one history import, or one session serve's queue lands,
+    /// holds decoded until it lands them all. Past it the import lands whole.
+    ImportDecodedMessages,
+    /// Bytes those decoded messages hold, ids and titles included. Past it
+    /// the import lands whole.
+    ImportDecodedBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -114,6 +120,8 @@ impl EngineLimit {
         Self::LinePushMonthly,
         Self::ImportFolderTextBytes,
         Self::ImportFolderNotes,
+        Self::ImportDecodedMessages,
+        Self::ImportDecodedBytes,
     ];
 
     /// The config key that sets the row.
@@ -138,6 +146,8 @@ impl EngineLimit {
             Self::LinePushMonthly => "line.monthly_push_allowance",
             Self::ImportFolderTextBytes => "limits.import_folder_text_bytes",
             Self::ImportFolderNotes => "limits.import_folder_notes",
+            Self::ImportDecodedMessages => "limits.import_decoded_messages",
+            Self::ImportDecodedBytes => "limits.import_decoded_bytes",
         }
     }
 
@@ -164,6 +174,8 @@ impl EngineLimit {
             Self::LinePushMonthly => 200,
             Self::ImportFolderTextBytes => 256 << 20,
             Self::ImportFolderNotes => 100_000,
+            Self::ImportDecodedMessages => 1_000_000,
+            Self::ImportDecodedBytes => 1 << 30,
         }
     }
 }
