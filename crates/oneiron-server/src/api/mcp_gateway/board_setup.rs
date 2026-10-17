@@ -857,3 +857,269 @@ pub(crate) async fn execute_mcp_setup(
     .await;
     mcp_release_result(server, actor, &snapshot.rows, continued, result)
 }
+
+/// A pumped run's CURRENT board (OF-533): [`mcp_current_board`] for the run's
+/// agent, which holds no MCP credential. Its rows are read under the agent's
+/// own lane on this device, its epoch and STREAM state are keyed on the
+/// run's own connection, and nothing is narrowed: the agent reads its board
+/// as a vault-wide connector of its own would.
+pub(crate) async fn run_current_board(
+    server: &Arc<SyncServer>,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+) -> Result<McpBoardState, McpGatewayError> {
+    let read = run_lane(server, actor)?;
+    let packs = run_visible_pack_inventory(server, &read)?;
+    let (observations, changes, board) =
+        super::board_observations::run_state(server, actor, connection, &read, &packs).await?;
+    let mut rows = Vec::new();
+    let (mut sections, omissions) = run_board_sections(server, actor, &read, &packs, &mut rows)?;
+    rows.extend(crate::device_local::changed_line_rows(&changes));
+    rows.extend(crate::device_local::changed_line_rows(&board));
+    sections.push(
+        oneiron::context_board::SkillsSection::project(&[], &observations)
+            .board_section()
+            .map_err(mcp_board_frame_error)?,
+    );
+    let scope_label =
+        crate::mcp::mcp_effective_scope_label(&crate::mcp::McpConnectorScope::vault_wide());
+    let mut state_rows = mcp_board_state_rows(&sections);
+    state_rows.extend(board.render());
+    let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &state_rows);
+    let epoch = {
+        let mut registry = server.mcp_registry.lock().await;
+        registry.attach_run_board(connection, &actor.entity_ref().to_hex());
+        registry.board_snapshot_epoch(connection, state_hash)
+    };
+    super::board_observations::run_read_set(server, actor, connection)
+        .await
+        .observe_pack_inventory(&packs);
+    Ok(McpBoardState {
+        sections,
+        scope_label,
+        epoch,
+        changes,
+        rows,
+        scope_omitted: omissions.scope_omitted,
+        window_truncated: omissions.window_truncated,
+        source_exhausted: omissions.source_exhausted,
+    })
+}
+
+/// The agent's own read lane, on this device.
+fn run_lane(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+) -> Result<oneiron::claim::ScopedRead<'_>, McpGatewayError> {
+    let key = oneiron::claim::ScopedReadActorKey::with_actor_class(
+        actor.entity_ref().to_hex(),
+        actor.actor_class().gate_actor_class(),
+    )
+    .ok_or_else(|| McpGatewayError::new(-32603, "engine_error", "run actor key invalid"))?;
+    Ok(server
+        .vault
+        .scoped_read(key.at(oneiron::claim::CallerLocality::OnDevice)))
+}
+
+/// The installed packs whose source the agent's lane reads.
+fn run_visible_pack_inventory(
+    server: &SyncServer,
+    read: &oneiron::claim::ScopedRead<'_>,
+) -> Result<Vec<(String, String)>, McpGatewayError> {
+    let mut visible = Vec::new();
+    for pack in server
+        .vault
+        .installed_packs()
+        .map_err(|error| mcp_engine_error("pack inventory failed", error))?
+    {
+        if run_lane_reads(read, &pack.source_id)? {
+            visible.push((pack.pack_name, pack.content_hash));
+        }
+    }
+    Ok(visible)
+}
+
+/// Whether the agent's lane reads the row a board id names; a row whose id
+/// is no entity id is not shown.
+fn run_lane_reads(
+    read: &oneiron::claim::ScopedRead<'_>,
+    row_id: &str,
+) -> Result<bool, McpGatewayError> {
+    let Ok(id) = oneiron::EntityId::from_hex(row_id) else {
+        return Ok(false);
+    };
+    read.is_entity_readable(&id)
+        .map_err(|error| mcp_engine_error("run board row admission failed", error))
+}
+
+/// [`mcp_board_sections`] for a pumped run's agent: VERBS, WORLDS, TASKS with
+/// its people and children, PACKS and the packs' own sections.
+fn run_board_sections(
+    server: &Arc<SyncServer>,
+    actor: oneiron::WriteActor,
+    read: &oneiron::claim::ScopedRead<'_>,
+    packs: &[(String, String)],
+    served: &mut Vec<oneiron::EntityId>,
+) -> Result<(Vec<oneiron::context_board::BoardSection>, McpBoardOmissions), McpGatewayError> {
+    let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
+    let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
+    let mut rows = server
+        .vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .at(oneiron::claim::CallerLocality::OnDevice)
+        .describe_rows()
+        .map_err(mcp_facade_error)?;
+    let children =
+        oneiron::context_board::child_states_for_actor(&server.vault, actor.entity_ref())
+            .map_err(|error| mcp_engine_error("board children failed", error))?;
+    let people = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| {
+                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+            });
+        oneiron::context_board::People::load(&server.vault, now, &mut |person| {
+            read.is_entity_readable(&person)
+        })
+        .map_err(|error| mcp_engine_error("board people failed", error))?
+    };
+    let resident = std::collections::BTreeSet::new();
+    rows.attach_people(
+        &oneiron::context_board::PeopleView::new(&people, &resident),
+        &children,
+    );
+    served.extend(
+        rows.intents
+            .iter()
+            .map(|intent| intent.id.as_str())
+            .chain(rows.bare_jobs.iter().map(|job| job.id.as_str()))
+            .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
+    );
+    let tasks = rows.render();
+    let omissions = McpBoardOmissions {
+        scope_omitted: 0,
+        window_truncated: tasks
+            .overflow
+            .map_or(0, |overflow| overflow.known_omitted_rows),
+        source_exhausted: tasks
+            .overflow
+            .is_none_or(|overflow| overflow.source_exhausted),
+    };
+    let worlds_section = {
+        let authority = server
+            .vault
+            .board_world_authority(Some(actor.entity_ref()), None)
+            .map_err(|error| mcp_engine_error("board world authority failed", error))?;
+        let allowed: Vec<oneiron::EntityId> =
+            authority.allowed_set.worlds().iter().copied().collect();
+        let presences = oneiron::context_board::WorldPresence::read_admitted(read, &allowed)
+            .map_err(|error| mcp_engine_error("board worlds failed", error))?;
+        served.extend(presences.iter().map(|world| world.id));
+        oneiron::context_board::WorldsSection::project(&presences, &authority, MCP_BOARD_WORLDS_CAP)
+            .board_section()
+            .map_err(mcp_board_frame_error)?
+    };
+    let tasks_section = oneiron::context_board::assemble_tasks_section(&tasks, Vec::new())
+        .map_err(mcp_board_frame_error)?;
+    let mut sections = vec![verb_section, worlds_section, tasks_section];
+    sections.push(
+        oneiron::context_board::BoardSection::new(
+            "PACKS".to_owned(),
+            Vec::new(),
+            packs
+                .iter()
+                .map(|(name, hash)| {
+                    format!(
+                        "{}: {}",
+                        oneiron::context_board::quoted_leaf(name),
+                        oneiron::context_board::quoted_leaf(hash)
+                    )
+                })
+                .collect(),
+            vec![format!("count: {}", packs.len())],
+            oneiron::context_board::SectionPolicy {
+                pinned: false,
+                shed_rank: Some(oneiron::context_board::ShedRank::PluginSections),
+            },
+        )
+        .map_err(mcp_board_frame_error)?,
+    );
+    sections.extend(run_pack_sections(server, read, served)?);
+    Ok((sections, omissions))
+}
+
+/// [`mcp_pack_sections`] under the agent's own lane.
+fn run_pack_sections(
+    server: &Arc<SyncServer>,
+    read: &oneiron::claim::ScopedRead<'_>,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Result<Vec<oneiron::context_board::BoardSection>, McpGatewayError> {
+    use oneiron::context_board::{
+        PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot, SectionId,
+        render_pack_sections,
+    };
+    let registry = PluginSectionRegistry::rebuild(&server.vault, &McpPackSectionBindings).map_err(
+        |error| McpGatewayError::new(-32603, "board_render_failed", format!("{error:?}")),
+    )?;
+    let mut snapshots = Vec::new();
+    let mut visible = Vec::new();
+    for entry in registry.pack_sections() {
+        if !run_lane_reads(read, &entry.source_id)? {
+            continue;
+        }
+        let mut rows = Vec::new();
+        for id in server
+            .vault
+            .pack_section_claim_ids(&entry.pack_name, &entry.section.section_id)
+            .map_err(|error| mcp_engine_error("pack section claim inventory failed", error))?
+        {
+            let Some((kind, _, body)) = read
+                .get_entity_parts_with_receipt(&id, None)
+                .map_err(|error| mcp_engine_error("pack section claim read failed", error))?
+                .value
+            else {
+                continue;
+            };
+            if kind != oneiron::registry::ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let claim = oneiron::claim::decode_claim_body(&body, false)
+                .map_err(|error| mcp_engine_error("pack section claim decode failed", error))?;
+            if claim.lifecycle != oneiron::claim::ClaimLifecycleStatus::Active
+                || !matches!(
+                    claim.approval,
+                    oneiron::claim::ClaimApprovalStatus::Approved
+                        | oneiron::claim::ClaimApprovalStatus::Auto
+                )
+                || claim.stale
+            {
+                continue;
+            }
+            served.push(id);
+            rows.push(PluginSectionRow {
+                row_id: id.to_hex(),
+                cells: vec![
+                    claim.predicate,
+                    format!("{:?}", claim.value).chars().take(256).collect(),
+                ],
+            });
+        }
+        snapshots.push(PluginSectionSnapshot {
+            section_id: SectionId(entry.section.section_id.clone()),
+            rows,
+        });
+        visible.push(entry.section.section_id.clone());
+    }
+    let rendered = render_pack_sections(&registry, &snapshots).map_err(|error| {
+        McpGatewayError::new(-32603, "board_render_failed", format!("{error:?}"))
+    })?;
+    Ok(registry
+        .pack_sections()
+        .zip(rendered)
+        .filter_map(|(entry, section)| {
+            visible
+                .contains(&entry.section.section_id)
+                .then_some(section)
+        })
+        .collect())
+}
