@@ -38,6 +38,7 @@ mod anchor_fold;
 mod anchor_marks;
 mod causal_write;
 mod checkpoint;
+mod checkpoint_attest;
 mod checkpoint_policy;
 mod claim_write;
 mod engine_machine;
@@ -140,6 +141,7 @@ pub use federation_activation::federation_grant_activation;
 // `use super::*`, so the file boundaries below do not change name resolution.
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::*;
+pub use checkpoint_attest::*;
 pub use checkpoint_policy::*;
 pub use fold_engine::*;
 pub use fold_state::*;
@@ -170,8 +172,9 @@ pub use recover_many::{
 };
 pub use slip::*;
 pub use slip_pairing::{
-    PairingDescriptor, PairingLink, PairingPrincipal, format_pairing_link,
-    pairing_binding_transcript, parse_pairing_link,
+    PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
+    format_pairing_link, format_pinned_pairing_link, pairing_binding_transcript,
+    pairing_binding_transcript_pinned, parse_pairing_link, parse_pinned_pairing_link,
 };
 pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
