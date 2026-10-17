@@ -339,7 +339,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 
 #### search-vector - `GET /api/search/vector`
 
-- when-to-use: Retrieve nearest entities from an embedding vector when the caller already has a numeric query embedding.
+- when-to-use: Retrieve nearest entities from an embedding vector when the caller already has a numeric query embedding. It searches the vault's own text index; with `space` (and `queryKind`: `text`, `image` or `audio`) it searches that declared embedding space, and the vector must come from that tower at the space's width.
 - trigger phrases:
   - "semantic vector search"
   - "nearest memories by embedding"
@@ -1017,7 +1017,7 @@ Request body:
 
 - `query` optional: retrieval text.
 - `query_vector` optional: numeric vector as an array of `f32` values.
-- `media` optional: `{ "space", "mime", "bytes_b64" }`. The server embeds the base64 bytes (at most `[limits].retrieval_query_bytes` as sent) into the declared embedding space `space` through the `ai.embed` rung its id names (a rung id from `GET /v1/ai/options`, then `@where`), on the query tower `mime` picks (`image/*`, `audio/*`, or UTF-8 `text/*`), and searches that space as one more ranked list. It may stand in for `query` and `query_vector`. With no `ai.embed` rung for the space the pack answers 503; the vault's inference policy still admits the call. `POST /v1/core/query` takes the same `media`. On the one-space preset (the vault's text kind slot bound to a declared space), both doors also embed `query` through that space's text tower and search it there, in place of the vault's own vector index.
+- `media` optional: `{ "space", "mime", "bytes_b64" }`. The server embeds the base64 bytes (at most `[limits].retrieval_query_bytes` as sent) into the declared embedding space `space` through the `ai.embed` rung its id names (a rung id from `GET /v1/ai/options`, then `@` and the `[models]` provider key that binds that rung), on the query tower `mime` picks (`image/*`, `audio/*`, or UTF-8 `text/*`), and searches that space as one more ranked list. It may stand in for `query` and `query_vector`. With no `ai.embed` rung for the space the pack answers 503; the vault's inference policy still admits the call. `POST /v1/core/query` takes the same `media`. On the one-space preset (the vault's text kind slot bound to a declared space), both doors also embed `query` through that space's text tower and search it there, in place of the vault's own vector index.
 - `limit` optional: maximum entities to retrieve, default `10`; past `1000` it is served at `1000` and `limit_clamped` says so.
 - `depth` optional: `edge_hop` and `max_neighbors` controls.
 - `policy` optional: hydration, edge/vector inclusion, view profile, and ranking boosts.

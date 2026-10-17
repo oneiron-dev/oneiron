@@ -11,6 +11,7 @@ use super::failure_signals::FailureSignalsConfig;
 use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
 use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
+use super::line::LineConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
@@ -61,6 +62,9 @@ pub struct SyncServerConfig {
     pub oauth_resource_indicator: Option<String>,
     /// The `[native_mail]` server the native mail pack's check reaches.
     pub native_mail: Option<super::NativeMailConfig>,
+    /// The `[connectors.<name>]` transports the generic connector call
+    /// reaches, by normalized catalog name.
+    pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
     /// Explicit local/dev escape hatch for running without `auth_secret`.
     pub allow_unauthenticated: bool,
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
@@ -113,6 +117,9 @@ pub struct SyncServerConfig {
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
+    /// `[line]`: the plan of the LINE Official Account the built-in LINE
+    /// pack serves, and the pushes it includes each month.
+    pub line: LineConfig,
 }
 
 impl Default for SyncServerConfig {
@@ -127,6 +134,7 @@ impl Default for SyncServerConfig {
             oauth_jwks_uri: None,
             oauth_resource_indicator: None,
             native_mail: None,
+            connectors: std::collections::BTreeMap::new(),
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
             artifact_domains: Vec::new(),
@@ -146,6 +154,7 @@ impl Default for SyncServerConfig {
             limits: LimitsConfig::default(),
             feedback_inbox: FeedbackInboxConfig::default(),
             runtime: RuntimeConfig::default(),
+            line: LineConfig::default(),
         }
     }
 }
@@ -221,6 +230,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("limits", &self.limits)
             .field("feedback_inbox", &self.feedback_inbox)
             .field("runtime", &self.runtime)
+            .field("line", &self.line)
             .finish()
     }
 }
@@ -316,9 +326,15 @@ pub struct ServeConfig {
     /// The `[native_mail]` section: the host's own mail server, absent until
     /// the config file names it.
     pub native_mail: Option<super::NativeMailConfig>,
+    /// The `[connectors.<name>]` sections: each catalog connector's installed
+    /// transport and endpoint, empty until the config file names one.
+    pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
     /// The `[embedding]` section: spaces and kind slots seeded at start,
     /// absent until the config file names it.
     pub embedding: Option<super::EmbeddingConfig>,
+    /// The `[line]` section: the LINE Official Account's plan, a free
+    /// account unless the config file names one.
+    pub line: LineConfig,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -387,7 +403,9 @@ impl Default for ServeConfig {
             desktop: None,
             gpu: None,
             native_mail: None,
+            connectors: std::collections::BTreeMap::new(),
             embedding: None,
+            line: server.line,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -461,7 +479,9 @@ impl fmt::Debug for ServeConfig {
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
+            .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
+            .field("line", &self.line)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -484,6 +504,13 @@ impl ServeConfig {
             oauth_jwks_uri: self.oauth_jwks_uri.clone(),
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
             native_mail: self.native_mail.clone(),
+            connectors: self
+                .connectors
+                .iter()
+                .map(|(name, connector)| {
+                    (super::connectors::normalize_name(name), connector.clone())
+                })
+                .collect(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
             artifact_domains: self.artifact_domains.clone(),
@@ -503,6 +530,7 @@ impl ServeConfig {
             limits: self.limits.clone(),
             feedback_inbox: self.feedback.inbox,
             runtime: self.runtime.clone(),
+            line: self.line,
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(

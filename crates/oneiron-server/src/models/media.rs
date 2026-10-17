@@ -18,7 +18,7 @@ use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCatalogEntry,
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStreamResult, ModelId, ModelLocality,
-    ModelTierRef,
+    ModelTierRef, Vault,
 };
 use oneiron_llm_openai::{
     OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
@@ -38,10 +38,15 @@ use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, media_offer};
 use super::rerank::transport;
+use super::soniox::{self, SonioxRung};
 use super::status::{RungStatus, SeatState, SeatStatus};
 use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
+
+mod jobs;
+
+use jobs::{JobRow, JobStore};
 
 /// The run every media call is admitted under, one run per call.
 const MEDIA_RUN: &str = "ai-media";
@@ -255,6 +260,12 @@ pub struct MediaTicket {
     pub operation: AiOperation,
 }
 
+/// A job a poll or a cancel reaches: held here, or ended and kept.
+enum Held {
+    Running(Arc<tokio::sync::Mutex<HeldJob>>),
+    Ended(MediaJobState),
+}
+
 /// Every media seat the config fills, their meter, and the jobs they run.
 pub struct MediaRuntime {
     seats: BTreeMap<AiOperation, MediaSeat>,
@@ -262,12 +273,19 @@ pub struct MediaRuntime {
     receipts: Arc<dyn RunReceiptSink>,
     host: Option<Arc<HostAccount>>,
     jobs: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>>,
+    /// Where the jobs are kept, so a restart loses none (FIX-LIST 465).
+    store: Option<JobStore>,
+    /// Each job seat's rungs, by engine id: the rung a kept job is taken up
+    /// on again after a restart.
+    job_rungs: BTreeMap<ModelId, LadderRung>,
     /// The render targets (provider names) that render from a banked
     /// identity's reference clip on each call and keep no clone.
     reference_targets: BTreeSet<String>,
     /// The hosted render targets (provider names) that clone a banked
     /// identity, by name.
     cloners: BTreeMap<String, Arc<HostedCloner>>,
+    /// The transcribe rungs that hear live (soniox), by engine id.
+    live_asr: BTreeMap<String, Arc<SonioxRung>>,
 }
 
 impl MediaRuntime {
@@ -278,9 +296,18 @@ impl MediaRuntime {
             receipts: Arc::new(LoggedReceipts),
             host: None,
             jobs: Mutex::default(),
+            store: None,
+            job_rungs: BTreeMap::new(),
             reference_targets: BTreeSet::new(),
             cloners: BTreeMap::new(),
+            live_asr: BTreeMap::new(),
         }
+    }
+
+    /// The live socket rung `model` (a rung's engine id) opens, when it
+    /// hears live.
+    pub(super) fn live_rung(&self, model: &str) -> Option<Arc<SonioxRung>> {
+        self.live_asr.get(model).cloned()
     }
 
     /// The clone wire of hosted render target `target`, when it is one.
@@ -323,6 +350,7 @@ impl MediaRuntime {
             .map(|(name, _)| name.clone())
             .collect();
         runtime.cloners = voice_cloners(config);
+        runtime.live_asr = soniox::live_rungs(config);
         let backends = media_backends(config, site, keys);
         for (operation, seat) in &config.media.seats {
             let mut rungs = Vec::new();
@@ -341,6 +369,11 @@ impl MediaRuntime {
                     None => entry.available = false,
                 }
                 rung_status.push(entry);
+            }
+            if operation.is_job() {
+                for rung in &rungs {
+                    runtime.job_rungs.insert(rung.model.clone(), rung.clone());
+                }
             }
             let state = if rungs.is_empty() {
                 SeatState::Unavailable
@@ -575,12 +608,14 @@ impl MediaRuntime {
         }
     }
 
-    /// Submits one job (`ai.video`); its caller polls the ticket.
+    /// Submits one job (`ai.video`); its caller polls the ticket. The job
+    /// is kept in the vault, so a restart loses none.
     pub async fn submit(&self, request: MediaRequest) -> LlmResult<MediaTicket> {
         if !request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let operation = request.operation;
+        let sent = self.store.as_ref().map(|_| request.clone());
         let MediaAnswer::Job(job) = self.walk(request)?.await? else {
             return Err(FatalLlmError::EmptyResponse.into());
         };
@@ -590,34 +625,136 @@ impl MediaRuntime {
             model: job.model.to_string(),
             operation,
         };
+        if let (Some(store), Some(request)) = (&self.store, sent) {
+            store.put(
+                &id,
+                JobRow {
+                    model: job.model.clone(),
+                    operation,
+                    provider_job: job.provider_job.clone(),
+                    request,
+                    ended: None,
+                },
+            );
+        }
         self.lock_jobs()
             .insert(id, Arc::new(tokio::sync::Mutex::new(job)));
         Ok(ticket)
     }
 
-    /// Where job `id` stands. A job that ended is answered once, and leaves
-    /// the table.
+    /// Where job `id` stands. A job that ended keeps its end, and every poll
+    /// answers it until its caller deletes the job; without a vault it is
+    /// answered once. A job a restart left running is taken up again on a
+    /// fresh permit, and nothing is sent again.
     pub async fn poll(&self, id: &str) -> LlmResult<MediaJobState> {
-        let job = self
-            .lock_jobs()
-            .get(id)
-            .cloned()
-            .ok_or(FatalLlmError::InvalidRequest)?;
-        let state = job.lock().await.poll().await;
-        if state.as_ref().is_ok_and(MediaJobState::ended) {
+        let job = match self.held(id)? {
+            Held::Running(job) => job,
+            Held::Ended(state) => return Ok(state),
+        };
+        let mut held = job.lock().await;
+        if held.permit.is_none() {
+            // The poll this one waited behind saw the end.
+            drop(held);
+            return self.ended(id);
+        }
+        let state = held.poll().await;
+        if let Ok(state) = &state
+            && state.ended()
+        {
+            if let Some(store) = &self.store
+                && let Some(mut row) = store.get(id)
+            {
+                row.ended = Some(state.clone());
+                store.put(id, row);
+            }
             self.lock_jobs().remove(id);
         }
         state
     }
 
-    /// Stops job `id` at its provider and drops it.
+    /// Stops job `id` at its provider and drops it, its kept row with it.
+    /// A job that ended is only dropped.
     pub async fn cancel(&self, id: &str) -> LlmResult<()> {
-        let job = self
-            .lock_jobs()
-            .remove(id)
-            .ok_or(FatalLlmError::InvalidRequest)?;
+        let held = self.held(id);
+        self.lock_jobs().remove(id);
+        if let Some(store) = &self.store {
+            store.remove(id);
+        }
+        let job = match held? {
+            Held::Running(job) => job,
+            Held::Ended(_) => return Ok(()),
+        };
         let stopped = job.lock().await.cancel().await;
         stopped
+    }
+
+    /// Job `id`, held here or kept in the vault. A kept job that has not
+    /// ended is taken up again here, once: a poll racing this one finds it
+    /// held.
+    fn held(&self, id: &str) -> LlmResult<Held> {
+        if let Some(job) = self.lock_jobs().get(id) {
+            return Ok(Held::Running(Arc::clone(job)));
+        }
+        let row = self
+            .store
+            .as_ref()
+            .and_then(|store| store.get(id))
+            .ok_or(FatalLlmError::InvalidRequest)?;
+        if let Some(state) = row.ended {
+            return Ok(Held::Ended(state));
+        }
+        let mut jobs = self.lock_jobs();
+        if let Some(job) = jobs.get(id) {
+            return Ok(Held::Running(Arc::clone(job)));
+        }
+        let job = Arc::new(tokio::sync::Mutex::new(self.take_up(&row)?));
+        jobs.insert(id.to_owned(), Arc::clone(&job));
+        Ok(Held::Running(job))
+    }
+
+    /// The end job `id`'s row keeps.
+    fn ended(&self, id: &str) -> LlmResult<MediaJobState> {
+        self.store
+            .as_ref()
+            .and_then(|store| store.get(id))
+            .and_then(|row| row.ended)
+            .ok_or_else(|| FatalLlmError::InvalidRequest.into())
+    }
+
+    /// A job a restart left running, taken up again on the rung that took
+    /// it: a permit admitted afresh on this runtime's meter for the call
+    /// its caller sent, and started for the job's polls without a new
+    /// submit. A job whose rung left the config cannot be taken up.
+    fn take_up(&self, row: &JobRow) -> LlmResult<HeldJob> {
+        let rung = self
+            .job_rungs
+            .get(&row.model)
+            .ok_or(FatalLlmError::InvalidRequest)?;
+        let media = rung.media.as_ref().ok_or(FatalLlmError::InvalidRequest)?;
+        let mut bound = row.request.clone();
+        bound.model = rung.model.clone();
+        bound.envelope.locality = rung.offer.binding.locality;
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
+        let selector = Some(row.request.model.as_str());
+        let permit = run.admit_media(selector, &bound, &rung.offer.binding)?;
+        let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
+        gate.resume(&bound, permit.lease())?;
+        Ok(HeldJob {
+            gate,
+            permit: Some(permit),
+            probe: None,
+            receipt: None,
+            provider_job: row.provider_job.clone(),
+            model: rung.model.clone(),
+            operation: row.operation,
+            caps: media.caps.clone(),
+        })
     }
 
     fn lock_jobs(
@@ -760,6 +897,9 @@ fn media_backends(
                 }
             }
             ProviderKind::Gemini => gemini_backend(provider, wire_models),
+            // It hears live only, through `open_voice_asr`; never the
+            // OpenAI-compatible wire below.
+            ProviderKind::Soniox => soniox::live_backend(provider),
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
                 Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models))
                     as Arc<dyn MediaBackend>
@@ -909,5 +1049,15 @@ impl MediaRuntime {
             Arc::clone(&self.receipts),
         );
         ladder.open_media_stream(&run, request, bound_ms)
+    }
+}
+
+impl super::ModelRuntime {
+    /// This runtime with its `ai.video` jobs kept in `vault`, so a restart
+    /// loses none and an ended job answers every poll (FIX-LIST 465).
+    #[must_use]
+    pub fn with_media_vault(mut self, vault: Arc<Vault>) -> Self {
+        self.media.store = Some(JobStore::new(vault));
+        self
     }
 }

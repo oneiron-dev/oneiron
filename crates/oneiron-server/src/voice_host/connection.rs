@@ -26,7 +26,9 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 use oneiron::voice_cascade::media::VoiceMediaOutput;
 
-use super::media_bridge::{HEARD_REVISION, MediaBridge, MediaEvent};
+use super::media_bridge::{
+    HEARD_REVISION, HeardWork, LIVE_ASR_FAILURE, LiveAsrFailure, MediaBridge, MediaEvent,
+};
 use super::wire::{self, ControlOut, WireMedia, WireOut};
 use super::{HostError, VoiceHost, VoiceMediaIn, VoiceOutputs, VoicePlayout};
 
@@ -171,12 +173,17 @@ impl VoiceHost {
         &self,
         stream: UnixStream,
         outputs: &mut VoiceOutputs<B, T, C>,
-        bridge: Option<&mut MediaBridge>,
+        mut bridge: Option<&mut MediaBridge>,
         wire: Option<WireMedia>,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
         let end_on_drop = EndOnDrop(self);
-        let result = self.serve_inner(stream, outputs, bridge, wire, stop).await;
+        let result = self
+            .serve_inner(stream, outputs, bridge.as_deref_mut(), wire, stop)
+            .await;
+        if let Some(bridge) = bridge {
+            bridge.stop_hearing();
+        }
         let stop = self
             .end()
             .map_err(|_| io::Error::other("voice teardown failed"))?;
@@ -202,6 +209,8 @@ impl VoiceHost {
         let mut reader = BufReader::new(read);
         let mut frame = FrameReader::new();
         let mut pending: Option<Pending<'_>> = None;
+        // Whether `pending` enriches a final: words heard live after it wait.
+        let mut pending_final = false;
         // Frames still to write; a sentence's audio goes out in several.
         let mut outbox = VecDeque::new();
         let mut requests = 0;
@@ -244,65 +253,8 @@ impl VoiceHost {
                         WireOut::Control(Some(ControlOut::Event(event))) => control_response(event),
                         WireOut::Playout(None) | WireOut::Control(None) => continue,
                     },
-                    bytes = frame.read(&mut reader) => {
-                        let Some(bytes) = bytes? else { break };
-                        let request = serde_json::from_slice::<Request>(&bytes);
-                        // Media ops stream for the whole call; only transcript ops
-                        // spend the request budget.
-                        if !matches!(request, Ok(Request::Pcm { .. } | Request::Cut | Request::Speaking { .. } | Request::RosterChanged | Request::Drained { .. })) {
-                            requests += 1;
-                            if requests > 4096 { break; }
-                        }
-                        match request {
-                            Ok(Request::Open { utterance_id }) => match self.open(utterance_id) {
-                                Ok(handle) => Response::Opened { handle },
-                                Err(error) => response_error(&error),
-                            },
-                            Ok(Request::Close { handle }) => match self.close(&handle) {
-                                Ok(()) => {
-                                    pending = None;
-                                    Response::Closed
-                                }
-                                Err(error) => response_error(&error),
-                            },
-                            Ok(Request::Partial { handle, revision, text }) => {
-                                match self.prepare(&handle, revision, text, false) {
-                                    Ok(work) => {
-                                        // Prepare invalidates old work first. Dropping its
-                                        // future then releases only its own reservation.
-                                        pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
-                                        continue;
-                                    }
-                                    Err(error) => response_error(&error),
-                                }
-                            }
-                            Ok(Request::Final { handle, revision, text }) => {
-                                match self.prepare(&handle, revision, text, true) {
-                                    Ok(work) => {
-                                        pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
-                                        continue;
-                                    }
-                                    Err(error) => response_error(&error),
-                                }
-                            }
-                            // An early or stale acknowledgement changes nothing.
-                            Ok(Request::Drained { generation }) => {
-                                let generation = wire.as_ref().and_then(|wire| wire.drained(generation));
-                                if let (Some(bridge), Some(generation)) = (bridge.as_deref_mut(), generation) {
-                                    self.media_in(VoiceMediaIn::Drained(generation), bridge, outputs);
-                                }
-                                continue;
-                            }
-                            Ok(media) => match (bridge.as_deref_mut(), wire.is_some(), media_input(media)) {
-                                (Some(bridge), true, Some(input)) => {
-                                    self.media_in(input, bridge, outputs);
-                                    continue;
-                                }
-                                _ => Response::Error { code: "invalid_request" },
-                            },
-                            Err(_) => Response::Error { code: "invalid_request" },
-                        }
-                    }
+                    // The bridge before wire input: it drives the live hearing's
+                    // socket, and steady microphone frames must not starve it.
                     event = async {
                         match bridge.as_deref_mut() {
                             Some(bridge) => bridge.next().await,
@@ -329,15 +281,93 @@ impl VoiceHost {
                                 // A heard final replaces any enrichment in flight, as a wire final does.
                                 if let Some((handle, work)) = self.heard(bridge, event) {
                                     pending = Some(Box::pin(async move { (handle, HEARD_REVISION, work.run().await) }));
+                                    pending_final = true;
+                                }
+                            }
+                            MediaEvent::Live(Ok(updates)) => {
+                                // A live hypothesis replaces partial work in flight, never a final's.
+                                if let Some(heard) = self.live_heard(bridge, updates, pending_final) {
+                                    pending_final = heard.final_text;
+                                    pending = Some(heard_pending(heard));
+                                }
+                            }
+                            MediaEvent::Live(Err(error)) => {
+                                tracing::warn!(%error, "voice media: the live hearing failed");
+                                self.live_failed(bridge);
+                                match LIVE_ASR_FAILURE {
+                                    LiveAsrFailure::EndCall => return Err(io::Error::other("voice live hearing failed")),
                                 }
                             }
                         }
                         continue;
                     }
+                    bytes = frame.read(&mut reader) => {
+                        let Some(bytes) = bytes? else { break };
+                        let request = serde_json::from_slice::<Request>(&bytes);
+                        // Media ops stream for the whole call; only transcript ops
+                        // spend the request budget.
+                        if !matches!(request, Ok(Request::Pcm { .. } | Request::Cut | Request::Speaking { .. } | Request::RosterChanged | Request::Drained { .. })) {
+                            requests += 1;
+                            if requests > 4096 { break; }
+                        }
+                        match request {
+                            Ok(Request::Open { utterance_id }) => match self.open(utterance_id) {
+                                Ok(handle) => Response::Opened { handle },
+                                Err(error) => response_error(&error),
+                            },
+                            Ok(Request::Close { handle }) => match self.close(&handle) {
+                                Ok(()) => {
+                                    pending = None;
+                                    pending_final = false;
+                                    Response::Closed
+                                }
+                                Err(error) => response_error(&error),
+                            },
+                            Ok(Request::Partial { handle, revision, text }) => {
+                                match self.prepare(&handle, revision, text, false) {
+                                    Ok(work) => {
+                                        // Prepare invalidates old work first. Dropping its
+                                        // future then releases only its own reservation.
+                                        pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
+                                        pending_final = false;
+                                        continue;
+                                    }
+                                    Err(error) => response_error(&error),
+                                }
+                            }
+                            Ok(Request::Final { handle, revision, text }) => {
+                                match self.prepare(&handle, revision, text, true) {
+                                    Ok(work) => {
+                                        pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
+                                        pending_final = true;
+                                        continue;
+                                    }
+                                    Err(error) => response_error(&error),
+                                }
+                            }
+                            // An early or stale acknowledgement changes nothing.
+                            Ok(Request::Drained { generation }) => {
+                                let generation = wire.as_ref().and_then(|wire| wire.drained(generation));
+                                if let (Some(bridge), Some(generation)) = (bridge.as_deref_mut(), generation) {
+                                    self.media_in(VoiceMediaIn::Drained(generation), bridge, outputs);
+                                }
+                                continue;
+                            }
+                            Ok(media) => match (bridge.as_deref_mut(), wire.is_some(), media_input(media)) {
+                                (Some(bridge), true, Some(input)) => {
+                                    self.media_in(input, bridge, outputs);
+                                    continue;
+                                }
+                                _ => Response::Error { code: "invalid_request" },
+                            },
+                            Err(_) => Response::Error { code: "invalid_request" },
+                        }
+                    }
                     result = async { pending.as_mut().expect("guarded pending work").await }, if pending.is_some() => {
                         pending = None;
+                        let was_final = std::mem::take(&mut pending_final);
                         let (handle, revision, result) = result;
-                        match result {
+                        let response = match result {
                             Ok(AsrUpdate::Partial(partial)) => Response::Partial {
                                 handle,
                                 revision,
@@ -367,7 +397,16 @@ impl VoiceHost {
                             }
                             Ok(_) => Response::Error { code: "stale_request" },
                             Err(error) => response_error(&error),
+                        };
+                        // The final consumed its handle: what was heard live after it goes next.
+                        if was_final
+                            && let Some(bridge) = bridge.as_deref_mut()
+                            && let Some(heard) = self.live_resume(bridge)
+                        {
+                            pending_final = heard.final_text;
+                            pending = Some(heard_pending(heard));
                         }
+                        response
                     }
                 }
             };
@@ -393,6 +432,17 @@ impl VoiceHost {
         }
         Ok(())
     }
+}
+
+/// Heard words' enrichment, as the connection's pending work.
+fn heard_pending(heard: HeardWork<'_>) -> Pending<'_> {
+    let HeardWork {
+        handle,
+        revision,
+        work,
+        ..
+    } = heard;
+    Box::pin(async move { (handle, revision, work.run().await) })
 }
 
 /// A media op as the bridge's input; `None` for bad audio or a

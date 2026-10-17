@@ -80,6 +80,12 @@ side_tables! {
     DREAMER_CONSOLIDATION_KEY_RULES: VaultMeta b"dreamer:consolidation:keys:v1" LegacyJson;
     /// Operator-set consolidation candidate-selection config (strength weights, caps). Key: ().
     DREAMER_CONSOLIDATION_SELECTION: VaultMeta b"dreamer:consolidation:selection:v1" LegacyJson;
+    /// Parent-verified promotion evidence observations. Key: id16(claim).
+    DREAMER_CONSOLIDATION_STRENGTH: VaultMeta b"dreamer:consolidation:strength:v1:" Named;
+    /// Pre-archive claim revision and strength policy. Key: id16(claim) + u64be(at_ms).
+    DREAMER_CONSOLIDATION_STRENGTH_ARCHIVE: VaultMeta b"dreamer:consolidation:strength_archive:v1:" Named;
+    /// Operator-set archive-only strength lifecycle. Key: ().
+    DREAMER_CONSOLIDATION_STRENGTH_POLICY: VaultMeta b"dreamer:consolidation:strength_policy:v1" Named;
     /// Private run-tree-scoped critique artifact for one branch attempt, keyed by attempt id and
     /// artifact id; written independently by both the generic critic reviewer and the Dreamer
     /// tournament with the identical prefix and key layout (see WHERE) - worth a second look for
@@ -116,8 +122,8 @@ side_tables! {
     DREAMER_NIGHTLY_OUTPUT: VaultMeta b"dreamer:nightly:output:v1:" Named;
     /// The NOTE review's page cursor: the last NOTE id a review finished. Key: ().
     DREAMER_NOTE_REVIEW_CURSOR: VaultMeta b"dreamer:note-review:cursor:v1" Named;
-    /// BLAKE3 of the markdown a NOTE review last read for one NOTE, so an unchanged NOTE is not
-    /// read again. Key: id16.
+    /// What a NOTE review last read and decided for one NOTE: the BLAKE3 of the markdown, so an
+    /// unchanged NOTE is not read again, and its verdict and importance. Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
@@ -393,6 +399,10 @@ side_tables! {
     /// A diagnostic already counted into the tier-1 failure aggregate, and when it observed; a
     /// later capture of the same diagnostic counts nothing (OF-380). Key: id16 (diagnostic id).
     FAILURE_SIGNALS_TIER1_COUNTED: VaultMeta b"failure_signals:tier1_counted:v1:" Raw;
+    /// One tier-1 failure count not yet delivered to the publisher, kept across restarts: the
+    /// count (u64be), then its content-free dimensions as JSON. Key: bytes32 (blake3 of that
+    /// JSON).
+    FAILURE_SIGNALS_TIER1_COUNTS: VaultMeta b"failure_signals:tier1_counts:v1:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so

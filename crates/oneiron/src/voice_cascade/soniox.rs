@@ -1,4 +1,8 @@
 //! Soniox streaming ASR wire client. Transport queues audio; callbacks normalize token frames.
+//! The owner's cut is authoritative: `finalize` asks Soniox to make every word
+//! spoken so far final, and its `<fin>` ack hands them back as one Final. A
+//! `<end>` from Soniox's own endpoint detection is an advisory Endpoint, and
+//! its words stay pending until the owner cuts. Neither marker is transcript text.
 use super::retrieval::invalid;
 use super::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
 use crate::error::Result;
@@ -6,11 +10,23 @@ use crate::error::Result;
 /// Host-owned transport: submit only, no provider work under the session lock.
 pub trait SonioxTransport {
     fn submit_audio(&mut self, bytes: &[u8]) -> Result<()>;
+    /// Sends `{"type":"finalize"}`, after every audio byte submitted before it.
+    fn submit_finalize(&mut self) -> Result<()>;
     fn submit_end(&mut self) -> Result<()>;
+}
+/// One frame's meaning, in the order Soniox said it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SonioxUpdate {
+    Asr(AsrEvent),
+    /// `<fin>`: a finalize the host asked for is done, and every word before
+    /// it came back in the Final just before this.
+    Finalized,
 }
 pub struct SonioxAsrClient<T> {
     transport: T,
     committed: Vec<AsrToken>,
+    /// Finalizes sent whose `<fin>` has not come back.
+    finalizing: usize,
     ended: bool,
 }
 impl<T: SonioxTransport> SonioxAsrClient<T> {
@@ -18,31 +34,68 @@ impl<T: SonioxTransport> SonioxAsrClient<T> {
         Self {
             transport,
             committed: Vec::new(),
+            finalizing: 0,
             ended: false,
         }
     }
     pub fn transport(&self) -> &T {
         &self.transport
     }
-    /// Receive a provider WebSocket JSON frame outside session state. Final
-    /// tokens accumulate until endpoint; non-final tokens are replacement hypotheses.
-    pub fn receive(&mut self, frame: &serde_json::Value) -> Result<Vec<AsrEvent>> {
-        if frame.get("error_code").is_some() {
-            return Ok(vec![AsrEvent {
-                kind: AsrEventKind::Error,
-                text: String::new(),
-                tokens: vec![],
-                provider_latency_ms: None,
-                endpoint_delay_ms: None,
-                error: Some(
-                    frame["error_code"]
-                        .as_str()
-                        .map_or_else(|| frame["error_code"].to_string(), str::to_owned),
-                ),
-            }]);
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+    /// The owner's cut: asks Soniox to finalize every word spoken so far.
+    /// Its `<fin>` comes back as [`SonioxUpdate::Finalized`].
+    pub fn finalize(&mut self) -> Result<()> {
+        if self.ended {
+            return Err(invalid("Soniox stream closed"));
         }
+        self.transport.submit_finalize()?;
+        self.finalizing = self.finalizing.saturating_add(1);
+        Ok(())
+    }
+    /// Whether a finalize is waiting for its `<fin>`.
+    #[must_use]
+    pub fn finalizing(&self) -> bool {
+        self.finalizing > 0
+    }
+    /// After the socket dropped: the words made final that no `<fin>` or
+    /// `finished` handed back, and how many finalizes never got their
+    /// `<fin>`. The stream hears nothing more.
+    pub fn dropped(&mut self) -> (Vec<AsrToken>, usize) {
+        self.ended = true;
+        (
+            std::mem::take(&mut self.committed),
+            std::mem::take(&mut self.finalizing),
+        )
+    }
+    /// Receive a provider WebSocket JSON frame outside session state. Final
+    /// tokens accumulate until `<fin>` or `finished`; non-final tokens are
+    /// replacement hypotheses.
+    pub fn receive(&mut self, frame: &serde_json::Value) -> Result<Vec<SonioxUpdate>> {
+        if frame.get("error_code").is_some() || frame.get("error_message").is_some() {
+            let field = |key: &str| {
+                frame
+                    .get(key)
+                    .filter(|value| !value.is_null())
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .map_or_else(|| value.to_string(), str::to_owned)
+                    })
+            };
+            let error = match (field("error_code"), field("error_message")) {
+                (Some(code), Some(message)) => format!("{code}: {message}"),
+                (Some(text), None) | (None, Some(text)) => text,
+                (None, None) => "Soniox error".to_owned(),
+            };
+            return Ok(vec![SonioxUpdate::Asr(AsrEvent {
+                error: Some(error),
+                ..event(AsrEventKind::Error, Vec::new())
+            })]);
+        }
+        let mut updates = Vec::new();
         let mut partial = Vec::new();
-        let mut endpoint = false;
         if let Some(tokens) = frame.get("tokens") {
             for token in tokens
                 .as_array()
@@ -51,9 +104,21 @@ impl<T: SonioxTransport> SonioxAsrClient<T> {
                 let text = token["text"]
                     .as_str()
                     .ok_or_else(|| invalid("Soniox token text missing"))?;
-                if text == "<end>" {
-                    endpoint = true;
-                    continue;
+                match text {
+                    "<end>" => {
+                        updates.push(SonioxUpdate::Asr(event(AsrEventKind::Endpoint, Vec::new())));
+                        continue;
+                    }
+                    "<fin>" => {
+                        self.finalizing = self
+                            .finalizing
+                            .checked_sub(1)
+                            .ok_or_else(|| invalid("Soniox finalized unasked"))?;
+                        self.flush(&mut updates);
+                        updates.push(SonioxUpdate::Finalized);
+                        continue;
+                    }
+                    _ => {}
                 }
                 let normalized = AsrToken {
                     text: text.into(),
@@ -73,34 +138,30 @@ impl<T: SonioxTransport> SonioxAsrClient<T> {
                 }
             }
         }
-        let mut events = Vec::new();
-        if endpoint {
-            if !self.committed.is_empty() {
-                events.push(event(
-                    AsrEventKind::Final,
-                    std::mem::take(&mut self.committed),
-                ));
-            }
-            events.push(event(AsrEventKind::Endpoint, Vec::new()));
+        if frame.get("finished").and_then(serde_json::Value::as_bool) == Some(true) {
+            self.flush(&mut updates);
+            updates.push(SonioxUpdate::Asr(event(AsrEventKind::Closed, Vec::new())));
+            self.ended = true;
         } else if !self.committed.is_empty() || !partial.is_empty() {
             let mut hypothesis = self.committed.clone();
             hypothesis.extend(partial);
-            events.push(event(AsrEventKind::Partial, hypothesis));
+            updates.push(SonioxUpdate::Asr(event(AsrEventKind::Partial, hypothesis)));
         }
-        if frame.get("finished").and_then(serde_json::Value::as_bool) == Some(true) {
-            if !self.committed.is_empty() {
-                events.push(event(
-                    AsrEventKind::Final,
-                    std::mem::take(&mut self.committed),
-                ));
+        for update in &updates {
+            if let SonioxUpdate::Asr(event) = update {
+                event.validate()?;
             }
-            events.push(event(AsrEventKind::Closed, Vec::new()));
-            self.ended = true;
         }
-        for event in &events {
-            event.validate()?;
+        Ok(updates)
+    }
+    /// The words made final so far, as one Final.
+    fn flush(&mut self, updates: &mut Vec<SonioxUpdate>) {
+        if !self.committed.is_empty() {
+            updates.push(SonioxUpdate::Asr(event(
+                AsrEventKind::Final,
+                std::mem::take(&mut self.committed),
+            )));
         }
-        Ok(events)
     }
 }
 fn optional_number(value: &serde_json::Value, key: &str) -> Result<Option<f64>> {

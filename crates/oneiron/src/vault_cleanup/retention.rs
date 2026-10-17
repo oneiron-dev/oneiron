@@ -51,3 +51,38 @@ pub(super) fn task_is_past_retention(
     Ok(crate::task_verb::completed_task_at_in_txn(vault, txn, *id)?
         .is_some_and(|finished| vault.now_recorded_at().saturating_sub(finished) > age))
 }
+
+/// Seconds in one retention day.
+const DAY_SECS: u64 = 86_400;
+
+/// A NOTE whose kind keeps it a set number of days (ARCH-0032: a handoff's
+/// 60), born longer ago than that (CALLS: OF-073 NOTE retention). A durable
+/// or session-sealed kind never passes. The archive keeps the body and its
+/// indexes, and restore brings the NOTE back; nothing here erases.
+pub(super) fn note_is_past_retention(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(row) = crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, id)?
+    else {
+        return Ok(false);
+    };
+    let Ok(note) = crate::note::decode_note_body_in_txn(&vault.store, txn, &row.body) else {
+        return Ok(false);
+    };
+    let Some(kind) =
+        crate::note::descriptor_in_txn(&vault.store, txn, note.kind.as_str().as_ref())?
+    else {
+        return Ok(false);
+    };
+    let (crate::note::RetentionDefault::ArchiveAfterDays, Some(days)) =
+        (kind.retention, kind.archive_after_days)
+    else {
+        return Ok(false);
+    };
+    if days == 0 {
+        return Ok(false);
+    }
+    Ok(vault.now_recorded_at().saturating_sub(row.learned_at) > u64::from(days) * DAY_SECS)
+}

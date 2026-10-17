@@ -22,14 +22,16 @@ use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, TH
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadProvider,
-    DecisionRung, HeldLadder, ModelDecisionProvider, ProviderCapability, ProviderDecision,
-    ProviderPin, RemoteDecisionSeat, RuleDecisionProvider, SeatPhase, SeatRequest,
+    DecisionRung, HeldLadder, ModelDecisionProvider, PersonThreshold, ProviderCapability,
+    ProviderDecision, ProviderPin, RemoteDecisionSeat, RuleDecisionProvider, SeatPhase,
+    SeatRequest,
 };
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
     ModelId, ReasoningEffort,
 };
+use oneiron::memory::ImagePick;
 use oneiron::policy_model::PolicyDecisions;
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::saved_query::MembershipDecisions;
@@ -38,10 +40,12 @@ use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::TaskDecisions;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationDecisions, EntityId, HostingPrivacyPosture,
-    Vault,
+    ModelLocality, Vault,
 };
 
-use crate::config::models::{BigSettings, ModelsConfig, SeatPickSettings, SystemOneSettings};
+use crate::config::models::{
+    BigSettings, ImagePickSettings, ModelsConfig, SeatPickSettings, SystemOneSettings,
+};
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
 
@@ -63,9 +67,17 @@ const PLACEMENT_WORDING: &str = "Which node of the task-type tree is this task? 
 specific live node whose kind fits the task's subgoal and site, or the root when none fits.";
 /// How long one placement may take before the rule rung's reading stands.
 pub(crate) const PLACEMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+/// The planner's shape question (OF-541, OF-389): this host's wording.
+const PLANNER_WORDING: &str = "Which team shape should take this need? Pick the option whose \
+model, pattern and width fit the need and its care level at the least expected spend.";
+/// How long one shape pick may take before the planner's deterministic pick stands.
+const PLANNER_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
+/// How long the person row may trail an accept whose commit sent no change
+/// signal.
+const PERSON_THRESHOLD_SWEEP: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The ladder, its person queue and the bands every caller starts from.
 #[derive(Clone)]
@@ -73,7 +85,15 @@ pub struct DecisionHost {
     ladder: HeldLadder,
     asks: Arc<DecisionAsks>,
     bands: DecisionBandPolicy,
+    /// The configured start row, when the recipe names a person question.
+    person_start: Option<PersonThreshold>,
+    /// One person-row refresh at a time, so an older read never lands last.
+    person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
+    image_pick: Option<ImagePickSettings>,
+    /// The owner's explicit opt-in to send unit text off the host,
+    /// `[models.decisions.system_one].remote_opt_in`.
+    remote_opt_in: bool,
 }
 
 impl DecisionHost {
@@ -97,7 +117,11 @@ impl DecisionHost {
             },
             asks,
             bands: DecisionBandPolicy::default(),
+            person_start: None,
+            person_refresh: Arc::default(),
             auto_checker: None,
+            image_pick: None,
+            remote_opt_in: false,
         }
     }
 
@@ -112,6 +136,7 @@ impl DecisionHost {
         self.ladder.person = None;
         self.ladder.presence = None;
         self.bands = DecisionBandPolicy::default();
+        self.person_start = None;
         let Some((door, meter)) = read else {
             return self;
         };
@@ -126,12 +151,14 @@ impl DecisionHost {
                 Ok(person) => {
                     let mut bands = DecisionBandPolicy::default();
                     // Q3's threshold home: an accepted Coach row replaces this
-                    // start value with a higher version, here.
+                    // start value with a higher version
+                    // ([`Self::refresh_person_threshold`]).
                     match bands
                         .set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
                     {
                         Ok(()) => {
                             self.ladder.person = Some(person);
+                            self.person_start = bands.person_threshold();
                             self.bands = bands;
                         }
                         Err(error) => tracing::warn!(%error, "the person threshold is invalid"),
@@ -153,6 +180,7 @@ impl DecisionHost {
             meter.clone(),
             &probe.paired,
             self.ladder.person.clone(),
+            door.connector().locality == ModelLocality::ThirdParty,
         ) {
             Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
             Err(error) => {
@@ -171,6 +199,7 @@ impl DecisionHost {
         runtime: tokio::runtime::Handle,
     ) -> Self {
         self.ladder.system_one = None;
+        self.remote_opt_in = settings.is_some_and(|settings| settings.remote_opt_in);
         let Some(settings) = settings else {
             return self;
         };
@@ -230,10 +259,23 @@ impl DecisionHost {
         self
     }
 
+    /// The per-image pick's wording and budget (OF-329).
+    fn with_image_pick(mut self, settings: Option<&ImagePickSettings>) -> Self {
+        self.image_pick = settings.cloned();
+        self
+    }
+
     /// The ladder every typed decision on this host goes through.
     #[must_use]
     pub fn ladder(&self) -> &HeldLadder {
         &self.ladder
+    }
+
+    /// Whether the owner opted in to sending unit text off the host, for
+    /// [`oneiron::llm::decision::DecisionLadder::under_posture`].
+    #[must_use]
+    pub fn remote_opt_in(&self) -> bool {
+        self.remote_opt_in
     }
 
     /// The ladder's last rung: the vault owner's durable ask queue. A caller
@@ -249,6 +291,34 @@ impl DecisionHost {
     #[must_use]
     pub fn bands(&self) -> DecisionBandPolicy {
         self.bands.clone()
+    }
+
+    /// Installs the newest accepted Coach revision of the person row (Q3)
+    /// above the configured start row, else the start row, on every clone of
+    /// the host's bands. A host whose recipe names no person question keeps
+    /// none.
+    pub(crate) fn refresh_person_threshold(&self, vault: &Vault) -> oneiron::Result<()> {
+        let Some(start) = self.person_start else {
+            return Ok(());
+        };
+        let _turn = self
+            .person_refresh
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let row = vault
+            .latest_accepted_person_threshold()?
+            .map(|(_, row)| row)
+            .filter(|row| row.version > start.version)
+            .unwrap_or(start);
+        if self.bands.person_threshold() != Some(row) {
+            self.bands.replace_person_threshold(row)?;
+            tracing::info!(
+                threshold = row.threshold,
+                version = row.version,
+                "the person threshold row changed"
+            );
+        }
+        Ok(())
     }
 
     /// A dial from the rule table up to `ceiling`, with the default band.
@@ -313,6 +383,25 @@ impl DecisionHost {
         }
     }
 
+    /// A leased agent run's planner ladder (OF-541, OF-389): the shape pick
+    /// and the type placement for `principal`, up to the Big rung, each call
+    /// on its own fresh clock.
+    pub(crate) fn host_planner_decisions(
+        &self,
+        principal: EntityId,
+    ) -> oneiron::code_run::HostPlannerDecisions<'_> {
+        oneiron::code_run::HostPlannerDecisions {
+            ladder: &self.ladder,
+            principal,
+            bands: self.bands.clone(),
+            planner_wording: PLANNER_WORDING.to_owned(),
+            planner_budget: PLANNER_BUDGET,
+            placement_dial: self.dial(DecisionRung::Big),
+            placement_wording: PLACEMENT_WORDING.to_owned(),
+            placement_budget: PLACEMENT_BUDGET,
+        }
+    }
+
     /// The Dreamer's consolidation questions through this ladder, in the
     /// shipped wording: the verdict role's generated read sits at the Local
     /// slot, and an answer still in the band steps up the host's stronger
@@ -327,6 +416,24 @@ impl DecisionHost {
             },
             bands: self.bands.clone(),
             ..ConsolidationDecisions::shipped()?
+        })
+    }
+
+    /// The fast per-image pick (OF-329) for `principal`'s `task`, when
+    /// `[models.decisions.image_pick]` words it. It asks the quick rungs
+    /// only, up to System One, under the host's bands; a pick no rung
+    /// answers in band serves the image in full.
+    #[must_use]
+    pub fn image_pick(&self, principal: EntityId, task: String) -> Option<ImagePick<'_>> {
+        let settings = self.image_pick.as_ref()?;
+        Some(ImagePick {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::SystemOne),
+            bands: self.bands.clone(),
+            wording: settings.wording.clone(),
+            task,
+            budget: settings.budget,
         })
     }
 
@@ -516,7 +623,8 @@ impl SyncServer {
                 models.raw_budget_units,
                 tokio::runtime::Handle::current(),
             )
-            .with_auto_check(models.decisions.auto_check.as_deref(), principal);
+            .with_auto_check(models.decisions.auto_check.as_deref(), principal)
+            .with_image_pick(models.decisions.image_pick.as_ref());
         self
     }
 
@@ -537,6 +645,47 @@ impl SyncServer {
     }
 }
 
+/// Keeps the host's person row on the newest accepted Coach revision: it
+/// re-reads after each committed change, and every sweep for an accept whose
+/// commit sent no change signal. `None` when the recipe names no person
+/// question.
+pub(crate) fn spawn_person_threshold(
+    server: &Arc<SyncServer>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    server.decision_host().person_start?;
+    let weak = Arc::downgrade(server);
+    // Subscribed before the first read, so no change between them is lost.
+    let mut changes = server.vault().subscribe_proactivity_changes();
+    Some(tokio::spawn(async move {
+        loop {
+            let Some(server) = weak.upgrade() else {
+                break;
+            };
+            let ran = tokio::task::spawn_blocking(move || {
+                server
+                    .decision_host()
+                    .refresh_person_threshold(server.vault())
+            })
+            .await;
+            match ran {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(kind = ?error.kind(), "the person threshold refresh failed; it runs again on the next change");
+                }
+                Err(error) => tracing::warn!(%error, "the person threshold refresh stopped"),
+            }
+            tokio::select! {
+                () = tokio::time::sleep(PERSON_THRESHOLD_SWEEP) => {}
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }))
+}
+
 fn pin(rung: DecisionRung, model: &str, version: &str) -> ProviderPin {
     ProviderPin {
         rung,
@@ -554,6 +703,8 @@ struct HouseRead {
     guard: BudgetGuard,
     paired: DecisionQuestion,
     person: Option<DecisionQuestion>,
+    /// The reader's provider is a third party's.
+    leaves: bool,
 }
 
 impl HouseRead {
@@ -562,6 +713,7 @@ impl HouseRead {
         guard: BudgetGuard,
         paired: &str,
         person: Option<DecisionQuestion>,
+        leaves: bool,
     ) -> oneiron::Result<Self> {
         let read = Self {
             pin: pin(DecisionRung::Escalation, reader.model(), reader.revision()),
@@ -569,6 +721,7 @@ impl HouseRead {
             person,
             reader,
             guard,
+            leaves,
         };
         read.provider()?;
         Ok(read)
@@ -593,6 +746,10 @@ impl DecisionProvider for HouseRead {
     fn capability(&self) -> ProviderCapability {
         self.provider()
             .map_or_else(|_| ProviderCapability::default(), |read| read.capability())
+    }
+
+    fn leaves_host(&self) -> bool {
+        self.leaves
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
@@ -668,6 +825,11 @@ impl DecisionProvider for SystemOneRung {
 
     fn image_edge(&self) -> Option<u32> {
         self.seat.image_edge()
+    }
+
+    /// The seat is remote: every call leaves the host.
+    fn leaves_host(&self) -> bool {
+        true
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {

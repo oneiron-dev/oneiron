@@ -57,6 +57,10 @@ impl AppError {
         &self.code
     }
 
+    pub(super) fn message(&self) -> &str {
+        &self.message
+    }
+
     pub(super) fn invalid_params() -> Self {
         Self::new(
             oneiron::memory::MEMORY_CODE_BAD_REQUEST,
@@ -122,6 +126,14 @@ impl From<ApiError> for AppError {
             error.message(),
             error.suggestions().to_vec(),
         )
+    }
+}
+
+/// A facade refusal from the generated dispatch, its open code, read
+/// receipt, wrong-root correction and hook stop kept, as `rpc.err` states it.
+impl From<crate::api::FacadeApiError> for AppError {
+    fn from(error: crate::api::FacadeApiError) -> Self {
+        error.into_memory_error().into()
     }
 }
 

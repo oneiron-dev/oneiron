@@ -39,7 +39,8 @@ pub use self::codec::{
 };
 pub(crate) use self::dispatcher::{ExecutorCallSite, check_write_gate_against_vault};
 pub use self::dispatcher::{
-    GatedActorWrite, HostPlannerBinding, HostSelfDispatcher, SELF_MEMORY_SEARCH_MAX_RESULTS,
+    GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
+    SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
@@ -61,7 +62,7 @@ pub(crate) use self::storage::{
 };
 pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
-    bind_wait_trap,
+    bind_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,

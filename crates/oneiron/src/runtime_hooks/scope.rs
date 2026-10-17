@@ -5,13 +5,17 @@
 use std::collections::BTreeSet;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::ClaimBody;
+use crate::claim::{ClaimBody, ScopedReadActorKey};
 use crate::error::RecordError;
 use crate::federation::{ScopeAxis, ScopeId};
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::{EntityId, Error, Result, Vault};
 
 use super::VerbCall;
+
+/// How many parent steps a project scope walks up from a room's or a
+/// claim's project, as the projects' effective authority serves them.
+const PROJECT_SCOPE_DEPTH: usize = 32;
 
 /// What a hook's `scope`, or a call's, names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,10 +47,13 @@ impl HookScope {
 
 /// Whether the selector scope `scope` holds `call`'s own. On one axis, the
 /// same id does. Over a room call, a project holds it when the room's
-/// project is that one or names it among its effective parents, a world
-/// when the room's read-world ceiling holds it, and a facet when the room's
-/// facets do. Any other pairing, a call with no scope, or a scope that does
-/// not parse, takes nothing.
+/// project is that one or reaches it through effective parents
+/// ([`project_within`]), a world when the room's read-world ceiling holds
+/// it, and a facet when the room's facets do. The world ceiling is the
+/// caller's own room turn's, as its reads narrowed it, when its read key
+/// holds one for that room; else the room's roster meets it now. Any other
+/// pairing, a call with no scope, or a scope that does not parse, takes
+/// nothing.
 pub(super) fn call_within(vault: &Vault, scope: &str, call: &VerbCall) -> Result<bool> {
     let (Some(wanted), Some(own)) = (
         HookScope::parse(scope),
@@ -66,11 +73,18 @@ pub(super) fn call_within(vault: &Vault, scope: &str, call: &VerbCall) -> Result
             Some(own) => project_within(vault, &txn, own, project)?,
             None => false,
         },
-        // The room's world ceiling as its roster meets it now, the one
-        // `room_read_worlds` reads, for a caller that reads the room.
         HookScope::World(world) => {
-            crate::context_board::room_ceiling_in(vault, &txn, room, call.actor)?
-                .is_some_and(|ceiling| ceiling.terms.get().worlds.worlds.contains(&ScopeId(world)))
+            let world = ScopeId(world);
+            match call.reader.as_ref().and_then(ScopedReadActorKey::room_turn) {
+                Some(turn) if turn.room == room => turn
+                    .terms
+                    .with(|terms| terms.worlds.worlds.contains(&world)),
+                // The room's world ceiling as its roster meets it now, the
+                // one `room_read_worlds` reads, for a caller that reads the
+                // room.
+                _ => crate::context_board::room_ceiling_in(vault, &txn, room, call.actor)?
+                    .is_some_and(|ceiling| ceiling.terms.get().worlds.worlds.contains(&world)),
+            }
         }
         HookScope::Facet(facet) => crate::workspace_roster::room_facets_in(vault, &txn, room)?
             .is_some_and(|facets| facets.contains(&ScopeId(facet))),
@@ -81,9 +95,9 @@ pub(super) fn call_within(vault: &Vault, scope: &str, call: &VerbCall) -> Result
 /// Whether the selector scope `scope` holds the fact on `entity`, with
 /// `claim` its claim when it is one. A world holds the record's world; a
 /// facet a record the one facet rule places in it; a project a claim stamped
-/// to it or to a child of it, else a record whose room's project is; a room
-/// a record said in it. A fact that proves none of these, or a scope that
-/// does not parse, takes nothing.
+/// to it or to a project under it ([`project_within`]), else a record whose
+/// room's project is; a room a record said in it. A fact that proves none of
+/// these, or a scope that does not parse, takes nothing.
 pub(super) fn fact_within(
     vault: &Vault,
     scope: &str,
@@ -167,8 +181,9 @@ fn room_project(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<
     }
 }
 
-/// Whether project `own` is `wanted`, or names it among the parents its
-/// effective authority serves (never the stored row's own list).
+/// Whether project `own` is `wanted`, or reaches it up the parents each
+/// project's effective authority serves (never a stored row's own list),
+/// within [`PROJECT_SCOPE_DEPTH`] steps. Each project is read once.
 fn project_within(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -183,10 +198,32 @@ fn project_within(
     else {
         return Ok(false);
     };
-    let wanted = wanted.to_hex();
-    Ok(reader
-        .effective(own)?
-        .is_some_and(|effective| effective.parents.contains(&wanted)))
+    let mut seen = BTreeSet::from([own]);
+    let mut ring = vec![own];
+    for _ in 0..PROJECT_SCOPE_DEPTH {
+        let mut next = Vec::new();
+        for id in ring {
+            let Some(effective) = reader.effective(id)? else {
+                continue;
+            };
+            for parent in &effective.parents {
+                let Ok(parent) = EntityId::from_hex(parent) else {
+                    continue;
+                };
+                if parent == wanted {
+                    return Ok(true);
+                }
+                if seen.insert(parent) {
+                    next.push(parent);
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        ring = next;
+    }
+    Ok(false)
 }
 
 /// The one room the record `entity` was said in; `None` when it names none,
