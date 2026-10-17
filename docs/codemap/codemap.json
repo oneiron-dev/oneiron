@@ -2873,6 +2873,20 @@
      "surface": {
       "crate-vis": 22,
       "fn": 24,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectOffer"
+     ],
+     "path": "src/authority/slip_vault/connect.rs",
+     "purpose": "Connect, signed by each vault's own host-root key (FIX 323, ARCH-0043 #relationship-lifecycle)",
+     "surface": {
+      "fn": 3,
       "struct": 1
      }
     },
@@ -51964,7 +51978,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 137,
+     "files": 138,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53408,7 +53422,7 @@
    },
    "over_bar": 172,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3242,
+   "source_files": 3243,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66149,6 +66163,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/federation_connect_routes.rs",
+     "purpose": "`/v1/owner/federation/connect`: the owner's Connect (ARCH-0043 #relationship-lifecycle, FIX 323), behind the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/guest_routes.rs",
      "purpose": "`/v1/owner/guests/revoke`: the owner withdraws one ask guest's access at this host (OF-232), behind the same…",
      "surface": {
@@ -70687,7 +70711,7 @@
      "path": "src/owner/cooperative_deletion.rs",
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -70698,6 +70722,16 @@
      "purpose": "The embedder section of `doctor` and `GET /v1/owner/status`: what config asks for, what the vault pins and…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/federation_connect.rs",
+     "purpose": "Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -70767,7 +70801,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -72117,7 +72151,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 299,
+     "files": 300,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72390,7 +72424,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72504,7 +72538,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 591,
+   "source_files": 593,
    "test_files": 182
   },
   "oneiron-spawn": {
