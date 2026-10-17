@@ -10,6 +10,9 @@ pub(crate) use self::mask::admit::{
     scan_document_in_txn,
 };
 pub(super) use self::mask::mask_batch_ops;
+pub(crate) use self::mask::side_row::{
+    SidePart, admit_side_parts, admit_side_row, admitted_from, from_named_tree, named_tree,
+};
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
     Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,

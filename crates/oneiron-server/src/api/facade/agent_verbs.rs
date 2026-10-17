@@ -15,6 +15,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.inbox.concern.move", post(facade_route))
         .route("/vault.people.list", post(facade_route))
         .route("/vault.people.get", post(facade_route))
+        .route("/vault.shape.read", post(facade_route))
+        .route("/vault.shape.plan", post(facade_route))
+        .route("/vault.shape.apply", post(facade_route))
         .route("/self.message", post(facade_route))
         .route("/self.grants.ask", post(facade_route))
         .route("/self.memory.diary.query", post(facade_route))
@@ -71,6 +74,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.close_erase_ask", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
+        .route("/vault.records.erase_preview", post(facade_route))
+        .route("/vault.records.erase_confirm", post(facade_route))
         .route("/vault.authority.handoff_alarms", post(facade_route))
         .route(
             "/vault.authority.handoff_alarms.acknowledge",
@@ -119,6 +124,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.artifacts.view", post(facade_route))
         .route("/vault.code.diff", post(facade_route))
         .route("/vault.code.blame", post(facade_route))
+        .route("/vault.code.proposal_view", post(facade_route))
+        .route("/vault.code.repo_diff", post(facade_route))
         .route("/vault.artifacts.export", post(facade_route))
         .route("/vault.artifacts.born_from", post(facade_route))
         .route("/vault.artifacts.proposals", post(facade_route))

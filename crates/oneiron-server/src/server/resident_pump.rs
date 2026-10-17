@@ -391,7 +391,12 @@ fn run_bound(
     let spend = metered
         .clone()
         .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
-    let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
+    let seat = seats.seat(
+        run_id,
+        spend,
+        CallerLocality::OnDevice,
+        provider.reader_window_tokens(),
+    );
     // One door for the whole run, so its browser lives as long as the run.
     let door: Arc<dyn AgentVerbDoor> = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let reactor = tokio::runtime::Builder::new_current_thread()
@@ -435,6 +440,7 @@ fn run_bound(
 /// its model calls spend under `spend`, and `seat`, which its reader
 /// children spawn under. With the host's `[models.planner]` seats, its
 /// spawns are planned on `decisions`' ladder and its leader calls answer.
+/// A run its parent planned is born on the model its plan picked.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -471,6 +477,7 @@ fn enter_run(
         compaction,
         reactor,
         spend,
+        status.input.plan.as_ref(),
     )
 }
 
