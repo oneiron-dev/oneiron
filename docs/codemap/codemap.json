@@ -9838,13 +9838,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/claim/lifecycle.rs",
      "purpose": "Claim lifecycle transitions: the supersession-chain walk, the write-verb validity guard, `supersede_claim` /…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 4
      }
     },
@@ -17775,7 +17775,7 @@
      "path": "src/dreamer_consolidation/persistence.rs",
      "purpose": "Persistent contradiction markers and prior-head context for consolidation",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -17978,25 +17978,28 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "ConflictRevertReceipt",
       "ConflictReviewScope",
       "ConflictSettleDecisions",
       "ConflictSettleReceipt",
       "ConflictSettlement",
       "OpenConflict",
       "ParkedConflictPass",
+      "RevertedSettlement",
+      "SettledAnswer",
       "SettledConflict"
      ],
      "path": "src/dreamer_consolidation/settle.rs",
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 3,
-      "struct": 5
+      "struct": 8
      }
     },
     {
@@ -29441,13 +29444,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/conflict_settle.rs",
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
-      "fn": 4
+      "fn": 8
      }
     },
     {
@@ -44600,7 +44603,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 24,
       "re-export": 16
      }
@@ -45532,6 +45535,16 @@
      "purpose": "Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state…",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/withdrawn_cutoffs.rs",
+     "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -53168,7 +53181,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 159,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53357,9 +53370,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 170,
+   "over_bar": 172,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3238,
+   "source_files": 3239,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58460,14 +58473,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SheetFate"
+      "SheetFate",
+      "XlsxAxis",
+      "XlsxAxisEdit"
      ],
      "path": "src/xlsx_shift.rs",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 1
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
      }
     },
     {
@@ -65080,7 +65096,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 30
      }
     },
     {
@@ -65984,7 +66000,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/conflict_routes.rs",
@@ -71134,7 +71150,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 28
      }
     },
     {
