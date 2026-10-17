@@ -11,7 +11,10 @@ Wire reference: [TypeSafe System One HTTP API](https://docs.typesafe.ai/api.md),
 `model: "<model>-<pinned version>"`, `state: { ... }`, and one named question under
 `questions.decision` with `type`, `instructions`, and where needed `criteria`:
 
-- `noul`: no criteria; response `{ "type": "noul", "noul": <P(yes)> }`.
+- `noul`: criteria `{ "true": <what a yes means>, "false": <what a no means> }`, sent
+  when the call's state carries a question's criteria triple (`yes_if_all`,
+  `no_if_any`, `not_a_reason_to_say_no`; re-checked 2026-10-17); response
+  `{ "type": "noul", "noul": <P(yes)> }`.
 - `choice`: criteria maps each offered choice to `null`; response has `type`,
   `choice`, `probabilities` for each offered key, and `confidence`.
 - `score`: criteria is an ordered list of 2–10 caller-provided labels; response

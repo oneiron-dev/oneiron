@@ -231,6 +231,77 @@ impl FrozenToolCall {
     }
 }
 
+/// Read-only view of one authorized frozen tool call, for a real sender.
+///
+/// A sender sends the envelope's `arguments` as the tool's arguments and its
+/// `headers` as HTTP headers, never the whole envelope. Decoding and its
+/// validation stay here, so a sender outside the engine never parses the
+/// internal payload itself.
+pub struct FrozenToolCallView {
+    frozen: FrozenToolCall,
+}
+
+impl FrozenToolCallView {
+    /// Decodes the frozen payload and checks it against the call's own
+    /// server, tool and endpoint axes.
+    pub fn read(call: &crate::outbound_intent_ledger::FrozenOutboundCall) -> Result<Self> {
+        let frozen = FrozenToolCall::decode(call.payload())?;
+        if frozen.call.server != call.server()
+            || frozen.call.tool != call.tool()
+            || call.resolved_endpoint() != Some(frozen.call.resolved_endpoint.as_str())
+        {
+            return Err(invalid_schema());
+        }
+        Ok(Self { frozen })
+    }
+
+    #[must_use]
+    pub fn server(&self) -> &str {
+        &self.frozen.call.server
+    }
+
+    #[must_use]
+    pub fn tool(&self) -> &str {
+        &self.frozen.call.tool
+    }
+
+    /// The endpoint the grant's allowlist admitted.
+    #[must_use]
+    pub fn endpoint(&self) -> &str {
+        &self.frozen.call.resolved_endpoint
+    }
+
+    /// The tool's arguments, with header parameters already moved out.
+    #[must_use]
+    pub fn arguments(&self) -> &BTreeMap<String, Value> {
+        &self.frozen.arguments
+    }
+
+    /// Canonical lowercase header names and their printable-ASCII values.
+    #[must_use]
+    pub fn headers(&self) -> &BTreeMap<String, String> {
+        &self.frozen.headers
+    }
+
+    /// The protocol revision the connector key pinned when it was approved.
+    #[must_use]
+    pub fn protocol_revision(&self) -> Option<&str> {
+        self.frozen
+            .manifest_binding
+            .as_ref()
+            .map(|binding| binding.protocol_revision.as_str())
+    }
+
+    /// The governing connector key the call was prepared against (hex).
+    #[must_use]
+    pub fn key_ref(&self) -> Option<&str> {
+        self.frozen
+            .manifest_binding
+            .as_ref()
+            .map(|binding| binding.key_ref.as_str())
+    }
+}
+
 /// Resolve headers and destructive preview from the descriptor once. The
 /// default mutation intent is preview; explicit mutation still needs consent.
 pub fn prepare_tool_call(
