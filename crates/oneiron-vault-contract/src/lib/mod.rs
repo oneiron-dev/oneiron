@@ -13,6 +13,8 @@
 
 pub mod artifact_origin;
 mod ctl;
+/// The vault's data-key escrow capsules on their way to the registry.
+pub mod escrow;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
