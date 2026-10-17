@@ -831,6 +831,11 @@ export_facade! {
     let output = client.vault_artifacts_export(&input)?;
     crate::codec::lift_record("vault.artifacts.export", &output)
 };
+"vault.agents.export_pack" => fn vault_agents_export_pack(&self, input: AgentPackExportRequest) -> AgentPackExport = |client| {
+    let input: oneiron::share_travel::AgentPackExportRequest = crate::codec::lower_record("vault.agents.export_pack", input)?;
+    let output = client.vault_agents_export_pack(&input)?;
+    crate::codec::lift_record("vault.agents.export_pack", &output)
+};
 "vault.artifacts.born_from" => fn vault_artifacts_born_from(&self, input: BornFromRequest) -> BornFromView = |client| {
     let input: oneiron::blob_artifact::BornFromRequest = crate::codec::lower_record("vault.artifacts.born_from", input)?;
     let output = client.vault_artifacts_born_from(&input)?;
