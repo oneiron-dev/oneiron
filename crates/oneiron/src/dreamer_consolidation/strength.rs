@@ -315,7 +315,7 @@ fn archive_receipt(
         decision_id: crate::store::GateDecisionId::now(),
         created_at: now_ms,
         outcome: "approved".to_owned(),
-        reason_codes: vec!["dreamer.strength.archived".to_owned()],
+        reason_codes: vec!["gate.dreamer.strength.archived".to_owned()],
         receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
         actor_class: actor.actor_class().gate_actor_class().to_owned(),

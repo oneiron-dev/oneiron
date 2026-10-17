@@ -81,6 +81,13 @@ enum ImportWarning {
     /// outside the folder. Counted, not named, as a notes import's stdout
     /// names no note.
     HardLinked { files: usize },
+    /// A folder past one of its `[limits]` rows: read and imported whole
+    /// all the same, and the row asks whether everything is okay (OF-520).
+    LimitCrossed {
+        row: &'static str,
+        limit: u64,
+        observed: u64,
+    },
 }
 
 #[derive(Serialize, Default)]
@@ -194,15 +201,19 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
                      `oneiron runs pending` lists the reviews"
                 ));
             }
-            (totals.new + totals.changed > 0).then(|| {
+            if totals.new + totals.changed > 0 {
+                // One inbox row for the batch, never one per conversation.
+                vault.record_history_import_finished(source, *imported_at)?;
                 let run_id =
                     oneiron::ingest::history::history_import_review_id(source, *imported_at);
-                Review {
+                Some(Review {
                     run_ref: crate::owner::runs::run_ref(&run_id),
                     run_id,
                     dreamer_attempts,
-                }
-            })
+                })
+            } else {
+                None
+            }
         }
         Target::Plan(..) => None,
     };
