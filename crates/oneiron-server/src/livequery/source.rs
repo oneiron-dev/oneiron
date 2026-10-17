@@ -147,6 +147,13 @@ impl LiveQuerySource for BoundSource {
                 ));
             }
         }
+        // An inbox is the bound actor's own, across every world it reads.
+        if channel == Channel::Notifications && view.world_ref.is_some() {
+            return Err(AppError::bad_request(
+                "notifications are the bound actor's across worlds",
+                Some("scopedView"),
+            ));
+        }
         // The same verified principal/class pair binds RPC and subscription reads.
         let memory = bound_memory(server.vault(), &self.auth)?;
         let mut dependencies = BTreeSet::new();
@@ -268,6 +275,22 @@ impl LiveQuerySource for BoundSource {
                     }
                 }
                 serde_json::to_value(updates)
+            }
+            Channel::Notifications => {
+                // A local notification put or mark commits to LMDB, never to
+                // Loro, so the view also follows the local path the refresh
+                // re-derives on its local cadence.
+                dependencies.insert(subscriptions::NOTIFICATIONS_PATH.to_owned());
+                let page = memory
+                    .inbox_list(None, limit.min(oneiron::inbox::INBOX_PAGE_MAX))
+                    .map_err(AppError::from)?;
+                // A row names its notification: the view follows it, and a
+                // mark synced from another device re-derives it.
+                for row in &page.rows {
+                    dependencies.insert(format!("e:{}", row.id));
+                    followed.insert(format!("e:{}", row.id));
+                }
+                serde_json::to_value(page)
             }
             Channel::MemoryBoard | Channel::Gap => {
                 return Err(AppError::not_implemented("reserved subscription channel"));

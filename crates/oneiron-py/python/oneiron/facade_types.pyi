@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 271 facade rows, 1044 declarations.
-Inputs: 226 of 271 fully typed, 43 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 220 of 271 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
-Opaque serde_json::Value leaves: 68; unread shapes: 2.
+Census: 278 facade rows, 1065 declarations.
+Inputs: 232 of 278 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 226 of 278 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Opaque serde_json::Value leaves: 73; unread shapes: 2.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -58,6 +58,17 @@ class ScratchpadRecallReply(TypedDict):
     sealed: bool
     matched: int
     lines: list[ScratchpadRecallReplyLine]
+class ScratchpadAppendRequest(TypedDict):
+    session_id: str
+    text: str
+    mark: NotRequired[ScratchpadRecallMark | None]
+    pin: NotRequired[bool]
+class ScratchpadWriteReply(TypedDict):
+    pad: NotRequired[EntityId | None]
+    sealed: bool
+    sealed_prior: NotRequired[EntityId | None]
+class ScratchpadSealRequest(TypedDict):
+    session_id: str
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]
@@ -1364,6 +1375,45 @@ class CallReceipt(TypedDict):
     action_digest: NotRequired[str | None]
     served: list[str]
     served_records: NotRequired[list[RecordRef]]
+class ExplainMemoryRequest(TypedDict):
+    entity: str
+    session_id: NotRequired[str | None]
+RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
+class RetrievalScoreComponent(TypedDict):
+    signal: RetrievalSignal
+    rank: int
+    score: float
+class ExplainScoreEvidence(TypedDict):
+    result_id: str
+    final_rank: int
+    final_score: float
+    access_factor: NotRequired[float | None]
+    components: list[RetrievalScoreComponent]
+class ExplainMemoryReply(TypedDict):
+    id: str
+    run_id: NotRequired[str | None]
+    rank: NotRequired[int | None]
+    neighbor: bool
+    tier: NotRequired[str | None]
+    hook: NotRequired[str | None]
+    score: NotRequired[ExplainScoreEvidence | None]
+class ExplainGateRequest(TypedDict):
+    receipt: str
+class ExplainGateNotice(TypedDict):
+    notice_type: str
+    row_ref: NotRequired[str | None]
+class ExplainGateReply(TypedDict):
+    receipt_id: str
+    decided_at: int
+    outcome: str
+    reason_codes: list[str]
+    receipt_reasons: list[str]
+    notices: list[ExplainGateNotice]
+    actor_class: str
+    actor_ref: NotRequired[str | None]
+    content_kind: str
+    policy_manifest_version: str
+    claim_ref: NotRequired[str | None]
 class KeyValueAddress(TypedDict):
     namespace: list[str]
     key: str
@@ -2084,6 +2134,27 @@ class AuthorityAuditPage(TypedDict):
     next_after: NotRequired[EntityId | None]
     order: AuthorityAuditOrder
     scanned: int
+class MeshPathReceiptsRequest(TypedDict):
+    limit: NotRequired[int | None]
+MeshPathDirection = Literal["inbound", "outbound"]
+MeshPathOutcome = Literal["admitted", "refused", "failed"]
+MeshPathKind = Literal["direct", "relayed", "mixed", "none"]
+class MeshPathReceipt(TypedDict):
+    id: str
+    direction: MeshPathDirection
+    outcome: MeshPathOutcome
+    machine: NotRequired[str | None]
+    endpoint_key: NotRequired[str | None]
+    alpn: str
+    opened_at_ms: int
+    closed_at_ms: NotRequired[int | None]
+    paths: MeshPathKind
+    used_direct: bool
+    used_relay: bool
+    direct_addr: NotRequired[str | None]
+    relay_url: NotRequired[str | None]
+    detail: NotRequired[str | None]
+    attempts: int
 class InspectionResolveRequest(TypedDict):
     handle: str
 LensBackingTargetKind = Literal["entity", "claim"]
@@ -3141,6 +3212,142 @@ class SlideReviewOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[Any]
     refused: list[SlideUnitRefused]
+class FolderItemInput(TypedDict):
+    artifact_ref: str
+    row: int
+class ArtifactAskUnitsSheetRows(TypedDict):
+    kind: Literal["sheet_rows"]
+    sheet: str
+    rows: str
+    answer_column: int
+    header_row: NotRequired[int | None]
+    max_count: NotRequired[int | None]
+class ArtifactAskUnitsParagraphs(TypedDict):
+    kind: Literal["paragraphs"]
+    blocks: list[str]
+    author: str
+    labels: Any
+class ArtifactAskUnitsFolderItems(TypedDict):
+    kind: Literal["folder_items"]
+    sheet: str
+    answer_column: int
+    items: list[FolderItemInput]
+    max_count: NotRequired[int | None]
+ArtifactAskUnits = ArtifactAskUnitsSheetRows | ArtifactAskUnitsParagraphs | ArtifactAskUnitsFolderItems
+class ArtifactAskSubmit(TypedDict):
+    artifact_ref: str
+    run_ref: str
+    question: Any
+    units: ArtifactAskUnits
+    reversibility: NotRequired[Any | None]
+    evidence_refs: NotRequired[list[str]]
+    unit_budget_ms: NotRequired[int | None]
+    deadline_ms: NotRequired[int | None]
+    made_by: NotRequired[Any | None]
+class ImageBox(TypedDict):
+    top: float
+    bottom: float
+    left: float
+    right: float
+class ImagePoint(TypedDict):
+    x: float
+    y: float
+class DecisionAnswerNoul(TypedDict):
+    kind: Literal["noul"]
+    value: bool
+class DecisionAnswerChoice(TypedDict):
+    kind: Literal["choice"]
+    value: str
+class DecisionAnswerScore(TypedDict):
+    kind: Literal["score"]
+    value: float
+class DecisionAnswerBox(TypedDict):
+    kind: Literal["box"]
+    value: ImageBox | None
+class DecisionAnswerPoint(TypedDict):
+    kind: Literal["point"]
+    value: ImagePoint | None
+class DecisionAnswerAbstain(TypedDict):
+    kind: Literal["abstain"]
+DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
+class ProviderPin(TypedDict):
+    rung: DecisionRung
+    model: str
+    version: str
+class DecisionBand(TypedDict):
+    low: float
+    high: float
+class EvidenceVersion(TypedDict):
+    id: str
+    body_hash: list[int]
+class PairedReading(TypedDict):
+    provider: ProviderPin
+    question: str
+    question_version: int
+    probability: float
+StopCause = Literal["done", "deadline", "provider_failure"]
+ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
+class ReasoningNotNeeded(TypedDict):
+    state: Literal["not_needed"]
+class ReasoningRan(TypedDict):
+    state: Literal["ran"]
+    cause: ReasoningCause
+class ReasoningSkipped(TypedDict):
+    state: Literal["skipped"]
+    cause: ReasoningCause
+class ReasoningCut(TypedDict):
+    state: Literal["cut"]
+    cause: ReasoningCause
+Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
+class DecisionTime(TypedDict):
+    budget_ms: int
+    used_ms: int
+    stop: StopCause
+    answered: NotRequired[DecisionRung | None]
+    reasoning: Reasoning
+class ImagePin(TypedDict):
+    provider: ProviderPin
+    name: str
+    evidence: EvidenceVersion
+    width: int
+    height: int
+    frame: NotRequired[PixelRegion | None]
+    edge: NotRequired[int | None]
+    sent_width: int
+    sent_height: int
+class DecisionReceipt(TypedDict):
+    question: str
+    question_version: int
+    principal: str
+    providers: list[ProviderPin]
+    band: DecisionBand
+    band_version: NotRequired[int]
+    evidence_versions: NotRequired[list[EvidenceVersion]]
+    cost_per_thousand: NotRequired[float | None]
+    paired: NotRequired[list[PairedReading]]
+    person: NotRequired[list[PairedReading]]
+    time: NotRequired[DecisionTime | None]
+    images: NotRequired[list[ImagePin]]
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
+HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
+class TypedDecision(TypedDict):
+    answer: DecisionAnswer
+    probability: NotRequired[float | None]
+    evidence: list[str]
+    in_band: bool
+    receipt: DecisionReceipt
+    human_ask: NotRequired[HumanAskReason | None]
+class UnitAbstention(TypedDict):
+    unit: Any
+    decision: NotRequired[TypedDecision | None]
+class UnitRefusal(TypedDict):
+    unit: Any
+    reason: str
+class ArtifactAskOutcome(TypedDict):
+    proposed: NotRequired[PendingProposalView | None]
+    abstained: list[UnitAbstention]
+    refused: list[UnitRefusal]
 class CriticBinding(TypedDict):
     lens_id: str
     lens_ref: str
@@ -3219,66 +3426,6 @@ class CritiqueArtifact(TypedDict):
     suggested_edit: NotRequired[str | None]
     out_of_scope: NotRequired[bool]
     created_at: int
-class ProviderPin(TypedDict):
-    rung: DecisionRung
-    model: str
-    version: str
-class DecisionBand(TypedDict):
-    low: float
-    high: float
-class EvidenceVersion(TypedDict):
-    id: str
-    body_hash: list[int]
-class PairedReading(TypedDict):
-    provider: ProviderPin
-    question: str
-    question_version: int
-    probability: float
-StopCause = Literal["done", "deadline", "provider_failure"]
-ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
-class ReasoningNotNeeded(TypedDict):
-    state: Literal["not_needed"]
-class ReasoningRan(TypedDict):
-    state: Literal["ran"]
-    cause: ReasoningCause
-class ReasoningSkipped(TypedDict):
-    state: Literal["skipped"]
-    cause: ReasoningCause
-class ReasoningCut(TypedDict):
-    state: Literal["cut"]
-    cause: ReasoningCause
-Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
-class DecisionTime(TypedDict):
-    budget_ms: int
-    used_ms: int
-    stop: StopCause
-    answered: NotRequired[DecisionRung | None]
-    reasoning: Reasoning
-class ImagePin(TypedDict):
-    provider: ProviderPin
-    name: str
-    evidence: EvidenceVersion
-    width: int
-    height: int
-    frame: NotRequired[PixelRegion | None]
-    edge: NotRequired[int | None]
-    sent_width: int
-    sent_height: int
-class DecisionReceipt(TypedDict):
-    question: str
-    question_version: int
-    principal: str
-    providers: list[ProviderPin]
-    band: DecisionBand
-    band_version: NotRequired[int]
-    evidence_versions: NotRequired[list[EvidenceVersion]]
-    cost_per_thousand: NotRequired[float | None]
-    paired: NotRequired[list[PairedReading]]
-    person: NotRequired[list[PairedReading]]
-    time: NotRequired[DecisionTime | None]
-    images: NotRequired[list[ImagePin]]
-    think_row: NotRequired[int | None]
-    person_row: NotRequired[int | None]
 class CriticReviewOutcome(TypedDict):
     verdict_claim_ref: str
     triage: CritiqueTriage
@@ -3394,32 +3541,6 @@ TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskA
 class TaskAnswerRequest(TypedDict):
     handle: TaskAskHandle
     word: TaskAskWord
-class ImageBox(TypedDict):
-    top: float
-    bottom: float
-    left: float
-    right: float
-class ImagePoint(TypedDict):
-    x: float
-    y: float
-class DecisionAnswerNoul(TypedDict):
-    kind: Literal["noul"]
-    value: bool
-class DecisionAnswerChoice(TypedDict):
-    kind: Literal["choice"]
-    value: str
-class DecisionAnswerScore(TypedDict):
-    kind: Literal["score"]
-    value: float
-class DecisionAnswerBox(TypedDict):
-    kind: Literal["box"]
-    value: ImageBox | None
-class DecisionAnswerPoint(TypedDict):
-    kind: Literal["point"]
-    value: ImagePoint | None
-class DecisionAnswerAbstain(TypedDict):
-    kind: Literal["abstain"]
-DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
 class OutcomeLabel(TypedDict):
     answer: str
     fact: str
@@ -4184,7 +4305,6 @@ class AiVerdictRequest(TypedDict):
     locate: NotRequired[bool]
     misses: NotRequired[int]
     until_ms: NotRequired[int | None]
-HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
     candidate: str
@@ -4241,13 +4361,6 @@ class GraphAskRequest(TypedDict):
     unit_deadline_ms: NotRequired[int | None]
     posture: NotRequired[HostingPrivacyPosture | None]
     criteria: NotRequired[QuestionCriteria | None]
-class TypedDecision(TypedDict):
-    answer: DecisionAnswer
-    probability: NotRequired[float | None]
-    evidence: list[str]
-    in_band: bool
-    receipt: DecisionReceipt
-    human_ask: NotRequired[HumanAskReason | None]
 class AnswerRecord(TypedDict):
     claim: str
     unit: str
@@ -4283,28 +4396,6 @@ QuestionAudience = Literal["asker"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
     audio: NotRequired[bool]
-class FolderItemInput(TypedDict):
-    artifact_ref: str
-    row: int
-class ArtifactAskUnitsSheetRows(TypedDict):
-    kind: Literal["sheet_rows"]
-    sheet: str
-    rows: str
-    answer_column: int
-    header_row: NotRequired[int | None]
-    max_count: NotRequired[int | None]
-class ArtifactAskUnitsParagraphs(TypedDict):
-    kind: Literal["paragraphs"]
-    blocks: list[str]
-    author: str
-    labels: Any
-class ArtifactAskUnitsFolderItems(TypedDict):
-    kind: Literal["folder_items"]
-    sheet: str
-    answer_column: int
-    items: list[FolderItemInput]
-    max_count: NotRequired[int | None]
-ArtifactAskUnits = ArtifactAskUnitsSheetRows | ArtifactAskUnitsParagraphs | ArtifactAskUnitsFolderItems
 class ArtifactUnits(TypedDict):
     artifact: str
     selection: ArtifactAskUnits
@@ -4378,6 +4469,8 @@ class QuestionAnswerGraph(AnswerRecord):
 class QuestionAnswerArtifact(ArtifactAskRecord):
     kind: Literal["artifact"]
 QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
+class QuestionRefreshRequest(TypedDict):
+    id: EntityId
 class DecisionAskAnswerRequest(TypedDict):
     seq: int
     answer: DecisionAnswer

@@ -4,6 +4,8 @@
 //! ends the run. The board serves the live pad as its SCRATCHPAD rows.
 //! POST /v1/core/context-board/scratchpad/recall searches the whole pad and
 //! answers its matching lines in full, the ones the board folds included.
+//! A write answers the SDK's [`ScratchpadWriteReply`] through the same SDK
+//! calls the `self.focus.scratchpad.append` and `.seal` rows make.
 
 use super::validate_session_id;
 use crate::auth::CoreAuth;
@@ -17,6 +19,9 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use oneiron::context_board::SCRATCHPAD_LINE_MAX_BYTES;
+use oneiron::task_verb::sdk::{
+    ScratchpadAppendRequest, ScratchpadRecallMark, ScratchpadSealRequest, ScratchpadWriteReply,
+};
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -32,10 +37,10 @@ pub(crate) enum ContextBoardScratchpadMark {
 }
 
 impl ContextBoardScratchpadMark {
-    fn engine(self) -> oneiron::context_board::ScratchpadMark {
+    fn sdk(self) -> ScratchpadRecallMark {
         match self {
-            Self::Keep => oneiron::context_board::ScratchpadMark::Keep,
-            Self::Scratch => oneiron::context_board::ScratchpadMark::Scratch,
+            Self::Keep => ScratchpadRecallMark::Keep,
+            Self::Scratch => ScratchpadRecallMark::Scratch,
         }
     }
 
@@ -72,8 +77,10 @@ pub(crate) struct ContextBoardScratchpadRequest {
     seal: bool,
 }
 
-/// What the write did to the session's pad.
-#[derive(Debug, Serialize, ToSchema)]
+/// What the write did to the session's pad: the OpenAPI mirror of
+/// [`ScratchpadWriteReply`], which the route answers.
+#[derive(ToSchema)]
+#[allow(dead_code, reason = "OpenAPI mirror of the SDK reply")]
 pub(crate) struct ContextBoardScratchpadResponse {
     /// Hex id of the pad NOTE written or sealed; absent when a seal found no pad.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,7 +112,7 @@ pub(crate) async fn context_board_scratchpad(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<ContextBoardScratchpadRequest>, JsonRejection>,
-) -> Result<Json<ContextBoardScratchpadResponse>, EnvelopedApiError> {
+) -> Result<Json<ScratchpadWriteReply>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let req = super::super::json_payload(payload)?;
@@ -115,37 +122,34 @@ pub(crate) async fn context_board_scratchpad(
         if req.text.is_some() || req.mark.is_some() || req.pin {
             return Err(ApiError::bad_request("a seal carries no line", Some("seal")).into());
         }
-        let pad = memory
-            .scratchpad_seal(&req.session_id)
-            .map_err(scratchpad_error)?;
-        return Ok(Json(ContextBoardScratchpadResponse {
-            pad: pad.map(|pad| pad.to_hex()),
-            sealed: pad.is_some(),
-            sealed_prior: None,
-        }));
+        let reply = oneiron::task_verb::sdk::scratchpad_seal_reply(
+            &memory,
+            &ScratchpadSealRequest {
+                session_id: req.session_id,
+            },
+        )
+        .map_err(scratchpad_error)?;
+        return Ok(Json(reply));
     }
     let text = req
         .text
-        .as_deref()
         .ok_or_else(|| ApiError::bad_request("text is required", Some("text")))?;
     if text.len() > SCRATCHPAD_LINE_MAX_BYTES {
         return Err(
             ApiError::payload_too_large("text", SCRATCHPAD_LINE_MAX_BYTES, text.len()).into(),
         );
     }
-    let receipt = memory
-        .scratchpad_append(
-            &req.session_id,
+    let reply = oneiron::task_verb::sdk::scratchpad_append_reply(
+        &memory,
+        &ScratchpadAppendRequest {
+            session_id: req.session_id,
             text,
-            req.mark.map(ContextBoardScratchpadMark::engine),
-            req.pin,
-        )
-        .map_err(scratchpad_error)?;
-    Ok(Json(ContextBoardScratchpadResponse {
-        pad: Some(receipt.pad.to_hex()),
-        sealed: false,
-        sealed_prior: receipt.sealed_prior.map(|pad| pad.to_hex()),
-    }))
+            mark: req.mark.map(ContextBoardScratchpadMark::sdk),
+            pin: req.pin,
+        },
+    )
+    .map_err(scratchpad_error)?;
+    Ok(Json(reply))
 }
 
 /// One recall over the caller's session pad.
