@@ -259,6 +259,33 @@ impl OneironClient {
         })
     }
 
+    /// A new handle whose every verb runs inside the off-record session
+    /// `session_ref` names (OF-063, FIX 1668). It binds this handle's
+    /// principal: an embedded handle's actor, the app host's, and a
+    /// connected handle's credential, which the server checks. It grants
+    /// nothing: inside an anonymous session that principal is verified in,
+    /// a refusal writes no receipt; anywhere else the verbs record as
+    /// before.
+    pub fn in_off_record_session(&self, session_ref: &str) -> Result<Self, MemoryError> {
+        let session_ref = session_ref.trim();
+        if session_ref.is_empty() {
+            return Err(crate::error::bad_request(
+                "invalid off-record session reference",
+                &["Name the session by the ref it was entered under."],
+            ));
+        }
+        Ok(Self {
+            backend: match &self.backend {
+                Backend::Embedded(embedded) => {
+                    Backend::Embedded(embedded.in_off_record_session(session_ref)?)
+                }
+                Backend::Remote(remote) => {
+                    Backend::Remote(remote.in_off_record_session(session_ref)?)
+                }
+            },
+        })
+    }
+
     /// Whether this handle talks to a remote server.
     #[must_use]
     pub fn is_remote(&self) -> bool {
