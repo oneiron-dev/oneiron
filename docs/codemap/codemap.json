@@ -10474,7 +10474,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 14,
+      "fn": 15,
       "struct": 6,
       "type": 1
      }
@@ -10651,7 +10651,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 1
      }
@@ -10731,7 +10731,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 4,
       "re-export": 10
      }
@@ -10882,7 +10882,18 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/run_verb_call.rs",
+     "purpose": "The four memory run rows as typed calls, outside the sandbox (OF-181)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
+      "AgentSpawnInput",
       "LeaderAdviceInput",
       "LeaderPatternInput",
       "MemoryClaimInput",
@@ -10892,6 +10903,9 @@
       "MemoryTimeRange",
       "ReaderSpawnInput",
       "SkillCallInput",
+      "SpawnCare",
+      "SpawnKnob",
+      "SpawnPattern",
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskWaitSetRequest"
@@ -10900,8 +10914,9 @@
      "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "enum": 1,
-      "struct": 11
+      "enum": 4,
+      "fn": 1,
+      "struct": 12
      }
     },
     {
@@ -48315,9 +48330,28 @@
      "path": "src/world_keys/doors.rs",
      "purpose": "The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConfirmedWorldKit",
+      "IssuedWorldKit",
+      "StoredCost",
+      "StoredKit",
+      "WorldKitRestore",
+      "WorldKitStatus"
+     ],
+     "path": "src/world_keys/kit.rs",
+     "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 6
      }
     },
     {
@@ -48343,7 +48377,7 @@
      "surface": {
       "crate-vis": 10,
       "fn": 3,
-      "re-export": 15,
+      "re-export": 16,
       "struct": 2
      }
     },
@@ -48426,6 +48460,7 @@
      "path": "src/world_keys/root_doors.rs",
      "purpose": "The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -48440,7 +48475,7 @@
      "path": "src/world_keys/root_issue.rs",
      "purpose": "Kit issue, phase 1: a fresh recovery root and its signed record, held in memory until the kit issuer reports…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -48506,7 +48541,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 23,
       "struct": 2
@@ -49639,7 +49674,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50871,7 +50906,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50887,7 +50922,7 @@
    },
    "over_bar": 137,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3073,
+   "source_files": 3075,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62271,7 +62306,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/action_routes.rs",
@@ -63166,6 +63201,16 @@
      "notable": [],
      "path": "src/api/owner_routes/proactivity_routes.rs",
      "purpose": "`/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/recovery_kit_routes.rs",
+     "purpose": "`/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173)",
      "surface": {
       "crate-vis": 1
      }
@@ -64158,7 +64203,7 @@
      "surface": {
       "enum": 9,
       "fn": 3,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 21
      }
     },
@@ -64277,6 +64322,24 @@
      "surface": {
       "enum": 14,
       "struct": 41
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KitPieceArgs",
+      "RecoveryKitCommand",
+      "RecoveryKitConfirmArgs",
+      "RecoveryKitIssueArgs",
+      "RecoveryKitRestoreArgs",
+      "RecoveryKitStatusArgs"
+     ],
+     "path": "src/cli/recovery_kit_args.rs",
+     "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173)",
+     "surface": {
+      "enum": 1,
+      "struct": 5
      }
     },
     {
@@ -64563,7 +64626,18 @@
      "surface": {
       "crate-vis": 4,
       "fn": 17,
-      "re-export": 1
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_kit.rs",
+     "purpose": "`oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -64581,7 +64655,7 @@
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -67310,7 +67384,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -67351,6 +67425,16 @@
      "purpose": "Persona snapshot, mode A (OF-325): compile a shareable card about one person, let the owner strike rows at…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/recovery_kit.rs",
+     "purpose": "The world kit's public side, shared by `oneiron recovery-kit` and `GET /v1/owner/recovery-kit` (OF-173): the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -68583,7 +68667,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 267,
+     "files": 268,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68625,14 +68709,14 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "cli": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -68800,7 +68884,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68900,7 +68984,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 520,
+   "source_files": 524,
    "test_files": 182
   },
   "oneiron-spawn": {
