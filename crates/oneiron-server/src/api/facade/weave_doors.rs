@@ -1,13 +1,13 @@
 //! The weave lens's host doors (OF-499): the one-tap wrong control a person
-//! uses on a link in their own report, the live report rendered into its
+//! uses on a link, claim, project or budget row in their own report, the live report rendered into its
 //! lens on this server's model, and a saved digest whose lens card's frame
 //! this server holds. The generated HTTP facade handler and the MCP
 //! dispatcher both call these through `host_doors`.
 use std::sync::Arc;
 
 use oneiron::claim::{
-    WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveLinkCorrectionView,
-    WeaveReportRequest, WeaveWrongLinkRequest,
+    WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemCorrectionView,
+    WeaveLinkCorrectionView, WeaveReportRequest, WeaveWrongItemRequest, WeaveWrongLinkRequest,
 };
 use oneiron::lens::LensFrameCard;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
@@ -72,6 +72,65 @@ pub(crate) async fn vault_weave_owner_link_wrong(
             .memory(actor, oneiron::EdgeActorClass::Human)
             .at(locality)
             .weave_owner_wrong_link(&owner, &input)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.weave.item.wrong`: a live person labels a claim, project or
+/// budget row in their own person lens as wrong, under their own proof, as
+/// `vault.weave.link.wrong` labels a link. The record stays; the loops
+/// learn from the label. An agent's credential is refused here.
+pub(crate) async fn vault_weave_item_wrong(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WeaveWrongItemRequest,
+) -> MemoryResult<WeaveItemCorrectionView> {
+    const VERB: &str = "vault.weave.item.wrong";
+    let proof = super::shared_act_doors::person(server, auth, VERB)?;
+    let (actor, class) = super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{VERB} labels an item in the credential's own lens"),
+            &["Present your own verified human credential."],
+        )
+    })?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality())
+            .weave_wrong_item(None, &proof, &input)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.weave.owner.item.wrong`: the owner labels a claim, project or
+/// budget row it sees in the owner lens as wrong, under its live owner
+/// proof. The owner lens card's item controls call it.
+pub(crate) async fn vault_weave_owner_item_wrong(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WeaveWrongItemRequest,
+) -> MemoryResult<WeaveItemCorrectionView> {
+    const VERB: &str = "vault.weave.owner.item.wrong";
+    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{VERB} labels an item in the owner lens"),
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })?;
+    let server = Arc::clone(server);
+    let locality = auth.locality();
+    tokio::task::spawn_blocking(move || {
+        let vault = server.vault();
+        let actor = owner.revalidate(vault)?;
+        vault
+            .memory(actor, oneiron::EdgeActorClass::Human)
+            .at(locality)
+            .weave_owner_wrong_item(&owner, &input)
     })
     .await
     .map_err(|_| internal(VERB))?

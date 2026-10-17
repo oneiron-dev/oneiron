@@ -330,6 +330,14 @@ export class Oneiron {
           /** The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays. */
           wrong: (input: Facade.WeaveWrongLinkRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveOwnerLinkWrong(input) as Facade.WeaveLinkCorrectionView),
         },
+        item: {
+          /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
+          wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveOwnerItemWrong(input) as Facade.WeaveItemCorrectionView),
+        },
+      },
+      item: {
+        /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
+        wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveItemWrong(input) as Facade.WeaveItemCorrectionView),
       },
     },
     packs: {

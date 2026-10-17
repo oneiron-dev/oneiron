@@ -5,9 +5,9 @@
 //! proof reads the owner lens.
 use super::{
     ClaimReadStatus, ScopedRead, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence,
-    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensRefusal, WeaveLensRender,
-    WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport, WeaveScheduleHold,
-    WeaveSectionKind, WeaveSectionSpec,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveItemCorrection, WeaveItemTarget,
+    WeaveLensRefusal, WeaveLensRender, WeaveLinkCorrection, WeaveLiveLens, WeaveReader,
+    WeaveReport, WeaveScheduleHold, WeaveSectionKind, WeaveSectionSpec,
 };
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
@@ -121,6 +121,85 @@ impl WeaveLinkCorrectionView {
             source_ref: correction.link.source.to_hex(),
             kind: correction.link.kind.name().to_owned(),
             target_ref: correction.link.target.to_hex(),
+            actor_ref: correction.actor.to_hex(),
+            recorded_at: correction.recorded_at,
+        }
+    }
+}
+
+/// `vault.weave.item.wrong`'s input: one claim, project or budget row, as
+/// the reader's report serves it (`item` is its `item` tag). A budget names
+/// the project it shows under; no other item does.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveWrongItemRequest {
+    pub item: String,
+    pub item_ref: String,
+    #[serde(default)]
+    pub project_ref: Option<String>,
+}
+
+impl WeaveWrongItemRequest {
+    /// The input a lens row's wrong control sends for `target`.
+    pub(super) fn of(target: WeaveItemTarget) -> Self {
+        let (item, id, project) = match target {
+            WeaveItemTarget::Claim(id) => ("claim", id, None),
+            WeaveItemTarget::Project(id) => ("project", id, None),
+            WeaveItemTarget::Budget { project, budget } => ("budget", budget, Some(project)),
+        };
+        Self {
+            item: item.to_owned(),
+            item_ref: id.to_hex(),
+            project_ref: project.map(|project| project.to_hex()),
+        }
+    }
+
+    fn target(&self) -> MemoryResult<WeaveItemTarget> {
+        let entity = |hex: &str| {
+            EntityId::from_hex(hex)
+                .map_err(|_| MemoryError::bad_request("a weave item names entity ids"))
+        };
+        let id = entity(&self.item_ref)?;
+        match (self.item.as_str(), &self.project_ref) {
+            ("claim", None) => Ok(WeaveItemTarget::Claim(id)),
+            ("project", None) => Ok(WeaveItemTarget::Project(id)),
+            ("budget", Some(project)) => Ok(WeaveItemTarget::Budget {
+                project: entity(project)?,
+                budget: id,
+            }),
+            ("budget", None) => Err(MemoryError::bad_request(
+                "a weave budget item names its project_ref",
+            )),
+            ("claim" | "project", Some(_)) => Err(MemoryError::bad_request(
+                "only a weave budget item names a project_ref",
+            )),
+            _ => Err(MemoryError::bad_request(
+                "a wrong weave item is a claim, project or budget",
+            )),
+        }
+    }
+}
+
+/// One filed wrong-item label. It labels the item for the loops; the
+/// record itself stays.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WeaveItemCorrectionView {
+    pub label_ref: String,
+    pub item: String,
+    pub item_ref: String,
+    pub project_ref: Option<String>,
+    pub actor_ref: String,
+    pub recorded_at: u64,
+}
+
+impl WeaveItemCorrectionView {
+    fn from_correction(correction: &WeaveItemCorrection) -> Self {
+        let item = WeaveWrongItemRequest::of(correction.item);
+        Self {
+            label_ref: correction.id.to_hex(),
+            item: item.item,
+            item_ref: item.item_ref,
+            project_ref: item.project_ref,
             actor_ref: correction.actor.to_hex(),
             recorded_at: correction.recorded_at,
         }
@@ -501,6 +580,32 @@ impl Memory<'_> {
         request: &WeaveWrongLinkRequest,
     ) -> MemoryResult<WeaveLinkCorrectionView> {
         self.weave_wrong_link(Some(owner), owner, request)
+    }
+
+    /// `vault.weave.item.wrong`: the one-tap wrong control on a claim,
+    /// project or budget row the bound human sees in its own lens, filed as
+    /// a link's is: under `proof`, from the owner lens when `owner` is
+    /// given; an agent files nothing.
+    pub fn weave_wrong_item(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        proof: &AuthenticatedOwner,
+        request: &WeaveWrongItemRequest,
+    ) -> MemoryResult<WeaveItemCorrectionView> {
+        let reader = self.weave_reader(owner)?;
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let filed = read.report_wrong_item(proof, reader, request.target()?)?;
+        Ok(WeaveItemCorrectionView::from_correction(&filed))
+    }
+
+    /// `vault.weave.owner.item.wrong`: the owner lens card's wrong control
+    /// on an item, filed under the owner reader with `owner` as its proof.
+    pub fn weave_owner_wrong_item(
+        &self,
+        owner: &AuthenticatedOwner,
+        request: &WeaveWrongItemRequest,
+    ) -> MemoryResult<WeaveItemCorrectionView> {
+        self.weave_wrong_item(Some(owner), owner, request)
     }
 
     /// A saved period's view. Its render composes under `read`, the

@@ -951,6 +951,28 @@
       "section": false
     },
     {
+      "name": "vault.weave.item.wrong",
+      "description": "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays.",
+      "input": "crate::claim::WeaveWrongItemRequest",
+      "output": "crate::claim::WeaveItemCorrectionView",
+      "call": "memory.weave_wrong_item(None, &memory.embedded_owner(\"vault.weave.item.wrong\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.weave.owner.item.wrong",
+      "description": "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.",
+      "input": "crate::claim::WeaveWrongItemRequest",
+      "output": "crate::claim::WeaveItemCorrectionView",
+      "call": "memory.weave_owner_wrong_item(&memory.embedded_owner(\"vault.weave.owner.item.wrong\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.packs.put",
       "description": "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.",
       "input": "PackPutRequest",

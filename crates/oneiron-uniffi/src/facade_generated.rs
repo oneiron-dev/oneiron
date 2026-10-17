@@ -251,6 +251,16 @@ export_facade! {
     let output = client.vault_weave_owner_link_wrong(&input)?;
     crate::codec::lift_record("vault.weave.owner.link.wrong", &output)
 };
+"vault.weave.item.wrong" => fn vault_weave_item_wrong(&self, input: WeaveWrongItemRequest) -> WeaveItemCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongItemRequest = crate::codec::lower_record("vault.weave.item.wrong", input)?;
+    let output = client.vault_weave_item_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.item.wrong", &output)
+};
+"vault.weave.owner.item.wrong" => fn vault_weave_owner_item_wrong(&self, input: WeaveWrongItemRequest) -> WeaveItemCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongItemRequest = crate::codec::lower_record("vault.weave.owner.item.wrong", input)?;
+    let output = client.vault_weave_owner_item_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.owner.item.wrong", &output)
+};
 "vault.packs.put" => fn vault_packs_put(&self, input: PackPutRequest) -> PackPutReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackPutRequest = crate::codec::lower_record("vault.packs.put", input)?;
     let output = client.vault_packs_put(&input)?;
