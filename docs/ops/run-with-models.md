@@ -121,7 +121,12 @@ the list says so; a `local-openai-compat` provider declares `streaming`, `json_r
 model's own list in place of `capabilities`, keyed by the model's name, so
 two models on one provider can differ: `model_capabilities = { "gpt-audio" =
 ["streaming", "audio_input"] }`; the Big rung hears a clip only on a model
-whose list has `audio_input`),
+whose list has `audio_input`), `family` (the line of models one developer
+trains, for every model on the provider; unset, a model's family is unknown,
+never read off the provider's name), `model_families` (one wire model's own
+family in place of `family`: `model_families = { "claude-opus-5-5" = "claude",
+"gpt-6.1" = "gpt" }`; a judge's tie-breaker is asked only of a model whose
+family neither judge has),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
