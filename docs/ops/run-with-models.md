@@ -202,8 +202,15 @@ carries `max_tokens`, 4096 when nothing else names it.
 An `openai-compat` provider at `https://api.openai.com` or `https://api.x.ai`
 runs each call as one Responses turn on a held WebSocket at its
 `/v1/responses`. A call whose conversation extends the last response that
-socket finished sends only the new items, with `previous_response_id` and
-`store = false`; any other call sends the whole conversation. A socket is
+socket finished sends only the new items, with `previous_response_id`; any
+other call sends the whole conversation. Each turn goes with `store = false`,
+so the provider keeps nothing and a replaced or reconnected socket starts the
+conversation again in full. The owner can turn storing on with
+`POST /v1/owner/settings/models` and `{"responses_store": true}` (`GET` reads
+it): each turn then goes with `store = true`, the provider keeps the response,
+and a new socket resumes a conversation from its last stored response, sending
+only the new items. The server remembers the last stored response of the 32
+most recent conversations per provider, until restart. A socket is
 replaced 5 minutes before its age limit (60 minutes at OpenAI, 59 at xAI).
 Idle sockets wait 10 minutes for a next turn, at most 8 per provider. A
 call whose socket will not open, or that carries audio, goes out over

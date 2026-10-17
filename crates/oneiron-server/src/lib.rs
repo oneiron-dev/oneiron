@@ -123,6 +123,8 @@ pub fn build_app_for_position(
     server: Arc<SyncServer>,
     position: web_client::DeploymentPosition,
 ) -> Router {
+    // The owner's Responses `store` switch (OF-602); unreadable leaves it off.
+    models::set_responses_store(server.vault().responses_store().unwrap_or(false));
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {
