@@ -13581,7 +13581,7 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 8,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6,
       "struct": 3,
       "trait": 1
@@ -13770,7 +13770,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 24,
       "struct": 2
      }
@@ -40666,7 +40666,7 @@
      "path": "src/skill_hub/pack_catalog/setup_session.rs",
      "purpose": "Source-bound guided pack setup (OF-378)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 3,
       "struct": 9
@@ -59695,7 +59695,7 @@
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 8,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -65600,7 +65600,7 @@
      "path": "src/big_rung.rs",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -66961,8 +66961,9 @@
      "path": "src/decision_host.rs",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
+      "const": 1,
       "crate-vis": 12,
-      "fn": 16,
+      "fn": 20,
       "struct": 1
      }
     },
@@ -68459,7 +68460,7 @@
      "path": "src/models/catalog.rs",
      "purpose": "Config model references to engine catalog rows",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -68540,6 +68541,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/family.rs",
+     "purpose": "Model families (OF-184): the line of models one developer trains, as a provider's config (`family`…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/forward.rs",
      "purpose": "One rung's stream handed to the caller event by event, up to its terminal or its failure",
      "surface": {
@@ -68598,7 +68609,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 16,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -68746,8 +68757,8 @@
      "path": "src/models/router.rs",
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 2,
+      "crate-vis": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -70635,7 +70646,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70770,7 +70781,7 @@
    },
    "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 563,
+   "source_files": 564,
    "test_files": 182
   },
   "oneiron-spawn": {
