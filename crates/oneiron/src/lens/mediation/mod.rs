@@ -5,6 +5,7 @@
 //! [`super::generated_ui`] into an approved, host-stamped write. Selection is
 //! not approval and nothing here is self-executing.
 
+mod hosted_render;
 mod mediation_backing;
 mod mediation_frame_read;
 mod mediation_frame_write;
@@ -13,6 +14,7 @@ mod mediation_quote;
 mod mediation_scope;
 mod surface_dispatch;
 
+pub use self::hosted_render::{HostedLensRender, LensFrameCard};
 pub use self::mediation_backing::{
     GeneratedUiResultSetScope, GeneratedUiResultSetWritePlan, LensAtomSelectionRequest,
     LensBackingRefToken, LensBackingTarget, LensBackingTargetKind, LensHostBackingRef,

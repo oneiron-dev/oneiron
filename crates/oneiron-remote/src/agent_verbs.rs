@@ -397,7 +397,7 @@ impl OneironClient {
                     remote_agent_verb_output::<oneiron::lens::LensListPage>(client, verb, &input)
                 }
                 "vault.lenses.default" => remote_agent_verb_output::<
-                    oneiron::claim::ScopedReadResult<oneiron::lens::GeneratedLens>,
+                    oneiron::claim::ScopedReadResult<oneiron::lens::LensFrameCard>,
                 >(client, verb, &input),
                 "vault.disclosure.offer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DisclosureOffered,
@@ -2308,7 +2308,7 @@ impl OneironClient {
     pub fn vault_lenses_default(
         &self,
         input: &oneiron::lens::LensDefaultRequest,
-    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::lens::GeneratedLens>, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::lens::LensFrameCard>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

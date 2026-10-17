@@ -99,6 +99,7 @@ pub use mediation::{
     LensHostMediatedWrite, LensPrincipalBinding, LensQuoteHandle, LensQuoteRange, LensReadHandle,
     LensReadReach, LensRenderFrame, LensSpanCursor, LensSpanSelectionRequest,
 };
+pub use mediation::{HostedLensRender, LensFrameCard};
 pub use self_ui::{
     ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption,
     SelfUiValue, SliderControl, TextInputControl, ToggleControl,

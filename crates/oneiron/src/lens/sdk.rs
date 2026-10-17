@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, GeneratedLens, LedgerCell,
+    AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, HostedLensRender, LedgerCell,
     LedgerRowAtom, LensBackingRefToken, LensBackingTarget, LensHandleName, LensHandleRole,
     LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
     compose_default_vault,
@@ -76,12 +76,13 @@ struct Admitted {
 
 impl Memory<'_> {
     /// `vault.lenses.default`: compose the default vault projection from the
-    /// named sources, read under this caller's own key. The folded receipt
-    /// names every narrowing those reads applied.
-    pub fn lenses_default(
+    /// named sources, read under this caller's own key, as a read-only card
+    /// beside the frame that minted its backing refs (OF-181). The folded
+    /// receipt names every narrowing those reads applied.
+    pub fn lenses_default_framed(
         &self,
         input: LensDefaultRequest,
-    ) -> MemoryResult<ScopedReadResult<GeneratedLens>> {
+    ) -> MemoryResult<ScopedReadResult<HostedLensRender>> {
         crate::memory::caps::check_as_of(input.as_of)?;
         let count = input.ledger.len() + input.dossiers.len() + input.threads.len();
         if count > LENS_DEFAULT_MAX_SOURCES {
@@ -170,7 +171,7 @@ impl Memory<'_> {
                 })
             })
             .transpose()?;
-        Ok(compose_default_vault(
+        let ScopedReadResult { value, receipt } = compose_default_vault(
             &read,
             &frame,
             DefaultVaultInput {
@@ -180,7 +181,11 @@ impl Memory<'_> {
                 dossiers,
                 threads,
             },
-        )?)
+        )?;
+        Ok(ScopedReadResult {
+            value: HostedLensRender::new(frame, value)?,
+            receipt,
+        })
     }
 }
 
