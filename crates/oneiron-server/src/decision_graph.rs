@@ -534,7 +534,7 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
 /// server's stable client identity, the gate the shared timer puts on macro
 /// work and digests. A vault no node has claimed is claimed here, as serve's
 /// Dreamer claims it, so standing questions run with the Dreamer off.
-fn at_home(vault: &Vault, now: u64) -> Result<bool> {
+pub(crate) fn at_home(vault: &Vault, now: u64) -> Result<bool> {
     let store = DreamerRunnerStore::new(vault);
     let local = store.local_home_node_candidate(true, true, false)?;
     let home = match store.home_node_designation()? {
