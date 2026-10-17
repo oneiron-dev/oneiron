@@ -45,6 +45,7 @@ mod decision_ask_routes;
 mod diary_routes;
 mod disclosure_routes;
 mod embedding_space_routes;
+mod guest_routes;
 mod handoff_alarm_routes;
 mod history_routes;
 mod inbox_routes;
@@ -70,6 +71,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secret-scan", get(secret_scan).post(set_secret_scan))
         .route("/secrets/register", post(register_secret))
         .route("/secrets/rotate", post(rotate_secret))
+        .route("/secrets/revoke", post(revoke_secret))
         .route("/healer/oversight", get(healer_oversight))
         .route("/healer/failures", get(healer_failures))
         .route("/healer/failures/drill", get(drill_failure))
@@ -103,6 +105,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(concern_routes::routes())
         .merge(pad_routes::routes())
         .merge(legal_hold_routes::routes())
+        .merge(guest_routes::routes())
         .merge(proactivity_routes::routes())
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())
@@ -419,6 +422,24 @@ async fn rotate_secret(
         .map_err(owner_error)?;
     let rotated = blocking(move || secrets::rotate(server.vault(), &owner, &request)).await?;
     Ok(Json(rotated))
+}
+
+/// `POST /v1/owner/secrets/revoke` with `{"name"}`: the record goes terminal
+/// and every lease over it is revoked (OF-422). The body is read by
+/// `secrets::read_revoke`, after the owner door, as rotation's is.
+async fn revoke_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    body: Body,
+) -> OwnerReply<secrets::Rotated> {
+    let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let name = secrets::read_revoke(body).await.map_err(owner_error)?;
+    let revoked = blocking(move || secrets::revoke(server.vault(), &owner, &name)).await?;
+    Ok(Json(revoked))
 }
 
 async fn healer_oversight(

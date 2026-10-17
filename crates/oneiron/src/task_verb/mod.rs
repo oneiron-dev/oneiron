@@ -72,7 +72,8 @@ mod verb_kind;
 mod wave_port;
 mod wire_decode;
 pub(crate) use wire_decode::{
-    TaskBinding, leader_task_body_in, task_binding, task_is_blocked_in, task_text_in,
+    TaskBinding, leader_task_body_in, leader_task_brief_in, task_binding, task_is_blocked_in,
+    task_text_in,
 };
 mod wire_encode;
 
@@ -220,6 +221,7 @@ pub mod sdk;
 mod sdk_connector;
 mod sdk_diary;
 mod sdk_disclosure;
+mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_self;
