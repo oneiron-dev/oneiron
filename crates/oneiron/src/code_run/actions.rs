@@ -660,7 +660,11 @@ fn build_run_verb(verb: RunVerb, args: &[ActionArgument], frozen_unix_ms: u64) -
         [ActionArgument::Text(input)] => serde_json::from_str(input.as_str())
             .map_err(|_| invalid("run-row action input is not JSON"))?,
         [ActionArgument::Json(input)] => input.value().clone(),
-        _ => return Err(invalid("run-row action takes its JSON input as one text or JSON")),
+        _ => {
+            return Err(invalid(
+                "run-row action takes its JSON input as one text or JSON",
+            ));
+        }
     };
     super::run_verb_call::run_verb_call(verb, input, frozen_unix_ms / 1000)
 }

@@ -559,10 +559,12 @@ the secret as the call's credential, in place of the connector's own. Its
 `connector:<connector>`, the connector the name routes to, and the call itself
 still runs under the run's own standing grant and gate. The tool's reply comes
 back as `result`, marked foreign, with the value replaced. A call the gate
-holds answers with its `call_ref`, and the run does not wait on it. The
+holds parks the run on its `call_ref`, as a held `connector.call` does. The
 settler sends it once the hold clears, with the same secret, and the door
-checks the binding again at that send. An embedded vault refuses
-`connector.call`.
+checks the binding again at that send. The run then resumes with the call's
+settled reply, the `connector.call` reply cleared of the value, bound as
+`wait<n>`. An embedded vault refuses `connector.call`.
+
 When the host's model ladder served the turn, each verb call the turn's
 program makes carries the provider that answered it, and a reveal's ask names
 that provider. An agent no host model drives, such as an external HTTP or MCP
@@ -1564,6 +1566,11 @@ budget_units = 50000           # its own meter; models.raw_budget_units when uns
 [models.decisions.booking_parse]
 role = "checker"        # the cheap seat a booking page's free text is parsed on
 max_input_bytes = 4096  # the longest text one parse reads (the default and the most)
+
+[models.decisions.connector_slate]
+# A connector's register and refresh doors ask, for each tool on its grant slate:
+wording = "What should this connector tool's setting be?"
+budget_ms = 30000       # the whole draft's budget (the default)
 ```
 
 The Big rung asks each question as one model call on that seat. The call is
@@ -1586,6 +1593,15 @@ authenticated caller's parse is paid on its principal's line. An anonymous
 visitor's parse is paid on the owner's line, since the owner publishes the
 page. Without the row, free text is refused, and a constraint object still
 works.
+
+A connector's grant slate (`POST /v1/owner/connectors/register` and
+`/refresh`) is drafted one tool at a time, up to the Big rung, when
+`[models.decisions.connector_slate]` words the question. The question reads
+the tool, the owner's past rulings on tools like it and the rule draft, and
+picks auto, always ask or never allow; only the owner picks always allow. An abstain, an answer
+outside the options, a failed call or a row past `budget_ms` keeps the rule
+draft. Without the row, the rule draft alone fills the slate. The owner
+stamps the slate either way.
 
 The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The

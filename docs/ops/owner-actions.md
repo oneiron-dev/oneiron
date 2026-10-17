@@ -825,6 +825,23 @@ When a shipped closed-form T1 detector reproduces every label (today `retrieval.
 graduated and its T2 stops running; the T1 already runs in the Coach's nightly tier-1 sweep.
 `GET /v1/owner/self-heal/minted` lists each family's registration and what graduated it.
 
+## Calibrate the judge
+
+When the Coach shadows a new judge model against the current one, the cases the two answer
+differently stay open until a settled outcome or a third judge decides them. You can decide
+them too. Each night the Coach turns open cases into A/B asks, one per case, for each owner who
+funded judge-ask minutes; an owner who funded none is never asked. It keeps only as many waiting
+as your minutes buy.
+
+`GET /v1/owner/coach/judge-asks/minutes` reads your balance, and `POST` with `{"minutes"}` sets
+it. Each delivered ask spends the calibration policy's minutes (one by default), and nothing
+refills the balance. The asks reach only your own digest: `POST
+/v1/owner/proactivity/digest/assemble` assembles it for you, carrying the asks once a cadence
+period, by id in `judge_ask_ids`. `POST /v1/owner/coach/judge-asks/pick` with `{"ask", "choice":
+"a" | "b"}` picks one option. The pick is a final label in the judged skill's anchor: the next
+shadow pass sides with it, and a pick against a judge that already took over re-pins the old
+one, with a notice.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
@@ -880,7 +897,7 @@ A passkey's PRF input is `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input
 credential name)`: the vault and the name fix it, so the same authenticator gives the same output
 on any host. A running server takes the same steps at `/v1/owner/vault-key` (`GET` for the wraps,
 `GET /prf-input?credential=NAME`, `POST /passkeys`, `POST /password`, `POST /device`,
-`POST /remove`, `POST /unlock`, `GET /signer`).
+`POST /remove`, `POST /retire-escrow`, `POST /unlock`, `GET /signer`).
 
 An escrow wrap seals to a hybrid key grown from a 32-byte seed; the recovery box keeps the seed.
 `--box-dir DIR` keeps it at `DIR/<vault id>/<label>.seed`, owner-only (removable media, your own
@@ -915,10 +932,23 @@ The report is the registry's JSON row as the node spooled it. Unknown fields, an
 (`--inspect` prints both) are refused before the secret is read. The recipient's secret comes from
 stdin, an owner-only `--secret-file` or the recovery box, never the command line: a 32-byte seed,
 or the key's 96 bytes of seeds (ML-KEM-1024's 64, then X25519's 32), raw, hex or base64url. A
-released recipient is never reused, and the restore says so on stderr. Retire it yourself: seal the
-vault key to a new recipient (`oneiron vault-key add-escrow`, or the managed node's fresh one at its
-next start), `oneiron vault-key remove escrow:<label>` if the restored vault still carries it, and
-have the registry delete its capsules.
+released recipient is never reused, and the restore says so on stderr. Retire it:
+
+```sh
+oneiron vault-key retire-escrow managed.<fp>      # drop its wrap; never seal to the label again
+oneiron vault-key reseal-capsule vault-key-escrow-managed.<fp>.json \
+  --recipient-file fresh-recipient.pub --secret-file recipient.secret > resealed.json
+```
+
+`retire-escrow` drops the wrap `escrow:<label>` if the vault still carries it and records the label
+as retired, with a receipt (`POST /v1/owner/vault-key/retire-escrow` with `{"label": "..."}` on a
+running server). From then on nothing seals the key to that label, a managed node's start
+included. The last wrap stays, and the world kit's `world-kit` wrap is replaced by confirming a new
+kit, not retired. `reseal-capsule` opens the registry's capsule with the released secret and seals
+the key it holds to the fresh recipient in one pass, with no vault and no key leaving the process.
+It prints the new capsule's report, labelled `<role>.<16 hex of the recipient key's BLAKE3>` as a
+managed node names its own, for the registry to keep. The registry then deletes the released
+recipient's capsules.
 
 ### Maximum tier
 

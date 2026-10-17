@@ -22,7 +22,7 @@ use super::machine_profile::in_host_custody;
 use super::*;
 
 /// One revision of a machine in one admitter's chain, as its entry carried it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct Revision {
     profile: MachineProfile,
     signer: AuthorityKey,
@@ -120,7 +120,7 @@ pub(super) fn held_revisions(state: &FoldState, out: &mut BTreeSet<AuthorityEntr
 /// revisions in the head's own past: what the edit followed. Not every
 /// revision the edit's parents carry: an edit naming a concurrent demotion
 /// never exempts it (Wonder P2 round 5, W1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct Mark {
     pub(super) entry: AuthorityEntryHash,
     pub(super) prior: Arc<BTreeSet<AuthorityEntryHash>>,
@@ -209,7 +209,7 @@ pub(super) fn every_chain(_: EntityId, _: MachineAdmitter) -> InstallHold {
 
 /// Whether an edit's machine was mine under `T(X)`, with the edit's key, at
 /// its parents: strength's condition (a) for every admitter at once.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct TrustedAt {
     roster: bool,
     /// The anchors whose trust set judged the machine otherwise than the
