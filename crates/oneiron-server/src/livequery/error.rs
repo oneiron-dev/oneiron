@@ -125,6 +125,14 @@ impl From<ApiError> for AppError {
     }
 }
 
+/// A facade refusal from the generated dispatch, its open code, read
+/// receipt, wrong-root correction and hook stop kept, as `rpc.err` states it.
+impl From<crate::api::FacadeApiError> for AppError {
+    fn from(error: crate::api::FacadeApiError) -> Self {
+        error.into_memory_error().into()
+    }
+}
+
 impl From<MemoryError> for AppError {
     fn from(error: MemoryError) -> Self {
         // Match the released HTTP projection, not the engine's internal
