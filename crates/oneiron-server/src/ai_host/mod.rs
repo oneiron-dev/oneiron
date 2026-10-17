@@ -41,6 +41,7 @@ pub(crate) mod identity;
 mod local_vision;
 mod policy;
 pub(crate) mod self_heal_detectors;
+mod skill_author;
 mod status;
 mod step;
 mod step_failure;
@@ -382,6 +383,8 @@ pub struct AiHost {
     sync_wake: Option<sync_wake::SyncWake>,
     /// The server the Dreamer's timer runs the standing questions on.
     question_timer: dreamer::QuestionTimer,
+    /// The gate each Dreamer pass is admitted through.
+    pass_admission: dreamer::PassAdmission,
 }
 
 /// The sieve's backlog drain and the stop it checks between passes.
@@ -440,6 +443,13 @@ impl AiHost {
         true
     }
 
+    /// Admits each Dreamer pass, its home-timer pump and its stewardship
+    /// drafts through `admit`: managed serve's reap freeze. Until a bind,
+    /// everything is admitted; a second bind keeps the first.
+    pub(crate) fn bind_pass_admission(&self, admit: crate::server::HousekeepingAdmission) {
+        let _ = self.pass_admission.set(admit);
+    }
+
     /// Builds every seat from `models` and starts the workers those seats can
     /// serve. Every model call they make is admitted as a run whose receipts
     /// are written to the log.
@@ -473,6 +483,7 @@ impl AiHost {
             sieve: None,
             sync_wake: None,
             question_timer: dreamer::QuestionTimer::default(),
+            pass_admission: dreamer::PassAdmission::default(),
         };
         let Some(models) = models else {
             return host;
@@ -480,9 +491,10 @@ impl AiHost {
         let status = Arc::clone(&handle.status);
         let idle = handle.idle_sample();
         let timer = Arc::clone(&host.question_timer);
+        let admission = Arc::clone(&host.pass_admission);
         let decisions = Arc::clone(&handle.decisions);
         match start_dreamer(
-            &vault, &runtime, models, host_root, &status, idle, decisions, timer,
+            &vault, &runtime, models, host_root, &status, idle, decisions, timer, admission,
         )
         .await
         {
@@ -730,6 +742,7 @@ async fn start_dreamer(
     idle: IdleSample,
     decisions: Arc<OnceLock<DecisionHost>>,
     question_timer: dreamer::QuestionTimer,
+    admission: dreamer::PassAdmission,
 ) -> Result<DreamerHost, IdleReason> {
     if !models.dreamer.enabled {
         return Err(IdleReason::Disabled);
@@ -796,6 +809,7 @@ async fn start_dreamer(
         windows: dreamer::dream_windows(models),
         decisions,
         question_timer,
+        admission,
     })
     .await
     .map_err(|error| {
