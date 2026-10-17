@@ -1,6 +1,6 @@
 //! What the model runtime built, for the owner-facing status route.
 use oneiron::ModelId;
-use oneiron::llm::BrokerIsolation;
+use oneiron::llm::{BrokerIsolation, SpentKind};
 use oneiron::llm::manifest::ModelRole;
 use serde::Serialize;
 
@@ -114,6 +114,11 @@ impl ProviderStatus {
 pub enum SeatState {
     Ready,
     Unavailable,
+    /// Every rung that was built rests because its provider is down.
+    Down,
+    /// No healthy rung is free to serve, but one is on probation after an
+    /// outage and takes a call to check.
+    Recovering,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -140,6 +145,39 @@ impl SeatStatus {
             rungs,
         }
     }
+
+    /// The live seat: each built rung's `health` at its configured position,
+    /// and a state worked out from that health (OF-305). A healthy rung that
+    /// no limit holds keeps the seat Ready. With no such rung, a free rung on
+    /// probation makes it Recovering, and every rung resting for its health
+    /// makes it Down. A seat that only limits hold stays as it was built,
+    /// since a hold is not an outage and each rung shows its own. A seat
+    /// with no built rung stays Unavailable.
+    pub(super) fn live(&mut self, health: Vec<(usize, RungHealth)>) {
+        if health.is_empty() {
+            return;
+        }
+        for (position, health) in &health {
+            if let Some(rung) = self.rungs.get_mut(*position) {
+                rung.health = Some(*health);
+            }
+        }
+        let free = |state| {
+            health
+                .iter()
+                .any(|(_, health)| health.state == state && health.limit.is_none())
+        };
+        if free(HealthState::Healthy) {
+            self.state = SeatState::Ready;
+        } else if free(HealthState::Recovering) {
+            self.state = SeatState::Recovering;
+        } else if health
+            .iter()
+            .all(|(_, health)| health.state == HealthState::Down)
+        {
+            self.state = SeatState::Down;
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -152,6 +190,57 @@ pub struct RungStatus {
     pub engine_model: Option<String>,
     pub locality: oneiron::ModelLocality,
     pub available: bool,
+    /// The live health of a rung that was built, in the live status only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<RungHealth>,
+}
+
+/// Where an offer's health stands (OF-305): in rotation, resting because
+/// its provider is down, or on probation after that rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthState {
+    Healthy,
+    Down,
+    Recovering,
+}
+
+/// One built rung's live health: its offer's state and its provider's
+/// failures in a row. While it is down, when that rest ends. While it
+/// recovers, its answers since and whether its one probation request is out
+/// now. Any limit rest shows apart, as a hold rather than an outage.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct RungHealth {
+    pub state: HealthState,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub strikes: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub successes: u32,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub probing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<LimitHold>,
+}
+
+/// A limit refusal's rest on an offer: when it ends, what set that end, and
+/// what was spent, if a window or credit was. Spent credit's end is
+/// `u64::MAX`, for the owner to clear.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct LimitHold {
+    pub until: u64,
+    pub reset: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spent: Option<SpentKind>,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the field by reference"
+)]
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 impl RungStatus {
@@ -164,6 +253,7 @@ impl RungStatus {
                 .map(|id| id.to_string()),
             locality: provider.locality,
             available: true,
+            health: None,
         }
     }
 }

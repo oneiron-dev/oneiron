@@ -7,8 +7,10 @@
 //! rests stop the call, it waits for the first offer back and tries again,
 //! until its wait budget is spent. Once every rung has parked, the owner
 //! is asked about each offer parked on spent quota, and a call whose
-//! parked offer the owner gave a fallback goes there instead. A request
-//! error ends the call.
+//! parked offer the owner gave a fallback goes there instead. An offer on
+//! probation after its provider was down takes one request at a time: a call
+//! that meets its probation request out passes it to the next rung, or waits
+//! for that request to end. A request error ends the call.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,12 +25,15 @@ use oneiron::{
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
-use super::cooldown::{Asked, OfferCooldowns, Refusal, Rest, leaves_device};
+use super::cooldown::{
+    Asked, OfferCooldowns, ProbeBlocked, ProbePermit, Refusal, Rest, leaves_device,
+};
 use super::driven::Driven;
 use super::forward::{Ended, forward};
 use super::media::{HeldJob, MediaAnswer, MediaRung};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
+use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
 
 /// One rung: a provider's offer for one model, and the instruction prepended
@@ -271,20 +276,68 @@ impl OfferLadder {
 
     /// Whether the call passes the rung at `index` without sending it: a
     /// fallback to it would take the work off the device and the call's
-    /// world stays on it, or its offer rests from an earlier refusal. The
-    /// device comes first, so a rung the call may not use is never one it
-    /// waits for.
+    /// world stays on it, its offer rests from an earlier refusal, or its
+    /// offer is on probation with its one probation request out. The device
+    /// comes first, so a rung the call may not use is never one it waits
+    /// for.
     fn passes_over(&self, call: Call<'_>, index: usize, walk: &mut Walk) -> bool {
         if self.kept_on_device(index, call.request) {
             self.hold(call, index, walk);
             return true;
         }
         let rung = &self.rungs[index];
-        let Some(rest) = self.rests.resting(&rung.offer.binding, &rung.wire_model) else {
+        if let Some(rest) = self.rests.resting(&rung.offer.binding, &rung.wire_model) {
+            walk.note(index, Passed::Resting { rest });
+            return true;
+        }
+        let Some(seen) = self.rests.probing(&rung.offer.binding, &rung.wire_model) else {
             return false;
         };
-        walk.note(index, Passed::Resting { rest });
+        walk.note(index, Passed::ProbeInFlight { seen });
         true
+    }
+
+    /// The permit to send the rung at `index`, taken right before it goes
+    /// out (OF-305). If its offer's health rest began after the walk judged
+    /// it, the rung is passed as resting. If its one probation request is
+    /// out, the rung is passed to the next. Neither counts as a strike, and
+    /// the call goes on.
+    fn probe(&self, index: usize, walk: &mut Walk) -> Option<ProbePermit> {
+        let rung = &self.rungs[index];
+        match self.rests.try_probe(&rung.offer.binding, &rung.wire_model) {
+            Ok(probe) => Some(probe),
+            Err(ProbeBlocked::Resting(rest)) => {
+                walk.note(index, Passed::Resting { rest });
+                None
+            }
+            Err(ProbeBlocked::Busy { seen }) => {
+                walk.note(index, Passed::ProbeInFlight { seen });
+                None
+            }
+        }
+    }
+
+    /// Each built rung's live health at its configured position, for the
+    /// status route. Read-only.
+    pub(super) fn health(&self) -> Vec<(usize, RungHealth)> {
+        self.rungs
+            .iter()
+            .map(|rung| {
+                let health = self.rests.offer_health(&rung.offer.binding, &rung.wire_model);
+                (rung.position, health)
+            })
+            .collect()
+    }
+
+    /// Waits for `back`, asking `may_send` meanwhile. Returns what is left
+    /// of the call's wait `budget`, in seconds, after the wait. Each wait
+    /// spends at least a second, so a chain ends.
+    async fn wait_back(&self, back: Back, budget: u64, may_send: &(dyn Fn() -> bool + Sync)) -> u64 {
+        let waited = self
+            .rests
+            .wait(back.wait, back.at, back.seen, may_send)
+            .await;
+        budget.saturating_sub(waited.as_secs().max(1))
     }
 
     /// Whether every rung of this ladder rests now.
@@ -456,7 +509,10 @@ impl OfferLadder {
     /// then, if that is within the vault's longest wait. The rate law: a
     /// cooling chain is not refused for rate; its call waits for the first
     /// offer back. Each rung is judged again first, one already sent too, so
-    /// the wait goes only to an offer the call may use now.
+    /// the wait goes only to an offer the call may use now. A rung whose
+    /// probation request was out ends the wait early when that request ends
+    /// (OF-305). If only such a rung is left, the call waits for that end,
+    /// for the rest of its budget.
     fn waits_for(&self, call: Call<'_>, walk: &mut Walk, budget_secs: u64) -> Option<Back> {
         if !walk.limited() {
             return None;
@@ -466,12 +522,25 @@ impl OfferLadder {
                 self.hold(call, index, walk);
             }
         }
-        let (index, at) = walk.back()?;
-        let wait = at.saturating_sub(self.rests.now()?);
-        (wait <= budget_secs).then(|| Back {
+        let now = self.rests.now()?;
+        let probing = walk.probing();
+        let seen = probing.map(|(_, seen)| seen);
+        if let Some((index, at)) = walk.back()
+            && at.saturating_sub(now) <= budget_secs
+        {
+            return Some(Back {
+                index,
+                at,
+                wait: Duration::from_secs(at.saturating_sub(now)),
+                seen,
+            });
+        }
+        let (index, seen) = probing.filter(|_| budget_secs > 0)?;
+        Some(Back {
             index,
-            at,
-            wait: Duration::from_secs(wait),
+            at: now.saturating_add(budget_secs),
+            wait: Duration::from_secs(budget_secs),
+            seen: Some(seen),
         })
     }
 
@@ -644,9 +713,7 @@ impl OfferLadder {
                 else {
                     break;
                 };
-                // Each wait spends at least a second, so a chain ends.
-                budget = budget.saturating_sub(back.wait.as_secs().max(1));
-                self.rests.wait(back.wait, back.at, may_send).await;
+                budget = self.wait_back(back, budget, may_send).await;
             }
             let mut sent = vec![false; self.rungs.len()];
             loop {
@@ -691,6 +758,10 @@ impl OfferLadder {
             self.hold(call, index, walk);
             return Ok(Sent::Held);
         }
+        let Some(_probe) = self.probe(index, walk) else {
+            settle_failed(permit);
+            return Ok(Sent::Held);
+        };
         let gate = call
             .run
             .gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
@@ -736,9 +807,7 @@ impl OfferLadder {
                 let Some(back) = self.waits_for(call, &mut walk, budget) else {
                     break;
                 };
-                // Each wait spends at least a second, so a chain ends.
-                budget = budget.saturating_sub(back.wait.as_secs().max(1));
-                self.rests.wait(back.wait, back.at, &|| true).await;
+                budget = self.wait_back(back, budget, &|| true).await;
             }
             let mut sent = vec![false; self.rungs.len()];
             while let Some(index) = self.next_rung(call, &sent, &mut walk) {
@@ -781,6 +850,10 @@ impl OfferLadder {
             self.hold(call, index, walk);
             return Ok(None);
         }
+        let Some(probe) = self.probe(index, walk) else {
+            settle_failed(permit);
+            return Ok(None);
+        };
         let gate = call
             .run
             .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
@@ -791,6 +864,7 @@ impl OfferLadder {
                 Ok(provider_job) => Ok(Some(MediaAnswer::Job(HeldJob {
                     gate,
                     permit: Some(permit),
+                    probe: Some(probe),
                     provider_job,
                     model: rung.model.clone(),
                     operation,
@@ -950,9 +1024,8 @@ impl OfferLadder {
             },
         };
         while let Some(next) = back {
-            budget = budget.saturating_sub(next.wait.as_secs().max(1));
             // Dropping the stream drops this wait: nothing else stops it.
-            self.rests.wait(next.wait, next.at, &|| true).await;
+            budget = self.wait_back(next, budget, &|| true).await;
             back = match self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
                 .await
@@ -1032,6 +1105,11 @@ impl OfferLadder {
         events: &Sender<LlmResult<LlmStreamEvent>>,
     ) -> Flow {
         let rung = &self.rungs[index];
+        // Held until the stream ends, however it ends.
+        let Some(_probe) = self.probe(index, walk) else {
+            settle_failed(permit);
+            return Flow::On;
+        };
         let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let ended = match gate.stream(call, permit.lease()) {
             Ok(stream) => forward(stream, events).await,
@@ -1110,12 +1188,14 @@ struct Opening {
 }
 
 /// A cooling chain's first offer back: its rung, when it is back, and the
-/// wait until then.
+/// wait until then. If a rung's probation request was out, `seen` is the
+/// health version it was seen at: that request's end cuts the wait short.
 #[derive(Clone, Copy)]
 struct Back {
     index: usize,
     at: u64,
     wait: Duration,
+    seen: Option<u64>,
 }
 
 /// What sending one rung came to.
@@ -1123,7 +1203,8 @@ enum Sent {
     Answer(LlmResponse),
     /// It failed and the call goes on.
     Failed,
-    /// It was kept from the work, unsent, and the call goes on.
+    /// It was kept from the work, unsent, and the call goes on. Either the
+    /// world stays on the device, or its offer's health holds it.
     Held,
     /// `may_send` said no once it was admitted: the call stops.
     Stopped,

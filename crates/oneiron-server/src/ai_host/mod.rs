@@ -244,6 +244,12 @@ impl AiHandle {
         self.runtime.status()
     }
 
+    /// [`Self::models_status`] with each offer's live health (OF-305).
+    #[must_use]
+    pub fn models_live_status(&self) -> ModelsStatus {
+        self.runtime.live_status()
+    }
+
     /// The models this server serves, for the `ai.*` verbs.
     #[must_use]
     pub(crate) fn model_runtime(&self) -> &ModelRuntime {

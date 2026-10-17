@@ -439,6 +439,28 @@ impl ModelRuntime {
     pub fn status(&self) -> &ModelsStatus {
         &self.status
     }
+
+    /// [`Self::status`] with each built rung's live health, and each seat's
+    /// state worked out from it (OF-305). A seat whose offers' providers are
+    /// down shows Down, and one with an offer on probation shows Recovering.
+    /// A limit hold shows on its rung, apart from the outage state. Read-only:
+    /// it takes no probation slot, probes nothing and rebuilds nothing.
+    #[must_use]
+    pub fn live_status(&self) -> ModelsStatus {
+        let mut status = self.status.clone();
+        for seat in &mut status.seats {
+            let ladder = self
+                .seats
+                .iter()
+                .find(|(role, _)| role_key(**role) == seat.role)
+                .map(|(_, built)| &built.ladder)
+                .or_else(|| self.media.seat_ladder(&seat.role));
+            if let Some(ladder) = ladder {
+                seat.live(ladder.health());
+            }
+        }
+        status
+    }
 }
 
 /// A run that declares nothing, on a meter its host built: the vault's
