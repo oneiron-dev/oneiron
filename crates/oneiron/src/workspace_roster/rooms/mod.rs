@@ -1,4 +1,5 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
+mod audience;
 mod history;
 mod hosting;
 mod liveness;
@@ -22,6 +23,11 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
+pub(crate) use audience::{
+    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, record_thread_admits_in,
+    require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
+    thread_binding, thread_members_in, thread_root_readable_in, validate_private_audience_in,
+};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
 pub(crate) use history::erase_room_side_rows;

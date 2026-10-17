@@ -183,6 +183,7 @@ impl Acceptance {
             conversation_ref: self.card.room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             quote: None,
+            thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::Companion,
