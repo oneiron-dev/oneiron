@@ -31,6 +31,7 @@ fn invalid() -> Error {
 /// ladders a planned spawn, its type placement and the leader's advice read
 /// on this run. Host configuration only: no guest call, transcript or replay
 /// row reaches it.
+#[derive(Clone)]
 pub struct HostPlannerBinding<'a> {
     pub skills: PlannerSkills,
     pub seats: Vec<PlannerSeat>,
@@ -50,6 +51,7 @@ pub struct HostPlannerBinding<'a> {
 /// bands and wording of the shape and placement questions. Each call builds
 /// its decisions on a fresh clock of its budget, so a long run's later
 /// spawns get the whole budget too.
+#[derive(Clone)]
 pub struct HostPlannerDecisions<'a> {
     pub ladder: &'a HeldLadder,
     pub principal: EntityId,
