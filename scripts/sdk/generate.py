@@ -780,7 +780,9 @@ async fn execute_agent_verb_listing(
     }
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
     let surface = McpRowSurface { position, invocation, origin };
-    let memory = surface.memory(server, actor, producers);
+    // The direct caller's own proof, on the rows whose HTTP door binds it
+    // outside a room turn (OF-417, OF-365).
+    let memory = mcp_direct_authorship(server, tool, actor, surface.memory(server, actor, producers))?;
     // Rule 5: a task-work row takes its one turn here, for MCP and code mode
     // alike, and holds it through its hooks and its row.
     let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work) {

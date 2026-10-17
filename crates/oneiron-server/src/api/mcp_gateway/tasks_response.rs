@@ -633,6 +633,31 @@ async fn mcp_task_row<T: Send + 'static>(
     })
 }
 
+/// The proof a direct MCP caller's own request binds for `tool`, as the
+/// HTTP facade binds it outside a room turn: the work-companion setting
+/// takes the person's own proof (OF-417), an attendee ask's answer the
+/// owner's own authorship (OF-365). Every other row binds none here, and a
+/// code-mode call's host origin suppresses either in the engine.
+fn mcp_direct_authorship<'a>(
+    server: &SyncServer,
+    tool: &str,
+    actor: &McpCallContext,
+    memory: oneiron::Memory<'a>,
+) -> Result<oneiron::Memory<'a>, McpGatewayError> {
+    if !matches!(tool, "vault.workspace.work_companion.set" | "tasks.answer") {
+        return Ok(memory);
+    }
+    let Some(auth) = actor.auth.as_ref() else {
+        return Ok(memory);
+    };
+    Ok(
+        match crate::api::facade::direct_authorship(auth, server, tool).map_err(mcp_api_error)? {
+            Some(owner) => memory.with_owner_authorship(&owner),
+            None => memory,
+        },
+    )
+}
+
 // BEGIN GENERATED MCP DISPATCH
 /// A `tools/call` of one generated verb: its arguments assemble the verb's typed
 /// input, which then takes the one dispatcher every MCP door shares.
@@ -2222,7 +2247,14 @@ async fn execute_agent_verb_listing(
         invocation,
         origin,
     };
-    let memory = surface.memory(server, actor, producers);
+    // The direct caller's own proof, on the rows whose HTTP door binds it
+    // outside a room turn (OF-417, OF-365).
+    let memory = mcp_direct_authorship(
+        server,
+        tool,
+        actor,
+        surface.memory(server, actor, producers),
+    )?;
     // Rule 5: a task-work row takes its one turn here, for MCP and code mode
     // alike, and holds it through its hooks and its row.
     let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
