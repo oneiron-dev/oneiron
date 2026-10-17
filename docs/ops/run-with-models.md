@@ -1013,6 +1013,42 @@ How a call runs:
 A full media queue makes heard audio wait for the next cut and a sentence
 wait for room. A queue that takes nothing for 30 seconds stops the reply.
 
+#### Live hearing on Soniox
+
+When the vault's `asr-live` row is bound to a soniox rung, the call hears the
+owner live instead of transcribing each cut:
+
+```toml
+[models.providers.soniox]
+kind = "soniox"
+base_url = "wss://stt-rt.soniox.com/transcribe-websocket"
+key_env = "SONIOX_API_KEY"
+
+[models.media.transcribe]
+rungs = ["soniox:stt-rt-v5"]
+tiers = { "asr-live" = "soniox:stt-rt-v5" }
+
+[models.media.transcribe.rung_options."soniox:stt-rt-v5"]
+language_hints = ["ja", "en"]   # the default; config replaces it
+```
+
+- A soniox provider takes a `wss://` URL only, and needs `key_env`. The key
+  is sent as `Authorization: Bearer` on the socket's upgrade and nowhere
+  else. A soniox rung serves the transcribe seat only, and a buffered
+  `ai.transcribe` call on it is refused.
+- The socket opens when the call starts, on a stream lease of its own on the
+  media meter. Microphone audio goes out as it arrives, and a keepalive goes
+  after 5 seconds with nothing sent.
+- Each hypothesis is a partial of one utterance, at the next revision, and
+  is enriched as a wire partial is. Soniox's own endpoint changes nothing:
+  the owner's `cut` finalizes what was said, and that one final starts the
+  reply.
+- At 10 minutes of audio the socket ends, and the next one opens on a fresh
+  lease. Words finalized before the switch stay in the utterance still open.
+- A live failure ends the call. A failure here means the socket fails or
+  closes early, Soniox reports an error, or more than 4 MiB queues. Nothing
+  falls back to batch transcription.
+
 ### Lazy images and `ask_image`
 
 A read serves each generated image down a ladder. A reader whose request
