@@ -99,17 +99,20 @@ pub(crate) async fn no_record_reply(mut response: Response) -> Response {
 /// asked about counts as anonymous, so a call that might be one records
 /// nothing.
 pub(crate) fn in_anonymous_session(server: &SyncServer, headers: &HeaderMap) -> bool {
-    let Some(value) = headers.get(super::write_facet::SESSION_HEADER) else {
-        return false;
-    };
-    let Ok(session_ref) = value.to_str() else {
-        return false;
-    };
-    match server.vault().off_record_session(session_ref.trim()) {
-        Ok(Some(record)) => record.mode == oneiron::off_record::OffRecordMode::Anonymous,
-        Ok(None) => false,
-        Err(_) => true,
-    }
+    request_session_ref(headers)
+        .is_some_and(|session_ref| server.vault().off_record_session_is_anonymous(session_ref))
+}
+
+/// The session ref a request's `x-oneiron-session` header names, as text;
+/// `None` when it names none or is no text. The engine binds it to the
+/// request's memory surface (`Memory::in_off_record_session`), so a
+/// reference refusal reads the same anonymous signal this receipt does.
+pub(crate) fn request_session_ref(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(super::write_facet::SESSION_HEADER)?
+        .to_str()
+        .ok()
+        .map(str::trim)
 }
 
 /// Who a credential's call is attributed to: its bound principal and actor
