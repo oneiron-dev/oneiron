@@ -8,6 +8,13 @@
 //! epoch summary's session floor is the one local row it raises.
 //! [`purge_left_shared_env_in_txn`] empties a left shared vault's whole
 //! environment the same way (OF-158).
+//!
+//! The local derivations of a removed TURN (its tag set, its sieve working
+//! state, its projection rounds) also reach other turns: a provisional
+//! entity it named, a round it shares. Their owners' demotion leaves settle
+//! them over the call's whole set before any row or edge goes, unerased,
+//! and never retag or reread a kept turn. A promotion that brings a TURN
+//! back owes it a tag pass and a sieve read ([`owe_promoted_turn_in_txn`]).
 
 mod left_env;
 
@@ -20,8 +27,10 @@ use std::ops::Bound;
 use heed::{RoTxn, RwTxn};
 use loro::{LoroDoc, LoroMap};
 
+use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::dreamer_runner::authority::is_base_agent_actor;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{
@@ -127,6 +136,10 @@ pub(crate) enum KeepReason {
     Guarded,
     /// A standing legal hold names it (OF-470).
     LegalHold,
+    /// A TURN that is the origin of a provisional entity a kept tag set or a
+    /// legal hold still needs, which no kept turn's text can take over: its
+    /// tag set is that entity's only readable source here.
+    ProvisionalOrigin,
 }
 
 /// What one call removed and kept, for the caller's log.
@@ -166,6 +179,11 @@ pub(crate) struct RemovedReplica {
 /// `u:w:` row go too. Unconfirmed queued writes stay: with the default
 /// controls a queued `q:` row for the window defers the whole call.
 ///
+/// A removed TURN leaves its tag set, its sieve working state and its
+/// projection rounds through their owners' demotion leaves, which run over
+/// the call's whole set first; a kept TURN that loses a MESSAGE keeps its
+/// own, which read as absent until the message is back.
+///
 /// One call removes at most `keep.max_removals` rows. Loop until `complete`,
 /// holding the window closed across the calls.
 #[allow(dead_code, reason = "L03's OF-534 demotion calls this")]
@@ -188,8 +206,13 @@ pub(crate) fn remove_local_replica_window_in_txn(
     let census = Census::new(store, txn, window, &keep, &doc)?;
     let removable = census.sort(txn, &mut report)?;
     report.remaining = removable.len().saturating_sub(keep.max_removals);
+    let batch = &removable[..removable.len().min(keep.max_removals)];
+    let removal = Removal::plan(store, txn, batch, &mut report)?;
+    // The leaves read the removed rows, their edges and other turns' sets.
+    crate::tagging::demote_tags_in_txn(store, txn, &removal.gone, &removal.partial)?;
+    crate::dreamer_wake::demote_in_txn(store, txn, &removal.gone)?;
     let edges = doc.get_map("edges");
-    for id in removable.iter().take(keep.max_removals) {
+    for id in &removal.order {
         remove_member(store, txn, &edges, id, &mut report)?;
     }
     if report.vectors > 0 {
@@ -344,6 +367,90 @@ impl<'a> Census<'a> {
         let mut notes = PENDING_NOTE_REQUESTS.iter_raw_from(self.store, txn, prefix.as_bytes())?;
         Ok(frames.next().is_some() || notes.next().is_some())
     }
+}
+
+/// One call's removals, planned whole before any row or edge goes.
+struct Removal {
+    /// The members this call removes, in learned order.
+    order: Vec<EntityId>,
+    /// The same members, for the demotion leaves.
+    gone: BTreeSet<EntityId>,
+    /// The kept TURNs a removed MESSAGE is part of: their words read partly
+    /// here until promotion, so their own rows stay as they are.
+    partial: BTreeSet<EntityId>,
+}
+
+impl Removal {
+    /// Plans `batch`, the census's removable members this call takes. A TURN
+    /// a provisional entity still needs as its origin stays whole, and the
+    /// rest is planned again without it, until no such turn is left.
+    fn plan(
+        store: &Store,
+        txn: &RoTxn<'_>,
+        batch: &[EntityId],
+        report: &mut RemovedReplica,
+    ) -> Result<Self> {
+        let mut order = batch.to_vec();
+        loop {
+            let gone: BTreeSet<EntityId> = order.iter().copied().collect();
+            let partial = partial_turns(store, txn, &gone)?;
+            let kept = crate::tagging::demotion_kept_origins_in_txn(store, txn, &gone, &partial)?;
+            if kept.is_empty() {
+                return Ok(Self {
+                    order,
+                    gone,
+                    partial,
+                });
+            }
+            order.retain(|id| !kept.contains(id));
+            for id in kept {
+                report.kept.push((id, KeepReason::ProvisionalOrigin));
+            }
+        }
+    }
+}
+
+/// The kept TURNs a MESSAGE in `gone` is part of, read before its edges go.
+fn partial_turns(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    gone: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut turns = BTreeSet::new();
+    for id in gone {
+        if store
+            .port_entity_record(txn, id)?
+            .is_none_or(|row| row.entity_type != registry::ENTITY_TYPE_MESSAGE)
+        {
+            continue;
+        }
+        for edge in store.port_edges(txn, id, EdgeDirection::Out, Some(EdgeKind::PartOf), None)? {
+            let turn = edge?.target;
+            if !gone.contains(&turn)
+                && store
+                    .port_entity_record(txn, &turn)?
+                    .is_some_and(|row| row.entity_type == registry::ENTITY_TYPE_TURN)
+            {
+                turns.insert(turn);
+            }
+        }
+    }
+    Ok(turns)
+}
+
+/// What a promotion owes a TURN it brings back (OF-534), in the transaction
+/// that lands the row: demotion dropped its tag set and its sieve reading,
+/// which never sync, so an armed vault owes it a tag pass, and the sieve,
+/// whose cursor has passed it, a read. A kept TURN whose MESSAGE comes back
+/// is owed neither: its stored set and spans read again with the message.
+#[allow(dead_code, reason = "L03's OF-534 promotion calls this")]
+pub(crate) fn owe_promoted_turn_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
+    crate::tagging::mark_turn_in_txn(vault, txn, *turn)?;
+    crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
 }
 
 /// The engine's own delete guards mark controls inside ordinary kinds: task
