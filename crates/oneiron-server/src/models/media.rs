@@ -38,6 +38,7 @@ use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, media_offer};
 use super::rerank::transport;
+use super::soniox::{self, SonioxRung};
 use super::status::{RungStatus, SeatState, SeatStatus};
 use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
@@ -268,6 +269,8 @@ pub struct MediaRuntime {
     /// The hosted render targets (provider names) that clone a banked
     /// identity, by name.
     cloners: BTreeMap<String, Arc<HostedCloner>>,
+    /// The transcribe rungs that hear live (soniox), by engine id.
+    live_asr: BTreeMap<String, Arc<SonioxRung>>,
 }
 
 impl MediaRuntime {
@@ -280,7 +283,14 @@ impl MediaRuntime {
             jobs: Mutex::default(),
             reference_targets: BTreeSet::new(),
             cloners: BTreeMap::new(),
+            live_asr: BTreeMap::new(),
         }
+    }
+
+    /// The live socket rung `model` (a rung's engine id) opens, when it
+    /// hears live.
+    pub(super) fn live_rung(&self, model: &str) -> Option<Arc<SonioxRung>> {
+        self.live_asr.get(model).cloned()
     }
 
     /// The clone wire of hosted render target `target`, when it is one.
@@ -323,6 +333,7 @@ impl MediaRuntime {
             .map(|(name, _)| name.clone())
             .collect();
         runtime.cloners = voice_cloners(config);
+        runtime.live_asr = soniox::live_rungs(config);
         let backends = media_backends(config, site, keys);
         for (operation, seat) in &config.media.seats {
             let mut rungs = Vec::new();
@@ -760,6 +771,9 @@ fn media_backends(
                 }
             }
             ProviderKind::Gemini => gemini_backend(provider, wire_models),
+            // It hears live only, through `open_voice_asr`; never the
+            // OpenAI-compatible wire below.
+            ProviderKind::Soniox => soniox::live_backend(provider),
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
                 Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models))
                     as Arc<dyn MediaBackend>

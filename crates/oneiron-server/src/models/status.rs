@@ -51,6 +51,7 @@ fn kind_name(kind: ProviderKind) -> &'static str {
         ProviderKind::Elevenlabs => "elevenlabs",
         ProviderKind::Voxcpm2 => "voxcpm2",
         ProviderKind::Gemini => "gemini",
+        ProviderKind::Soniox => "soniox",
     }
 }
 
