@@ -301,6 +301,15 @@ impl AgentDispatcher<'_> {
         self.available_from_in_txn(&txn, &target)
     }
 
+    /// `scope` as a spend would report it, without spending: what is left
+    /// under the binding cap and the wrap-up or cap signal in force
+    /// (OF-541's budget hold reads it before work starts).
+    pub fn spend_read(&self, scope: &SpendScopeId) -> Result<SpendRead> {
+        let txn = self.vault.store.env.read_txn()?;
+        let target = self.effective_scope_in_txn(&txn, scope)?;
+        self.spend_read_in_txn(&txn, &target)
+    }
+
     pub fn read_spend_scope(&self, scope: &SpendScopeId) -> Result<Option<SpendScope>> {
         let txn = self.vault.store.env.read_txn()?;
         SCOPE.get(&self.vault.store, &txn, &scope.0)
@@ -350,8 +359,9 @@ impl AgentDispatcher<'_> {
     }
 
     /// Settles a child at its attempt's terminal: closes its scope, charges
-    /// its spend to its parent, releases the unused hold, and folds one
-    /// calibration sample for its agent. Idempotent. `None`: the attempt
+    /// its spend to its parent, releases the unused hold, folds one
+    /// calibration sample for its agent, and settles the exploration-slice
+    /// charge of a run a skill trial routed. Idempotent. `None`: the attempt
     /// launched unmetered.
     pub fn settle_child_in_txn(
         &self,
@@ -395,6 +405,14 @@ impl AgentDispatcher<'_> {
         scope.state = SpendState::Closed;
         scope.closed_at = Some(now);
         SCOPE.put(&self.vault.store, txn, &scope.scope.0, &scope)?;
+        // A run an exploration trial routed is charged what it spent.
+        crate::skill::settle_exploration_route_in_txn(
+            self.vault,
+            txn,
+            *child,
+            &scope.unit,
+            scope.spent_units,
+        )?;
         if let Some(agent) = scope.agent {
             self.fold_spend_sample_in_txn(txn, agent, &scope.unit, scope.spent_units, now)?;
         }

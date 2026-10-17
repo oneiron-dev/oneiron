@@ -20,6 +20,10 @@ pub(crate) struct AppError {
     /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
     #[serde(flatten)]
     wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
+    /// A verb hook's stop (ARCH-0080 §3): skipped with its reason, pending
+    /// on an ask with the invocation and the ask, or hidden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook: Option<Box<oneiron::runtime_hooks::VerbHookStop>>,
 }
 
 impl AppError {
@@ -37,6 +41,7 @@ impl AppError {
             suggestions: suggestions.into_iter().map(Into::into).collect(),
             narrowing: None,
             wrong_root: None,
+            hook: None,
         }
     }
 
@@ -123,10 +128,12 @@ impl From<ApiError> for AppError {
 impl From<MemoryError> for AppError {
     fn from(error: MemoryError) -> Self {
         // Match the released HTTP projection, not the engine's internal
-        // fields; a read refusal keeps its receipt, as the HTTP envelope does.
+        // fields; a read refusal keeps its receipt and a hook stop its typed
+        // stop, as the HTTP envelope does.
         Self {
             narrowing: error.read_receipt,
             wrong_root: error.wrong_root,
+            hook: error.hook,
             ..Self::new(&error.code, error.message, error.suggestions)
         }
     }

@@ -16,10 +16,13 @@ use crate::workspace_roster::{ProjectBudgetShare, ProjectEffective, ProjectGoalR
 pub struct LeaderStarterSkills {
     pub starter: EntityId,
     pub pattern: Option<EntityId>,
+    /// The team-shape workflow the CEO's top-shapes advice reads (OF-389).
+    pub team_shape: EntityId,
 }
 
 impl LeaderStarterSkills {
-    /// The installed starter shipped with the team-lead agent definition.
+    /// The installed starter shipped with the team-lead agent definition,
+    /// and the installed team-shape skill.
     pub fn seeded() -> Result<Self> {
         Ok(Self {
             starter: EntityId::derive(
@@ -27,6 +30,7 @@ impl LeaderStarterSkills {
                 &[b"team-lead"],
             )?,
             pattern: None,
+            team_shape: super::team_shape::team_shape_skill()?,
         })
     }
 }
@@ -53,6 +57,10 @@ pub struct LeaderTaskContext {
     pub task_ref: EntityId,
     pub label: Option<String>,
     pub body: Value,
+    /// The type the TASK was placed at, once (OF-543).
+    pub type_ref: crate::task_type::TaskTypeRef,
+    /// The TASK's typed brief: need, care, notes and pins the planner reads.
+    pub brief: Option<crate::task_verb::QueueTaskBrief>,
     pub responsibility: LeaderResponsibility,
 }
 
@@ -66,7 +74,8 @@ pub struct LeaderStarter {
 /// The team-shape planner owns its ladder, pins, estimates and plan schema.
 /// Advice is returned to the CEO; it neither launches agents nor assigns work.
 /// The JSON result preserves that planner's contract without defining a
-/// second team-plan format in the starter.
+/// second team-plan format in the starter. The installed implementation is
+/// [`super::VaultLeaderTeamPlanner`], over the one live planner service.
 pub trait LeaderTeamPlanner {
     fn top_shapes(
         &mut self,
@@ -173,6 +182,33 @@ impl AgentDispatcher<'_> {
         planner.top_shapes(&context, &team_shape)
     }
 
+    /// The CEO's advice: [`Self::leader_top_shapes`] on the configured
+    /// team-shape workflow, over the same acquired lease.
+    pub fn leader_advice(
+        &self,
+        leased: &AttemptRecord,
+        skills: &LeaderStarterSkills,
+        executor: &str,
+        planner: &mut dyn LeaderTeamPlanner,
+        at: u64,
+    ) -> Result<JsonValue> {
+        self.leader_top_shapes(leased, skills.team_shape, executor, planner, at)
+    }
+
+    /// Load the pattern the CEO selected after reading the advice, through
+    /// the same lease-fenced manifest door, after re-reading the live task
+    /// and responsibility. Selecting a pattern is not a spawn.
+    pub fn reload_leader_pattern(
+        &self,
+        leased: &AttemptRecord,
+        pattern: EntityId,
+        executor: &str,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
+        self.leader_task_context(leased)?;
+        self.load_leader_workflow(leased, pattern, executor, at)
+    }
+
     fn load_leader_workflow(
         &self,
         leased: &AttemptRecord,
@@ -244,6 +280,8 @@ impl AgentDispatcher<'_> {
         let task_ref = EntityId::from_hex(task_ref)?;
         let (label, body) =
             crate::task_verb::leader_task_body_in(self.vault, &txn, task_ref, leader)?;
+        let (type_ref, brief) =
+            crate::task_verb::leader_task_brief_in(self.vault, &txn, task_ref, leader)?;
         let (_, spawn_view) = self
             .vault
             .project_for_spawn_in_txn(&txn, Some(project_ref))?;
@@ -257,6 +295,8 @@ impl AgentDispatcher<'_> {
             task_ref,
             label,
             body,
+            type_ref,
+            brief,
             responsibility: LeaderResponsibility {
                 project_ref,
                 authority,

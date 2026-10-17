@@ -687,6 +687,11 @@ pub(super) fn read_turn_facts_in_txn(
     {
         return Err(crate::secret_custody::reject_secret_custody_byte());
     }
+    // A TURN whose words a deletion withdrew reads as the empty body, as the
+    // committed twin reads it through `Vault::get_raw`.
+    if !crate::ports::raw_readable_in_txn(&vault.store, txn, id, &raw)? {
+        return Ok(decode_turn_body(&[]));
+    }
     Ok(decode_turn_body(
         &raw[ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
     ))

@@ -3,6 +3,7 @@
 use crate::attempt_queue::annotation_hold::{
     ANNOTATION_HOLD_ACTOR, ERR_ANNOTATION_HOLD_ACTOR_RESERVED,
 };
+use crate::attempt_queue::budget_hold::{BUDGET_HOLD_ACTOR, ERR_BUDGET_HOLD_ACTOR_RESERVED};
 use crate::attempt_queue::cancel::{
     ATTEMPT_RUNTIME_ACTOR, AttemptCancelState, AttemptLandingReserve, ForceCancelAuthority,
     force_cancel_record, validate_force_authority,
@@ -244,6 +245,13 @@ impl AttemptQueue<'_> {
         if input.actor == ANNOTATION_HOLD_ACTOR {
             return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_ANNOTATION_HOLD_ACTOR_RESERVED,
+            )));
+        }
+        // OF-541: the budget hold's actor is the engine's own too; only the
+        // lease-fenced hold door writes it.
+        if input.actor == BUDGET_HOLD_ACTOR {
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                ERR_BUDGET_HOLD_ACTOR_RESERVED,
             )));
         }
         self.apply_intervention_in_txn(wtxn, input)
