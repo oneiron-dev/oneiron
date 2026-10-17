@@ -526,6 +526,49 @@ fn escrow_vault_key(vault: &oneiron::Vault, managed: &ManagedArgs) -> anyhow::Re
     Ok(())
 }
 
+/// Hands each escrow capsule the outbox does not hold yet to the outbox the
+/// supervisor named (CROSS-ARCH-0022 #ov-custody, invariant 03): the report
+/// is written durably first and marked in the vault after, so a crash
+/// between the two writes the same report again. The node ships it and
+/// removes it only after the registry's durable acknowledgement. A capsule
+/// that cannot be spooled waits for the next start; the vault still serves,
+/// since the node holds the key it runs on.
+fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
+    let Some(outbox) = &managed.escrow_outbox else {
+        return;
+    };
+    let spool = || -> anyhow::Result<()> {
+        for capsule in vault.vault_key_escrow_capsules()? {
+            let Some((role @ ("managed" | "break-glass"), _)) = capsule.label.split_once('.')
+            else {
+                continue;
+            };
+            if capsule.spooled {
+                continue;
+            }
+            let report = oneiron_vault_contract::escrow::EscrowCapsuleReport {
+                schema_version: oneiron_vault_contract::escrow::ESCROW_REPORT_SCHEMA_VERSION,
+                report_type: oneiron_vault_contract::escrow::ESCROW_REPORT_TYPE.to_owned(),
+                report_id: blake3::hash(&capsule.capsule).to_hex().to_string(),
+                vault_name: managed.vault_name.clone(),
+                vault_id: oneiron_vault_contract::hex(&capsule.vault_id),
+                role: role.to_owned(),
+                label: capsule.label.clone(),
+                wrap_id: capsule.wrap_id.clone(),
+                key_commitment: oneiron_vault_contract::hex(&capsule.commitment),
+                capsule: oneiron_vault_contract::hex(&capsule.capsule),
+                sealed_at: capsule.created_at,
+            };
+            oneiron_vault_contract::escrow::spool_escrow_report(outbox, &report)?;
+            vault.mark_vault_key_escrow_spooled(&capsule.wrap_id, &capsule.capsule)?;
+        }
+        Ok(())
+    };
+    if let Err(error) = spool() {
+        tracing::warn!(%error, "an escrow capsule was not spooled; the next start spools it");
+    }
+}
+
 /// Boots the engine as a supervised child process.
 ///
 /// The startup order is the contract, not an implementation detail: the
@@ -594,6 +637,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // recipient the node's operator installed keeps a copy of it.
     vault.admit_vault_key(&credentials.dek)?;
     escrow_vault_key(&vault, &managed)?;
+    spool_vault_key_escrow(&vault, &managed);
     // Managed mode reads no environment, so the destination carries no
     // bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)

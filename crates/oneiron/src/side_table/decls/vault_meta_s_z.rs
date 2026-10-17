@@ -580,6 +580,9 @@ side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw;
+    /// The blake3 of the escrow capsule each escrow wrap last handed to the host's outbound spool
+    /// (OF-570, CROSS-ARCH-0022 invariant 03). Key: string (wrap id).
+    VAULT_KEY_ESCROW_SPOOLED: VaultMeta b"vault_key:escrow_spooled:v1:" Named;
     /// The vault data key's commitment and birth (OF-570 E1). Never the key. Key: ().
     VAULT_KEY_STATE: VaultMeta b"vault_key:state:v1" Named;
     /// One way to unlock the vault data key: an E0 `VaultDek` envelope and its public
