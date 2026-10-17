@@ -71405,7 +71405,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 11,
       "struct": 1
      }
@@ -71431,7 +71431,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 23,
       "fn": 16,
       "struct": 3
      }
