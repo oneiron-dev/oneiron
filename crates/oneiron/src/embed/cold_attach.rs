@@ -1,6 +1,6 @@
 //! First-provider backfill, distinct from embedding-space migration.
 use super::EMBED_PRIORITY_BACKFILL;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, IndexMetaKey, RetrievalIndexInventory};
 use crate::{Error, Result};
 
 /// Marker set atomically with the first model identity, consumed by cold attach.
@@ -21,8 +21,7 @@ impl crate::Vault {
         self.with_write_txn_grouped(|wtxn| {
             if self
                 .store
-                .hnsw_meta
-                .get(wtxn, COLD_ATTACH_PENDING_KEY)?
+                .port_index_meta_with_raw(wtxn, IndexMetaKey::ColdAttachPending, |_| Ok(()))?
                 .is_none()
             {
                 return Ok(0);
@@ -96,7 +95,10 @@ fn remark_pending_in_txn(
         // e.g. a restored record the worker filled before this attach.
         let mut owed = Vec::with_capacity(embeddable.len());
         for (id, body) in embeddable {
-            if vault.store.vectors.get(wtxn, id.as_bytes())?.is_none()
+            if vault
+                .store
+                .port_vector_with_raw(wtxn, &id, |_| Ok(()))?
+                .is_none()
                 || vault
                     .store
                     .has_current_pending_embedding_in_txn(wtxn, &id)?

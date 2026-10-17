@@ -6,10 +6,10 @@ use crate::bm25;
 use crate::config::VaultConfig;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result, StoreError};
+use crate::ports::{IndexMetaKey, IndexRows, RetrievalIndexInventory};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::{
-    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, Store, TEXT_INDEX_SCHEMA_VERSION,
-    lmdb_database_open_guard,
+    DB_MANIFEST, HnswCompatibilityState, Store, TEXT_INDEX_SCHEMA_VERSION, lmdb_database_open_guard,
 };
 use serde::Serialize;
 
@@ -161,10 +161,13 @@ fn doctor_embedding_model_id(
     rtxn: &heed::RoTxn<'_>,
     unreadable_fields: &mut Vec<String>,
 ) -> Result<Option<String>> {
-    let Some(raw) = store.hnsw_meta.get(rtxn, MODEL_ID_KEY)? else {
+    let Some(parsed) = store.port_index_meta_with_raw(rtxn, IndexMetaKey::ModelId, |raw| {
+        Ok(crate::store::parse_utf8_bytes(raw))
+    })?
+    else {
         return Ok(None);
     };
-    match crate::store::parse_utf8_bytes(&raw) {
+    match parsed {
         Ok(model_id) => Ok(Some(model_id)),
         Err(Error::InvalidKey | Error::CorruptedIndex(_)) => {
             unreadable_fields.push("hnsw_meta.model_id".to_owned());
@@ -179,7 +182,7 @@ fn doctor_hnsw(
     rtxn: &heed::RoTxn<'_>,
     unreadable_fields: &mut Vec<String>,
 ) -> Result<VaultDoctorHnswReport> {
-    match crate::store::read_hnsw_compatibility(&store.hnsw_meta, rtxn) {
+    match crate::store::read_hnsw_compatibility(store, rtxn) {
         Ok(HnswCompatibilityState::Missing) => Ok(VaultDoctorHnswReport {
             record_state: VaultDoctorHnswRecordState::Missing,
             vector_dimensions: None,
@@ -349,10 +352,10 @@ fn read_bm25_field_schema_hash(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<
 /// sentinel coexisting with rows in any of the text DBs is corruption, not
 /// emptiness.
 fn text_index_residual_rows_empty(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    let residual = store.text_postings.len(txn)?
-        + store.text_forward.len(txn)?
-        + store.text_doc_field_lengths.len(txn)?
-        + store.text_bm25_field_stats.len(txn)?;
+    let residual = store.port_index_row_count(txn, IndexRows::TextPostings)?
+        + store.port_index_row_count(txn, IndexRows::TextForward)?
+        + store.port_index_row_count(txn, IndexRows::TextDocFieldLengths)?
+        + store.port_index_row_count(txn, IndexRows::TextBm25FieldStats)?;
     Ok(residual == 0)
 }
 
