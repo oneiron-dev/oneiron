@@ -33,7 +33,7 @@ use oneiron::context_board::StreamConnectionId;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
     answer_records, create_question, edit_question, pause_question, read_question,
-    run_graph_ask_receipted, select_graph_units_by_type,
+    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
 };
 use oneiron::llm::media::{AiOperation, Modality};
 use oneiron::memory::{
@@ -41,8 +41,9 @@ use oneiron::memory::{
     MemoryResult, ProducerRows,
 };
 use oneiron::receipt::{
-    GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
+    GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionBackfillRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
@@ -305,6 +306,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultQuestionsCreate
             | AgentVerb::VaultQuestionsEdit
             | AgentVerb::VaultQuestionsPause
+            | AgentVerb::VaultQuestionsBackfill
             | AgentVerb::VaultQuestionsRead
             | AgentVerb::VaultQuestionsAnswers
             | AgentVerb::TasksWave
@@ -415,6 +417,16 @@ fn host_row(
                 id: request.id,
                 paused: request.paused,
             })
+        }
+        AgentVerb::VaultQuestionsBackfill => {
+            let request: QuestionBackfillRequest = decode(input)?;
+            encode(schedule_backfill(
+                vault,
+                principal,
+                request.id,
+                request.expected_version,
+                request.at.unwrap_or(now),
+            )?)
         }
         AgentVerb::VaultQuestionsRead => {
             let request: QuestionReadRequest = decode(input)?;

@@ -349,8 +349,34 @@ pub(crate) fn create_in_txn(
     if !fresh_id_in_txn(&vault.store, txn, id)? {
         return Err(state("conversation already exists"));
     }
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
     for person in &body.member_ids {
         require_kind(vault, txn, *person, ENTITY_TYPE_PERSON)?;
+        // OF-365 P5: an initial member's first entry is recorded with its
+        // join, as the membership door records a later member's.
+        if super::attendee::initial_member_enters_in(
+            vault,
+            txn,
+            &fold,
+            body,
+            actor.entity_ref(),
+            *person,
+        )? {
+            crate::task_verb::admit_attendee_entry_in_txn(
+                vault,
+                txn,
+                actor.entity_ref(),
+                &ContainerAttendeeEvent {
+                    container: id,
+                    attendee: ContainerAttendee::Person(*person),
+                    roster_revision: occurred.start.max(1),
+                    trigger_turn: None,
+                    candidates: Vec::new(),
+                    until: occurred.start,
+                    history: HistoryChoice::Inherit,
+                },
+            )?;
+        }
         membership::append_row(
             vault,
             txn,
