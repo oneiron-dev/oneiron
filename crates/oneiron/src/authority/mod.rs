@@ -56,6 +56,7 @@ mod host_re_root;
 mod import_order;
 mod ingest_observation;
 mod install_fold;
+mod invitee_slip;
 mod invocation_slip;
 mod left_notices;
 mod log_budget;
@@ -172,7 +173,7 @@ pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::HostSlipIssuer;
-pub(crate) use task_actor::TaskActorVerb;
+pub(crate) use task_actor::{TaskActorProof, TaskActorVerb};
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.

@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate.rs` | src | s | 1 struct | RetrievalFilter | The caller-supplied retrieval filter |
 | `src/identity_topology.rs` | src | s | 2 enum · 4 fn | EntityLifecycleState, IdentityTopologyRejection | Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay… |
 | `src/lib.rs` | src | s | 22 mod · 2 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
-| `src/limit_ask.rs` | src | s | 2 struct · 1 enum · 1 trait · 11 fn · 1 const | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
+| `src/limit_ask.rs` | src | m | 2 struct · 1 enum · 1 trait · 11 fn · 1 const | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
 | `src/memory.rs` | src | s | 3 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
 | `src/memory/error.rs` | src | m | 5 struct · 7 fn · 1 type · 15 const | MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
