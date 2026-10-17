@@ -26,7 +26,7 @@ pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 pub(crate) use sealed::drop_sealed_labels_in_txn;
 pub use sealed::{
     SEALED_PUT_PART_MAX, SEALED_READ_PART_MAX, SEALED_SHELF_PAGE_MAX, SealedShelfEntry,
-    sealed_shelf_after, sealed_shelf_packet, sealed_shelf_packet_part, shelve_sealed_window,
+    sealed_shelf_after, sealed_shelf_packet_part, shelve_sealed_window,
     shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
     wanted_sealed_replacements,
 };

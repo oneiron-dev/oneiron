@@ -28,7 +28,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 }
 
 /// `POST /v1/federation/courtesy-delete`: a former peer's signed ask.
-async fn take_request(State(server): State<Arc<SyncServer>>, body: Bytes) -> Response {
+#[utoipa::path(post, path = "/v1/federation/courtesy-delete",
+    operation_id = "federation_courtesy_delete",
+    request_body(content = Vec<u8>, description = "The former peer's signed ask, in the courtesy codec. No bearer: the signature, checked against the key this vault pinned for the pact it names, is the authentication.", content_type = "application/octet-stream"),
+    responses(
+        (status = 202, description = "Filed for the owner's review; nothing is deleted on receipt."),
+        (status = 200, description = "Already filed."),
+        (status = 403, description = "No pact with this peer, or the bytes do not verify against the key it pinned."),
+        (status = 409, description = "A different ask under the same nonce is already filed."),
+        (status = 503, description = "The vault could not file it now; send it again.")))]
+pub(super) async fn take_request(State(server): State<Arc<SyncServer>>, body: Bytes) -> Response {
     land(server, body, |vault, bytes, now| {
         vault.receive_cooperative_deletion_request(bytes, now)
     })
@@ -37,7 +46,16 @@ async fn take_request(State(server): State<Arc<SyncServer>>, body: Bytes) -> Res
 
 /// `POST /v1/federation/courtesy-delete/reply`: a former peer's answer to
 /// an ask this vault sent.
-async fn take_reply(State(server): State<Arc<SyncServer>>, body: Bytes) -> Response {
+#[utoipa::path(post, path = "/v1/federation/courtesy-delete/reply",
+    operation_id = "federation_courtesy_delete_reply",
+    request_body(content = Vec<u8>, description = "The former peer's signed answer, in the courtesy codec. No bearer: the signature, checked against the key this vault pinned for the pact it names, is the authentication.", content_type = "application/octet-stream"),
+    responses(
+        (status = 202, description = "Recorded on the sent ask."),
+        (status = 200, description = "Already recorded."),
+        (status = 403, description = "No pact with this peer, or the bytes do not verify against the key it pinned."),
+        (status = 409, description = "A different answer to the same ask is already recorded."),
+        (status = 503, description = "The vault could not record it now; send it again.")))]
+pub(super) async fn take_reply(State(server): State<Arc<SyncServer>>, body: Bytes) -> Response {
     land(server, body, |vault, bytes, now| {
         vault.receive_cooperative_deletion_reply(bytes, now)
     })

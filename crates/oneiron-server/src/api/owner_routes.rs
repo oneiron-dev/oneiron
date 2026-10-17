@@ -44,7 +44,7 @@ mod conflict_routes;
 mod connector_admission_routes;
 mod connector_consent_routes;
 mod connector_subscription_routes;
-mod cooperative_deletion_routes;
+pub(super) mod cooperative_deletion_routes;
 mod decision_ask_routes;
 mod diary_routes;
 mod disclosure_routes;

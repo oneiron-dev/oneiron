@@ -45,6 +45,8 @@ pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
+// The owner's courtesy delete doors (OF-273) too.
+pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::guest_doors::*;
 // The weave lens's human doors, likewise.
@@ -420,23 +422,25 @@ pub(crate) async fn ai_video_cancel(
 /// `self.memory.diary.query`: the caller reads an agent's diary, stating a
 /// reason the agent sees in its read log (`Memory::read_agent_diary`). The
 /// caller's `diary.read` Grants decide what it gets. A person reads with
-/// their authentication, so the vault owner's own credential carries the
-/// proof `/v1/owner` takes from the request; any other caller passes none
-/// and the gate decides: an agent or system reads as itself, and a person
-/// without the proof is refused.
+/// their authentication: the vault owner's own credential carries the proof
+/// `/v1/owner` takes from the request, and any other verified human carries
+/// their own person proof ([`super::shared_act_doors::person`], OF-490), so
+/// their own Grant decides. Any other caller passes none and the engine door
+/// decides: an agent or system reads as itself, and a person without a proof
+/// is refused.
 pub(crate) async fn self_memory_diary_query(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::DiaryQueryRequest,
 ) -> MemoryResult<oneiron::task_verb::sdk::DiaryQueryOutcome> {
-    let owner = crate::api::owner_routes::owner(auth, server).ok();
     let (actor, class) = diary_reader(auth)?;
     let server = Arc::clone(server);
     let auth = auth.clone();
     tokio::task::spawn_blocking(move || {
+        let proof = super::shared_act_doors::person(&server, &auth, "self.memory.diary.query").ok();
         let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
             .at(auth.locality());
-        oneiron::task_verb::sdk::diary_query_as(&memory, owner.as_ref(), input)
+        oneiron::task_verb::sdk::diary_query_as(&memory, proof.as_ref(), input)
     })
     .await
     .map_err(|_| internal("self.memory.diary.query"))?
@@ -613,6 +617,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.legal_holds.list"
         | "vault.legal_holds.log"
         | "vault.legal_holds.lift_and_erase"
+        | "vault.courtesy_delete.send"
+        | "vault.courtesy_delete.sent"
+        | "vault.courtesy_delete.incoming"
+        | "vault.courtesy_delete.answer"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"

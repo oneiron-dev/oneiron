@@ -644,7 +644,8 @@ pub enum ApiCommand {
         /// Entity id; percent-encoded into the path.
         entity_id: String,
     },
-    /// POST one core memory verb.
+    /// POST one verb: an SDK facade row to `/v1/core/facade/<verb>`, any
+    /// other name to `/v1/core/memory/verbs/<verb>`.
     Call {
         /// Verb name; percent-encoded into the path.
         verb: String,
