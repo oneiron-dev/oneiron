@@ -13,13 +13,16 @@ use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessTurn};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::JoinSubject;
+use std::collections::BTreeMap;
 
 /// What the room guard proved for one witness.
 pub(crate) struct RoomWitness {
-    /// A quote the witness mints into the TURN's first body and write
-    /// (OF-460): a project room's thread reply's, or any quoted turn's in an
-    /// ordinary room (FIX 2027). A project room's trunk turn's quote is kept
-    /// in its room row instead, and its TURN is minted opaque: `None`.
+    /// The reply topology the witness mints into the TURN's first body and
+    /// write when its messages quote (OF-460, FIX 2028): a project room's
+    /// thread reply's, or an ordinary room's quoted turn's (FIX 2027), whose
+    /// body also keeps its messages' quotes. A project room's trunk turn
+    /// keeps its quotes in its room row alone, and its TURN is minted
+    /// opaque: `None`, as for a stored TURN.
     pub(crate) quoted: Option<QuotedReply>,
     /// The thread binding a minted TURN is born with (FIX 2951): its root
     /// and, on the root, the audience it names. A stored TURN already holds
@@ -31,7 +34,9 @@ pub(crate) struct RoomWitness {
 /// room's claim, participation and quote rules, and a thread's audience
 /// (FIX 2951), checked before any message. `quote_key` is the speaker's
 /// read key, taken before the writer opened, that a quote's selection is
-/// read under (FIX 2027).
+/// read under (FIX 2027). `messages` are the input messages' ids, in order;
+/// each quote is proven, pinned and kept against its message's id (FIX
+/// 2028).
 #[expect(
     clippy::too_many_arguments,
     reason = "binds the witness transaction to its resolved actor, container and message ids"
@@ -52,13 +57,15 @@ pub(crate) fn admit_witness(
     // in a project room once its writer is admitted below.
     let writer = crate::WriteActor::new(actor, class);
     // A stored TURN keeps the thread it was born in (FIX 2951).
-    let stored = match live_entity_row_in_txn(&vault.store, txn, &turn_id)? {
+    let stored_body = match live_entity_row_in_txn(&vault.store, txn, &turn_id)? {
         LiveEntityRow::Live {
             entity_type: crate::registry::ENTITY_TYPE_TURN,
             body,
-        } => Some(thread_binding(&body)?),
+        } => Some(body),
         _ => None,
     };
+    let stored = stored_body.as_deref().map(thread_binding).transpose()?;
+    let quoting = input.messages.iter().any(|m| m.quote.is_some());
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         // An ordinary room's thread opens on its DAG, so a witness opens
         // none; one adding to a private thread's TURN writes from its
@@ -71,34 +78,61 @@ pub(crate) fn admit_witness(
         {
             return Err(invalid());
         }
-        // FIX 2027: a quote rides a turn in any room (ARCH-0006a:229). Its
-        // speaker takes part here, on a seat or a live Ready join, and its
-        // selection is one the speaker's own read admits under the room's
-        // ceiling, or the thread's a stored turn sits in. The turn stays an
-        // opaque one that answers the quoted TURN: no thread, no `Parent`.
-        let quoted = match input.quote {
-            None => None,
-            Some(quote) => {
-                let now = vault.store.clock.now_recorded_at();
-                let subject = participant_in_txn(vault, txn, actor, now)?.ok_or_else(invalid)?;
-                let members = vault.members_in_txn(txn, room)?;
-                if !members.contains(&actor) && !members.contains(&subject.id()) {
-                    super::participation::joined(
-                        crate::workspace_roster::require_join_for_branch_in_txn(
-                            vault, txn, room, None, &subject, None,
-                        ),
-                    )?
-                    .ok_or_else(invalid)?;
-                }
-                let landing = stored
-                    .as_ref()
-                    .and_then(|held| held.as_ref())
-                    .map(|held| held.root);
-                quote_read_in_txn(vault, txn, room, landing, actor, quote, quote_key)?;
-                Some(QuotedReply::prove_trunk_in_txn(
-                    vault, txn, room, writer, quote, turn_id,
-                )?)
+        // FIX 2027: a quote rides a turn in any room (ARCH-0006a:229), one
+        // per message (FIX 2028). Its speaker takes part here, on a seat or a
+        // live Ready join, and each selection is one the speaker's own read
+        // admits under the room's ceiling, or the thread's a stored turn sits
+        // in. An ordinary room keeps no room row, so its turn's first body
+        // keeps its messages' quotes by citing MESSAGE: they are born with
+        // the TURN, which stays an opaque one answering its first quoted
+        // message's TURN, no thread, no `Parent`. A retried message carries
+        // its own kept quote again; a stored TURN takes no new one.
+        if quoting {
+            let now = vault.store.clock.now_recorded_at();
+            let subject = participant_in_txn(vault, txn, actor, now)?.ok_or_else(invalid)?;
+            let members = vault.members_in_txn(txn, room)?;
+            if !members.contains(&actor) && !members.contains(&subject.id()) {
+                super::participation::joined(
+                    crate::workspace_roster::require_join_for_branch_in_txn(
+                        vault, txn, room, None, &subject, None,
+                    ),
+                )?
+                .ok_or_else(invalid)?;
             }
+        }
+        let landing = stored
+            .as_ref()
+            .and_then(|held| held.as_ref())
+            .map(|held| held.root);
+        let kept = match &stored_body {
+            Some(body) => crate::conversation_dag::witness_turn_quotes(body)?,
+            None => BTreeMap::new(),
+        };
+        let mut quotes = BTreeMap::new();
+        let mut target = None;
+        for (message, id) in input.messages.iter().zip(messages) {
+            let Some(quote) = message.quote else {
+                if kept.contains_key(id) {
+                    return Err(invalid());
+                }
+                continue;
+            };
+            quote_read_in_txn(vault, txn, room, landing, actor, quote, quote_key)?;
+            let proven =
+                ProvenRoomQuote::prove_ordinary_in_txn(vault, txn, room, writer, quote, *id)?;
+            match kept.get(id) {
+                Some(stored_quote) => proven.require_stored_in_txn(vault, txn, stored_quote)?,
+                None if stored_body.is_some() => return Err(invalid()),
+                None => {
+                    proven.pin_in_txn(vault, txn)?;
+                    target.get_or_insert(proven.target_turn());
+                    quotes.insert(*id, proven.metadata());
+                }
+            }
+        }
+        let quoted = match target {
+            Some(target) => Some(QuotedReply::ordinary_in_txn(vault, txn, target, quotes)?),
+            None => None,
         };
         super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
         return Ok(RoomWitness {
@@ -301,53 +335,65 @@ pub(crate) fn admit_witness(
         }
         RESPONSE.put(&vault.store, txn, &parent, &turn_id)?;
     }
-    // FIX 2027: the selection is one the speaker's own read admits under the
-    // destination's ceiling: the thread's the turn lands in, or the room's
-    // for a trunk turn and for a thread's root this write births, which has
-    // no thread to read from yet. A stored or missing other root keeps the
-    // fail-closed gates above.
-    if let Some(quote) = input.quote {
-        let read_branch = if branch == Some(turn_id) && stored.is_none() {
-            None
-        } else {
-            branch
-        };
+    // FIX 2027: each selection is one the speaker's own read admits under
+    // the destination's ceiling: the thread's the turn lands in, or the
+    // room's for a trunk turn and for a thread's root this write births,
+    // which has no thread to read from yet. A stored or missing other root
+    // keeps the fail-closed gates above.
+    let read_branch = if branch == Some(turn_id) && stored.is_none() {
+        None
+    } else {
+        branch
+    };
+    for quote in input.messages.iter().filter_map(|message| message.quote) {
         quote_read_in_txn(vault, txn, room, read_branch, actor, quote, quote_key)?;
     }
-    // OF-460: the quote is proven in this write against the reply's own
-    // thread chain, never moved onto the quoted target, so a thread reply
-    // may quote a trunk message. A thread's root, which names its anchor
-    // and answers no turn, continues the anchor. The claim parent above
-    // stays `reply_to`. A trunk turn's quote reads from the trunk alone and
-    // is kept in its room row: the TURN stays opaque and unchained, so the
-    // room's DAG keeps its one trunk root.
-    let mut trunk_quote = None;
-    let quoted = match (input.quote, thread_of) {
-        (None, _) => None,
-        (Some(quote), Some(anchor)) => {
-            let parent = dag_parent_in_txn(vault, txn, anchor, reply_to.unwrap_or(anchor))?;
-            Some(QuotedReply::prove_in_txn(
-                vault,
-                txn,
-                room,
-                parent,
-                crate::WriteActor::new(actor, class),
-                quote,
-                turn_id,
-            )?)
+    // OF-460, FIX 2028: each message's quote is proven in this write against
+    // the reply's own thread chain, never moved onto the quoted target, so a
+    // thread reply may quote a trunk message, and that MESSAGE cites it. A
+    // thread's root, which names its anchor and answers no turn, continues
+    // the anchor. The claim parent above stays `reply_to`. Every quote is
+    // kept in the turn's room row by citing MESSAGE, once: a retried message
+    // carries its own again, a message stored without one takes none, and a
+    // new message on a stored turn adds its own. A trunk turn's quotes read
+    // from the trunk alone and its TURN stays opaque and unchained, so the
+    // room's DAG keeps its one trunk root; a thread reply minted with quotes
+    // is a DAG thread record answering its first quoted message's TURN.
+    let parent = match thread_of {
+        Some(anchor) if quoting => {
+            Some(dag_parent_in_txn(vault, txn, anchor, reply_to.unwrap_or(anchor))?)
         }
-        (Some(quote), None) => {
-            trunk_quote = Some(ProvenRoomQuote::prove_in_txn(
-                vault,
-                txn,
-                room,
-                None,
-                crate::WriteActor::new(actor, class),
-                quote,
-                turn_id,
-            )?);
-            None
+        _ => None,
+    };
+    let old = TURNS.get(&vault.store, txn, &turn_id)?;
+    let mut quotes = old
+        .as_ref()
+        .map_or_else(BTreeMap::new, |old| old.quotes.clone());
+    let mut target = None;
+    for (message, id) in input.messages.iter().zip(messages) {
+        let kept = quotes.get(&id.to_hex()).copied();
+        let Some(quote) = message.quote else {
+            if kept.is_some() {
+                return Err(invalid());
+            }
+            continue;
+        };
+        let proven = ProvenRoomQuote::prove_in_txn(vault, txn, room, parent, writer, quote, *id)?;
+        target.get_or_insert(proven.target_turn());
+        match kept {
+            Some(stored_quote) => proven.require_stored_in_txn(vault, txn, &stored_quote)?,
+            None if vault.get_entity_type_in_txn(txn, id)?.is_some() => return Err(invalid()),
+            None => {
+                proven.pin_in_txn(vault, txn)?;
+                quotes.insert(id.to_hex(), proven.metadata());
+            }
         }
+    }
+    let quoted = match (parent, target) {
+        (Some(parent), Some(target)) if stored.is_none() => {
+            Some(QuotedReply::thread_in_txn(vault, txn, room, parent, target)?)
+        }
+        _ => None,
     };
     let mut turn = RoomTurn {
         turn_id: turn_id.to_hex(),
@@ -360,20 +406,8 @@ pub(crate) fn admit_witness(
         at: input.occurred_at,
         task_ids: Vec::new(),
         converted_project: None,
-        quote: trunk_quote.as_ref().map(ProvenRoomQuote::metadata),
+        quotes,
     };
-    let old = TURNS.get(&vault.store, txn, &turn_id)?;
-    // A kept quote is immutable: an append or retry carries the same one and
-    // never re-pins it; only its first attachment writes the citation pin.
-    match (
-        &trunk_quote,
-        old.as_ref().and_then(|old| old.quote.as_ref()),
-    ) {
-        (Some(proven), Some(stored)) => proven.require_stored_in_txn(vault, txn, stored)?,
-        (Some(proven), None) if old.is_none() => proven.pin_in_txn(vault, txn)?,
-        (None, None) => {}
-        _ => return Err(invalid()),
-    }
     if let Some(old) = old {
         if old.actor != turn.actor
             || old.room_id != turn.room_id

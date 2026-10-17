@@ -160,9 +160,12 @@ pub struct RoomTurn {
     pub task_ids: Vec<String>,
     #[serde(default)]
     pub converted_project: Option<String>,
-    /// A trunk turn's quote (OF-460). A thread reply's quote stays in its
-    /// TURN's reply pointer, never here.
-    pub quote: Option<crate::conversation_dag::RoomQuote>,
+    /// Its messages' quotes (OF-460, FIX 2028), on trunk and thread turns
+    /// alike, keyed by the citing MESSAGE's id, one of `message_ids`. An
+    /// entry is its message's birth fact: written once, in the message's own
+    /// witness, and never changed; a later message adds its own.
+    #[serde(default)]
+    pub quotes: std::collections::BTreeMap<String, crate::conversation_dag::RoomQuote>,
 }
 /// The first trunk entry is the origin card when this room came from a thread.
 /// It points to that thread without copying any of its messages.

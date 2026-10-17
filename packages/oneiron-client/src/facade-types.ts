@@ -452,16 +452,16 @@ export type TaskUpdateRequest = { task_ref: string; resultRef?: string | null; r
 export type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean; report?: TaskCallReceipt | null }
 /** `oneiron::task_verb::highway_types::TaskAccept` */
 export type TaskAccept = { task_ref: EntityId; intent_key: string }
-/** `oneiron::conversation_dag::types::QuoteSpan` */
-export type QuoteSpan = { message: EntityId; start: number; end: number }
 /** `oneiron::memory::witness::types::WitnessAuthor` */
 export type WitnessAuthor = "user" | "companion" | "system"
+/** `oneiron::conversation_dag::types::QuoteSpan` */
+export type QuoteSpan = { message: EntityId; start: number; end: number }
 /** `oneiron::memory::witness::types::WitnessMessage` */
-export type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number }
+export type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null }
 /** `oneiron::memory::witness::types::WitnessAssertions` */
 export type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] }
 /** `oneiron::memory::witness::types::WitnessTurn` */
-export type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions }
+export type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions }
 /** `oneiron::memory::claims::ClaimInput` */
 export type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null }
 /** `oneiron::memory::claims::CommitReceipt` */
@@ -1641,7 +1641,7 @@ export type QuoteAnchor = { anchor: "document"; message: EntityId; citation: Ent
 /** `oneiron::conversation_dag::quote::RoomQuote` */
 export type RoomQuote = { target_turn: EntityId; anchor: QuoteAnchor }
 /** `oneiron::workspace_roster::rooms::RoomTurn` */
-export type RoomTurn = { turn_id: string; room_id: string; actor: string; addressed_agents: string[]; message_ids: string[]; reply_to?: string | null; thread_of?: string | null; at: number; task_ids?: string[]; converted_project?: string | null; quote?: RoomQuote | null }
+export type RoomTurn = { turn_id: string; room_id: string; actor: string; addressed_agents: string[]; message_ids: string[]; reply_to?: string | null; thread_of?: string | null; at: number; task_ids?: string[]; converted_project?: string | null; quotes?: Record<string, RoomQuote> }
 /** `oneiron::workspace_roster::rooms::RoomPage` */
 export type RoomPage = { rows: RoomTurn[]; next_after?: string | null; scope: Scope }
 /** `oneiron::workspace_roster::rooms::participants::ParticipantsRequest` */

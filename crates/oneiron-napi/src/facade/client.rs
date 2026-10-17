@@ -10,8 +10,7 @@ use super::convert::{
 };
 use super::dtos::{
     NapiClaimInput, NapiCommitReceipt, NapiGateReceipt, NapiMemoryPack, NapiQueryAffect,
-    NapiQuoteSpan, NapiRecallMedia, NapiRecallScope, NapiWitnessMessage, NapiWitnessReceipt,
-    NapiWitnessTurn,
+    NapiRecallMedia, NapiRecallScope, NapiWitnessMessage, NapiWitnessReceipt, NapiWitnessTurn,
 };
 use super::input_error::witness_input_error;
 use super::numeric::{claim_input_to_engine, dimensions_to_engine, limit_to_engine};
@@ -46,9 +45,6 @@ pub struct NapiWitnessTurnInput {
     pub messages: Vec<NapiWitnessMessage>,
     /// Unix seconds; omitted ⇒ stamped at the call boundary.
     pub occurred_at: Option<f64>,
-    /// A quote on a project room's thread reply (OF-460): a span of one
-    /// MESSAGE in the room; omitted ⇒ no quote.
-    pub quote: Option<NapiQuoteSpan>,
     /// A new project room thread root's audience (32-hex PERSON and
     /// AGENT_DEF ids), fixed once set; omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
@@ -66,7 +62,6 @@ impl NapiWitnessTurnInput {
             turn_ref: self.turn_ref,
             messages: self.messages,
             occurred_at,
-            quote: self.quote,
             thread_audience: self.thread_audience,
         })
         .map_err(witness_input_error)

@@ -177,7 +177,7 @@ pub(crate) fn offer_turns_in_txn(
             at,
             task_ids: Vec::new(),
             converted_project: None,
-            quote: None,
+            quotes: BTreeMap::new(),
         });
     }
     Ok(turns)

@@ -106,6 +106,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
             metadata: message.metadata.clone(),
             is_visible: message.is_visible.unwrap_or(true),
             order: message.order,
+            quote: message.quote.as_ref().map(quote_to_engine).transpose()?,
         });
     }
     let thread_audience = turn
@@ -120,11 +121,9 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
                 .collect::<BoundaryResult<std::collections::BTreeSet<_>>>()
         })
         .transpose()?;
-    let quote = turn.quote.as_ref().map(quote_to_engine).transpose()?;
     Ok(WitnessTurn {
         conversation_ref: turn.conversation_ref.clone(),
         turn_ref: turn.turn_ref.clone(),
-        quote,
         thread_audience,
         messages,
         occurred_at: ts_to_engine(turn.occurred_at, "occurred_at")?,

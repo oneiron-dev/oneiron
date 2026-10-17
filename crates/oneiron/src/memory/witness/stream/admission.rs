@@ -394,7 +394,6 @@ impl Memory<'_> {
             WitnessTurn {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn.to_hex()),
-                quote: None,
                 thread_audience: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
@@ -412,6 +411,7 @@ impl Memory<'_> {
                         .and_then(serde_json::Value::as_u64)
                         .and_then(|order| u32::try_from(order).ok())
                         .ok_or(Error::CorruptedIndex("message order"))?,
+                    quote: None,
                 }],
                 occurred_at: self.vault.now_recorded_at(),
                 assertions: Default::default(),

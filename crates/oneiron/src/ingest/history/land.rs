@@ -191,6 +191,7 @@ pub(super) fn imported_message(
         metadata: Some(provenance(source, conversation, message, previous)),
         is_visible: true,
         order,
+        quote: None,
     }
 }
 
@@ -552,7 +553,6 @@ impl Import<'_> {
         let turn = WitnessTurn {
             conversation_ref: self.conversation_id.to_hex(),
             turn_ref: Some(turn_id.to_hex()),
-            quote: None,
             thread_audience: None,
             messages,
             occurred_at: occurred[0],

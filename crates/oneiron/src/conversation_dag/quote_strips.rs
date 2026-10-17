@@ -7,12 +7,11 @@
 //! [`super::ReplyStrip`] rules: a strip never shows replacement text as
 //! the historical quotation, and an erased message shows none.
 
-use super::graph::{conversation_of, edge_ids, invalid, require_type};
+use super::graph::{conversation_of, invalid, require_type};
 use super::quote::{
     QuoteAnchor, field, message_fields, owning_turn_in, read_pointer, scalar_slice,
 };
 use super::thread_projection::selected_thread_in_txn;
-use crate::edge::EdgeKind;
 use crate::entity_doc::CursorResolution;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -35,7 +34,8 @@ pub struct ReplyStripsRequest {
     pub room_ref: String,
     /// Trunk record whose selected thread is read, as `Vault::thread` selects it.
     pub thread_ref: String,
-    /// Last reply turn of a preceding page.
+    /// The last strip's citer on a preceding page (its `next_after`): the
+    /// citing MESSAGE, or a native append's TURN.
     #[serde(default)]
     pub after: Option<String>,
     /// Strips per page, 1..=256 (absent: 256).
@@ -60,10 +60,10 @@ pub enum QuoteStripStatus {
 /// One reply quoting a span of the group's message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuoteReplyStrip {
-    /// The replying TURN.
+    /// The TURN the citing message is part of, or a native append's own.
     pub reply_turn: String,
-    /// The reply's first MESSAGE when it holds any the reader may read; a
-    /// first-party append is its own record.
+    /// The MESSAGE that carries the quote (FIX 2028); absent for a native
+    /// append, which its TURN cites.
     pub reply_message: Option<String>,
     /// The anchor the strip resolves through: `<message>:<citation>` names a
     /// document citation pin, `<message>#<body hash>` an atomic message's
@@ -86,15 +86,21 @@ pub struct QuoteReplyGroup {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplyStripsPage {
     pub groups: Vec<QuoteReplyGroup>,
-    /// Explicit end marker: `None` means the thread has no further strip.
+    /// The last strip's citer, the next page's `after`; `None` means the
+    /// thread has no further strip.
     pub next_after: Option<String>,
 }
 
-/// One quote reply on the selected chain, before the reader's clamp.
+/// One quote on the selected chain, before the reader's clamp.
 struct QuoteFact {
+    /// The TURN the quote's citer is part of, or is.
     reply: EntityId,
-    reply_message: Option<EntityId>,
-    /// The quoted message's TURN, the reply pointer's target.
+    /// The record that cites the quote: a witnessed MESSAGE, or a native
+    /// append's TURN, `reply` itself (FIX 2028).
+    citer: EntityId,
+    /// The citing MESSAGE's order within its turn; 0 for a native append.
+    order: u32,
+    /// The quoted message's TURN.
     turn: EntityId,
     anchor: QuoteAnchor,
     /// The quoted message and its TURN are live rows, so the reader must be
@@ -105,6 +111,13 @@ struct QuoteFact {
     at: u64,
 }
 
+impl QuoteFact {
+    /// The citing MESSAGE; `None` when a native append's TURN cites.
+    fn reply_message(&self) -> Option<EntityId> {
+        (self.citer != self.reply).then_some(self.citer)
+    }
+}
+
 /// A handle's quote replies and how they are read. `room` is `None` for a
 /// DAG chain, read under the caller's own read; for a room turn it is the
 /// thread its selection reads under, `Some(None)` for a trunk's every thread.
@@ -113,10 +126,11 @@ struct QuoteSelection {
     room: Option<Option<EntityId>>,
 }
 
-/// Every quote reply `trunk` selects, in one snapshot. A DAG record's are
-/// those on its selected chain, root-first. A room turn's are those of every
-/// reply of every thread the room's index selects for it, with each native
-/// DAG append on the chain that has no room row, by `(at, reply id)`.
+/// Every quote `trunk` selects, in one snapshot. A DAG record's are those
+/// its selected chain's native appends hold, root-first. A room turn's are
+/// every message quote of every reply of every thread the room's index
+/// selects for it, with each native DAG append on the chain that has no room
+/// row, by `(at, reply id, message order, citer id)`.
 fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSelection> {
     let txn = vault.store.env.read_txn()?;
     if conversation_of(&vault.store, &txn, &trunk)? != room {
@@ -139,19 +153,12 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
     for turn in &indexed.turns {
         let reply = EntityId::from_hex(&turn.turn_id)?;
         selected.insert(reply);
-        // A trunk turn's quote is kept in its room row; a thread reply's in
-        // its TURN's reply pointer.
-        let pointer = match turn.quote {
-            Some(quote) => Some((quote.target_turn, quote.anchor)),
-            None => match live_entity_row_in_txn(&vault.store, &txn, &reply)? {
-                LiveEntityRow::Live {
-                    entity_type: ENTITY_TYPE_TURN,
-                    body,
-                } => read_pointer(&body)?,
-                _ => None,
-            },
-        };
-        facts.extend(fact_in(vault, &txn, reply, pointer, turn.at)?);
+        // Each message's quote is kept in its room row, by citing MESSAGE.
+        for (citer, quote) in &turn.quotes {
+            let citer = EntityId::from_hex(citer)?;
+            let pointer = Some((quote.target_turn, quote.anchor));
+            facts.extend(fact_in(vault, &txn, reply, citer, pointer, turn.at)?);
+        }
     }
     // A native append lands no room row, so only the DAG chain holds it.
     for reply in chain {
@@ -161,15 +168,15 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
             facts.extend(dag_fact_in(vault, &txn, reply)?);
         }
     }
-    facts.sort_by_key(|fact| (fact.at, fact.reply));
+    facts.sort_by_key(|fact| (fact.at, fact.reply, fact.order, fact.citer));
     Ok(QuoteSelection {
         facts,
         room: Some(indexed.root),
     })
 }
 
-/// [`fact_in`] for a DAG reply: its TURN's reply pointer, at its valid-time
-/// start.
+/// [`fact_in`] for a native DAG reply: its TURN's reply pointer, cited by
+/// that TURN, at its valid-time start.
 fn dag_fact_in(vault: &Vault, txn: &RoTxn<'_>, reply: EntityId) -> Result<Option<QuoteFact>> {
     let body = require_type(&vault.store, txn, &reply, ENTITY_TYPE_TURN)?;
     let at = vault
@@ -178,15 +185,17 @@ fn dag_fact_in(vault: &Vault, txn: &RoTxn<'_>, reply: EntityId) -> Result<Option
         .ok_or(Error::EntityNotFound)?
         .occurred
         .start;
-    fact_in(vault, txn, reply, read_pointer(&body)?, at)
+    fact_in(vault, txn, reply, reply, read_pointer(&body)?, at)
 }
 
-/// The quote fact of `reply`, whose quote `pointer` names: `None` when it
-/// quotes nothing, or when its live target is no TURN its message is part of.
+/// The quote fact `citer`, a MESSAGE of `reply` or `reply` itself, cites
+/// through `pointer`: `None` when it quotes nothing, or when its live target
+/// is no TURN its message is part of.
 fn fact_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
     reply: EntityId,
+    citer: EntityId,
     pointer: Option<(EntityId, QuoteAnchor)>,
     at: u64,
 ) -> Result<Option<QuoteFact>> {
@@ -201,28 +210,26 @@ fn fact_in(
     if target_live && owning_turn_in(&vault.store, txn, &message)? != turn {
         return Ok(None);
     }
-    let mut messages = Vec::new();
-    for child in edge_ids(
-        &vault.store,
-        txn,
-        &reply,
-        EdgeKind::PartOf,
-        true,
-        crate::limits::MAX_ANCESTOR_DEPTH,
-    )? {
-        if matches!(
-            live_entity_row_in_txn(&vault.store, txn, &child)?,
+    // A citing MESSAGE sorts by its place in its turn; one no longer live
+    // sorts last, and the reader's clamp withholds it.
+    let order = if citer == reply {
+        0
+    } else {
+        match live_entity_row_in_txn(&vault.store, txn, &citer)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_MESSAGE,
-                ..
-            }
-        ) {
-            messages.push(child);
+                body,
+            } => field(&message_fields(&body)?, "order")
+                .and_then(Value::as_u64)
+                .and_then(|order| u32::try_from(order).ok())
+                .unwrap_or(u32::MAX),
+            _ => u32::MAX,
         }
-    }
+    };
     Ok(Some(QuoteFact {
         reply,
-        reply_message: messages.into_iter().min(),
+        citer,
+        order,
         turn,
         anchor,
         target_live,
@@ -230,8 +237,12 @@ fn fact_in(
     }))
 }
 
-/// The strip's status and pinned excerpt.
-fn hydrate(vault: &Vault, anchor: &QuoteAnchor) -> Result<(QuoteStripStatus, Option<String>)> {
+/// The strip's status and pinned excerpt; `citer` keys a body anchor's pin.
+fn hydrate(
+    vault: &Vault,
+    anchor: &QuoteAnchor,
+    citer: EntityId,
+) -> Result<(QuoteStripStatus, Option<String>)> {
     let txn = vault.store.env.read_txn()?;
     let message = anchor.message();
     let row = live_entity_row_in_txn(&vault.store, &txn, &message)?;
@@ -250,22 +261,13 @@ fn hydrate(vault: &Vault, anchor: &QuoteAnchor) -> Result<(QuoteStripStatus, Opt
         _ => return Ok((QuoteStripStatus::Drifted, None)),
     };
     match *anchor {
-        QuoteAnchor::Document { message, citation } => {
-            let Some(pin) = vault.message_quote_pin_in_txn(&txn, &message, &citation)? else {
-                return Ok((QuoteStripStatus::Drifted, None));
-            };
-            drop(txn);
-            // The pin's quote was proven against the pinned version.
-            let excerpt = Some(pin.anchor.quote().to_owned());
-            let status = if vault.entity_text_frontier(&message)? == pin.anchor.frontier() {
-                QuoteStripStatus::Live
-            } else {
-                match vault.resolve_entity_text_cursor(&message, &pin.anchor)? {
-                    CursorResolution::Live { .. } => QuoteStripStatus::Edited,
-                    CursorResolution::Drifted { .. } => QuoteStripStatus::Drifted,
-                }
-            };
-            Ok((status, excerpt))
+        QuoteAnchor::Document { message, citation } => pinned(vault, txn, message, citation),
+        // OF-460 (FIX 852): a body-quoted MESSAGE that has since gained a
+        // document reads the pin its birth wrote for this citer.
+        QuoteAnchor::Body { .. }
+            if crate::entity_doc::has_record_head(&vault.store, &txn, &message)? =>
+        {
+            pinned(vault, txn, message, citer)
         }
         QuoteAnchor::Body {
             body_hash,
@@ -300,12 +302,39 @@ fn hydrate(vault: &Vault, anchor: &QuoteAnchor) -> Result<(QuoteStripStatus, Opt
     }
 }
 
+/// A document quote's status and excerpt from the citation pin `citation`
+/// holds on `message`: no pin reads as drifted, with no text.
+fn pinned(
+    vault: &Vault,
+    txn: RoTxn<'_>,
+    message: EntityId,
+    citation: EntityId,
+) -> Result<(QuoteStripStatus, Option<String>)> {
+    let Some(pin) = vault.message_quote_pin_in_txn(&txn, &message, &citation)? else {
+        return Ok((QuoteStripStatus::Drifted, None));
+    };
+    drop(txn);
+    // The pin's quote was proven against the pinned version.
+    let excerpt = Some(pin.anchor.quote().to_owned());
+    let status = if vault.entity_text_frontier(&message)? == pin.anchor.frontier() {
+        QuoteStripStatus::Live
+    } else {
+        match vault.resolve_entity_text_cursor(&message, &pin.anchor)? {
+            CursorResolution::Live { .. } => QuoteStripStatus::Edited,
+            CursorResolution::Drifted { .. } => QuoteStripStatus::Drifted,
+        }
+    };
+    Ok((status, excerpt))
+}
+
 impl Memory<'_> {
     /// One page of a thread's quote replies, grouped by the MESSAGE they
-    /// quote, in chronological reply order on the selected chain. Every row
-    /// passes the reader's own read lane (inside a room turn, the room's):
-    /// the trunk, each reply, and each quoted message and its TURN while they
-    /// are live. A withheld reply never fills a slot or becomes the cursor.
+    /// quote, in chronological reply order on the selected chain, one strip
+    /// per citing MESSAGE (FIX 2028), or per native append. Every row passes
+    /// the reader's own read lane (inside a room turn, the room's): the
+    /// trunk, each reply TURN and citing MESSAGE, and each quoted message and
+    /// its TURN while they are live. A withheld strip never fills a slot or
+    /// becomes the cursor, which names the strip's citer.
     /// A room turn's strips read its room's threads (OF-460) under the
     /// room's reader for a trunk's every thread, or one thread's own reader
     /// for that thread, as a room history read does.
@@ -340,7 +369,7 @@ impl Memory<'_> {
         let mut ids = BTreeSet::from([trunk]);
         for fact in &facts {
             ids.insert(fact.reply);
-            ids.extend(fact.reply_message);
+            ids.extend(fact.reply_message());
             if fact.target_live {
                 ids.extend([fact.turn, fact.anchor.message()]);
             }
@@ -383,7 +412,7 @@ impl Memory<'_> {
                     {
                         let ids = private.entry(root).or_default();
                         ids.push(fact.reply);
-                        ids.extend(fact.reply_message);
+                        ids.extend(fact.reply_message());
                         if fact.target_live {
                             ids.extend([fact.turn, fact.anchor.message()]);
                         }
@@ -421,6 +450,7 @@ impl Memory<'_> {
             .into_iter()
             .filter(|fact| {
                 admitted.contains(&fact.reply)
+                    && admitted.contains(&fact.citer)
                     && (!fact.target_live
                         || (admitted.contains(&fact.turn)
                             && admitted.contains(&fact.anchor.message())))
@@ -430,7 +460,7 @@ impl Memory<'_> {
             Some(after) => {
                 facts
                     .iter()
-                    .position(|fact| fact.reply == after)
+                    .position(|fact| fact.citer == after)
                     .ok_or_else(|| {
                         MemoryError::bad_request_with(
                             "cursor is not a quote reply on this thread",
@@ -444,13 +474,10 @@ impl Memory<'_> {
         let end = start.saturating_add(limit).min(facts.len());
         let mut groups: Vec<QuoteReplyGroup> = Vec::new();
         for fact in &facts[start..end] {
-            let (status, excerpt) = hydrate(self.vault(), &fact.anchor)?;
+            let (status, excerpt) = hydrate(self.vault(), &fact.anchor, fact.citer)?;
             let strip = QuoteReplyStrip {
                 reply_turn: fact.reply.to_hex(),
-                reply_message: fact
-                    .reply_message
-                    .filter(|id| admitted.contains(id))
-                    .map(|id| id.to_hex()),
+                reply_message: fact.reply_message().map(|id| id.to_hex()),
                 pin_ref: fact.anchor.reference(),
                 excerpt,
                 status,
@@ -469,7 +496,7 @@ impl Memory<'_> {
         }
         Ok(ReplyStripsPage {
             groups,
-            next_after: (end < facts.len()).then(|| facts[end - 1].reply.to_hex()),
+            next_after: (end < facts.len()).then(|| facts[end - 1].citer.to_hex()),
         })
     }
 }

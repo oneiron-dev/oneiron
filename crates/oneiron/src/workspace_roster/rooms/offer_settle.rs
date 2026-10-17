@@ -182,7 +182,6 @@ impl Acceptance {
         WitnessTurn {
             conversation_ref: self.card.room.to_hex(),
             turn_ref: Some(turn.to_hex()),
-            quote: None,
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
@@ -192,6 +191,7 @@ impl Acceptance {
                 metadata: Some(serde_json::Value::Object(metadata)),
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: at,
             assertions: Default::default(),

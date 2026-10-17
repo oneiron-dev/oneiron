@@ -49,9 +49,11 @@ pub(crate) enum TurnMerge {
 
 /// Merges a turn row another machine of this vault carried. A row this vault
 /// lacks is written as carried. One it holds keeps its room, actor,
-/// addressing, links, quote, time and conversion, and takes the carried
-/// messages and bound tasks it lacks; a carried row that names other fixed
-/// fields is refused. A row whose room this vault deleted, or holds no
+/// addressing, links, time and conversion, and takes the carried messages,
+/// bound tasks and message quotes it lacks; a carried row that names other
+/// fixed fields, or another quote for a message this vault's row already
+/// keeps one for (FIX 2028), is refused. A quote is kept only against a
+/// message the row names. A row whose room this vault deleted, or holds no
 /// record of, is refused before anything is written, so no turn or history
 /// row dangles from a room that is gone (OF-522).
 pub(crate) fn merge_replicated_turn_in_txn(
@@ -65,6 +67,10 @@ pub(crate) fn merge_replicated_turn_in_txn(
         || !named(&carried.actor)
         || carried.reply_to.as_deref().is_some_and(|id| !named(id))
         || carried.thread_of.as_deref().is_some_and(|id| !named(id))
+        || carried
+            .quotes
+            .keys()
+            .any(|citer| !named(citer) || !carried.message_ids.contains(citer))
     {
         return Ok(TurnMerge::Refused(TurnMergeRefusal::InvalidIds));
     }
@@ -84,7 +90,9 @@ pub(crate) fn merge_replicated_turn_in_txn(
                 || held.addressed_agents != carried.addressed_agents
                 || held.reply_to != carried.reply_to
                 || held.thread_of != carried.thread_of
-                || held.quote != carried.quote
+                || carried.quotes.iter().any(|(citer, quote)| {
+                    held.quotes.get(citer).is_some_and(|kept| kept != quote)
+                })
             {
                 return Ok(TurnMerge::Refused(TurnMergeRefusal::FixedFieldsConflict));
             }
@@ -98,6 +106,9 @@ pub(crate) fn merge_replicated_turn_in_txn(
                 if !merged.task_ids.contains(&task) {
                     merged.task_ids.push(task);
                 }
+            }
+            for (citer, quote) in carried.quotes {
+                merged.quotes.entry(citer).or_insert(quote);
             }
             if merged.converted_project.is_none() {
                 merged.converted_project = carried.converted_project;

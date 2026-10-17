@@ -20,6 +20,13 @@ WitnessAuthor = Literal["user", "companion", "system"]
 Effort = Literal["light", "medium", "high", "xhigh", "max", "call"]
 PackFormat = Literal["json", "yaml", "toon", "md", "txt"]
 
+class QuoteSpan(TypedDict):
+    # The quoted MESSAGE (not the TURN that holds it), as 32 hex.
+    message: str
+    # Half-open Unicode scalar indices into its text.
+    start: int
+    end: int
+
 class WitnessMessage(TypedDict):
     id: NotRequired[str]
     author: WitnessAuthor
@@ -28,13 +35,8 @@ class WitnessMessage(TypedDict):
     metadata: NotRequired[dict[str, Any] | None]
     is_visible: NotRequired[bool]
     order: int
-
-class QuoteSpan(TypedDict):
-    # The quoted MESSAGE (not the TURN that holds it), as 32 hex.
-    message: str
-    # Half-open Unicode scalar indices into its text.
-    start: int
-    end: int
+    # This message's quote: a span of one MESSAGE in the same room, cited by this message.
+    quote: NotRequired[QuoteSpan | None]
 
 class WitnessTurn(TypedDict):
     conversation_ref: str
@@ -42,8 +44,6 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
-    # A quote on a project room's thread reply: a span of one MESSAGE in the room.
-    quote: NotRequired[QuoteSpan | None]
     # A new project room thread root's audience; fixed once set.
     thread_audience: NotRequired[list[str] | None]
 

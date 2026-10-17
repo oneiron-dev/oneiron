@@ -311,7 +311,6 @@ pub(crate) fn witness_turn(
     WitnessTurn {
         conversation_ref: conversation_ref.to_owned(),
         turn_ref: turn.map(|turn| turn.to_hex()),
-        quote: None,
         thread_audience: None,
         messages: vec![WitnessMessage {
             id: None,
@@ -321,6 +320,7 @@ pub(crate) fn witness_turn(
             metadata: None,
             is_visible: true,
             order: 0,
+            quote: None,
         }],
         occurred_at: at,
         assertions: Default::default(),

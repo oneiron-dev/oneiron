@@ -247,11 +247,11 @@ declare namespace Sdk {
   type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean; report?: TaskCallReceipt | null };
   type ReaderReportReceipt = { task: EntityId; ref: string; replay: boolean };
   type TaskAccept = { task_ref: EntityId; intent_key: string };
-  type QuoteSpan = { message: EntityId; start: number; end: number };
   type WitnessAuthor = "user" | "companion" | "system";
-  type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number };
+  type QuoteSpan = { message: EntityId; start: number; end: number };
+  type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
-  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
+  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
@@ -841,7 +841,7 @@ declare namespace Sdk {
   type RoomRequest = { room_ref: string; after?: string | null; limit?: number | null };
   type QuoteAnchor = { anchor: "document"; message: EntityId; citation: EntityId } | { anchor: "body"; message: EntityId; body_hash: string; start: number; end: number; quote_hash: string };
   type RoomQuote = { target_turn: EntityId; anchor: QuoteAnchor };
-  type RoomTurn = { turn_id: string; room_id: string; actor: string; addressed_agents: string[]; message_ids: string[]; reply_to?: string | null; thread_of?: string | null; at: number; task_ids?: string[]; converted_project?: string | null; quote?: RoomQuote | null };
+  type RoomTurn = { turn_id: string; room_id: string; actor: string; addressed_agents: string[]; message_ids: string[]; reply_to?: string | null; thread_of?: string | null; at: number; task_ids?: string[]; converted_project?: string | null; quotes?: Record<string, RoomQuote> };
   type RoomPage = { rows: RoomTurn[]; next_after?: string | null; scope: Scope };
   type ParticipantsRequest = { room: EntityId; branch?: EntityId | null; after?: string | null; limit?: number | null };
   type JoinSubject = { kind: "person"; id: EntityId } | { kind: "agent"; id: EntityId };

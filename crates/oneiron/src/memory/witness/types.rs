@@ -62,6 +62,20 @@ pub struct WitnessMessage {
     pub is_visible: bool,
     /// Position of the message within its turn.
     pub order: u32,
+    /// This message's quote (OF-460; one per message, FIX 2028): a scalar
+    /// span of one MESSAGE in the same room that the speaker's own read
+    /// admits under the room's, or the destination thread's, ceiling; a
+    /// private thread's MESSAGE only from inside that thread. The witness
+    /// proves it in its own write, and this message is its citation: the
+    /// engine-issued anchor is kept against this message's id, in its
+    /// project room's turn row or, in an ordinary room, in its TURN's first
+    /// body, so an ordinary room's quotes are born with their TURN. A
+    /// project thread reply or an ordinary room's turn minted with quotes
+    /// answers the first quoted message's TURN; a project trunk turn stays
+    /// opaque. A stored message's quote is a birth fact, so a retry carries
+    /// the same one. Absent ⇒ no quote.
+    #[serde(default)]
+    pub quote: Option<crate::conversation_dag::QuoteSpan>,
 }
 
 /// One conversational turn to witness: create-or-get CONVERSATION/TURN plus
@@ -73,18 +87,6 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// TURN ref (create-or-get for hex); `None` ⇒ a fresh TURN is created.
     pub turn_ref: Option<String>,
-    /// A quote on a room turn (OF-460): a scalar span of one MESSAGE in the
-    /// same room that the speaker's own read admits under the room's, or the
-    /// destination thread's, ceiling; a private thread's MESSAGE only from
-    /// inside that thread. The witness proves it in its own write. A project
-    /// room's thread reply is minted with the engine-issued anchor, the reply
-    /// pointer to the quoted message's TURN and its DAG edges, its thread
-    /// chain its own; a project trunk turn keeps the quote in its room row;
-    /// an ordinary room's turn is minted with the anchor and reply pointer
-    /// alone, no thread. A stored turn's quote is a birth fact, so a retry
-    /// carries the same one. Absent ⇒ no quote.
-    #[serde(default)]
-    pub quote: Option<crate::conversation_dag::QuoteSpan>,
     /// The audience a project room thread's root names (FIX 2951): room
     /// PERSON and AGENT_DEF members, the speaker among them. Only the turn
     /// that opens a thread takes one, and it is fixed from then on: the

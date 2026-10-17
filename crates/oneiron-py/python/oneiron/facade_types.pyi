@@ -1190,11 +1190,11 @@ class TaskUpdateReceipt(TypedDict):
 class TaskAccept(TypedDict):
     task_ref: EntityId
     intent_key: str
+WitnessAuthor = Literal["user", "companion", "system"]
 class QuoteSpan(TypedDict):
     message: EntityId
     start: int
     end: int
-WitnessAuthor = Literal["user", "companion", "system"]
 class WitnessMessage(TypedDict):
     id: NotRequired[str | None]
     author: WitnessAuthor
@@ -1203,13 +1203,13 @@ class WitnessMessage(TypedDict):
     metadata: NotRequired[Any | None]
     is_visible: bool
     order: int
+    quote: NotRequired[QuoteSpan | None]
 class WitnessAssertions(TypedDict):
     cited: list[RecordRef]
     created: list[RecordRef]
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
-    quote: NotRequired[QuoteSpan | None]
     thread_audience: NotRequired[list[EntityId] | None]
     messages: list[WitnessMessage]
     occurred_at: int
@@ -4214,7 +4214,7 @@ class RoomTurn(TypedDict):
     at: int
     task_ids: NotRequired[list[str]]
     converted_project: NotRequired[str | None]
-    quote: NotRequired[RoomQuote | None]
+    quotes: NotRequired[dict[str, RoomQuote]]
 class RoomPage(TypedDict):
     rows: list[RoomTurn]
     next_after: NotRequired[str | None]

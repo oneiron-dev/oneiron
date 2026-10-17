@@ -61,13 +61,13 @@ impl Seed {
             metadata: self.metadata.clone(),
             is_visible: self.is_visible,
             order: self.order,
+            quote: None,
         }
     }
     pub(super) fn turn(&self, content: String) -> WitnessTurn {
         WitnessTurn {
             conversation_ref: self.conversation.to_hex(),
             turn_ref: Some(self.turn.to_hex()),
-            quote: None,
             thread_audience: None,
             messages: vec![self.message(content)],
             occurred_at: self.occurred_at,

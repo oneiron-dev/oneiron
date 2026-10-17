@@ -40,6 +40,9 @@ pub struct NapiWitnessMessage {
     pub is_visible: Option<bool>,
     /// Position within the turn; unique across the call.
     pub order: u32,
+    /// This message's quote (OF-460): a span of one MESSAGE in the same
+    /// room, cited by this message, one per message; omitted ⇒ no quote.
+    pub quote: Option<NapiQuoteSpan>,
 }
 
 /// One turn to witness.
@@ -53,9 +56,6 @@ pub struct NapiWitnessTurn {
     pub messages: Vec<NapiWitnessMessage>,
     /// Unix seconds (occurred + learned_at).
     pub occurred_at: i64,
-    /// A quote on a project room's thread reply (OF-460): a span of one
-    /// MESSAGE in the room; omitted ⇒ no quote.
-    pub quote: Option<NapiQuoteSpan>,
     /// A new project room thread root's audience (32-hex PERSON and
     /// AGENT_DEF ids), fixed once set; omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,

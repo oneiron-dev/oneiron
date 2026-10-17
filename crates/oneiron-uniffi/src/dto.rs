@@ -85,6 +85,9 @@ pub struct WitnessMessage {
     pub is_visible: Option<bool>,
     /// Position within the turn.
     pub order: u32,
+    /// This message's quote: a scalar span of one MESSAGE in the same room,
+    /// cited by this message, one per message. Omitted means no quote.
+    pub quote: Option<QuoteSpan>,
 }
 
 /// One turn to witness.
@@ -94,9 +97,6 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// Turn ref (create-or-get); omitted means a fresh turn.
     pub turn_ref: Option<String>,
-    /// A quote on a project room's thread reply: a scalar span of one MESSAGE
-    /// in the room. Omitted means no quote.
-    pub quote: Option<QuoteSpan>,
     /// A new project room thread root's audience, as 32-hex PERSON and
     /// AGENT_DEF ids, fixed once set. Omitted means it reads as its room does.
     pub thread_audience: Option<Vec<String>>,

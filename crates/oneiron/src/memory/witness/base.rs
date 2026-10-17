@@ -44,8 +44,9 @@ pub(super) enum BaseGuards {
         /// The project whose leader chat admitted this witness; its records
         /// are settled after the landing's effect.
         leader_project: Option<EntityId>,
-        /// The quote the room guard proved for the turn (OF-460, FIX 2027):
-        /// the TURN is minted with it, or a stored one must already carry it.
+        /// The reply topology the room guard fixed for a TURN this write
+        /// mints with quotes (OF-460, FIX 2027, FIX 2028); the quotes
+        /// themselves are proven, pinned and kept by citing MESSAGE there.
         quoted: Option<crate::conversation_dag::QuotedReply>,
         /// The thread binding the room guard proved (FIX 2951): a minted
         /// TURN is born with it; a stored one already holds it.
@@ -321,8 +322,8 @@ impl Memory<'_> {
     /// concurrent hard delete cannot land between check and commit, A1),
     /// `prepare` runs, the conversation is re-read as a live room, an erased
     /// PERSON is refused, and the room admits the witness. `quote_key`, taken
-    /// before the writer opened, is the read a quote's selection passes
-    /// (FIX 2027).
+    /// before the writer opened, is the read each message's quote selection
+    /// passes (FIX 2027).
     pub(super) fn base_guards_in_txn(
         &self,
         plan: &WitnessPlan<'_>,
@@ -437,8 +438,9 @@ impl Memory<'_> {
 
     /// Stages the admitted turn into base: one batch, its text ops, the open
     /// session's activity bump and the turn's session membership. A minted
-    /// quoted turn also takes its `RepliesTo` edge, a project thread reply's
-    /// `Parent`, and its citation pin here, in the TURN's own write (OF-460).
+    /// quoted turn also takes its `RepliesTo` edge and a project thread
+    /// reply's `Parent` here, in the TURN's own write (OF-460); its messages'
+    /// citation pins were written by the room guard in this same write.
     pub(super) fn stage_in_base(
         &self,
         plan: &WitnessPlan<'_>,
@@ -538,9 +540,6 @@ impl Memory<'_> {
             }
         }
         batch.apply(wtxn)?;
-        if let (Some(quoted), AdmittedTurn::Mint { .. }) = (quoted, &admission.turn) {
-            quoted.pin_in_txn(self.vault, wtxn)?;
-        }
         // The re-put moves the TURN only to `old + 1`, which a scope cursor a
         // later TURN advanced can already be past; the re-dirty carrier puts it
         // past every cursor in this same commit.
