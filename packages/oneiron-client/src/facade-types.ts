@@ -1,377 +1,1180 @@
-// Generated from Rust facade DTOs by scripts/sdk/generate.py.
-export type TaskCanAskRequest = {
-  ask: unknown
-}
-export type TaskAskShort = {
-  who?: unknown | null
-  what: unknown
-  until?: number | null
-  default?: unknown
-}
-export type TaskWaitRequest = {
-  handle: unknown
-  step_key: string
-}
-export type TaskAnswerRequest = {
-  handle: unknown
-  word: unknown
-}
-export type EmptyRequest = {
-}
-export type RoomRequest = {
-  room_ref: string
-  after?: string | null
-  limit?: number | null
-}
-export type RoomRefRequest = {
-  room_ref: string
-}
-export type RoomTurnRequest = {
-  room_ref: string
-  turn_ref: string
-}
-export type RoomClaimRequest = {
-  room_ref: string
-  turn_ref: string
-}
-export type ProjectRefRequest = {
-  project_ref: string
-}
-export type ProjectGoalDismissRequest = {
-  project_ref: string
-  expected_goal_ref: string
-  question_digest: string
-}
-export type ProjectGoalDismissReceipt = {
-  dismissed: boolean
-}
-export type ProjectTradeoffRouteRequest = {
-  task_ref: string
-  proposal_ref: string
-}
-export type RoomHostRequest = {
-  room_ref: string
-  session_ref?: string | null
-}
-export type CompanionSharingRequest = {
-  companion_ref: string
-  contact_ref: string
-}
-export type CompanionSharingSetRequest = {
-  companion_ref: string
-  contact_ref: string
-  proposal_ref: string
-  expected_delta: string
-}
-export type WorkspaceRefRequest = {
-  workspace_ref: string
-}
-export type WorkCompanionSetRequest = {
-  workspace_ref: string
-  policy: unknown
-}
-export type TaskRequest = {
-  task_ref: string
-}
-export type ProjectConversationRequest = {
-  conversation_ref: string
-}
-export type ProjectCardRequest = {
-  card_id: string
-}
-export type ProjectCardDismissal = {
-  card_id: string
-  dismissed: boolean
-}
-export type DescribeRequest = {
-  task_ref?: string | null
-  self?: boolean
-  session_id?: string | null
-  key?: string | null
-  frame_epoch?: number | null
-  fold?: string | null
-}
-export type TaskCreateRequest = {
-  spec: unknown
-  label?: string | null
-  assignee?: unknown | null
-}
-export type BoardRefreshRequest = {
-  frame_epoch?: number | null
-}
-export type BoardSubscriptionRequest = {
-  scopes: unknown
-}
-export type RoomEntry = {
-  id: string
-  room: unknown
-}
-export type RecallRequest = {
-  query: string
-  effort?: unknown | null
-  scope?: unknown | null
-  limit?: number | null
-  format?: string | null
-  as_of?: number | null
-  deadline_ms?: number | null
-}
-export type ReceiptsRequest = {
-  limit?: number | null
-}
-export type VaultReceiptsRequest = {
-  limit?: number | null
-  kinds?: (string)[]
-}
-export type InboxListRequest = {
-  after?: string | null
-  limit?: number | null
-}
-export type InboxMarkRequest = {
-  notification_ref: string
-  mark: unknown
-}
-export type CommitRequest = {
-  claims: (ClaimInput)[]
-}
-export type ClaimRefRequest = {
-  claim_ref: string
-}
-export type ForgetPredicateRequest = {
-  subject_ref: string
-  predicate: string
-}
-export type SafeDeleteRequest = {
-  entity_ref: string
-  reason: SafeDeleteReason
-}
-export type HydrateRequest = {
-  refs: (string)[]
-}
-export type EntityRequest = {
-  entity_ref: string
-}
-export type QueryBm25Request = {
-  query: string
-  limit: number
-}
-export type NeighborsRequest = {
-  entity_ref: string
-  opts: NeighborOpts
-}
-export type AppendBlobVersionRequest = {
-  artifact_ref: string
-  content_base64: string
-  run_ref?: string | null
-  occurred_at: number
-  learned_at?: number | null
-}
-export type ReadBlobVersionRequest = {
-  artifact_ref: string
-  version: number
-}
-export type CreateNoteRequest = {
-  kind: string
-  markdown: string
-}
-export type CreateNoteFromEntityRequest = {
-  source_ref: string
-  kind: string
-}
-export type EditNoteRequest = {
-  note_ref: string
-  edit: unknown
-}
-export type BlobContent = {
-  content_base64: string
-}
-export type ClaimInput = {
-  id?: string | null
-  predicate: string
-  subject_ref: string
-  value: unknown
-  confidence: number
-  source: string
-  world_ref?: string | null
-  relationship_ref?: string | null
-  scope?: unknown | null
-  valid_from?: number | null
-  valid_to?: number | null
-  occurred_at?: number | null
-  learned_at?: number | null
-  salience?: number | null
-}
-export type CommitReceipt = {
-  claim_short_id: string
-  approval: string
-  superseded_short_id?: string | null
-  receipt_ref: string
-}
-export type DeleteReceipt = {
-  existed: boolean
-  reason: string
-  receipt_ref?: string | null
-}
-export type PendingWrite = {
-  claim_ref: string
-  decision_ref: string
-  created_at: number
-  reason_codes: (string)[]
-  dreamer_run_id?: string | null
-}
-export type MemoryReceipt = {
-  receipt_ref: string
-  kind: string
-  outcome: string
-  created_at: number
-  reason_codes: (string)[]
-  actor_class: string
-  actor_ref?: string | null
-  content_kind: string
-  claim_ref?: string | null
-  fields?: unknown
-}
-export type EntityView = {
-  id_hex: string
-  short_ref?: string | null
-  kind: string
-  occurred_start: number
-  occurred_end: number
-  learned_at: number
-  body?: unknown | null
-}
-export type TextIndexField = {
-  field: string
-  value: string
-}
-export type StructuralEdgeSpec = {
-  edge_kind: string
-  target_ref: string
-  weight?: number | null
-}
-export type StructuralPutInput = {
-  id?: string | null
-  kind: string
-  body: unknown
-  text_fields?: (TextIndexField)[] | null
-  edges?: (StructuralEdgeSpec)[] | null
-  occurred_at: number
-  learned_at?: number | null
-}
-export type EntityRefReceipt = {
-  entity_ref: string
-  id_hex: string
-  receipt_ref: string
-}
-export type HabitCheckinInput = {
-  habit_ref: string
-  id?: string | null
-  data?: unknown | null
-  occurred_at: number
-  learned_at?: number | null
-}
-export type AdmitImportedClaimInput = {
-  source_id: string
-  source_record_id: string
-  id?: string | null
-  subject_ref: string
-  predicate: string
-  value: unknown
-  occurred_at: number
-  learned_at?: number | null
-}
-export type BlobArtifactInput = {
-  id?: string | null
-  name: string
-  media_type: string
-  occurred_at: number
-  learned_at?: number | null
-}
-export type BlobVersionView = {
-  artifact_ref: string
-  version: number
-  content_hash_hex: string
-  claim_ref: string
-  created_at: number
-}
-export type ClaimView = {
-  claim_ref: string
-  short_ref?: string | null
-  predicate: string
-  subject_ref: string
-  value: unknown
-  confidence: number
-  approval: string
-  lifecycle: string
-  source?: string | null
-  world_ref?: string | null
-  scope?: unknown | null
-  valid_from?: number | null
-  valid_to?: number | null
-  salience?: number | null
-  stale: boolean
-}
-export type ClaimListFilter = {
-  subject_ref?: string | null
-  predicate?: string | null
-  lifecycle?: string | null
-  limit: number
-}
-export type LexicalHit = {
-  short_id: string
-  kind: string
-  score: number
-  snippet?: string | null
-}
-export type NeighborOpts = {
-  edge_kind?: string | null
-  min_weight?: number | null
-  limit: number
-}
-export type NeighborHit = {
-  short_id: string
-  kind: string
-  edge_kind: string
-  weight: number
-  direction: string
-}
-export type ExportOptions = {
-  format?: string | null
-  include_secrets?: boolean | null
-}
-export type ExportReceipt = {
-  at: number
-  format: string
-  bytes: number
-  digest: string
-  by: string
-  diary_reads: (unknown)[]
-}
-export type MemoryExport = {
-  format: string
-  archive: string
-  digest: string
-}
-export type WitnessMessage = {
-  id?: string | null
-  author: WitnessAuthor
-  message_type: string
-  content: string
-  metadata?: unknown | null
-  is_visible: boolean
-  order: number
-}
-export type WitnessTurn = {
-  conversation_ref: string
-  turn_ref?: string | null
-  quote?: unknown | null
-  messages: (WitnessMessage)[]
-  occurred_at: number
-}
-export type WitnessReceipt = {
-  turn_short_id: string
-  message_short_ids: (string)[]
-  receipt_ref: string
-}
-export type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
-export type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete"
+// Generated by scripts/sdk/generate.py from the Rust types each facade row
+// of scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
+// Census: 162 facade rows, 587 declarations.
+// Inputs: 140 of 162 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+// Results: 136 of 162 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+// Opaque serde_json::Value leaves: 39; unread shapes: 0.
+/** `oneiron::edit_distance::publisher::vocab::IssueCategory` */
+export type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"
+/** `oneiron::feedback::report::ReportKind` */
+export type ReportKind = "problem" | "proposal"
+/** `oneiron::feedback::bundle::FeedbackProposal` */
+export type FeedbackProposal = { problem: string; fix: string }
+/** `oneiron::feedback::report::ReportRequest` */
+export type ReportRequest = { subject_ref: string; category: IssueCategory; kind?: ReportKind; note?: string | null; evidence_refs?: string[]; why?: string | null; proposal?: FeedbackProposal | null }
+/** `oneiron::feedback::report::ReportStatus` */
+export type ReportStatus = "accepted" | "needs_more_evidence" | "duplicate" | "rejected" | "queued"
+/** `oneiron::feedback::report::routing::ReportRoute` */
+export type ReportRoute = { destination: "owner_inbox" } | { destination: "publisher"; publisher_ref: string }
+/** `oneiron::feedback::report::ReportDisclosure` */
+export type ReportDisclosure = "local" | "content_free" | "needs_approval" | "approved" | "denied"
+/** `oneiron::feedback::report::ReportReceipt` */
+export type ReportReceipt = { issue_ref: string; already_submitted: boolean; status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null; route: ReportRoute; disclosure: ReportDisclosure }
+/** `oneiron::task_verb::sdk_self::DiaryEntryRequest` */
+export type DiaryEntryRequest = { content: string; kind?: string | null }
+/** `oneiron::task_verb::sdk_self::DiaryEntryReceipt` */
+export type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string }
+/** `oneiron::memory::diary_read::DiaryReadsRequest` */
+export type DiaryReadsRequest = { limit?: number | null }
+/** `oneiron_contracts::entity_id::EntityId` */
+export type EntityId = string
+/** `oneiron::memory::diary_read::DiaryReadRecord` */
+export type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null }
+/** `oneiron::memory::diary_read::DiaryReviewState` */
+export type DiaryReviewState = "pending" | "approved" | "declined" | "used"
+/** `oneiron::memory::diary_read::DiaryReadRequest` */
+export type DiaryReadRequest = { request: EntityId; reader: EntityId; reader_class: string; reason: string; asked_at: number; state: DiaryReviewState; answered_at?: number | null; read?: EntityId | null }
+/** `oneiron::memory::diary_read::DiaryReadsView` */
+export type DiaryReadsView = { review: boolean; reads: DiaryReadRecord[]; requests: DiaryReadRequest[] }
+/** `oneiron::memory::diary_read::DiaryReviewAnswer` */
+export type DiaryReviewAnswer = { request: string; approve: boolean }
+/** `oneiron::dreamer_runner::maintenance::identity::IdentityAnswerRequest` */
+export type IdentityAnswerRequest = { ask: string; choice: string }
+/** `oneiron::dreamer_runner::maintenance::identity::IdentitySettled` */
+export type IdentitySettled = { ask: string; entity: string }
+/** `oneiron::dreamer_runner::maintenance::identity::IdentityEffect` */
+export type IdentityEffect = "send" | "pay" | "invite" | "share"
+/** `oneiron::dreamer_runner::maintenance::identity::IdentityActNowRequest` */
+export type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string }
+/** `oneiron::dreamer_runner::maintenance::identity::IdentityActNow` */
+export type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown }
+/** `oneiron::memory::people_verbs::PeopleListRequest` */
+export type PeopleListRequest = { vault?: string | null; page?: number | null }
+/** `oneiron::context_board::people::PersonKind` */
+export type PersonKind = "human" | "agent"
+/** `oneiron::context_board::people::PersonRow` */
+export type PersonRow = { person: EntityId; actors: EntityId[]; handle: string; name: string; kind: PersonKind; role: string; about?: string | null }
+/** `oneiron::memory::people_verbs::PeoplePage` */
+export type PeoplePage = { vault: string; page: number; people: PersonRow[]; more: number }
+/** `oneiron::memory::people_verbs::PersonRequest` */
+export type PersonRequest = { pr: string }
+/** `oneiron::dreamer_runner::maintenance::identity::MentionProvenance` */
+export type MentionProvenance = { turn: string; message: string; start: number; end: number }
+/** `oneiron::memory::people_verbs::MessagePersonRequest` */
+export type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null }
+/** `oneiron::memory::witness::types::WitnessReceipt` */
+export type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string }
+/** `oneiron::memory::people_verbs::MessagePersonReceipt` */
+export type MessagePersonReceipt = { room: string; receipt: WitnessReceipt }
+/** `oneiron::memory::people_verbs::GrantAskScope` */
+export type GrantAskScope = { kind: "messages"; space_ref: string } | { kind: "summaries"; space_ref: string } | { kind: "relationship_claims"; space_ref: string } | { kind: "companion_profile"; facet_ref?: string | null }
+/** `oneiron::memory::people_verbs::GrantAskRequest` */
+export type GrantAskRequest = { pr: string; scope: GrantAskScope }
+/** `oneiron::memory::people_verbs::GrantAskReceipt` */
+export type GrantAskReceipt = { request: string; asked: string; status: string }
+/** `oneiron::task_verb::sdk_diary::DiaryQueryRequest` */
+export type DiaryQueryRequest = { agent: string; reason: string }
+/** `oneiron::task_verb::sdk_diary::DiaryQueryEntry` */
+export type DiaryQueryEntry = { id: EntityId; learned_at: number; markdown: string }
+/** `oneiron::task_verb::sdk_diary::DiaryQueryOutcome` */
+export type DiaryQueryOutcome = { state: "granted"; read?: EntityId | null; entries: DiaryQueryEntry[] } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" }
+/** `oneiron::task_verb::sdk::TaskRequest` */
+export type TaskRequest = { task_ref: string }
+/** `oneiron_contracts::claim::status::ClaimApprovalStatus` */
+export type ClaimApprovalStatus = "auto" | "proposed" | "approved" | "rejected"
+/** `oneiron::run_tree::types::RunTreeStatus` */
+export type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned"
+/** `oneiron::task_verb::route_receipts::TaskCancelReceipt` */
+export type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boolean; proposal_ref?: EntityId | null; gate_decision_ref?: string | null; status?: RunTreeStatus | null; cancel_requested: boolean; forced: boolean }
+/** `oneiron::task_verb::sdk_self::SteerRequest` */
+export type SteerRequest = { task_ref: string; instruction: string; key: string }
+/** `oneiron::run_tree::signal::RunSignalState` */
+export type RunSignalState = "Pending" | "Settled" | "RefusedCancelCapacity" | "RefusedCancelUnavailable"
+/** `oneiron::task_verb::sdk_self::SteerReceipt` */
+export type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState }
+/** `oneiron::task_verb::sdk::DescribeRequest` */
+export type DescribeRequest = { task_ref?: string | null; self?: boolean; session_id?: string | null; key?: string | null; frame_epoch?: number | null; fold?: string | null }
+/** `oneiron::context_board::tasks::projection::TaskBoardStatus` */
+export type TaskBoardStatus = "running" | "scheduled" | "queued" | "done" | "failed"
+/** `oneiron::task_verb::verb_kind::TaskKind` */
+export type TaskKind = "standard" | "consult" | "reconciliation"
+/** `oneiron::task_verb::terminal_state::TaskTerminalDisposition` */
+export type TaskTerminalDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled"
+/** `oneiron::outbound::connector_task::ConnectorSendTaskOutcome` */
+export type ConnectorSendTaskOutcome = "delivered" | "failed" | "ambiguous"
+/** `oneiron::consult_ladder::ladder_state::LadderTerminalDisposition` */
+export type LadderTerminalDisposition = "approved" | "overridden" | "rejected" | "failed" | "escalated" | "countered" | "abandoned"
+/** `oneiron::context_board::tasks::projection::CancelRejectionPathology` */
+export type CancelRejectionPathology = { attempt_id: string; rejections: number; threshold: number; last_status?: string | null }
+/** `oneiron::context_board::tasks::projection::TaskRow` */
+export type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null }
+/** `oneiron::context_board::tasks::projection::TasksOverflow` */
+export type TasksOverflow = { known_omitted_rows: number; source_exhausted: boolean }
+/** `oneiron::context_board::tasks::projection::TasksSection` */
+export type TasksSection = { rows: TaskRow[]; overflow?: TasksOverflow | null }
+/** `oneiron::task_verb::route_receipts::TaskDescription` */
+export type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string }
+/** `oneiron::task_verb::verb_kind::TaskAssignee` */
+export type TaskAssignee = "dreamer" | { agent_def: { agent_def_ref: EntityId } } | { peer: { actor_ref: EntityId } } | { child: { actor_ref: EntityId } } | { human: { actor_ref: EntityId } }
+/** `oneiron::task_verb::sdk::TaskCreateRequest` */
+export type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null }
+/** `oneiron::attempt_queue::types::AttemptId` */
+export type AttemptId = { bytes: number[] }
+/** `oneiron::task_verb::route_receipts::TaskRouteOutcome` */
+export type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } }
+/** `oneiron::task_verb::route_receipts::TaskCreateReceipt` */
+export type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null }
+/** `oneiron::task_verb::route_receipts::TaskUpdateReceipt` */
+export type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean }
+/** `oneiron::conversation_dag::types::QuoteSpan` */
+export type QuoteSpan = { message: EntityId; start: number; end: number }
+/** `oneiron::memory::witness::types::WitnessAuthor` */
 export type WitnessAuthor = "user" | "companion" | "system"
+/** `oneiron::memory::witness::types::WitnessMessage` */
+export type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number }
+/** `oneiron::memory::witness::types::WitnessTurn` */
+export type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; messages: WitnessMessage[]; occurred_at: number }
+/** `oneiron::memory::claims::ClaimInput` */
+export type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null }
+/** `oneiron::memory::claims::CommitReceipt` */
+export type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string }
+/** `oneiron::memory::recall::call_mode::RecallEffort` */
+export type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call"
+/** `oneiron::memory::recall::RecallScope` */
+export type RecallScope = { world_ref?: string | null; facet?: string | null; kinds?: string[] | null }
+/** `oneiron::task_verb::sdk::RecallRequest` */
+export type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null }
+/** `oneiron::memory::recall::MemoryProvenance` */
+export type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] }
+/** `oneiron::memory::recall::CitedMessage` */
+export type CitedMessage = { short_id: string; value_text: string }
+/** `oneiron::memory::recall::MemoryItem` */
+export type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null }
+/** `oneiron::memory::recall::ScopeHonesty` */
+export type ScopeHonesty = { out_of_scope_worlds: string[]; census_capped?: boolean }
+/** `oneiron_contracts::retrieval_quality::RetrievalQuality` */
+export type RetrievalQuality = "full" | "degraded" | "passthrough"
+/** `oneiron_contracts::retrieval_quality::RetrievalDegradation` */
+export type RetrievalDegradation = "ppr_cache_miss" | "embedding_timeout" | "bm25_stale" | "temporal_signal_skipped"
+/** `oneiron_contracts::retrieval_quality::ConfidenceAdjustment` */
+export type ConfidenceAdjustment = number
+/** `oneiron_contracts::temporal::TemporalHintStatus` */
+export type TemporalHintStatus = "used" | "unresolved" | "future"
+/** `oneiron_contracts::temporal::TemporalHintReport` */
+export type TemporalHintReport = { phrase: string; status: TemporalHintStatus; start?: number | null; end?: number | null }
+/** `oneiron::memory::recall::paid::RerankSkip` */
+export type RerankSkip = "no_reranker" | "no_candidates" | "deadline" | "device_only"
+/** `oneiron::memory::recall::paid::RerankReport` */
+export type RerankReport = { status: "applied"; model: string; served_model?: string | null; candidates: number; calls: number } | { status: "skipped"; reason: RerankSkip }
+/** `oneiron::memory::recall::RetrievalMeta` */
+export type RetrievalMeta = { quality?: RetrievalQuality; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment; sparse?: boolean | null; total_candidates: number; claims_returned: number; deep_pending?: boolean | null; partial?: boolean; temporal_hints?: TemporalHintReport[]; rerank?: RerankReport | null; limit_clamped?: boolean }
+/** `oneiron_contracts::claim::receipt::ReadScope` */
+export type ReadScope = { entity_types?: number[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean }
+/** `oneiron_contracts::claim::receipt::ScopedReadReceipt` */
+export type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] }
+/** `oneiron::memory::recall::MemoryPack` */
+export type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt }
+/** `oneiron::memory::export::ExportOptions` */
+export type ExportOptions = { format?: string | null; include_secrets?: boolean | null }
+/** `oneiron::memory::export::MemoryExport` */
+export type MemoryExport = { format: string; archive: string; digest: string }
+/** `oneiron::task_verb::sdk::VaultReceiptsRequest` */
+export type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] }
+/** `oneiron::memory::claims::MemoryReceipt` */
+export type MemoryReceipt = { receipt_ref: string; kind: string; outcome: string; created_at: number; reason_codes: string[]; actor_class: string; actor_ref?: string | null; content_kind: string; claim_ref?: string | null; fields?: Record<string, string> }
+/** `oneiron::memory::asset_resolve::PixelRegion` */
+export type PixelRegion = { x: number; y: number; width: number; height: number }
+/** `oneiron::memory::asset_resolve::ImageViewRequest` */
+export type ImageViewRequest = { handle: string; region?: PixelRegion | null; edge?: number | null }
+/** `oneiron::memory::asset_resolve::PulledImage` */
+export type PulledImage = { asset_ref: string; pull: string; mime_type: string; bytes: string; width?: number | null; height?: number | null }
+/** `oneiron::receipt::call::CallReceiptRequest` */
+export type CallReceiptRequest = { receipt_ref: string }
+/** `oneiron::receipt::call::CallTransport` */
+export type CallTransport = "http_facade" | "mcp" | "ws"
+/** `oneiron::receipt::call::CallOutcome` */
+export type CallOutcome = "ok" | { refused: { code: string } }
+/** `oneiron::lens::record_ref::RecordRef` */
+export type RecordRef = { kind: string; id: string; short_id?: string | null; label: string }
+/** `oneiron::receipt::call::CallReceipt` */
+export type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; served: string[]; served_records?: RecordRef[] }
+/** `oneiron::memory::key_value::types::KeyValueAddress` */
+export type KeyValueAddress = { namespace: string[]; key: string }
+/** `oneiron::memory::key_value::types::KeyValueItem` */
+export type KeyValueItem = { namespace: string[]; key: string; value: unknown; created_at: number; updated_at: number; revision: string }
+/** `oneiron::memory::key_value::types::KeyValuePut` */
+export type KeyValuePut = { namespace: string[]; key: string; value: unknown; request_id: string; source?: string }
+/** `oneiron::memory::key_value::types::KeyValuePutReceipt` */
+export type KeyValuePutReceipt = { item: KeyValueItem; replayed: boolean; receipt_ref: string }
+/** `oneiron::memory::key_value::types::KeyValueDeleteReceipt` */
+export type KeyValueDeleteReceipt = { existed: boolean; receipt_refs: string[] }
+/** `oneiron::memory::key_value::types::KeyValueSearch` */
+export type KeyValueSearch = { namespace_prefix?: string[]; filter?: Record<string, unknown> | null; limit?: number; offset?: number }
+/** `oneiron::memory::key_value::types::KeyValueNamespaces` */
+export type KeyValueNamespaces = { prefix?: string[]; suffix?: string[]; max_depth?: number | null; limit?: number; offset?: number }
+/** `oneiron::claim::scoped_read::weave_report::WeaveSectionKind` */
+export type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest"
+/** `oneiron::claim::scoped_read::weave_serve::WeaveSectionInput` */
+export type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveReportRequest` */
+export type WeaveReportRequest = { sections: WeaveSectionInput[] }
+/** `oneiron::memory::reads::ClaimView` */
+export type ClaimView = { claim_ref: string; short_ref?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; approval: string; lifecycle: string; source?: string | null; world_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; salience?: number | null; stale: boolean }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveItemView` */
+export type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveSectionView` */
+export type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[] }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveReportView` */
+export type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveDigestRequest` */
+export type WeaveDigestRequest = { scheduled_for?: number | null }
+/** `oneiron::lens::atom::atom_scalars::LensText` */
+export type LensText = string
+/** `oneiron::lens::atom::atom_leaves::LensTextSpan` */
+export type LensTextSpan = { type: "literal"; value: LensText } | { type: "interpolation"; value: { key: string; fallback: LensText } }
+/** `oneiron::lens::atom::atom_leaves::TextBlockAtom` */
+export type TextBlockAtom = { spans: LensTextSpan[] }
+/** `oneiron::lens::atom::atom_leaves::LedgerCell` */
+export type LedgerCell = { label: LensText; value: LensText }
+/** `oneiron::lens::atom::atom_leaves::LensStatus` */
+export type LensStatus = "proposed" | "auto" | "approved" | "rejected" | "stale" | "missing" | "running" | "complete"
+/** `oneiron::lens::atom::atom_leaves::StatusDotAtom` */
+export type StatusDotAtom = { status: LensStatus; label?: LensText | null }
+/** `oneiron::lens::atom::atom_leaves::SealLevel` */
+export type SealLevel = "none" | "local" | "actor" | "authority"
+/** `oneiron::lens::atom::atom_leaves::SealAtom` */
+export type SealAtom = { level: SealLevel; label: LensText }
+/** `oneiron::lens::atom::atom_leaves::LedgerRowAtom` */
+export type LedgerRowAtom = { cells: LedgerCell[]; status?: StatusDotAtom | null; seal?: SealAtom | null }
+/** `oneiron::lens::atom::atom_leaves::ClaimLineAtom` */
+export type ClaimLineAtom = { subject: LensText; predicate: LensText; value: LensText; status: StatusDotAtom; seal?: SealAtom | null }
+/** `oneiron::lens::atom::atom_leaves::MetaLineAtom` */
+export type MetaLineAtom = { label: LensText; value: LensText }
+/** `oneiron::lens::atom::atom_leaves::SectionAtom` */
+export type SectionAtom = { title: LensText; lines?: LensText[] }
+/** `oneiron::lens::atom::atom_leaves::ThreadEntryAtom` */
+export type ThreadEntryAtom = { author: LensText; body: LensText; timestamp?: LensText | null; seal?: SealAtom | null }
+/** `oneiron::lens::atom::atom_leaves::CollectionAtom` */
+export type CollectionAtom = { title: LensText; rows?: LedgerRowAtom[] }
+/** `oneiron::lens::atom::atom_leaves::ReceiptAtom` */
+export type ReceiptAtom = { title: LensText; lines?: MetaLineAtom[]; seal?: SealAtom | null }
+/** `oneiron::lens::atom::atom_leaves::PostmarkAtom` */
+export type PostmarkAtom = { label: LensText; timestamp: LensText }
+/** `oneiron::lens::atom::atom_leaves::PackLineAtom` */
+export type PackLineAtom = { pack: LensText; summary: LensText; status: LensStatus }
+/** `oneiron::lens::wire_ids::LensHandleRole` */
+export type LensHandleRole = "claim_set" | "entity_set" | "timeline" | "query_result" | "action_target"
+/** `oneiron::lens::wire_ids::LensHandleRef` */
+export type LensHandleRef = { name: string; role: LensHandleRole }
+/** `oneiron::lens::atom::atom_leaves::AnswerSheetAtom` */
+export type AnswerSheetAtom = { question: LensText; answer: LensText; citations?: LensHandleRef[] }
+/** `oneiron::lens::atom::atom_leaves::TwoClocksAtom` */
+export type TwoClocksAtom = { occurred_at: LensText; learned_at: LensText }
+/** `oneiron::lens::atom::atom_leaves::GraphNode` */
+export type GraphNode = { id: string; label: LensText }
+/** `oneiron::lens::atom::atom_leaves::GraphEdge` */
+export type GraphEdge = { from: string; to: string; label: LensText }
+/** `oneiron::lens::atom::atom_leaves::NeighborhoodGraphAtom` */
+export type NeighborhoodGraphAtom = { nodes?: GraphNode[]; edges?: GraphEdge[] }
+/** `oneiron::lens::atom::atom_leaves::AsofScrubberAtom` */
+export type AsofScrubberAtom = { value: LensText; min?: LensText | null; max?: LensText | null }
+/** `oneiron::lens::atom::atom_leaves::ThrobberAtom` */
+export type ThrobberAtom = { label: LensText }
+/** `oneiron::lens::atom::atom_leaves::VadBadge` */
+export type VadBadge = "low" | "neutral" | "high"
+/** `oneiron::lens::atom::atom_leaves::VoiceLineAtom` */
+export type VoiceLineAtom = { speaker: LensText; text: LensText; vad?: VadBadge | null }
+/** `oneiron::lens::self_ui::SelfUiOption` */
+export type SelfUiOption = { value: string; label: LensText }
+/** `oneiron::lens::atom::atom_scalars::FiniteF64` */
+export type FiniteF64 = number
+/** `oneiron::lens::self_ui::SelfUiValue` */
+export type SelfUiValue = { type: "bool"; value: boolean } | { type: "number"; value: FiniteF64 } | { type: "text"; value: LensText } | { type: "token"; value: string } | { type: "handle"; value: string }
+/** `oneiron::lens::self_ui::SelfUiAction` */
+export type SelfUiAction = { command: string; args?: SelfUiValue[] }
+/** `oneiron::lens::atom::atom_leaves::QuickFilterAtom` */
+export type QuickFilterAtom = { id: string; label: LensText; options?: SelfUiOption[]; selected?: string[]; action: SelfUiAction }
+/** `oneiron::lens::atom::atom_leaves::InspectorAtom` */
+export type InspectorAtom = { title: LensText; sections?: SectionAtom[] }
+/** `oneiron::lens::self_ui::ButtonControl` */
+export type ButtonControl = { id: string; label: LensText; action: SelfUiAction }
+/** `oneiron::lens::self_ui::ToggleControl` */
+export type ToggleControl = { id: string; label: LensText; checked: boolean; action: SelfUiAction }
+/** `oneiron::lens::self_ui::SegmentedControl` */
+export type SegmentedControl = { id: string; label: LensText; options: SelfUiOption[]; selected?: string | null; action: SelfUiAction }
+/** `oneiron::lens::self_ui::SelectControl` */
+export type SelectControl = { id: string; label: LensText; options: SelfUiOption[]; selected?: string | null; action: SelfUiAction }
+/** `oneiron::lens::self_ui::SliderControl` */
+export type SliderControl = { id: string; label: LensText; min: FiniteF64; max: FiniteF64; step: FiniteF64; value: FiniteF64; action: SelfUiAction }
+/** `oneiron::lens::self_ui::TextInputControl` */
+export type TextInputControl = { id: string; label: LensText; placeholder?: LensText | null; value?: LensText | null; action: SelfUiAction }
+/** `oneiron::lens::self_ui::SelfUiControlWire` */
+export type SelfUiControlWire = { control: "button"; props: ButtonControl } | { control: "toggle"; props: ToggleControl } | { control: "segmented"; props: SegmentedControl } | { control: "select"; props: SelectControl } | { control: "slider"; props: SliderControl } | { control: "text_input"; props: TextInputControl }
+/** `oneiron::lens::self_ui::SelfUiControl` */
+export type SelfUiControl = SelfUiControlWire
+/** `oneiron::lens::atom::atom_leaves::MediaAtom` */
+export type MediaAtom = { handle: string; alt: LensText }
+/** `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetRow` */
+export type GeneratedUiResultSetRow = { id: string; label: LensText; target_handle: string }
+/** `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetSelectAll` */
+export type GeneratedUiResultSetSelectAll = { mode: "disabled" } | { mode: "within_filter"; predicate_handle: string }
+/** `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetAtom` */
+export type GeneratedUiResultSetAtom = { rows: GeneratedUiResultSetRow[]; select_all: GeneratedUiResultSetSelectAll; action_bar?: string[] }
+/** `oneiron::lens::atom::atom_enum::LensAtomWire` */
+export type LensAtomWire = { kind: "text_block"; props: TextBlockAtom } | { kind: "ledger_row"; props: LedgerRowAtom } | { kind: "claim_line"; props: ClaimLineAtom } | { kind: "status_dot"; props: StatusDotAtom } | { kind: "seal"; props: SealAtom } | { kind: "meta_line"; props: MetaLineAtom } | { kind: "dossier_section"; props: SectionAtom } | { kind: "thread_entry"; props: ThreadEntryAtom } | { kind: "sheet"; props: CollectionAtom } | { kind: "slip"; props: SectionAtom } | { kind: "receipt"; props: ReceiptAtom } | { kind: "charter"; props: SectionAtom } | { kind: "postmark"; props: PostmarkAtom } | { kind: "pack_line"; props: PackLineAtom } | { kind: "answer_sheet"; props: AnswerSheetAtom } | { kind: "two_clocks"; props: TwoClocksAtom } | { kind: "neighborhood_graph"; props: NeighborhoodGraphAtom } | { kind: "asof_scrubber"; props: AsofScrubberAtom } | { kind: "throbber"; props: ThrobberAtom } | { kind: "voice_line"; props: VoiceLineAtom } | { kind: "quick_filter"; props: QuickFilterAtom } | { kind: "inspector_sheet"; props: InspectorAtom } | { kind: "inspector_rail"; props: InspectorAtom } | { kind: "inspector_trail"; props: InspectorAtom } | { kind: "self_ui"; props: SelfUiControl } | { kind: "media"; props: MediaAtom } | { kind: "result_set"; props: GeneratedUiResultSetAtom }
+/** `oneiron::lens::atom::atom_enum::LensAtom` */
+export type LensAtom = LensAtomWire
+/** `oneiron::lens::generated_ui::genui_state::SelfUiBindableProperty` */
+export type SelfUiBindableProperty = "checked" | "selected" | "value" | "text"
+/** `oneiron::lens::generated_ui::genui_state::SelfUiBinding` */
+export type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty }
+/** `oneiron::lens::atom::atom_node::LensNode` */
+export type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] }
+/** `oneiron::lens::generated_ui::genui_envelope::GeneratedLens` */
+export type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveDigestView` */
+export type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveWrongLinkRequest` */
+export type WeaveWrongLinkRequest = { source_ref: string; kind: string; target_ref: string }
+/** `oneiron::claim::scoped_read::weave_serve::WeaveLinkCorrectionView` */
+export type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number }
+/** `oneiron::task_verb::sdk_host::PackFileInput` */
+export type PackFileInput = { path: string; text: string }
+/** `oneiron::task_verb::sdk_host::PackPutRequest` */
+export type PackPutRequest = { files: PackFileInput[] }
+/** `oneiron::task_verb::sdk_host::PackPutOutcome` */
+export type PackPutOutcome = "installed" | "candidate" | "blocked"
+/** `oneiron::skill_hub::pack_catalog::manifest::PackKind` */
+export type PackKind = "capability" | "connector" | "agent"
+/** `oneiron::skill_hub::pack_catalog::manifest::PackAdapter` */
+export type PackAdapter = { builtin: string } | { script: string }
+/** `oneiron::skill_hub::pack_catalog::admission_types::PackInstallStatus` */
+export type PackInstallStatus = "active" | "candidate"
+/** `oneiron::skill_hub::pack_catalog::admission_types::PackCandidateReason` */
+export type PackCandidateReason = "rules_hit" | "code_auto_install_off" | "qualification_required" | "advisories"
+/** `oneiron::skill_hub::pack_catalog::admission_types::BundledSkillPermissions` */
+export type BundledSkillPermissions = { skill_id: string; bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] }
+/** `oneiron::skill_hub::pack_catalog::admission_types::PackPermissions` */
+export type PackPermissions = { bundled_skills: BundledSkillPermissions[]; widening_bundled_skills: BundledSkillPermissions[]; grants: string[]; wakes: string[]; hooks: string[]; organs: string[]; section_verbs: string[]; section_authorities: string[]; widening_grants: string[]; widening_wakes: string[]; widening_hooks: string[]; widening_organs: string[]; widening_section_verbs: string[]; widening_section_authorities: string[] }
+/** `oneiron::connector_key::qualification::receipt::ConnectorQualificationReceipt` */
+export type ConnectorQualificationReceipt = { suite: string; report_hash: string; protocol_revision: string; manifest_hash: number[]; qualified_at: number }
+/** `oneiron::skill_hub::pack_catalog::qualify::PackConnectorReceipt` */
+export type PackConnectorReceipt = { source_hash: string; qualification: ConnectorQualificationReceipt }
+/** `oneiron::skill_hub::pack_catalog::admission_types::PackRuntimeRecipe` */
+export type PackRuntimeRecipe = { adapter: PackAdapter; runtime_id: string; runtime_hash: string }
+/** `oneiron::context_board::plugin::manifest::StateFamilyRef` */
+export type StateFamilyRef = { family: string; version: number }
+/** `oneiron::context_board::plugin::manifest::SectionVerbRef` */
+export type SectionVerbRef = string
+/** `oneiron::context_board::plugin::manifest::AuthorityLaneRef` */
+export type AuthorityLaneRef = string
+/** `oneiron::context_board::frame::BudgetPolicyRef` */
+export type BudgetPolicyRef = string
+/** `oneiron::skill_hub::pack_catalog::source::PackSection` */
+export type PackSection = { section_id: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef }
+/** `oneiron::skill_hub::pack_catalog::admission_types::PackInstallReceipt` */
+export type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; installed_at: number }
+/** `oneiron::task_verb::sdk_host::PackPutReceipt` */
+export type PackPutReceipt = { outcome: PackPutOutcome; reason?: string | null; receipt?: PackInstallReceipt | null }
+/** `oneiron::task_verb::sdk_host::PackSetupRequest` */
+export type PackSetupRequest = { pack: string; source?: string | null }
+/** `oneiron::skill_hub::pack_catalog::setup::PackSetupAccount` */
+export type PackSetupAccount = { id: string; label: string; sign_up?: string | null; note?: string | null }
+/** `oneiron::skill_hub::pack_catalog::setup::PackSetupAuth` */
+export type PackSetupAuth = "oauth" | "api_key" | "bot_token" | "app_password" | "session" | "webhook" | "local"
+/** `oneiron::skill_hub::pack_catalog::setup::PackSetupSecret` */
+export type PackSetupSecret = { name: string; label: string; effector: string; hint?: string | null }
+/** `oneiron::skill_hub::pack_catalog::setup::PackSetupRisk` */
+export type PackSetupRisk = "low" | "medium" | "high"
+/** `oneiron::skill_hub::pack_catalog::setup::PackSetupPermission` */
+export type PackSetupPermission = { id: string; scope?: string | null; grant?: string | null; what: string; risk: string; level: PackSetupRisk; optional?: boolean }
+/** `oneiron::skill_hub::pack_catalog::setup::PackSetupConnection` */
+export type PackSetupConnection = { id: string; label: string; account?: string | null; auth: PackSetupAuth; connector?: string | null; secrets?: PackSetupSecret[]; permissions: PackSetupPermission[]; verify: string }
+/** `oneiron::skill_hub::pack_catalog::setup::PackSetup` */
+export type PackSetup = { skill: string; accounts?: PackSetupAccount[]; connections?: PackSetupConnection[] }
+/** `oneiron::skill_hub::pack_catalog::setup_session::PackSetupSecretState` */
+export type PackSetupSecretState = { name: string; stored: boolean }
+/** `oneiron::skill_hub::pack_catalog::setup_session::PackSetupPermissionState` */
+export type PackSetupPermissionState = { id: string; granted: boolean; grant_ref?: string | null; decision_id?: string | null }
+/** `oneiron::skill_hub::pack_catalog::setup_session::PackSetupCheck` */
+export type PackSetupCheck = { state: "unchecked" } | { state: "verified"; account: string; evidence: string; checked_at: number } | { state: "failed"; reason: string; checked_at: number } | { state: "stale"; checked_at: number }
+/** `oneiron::skill_hub::pack_catalog::setup_session::PackSetupConnectionState` */
+export type PackSetupConnectionState = { id: string; secrets: PackSetupSecretState[]; permissions: PackSetupPermissionState[]; connector_key?: string | null; check: PackSetupCheck; ready: boolean }
+/** `oneiron::skill_hub::pack_catalog::setup_session::PackSetupView` */
+export type PackSetupView = { session_id: string; pack_name: string; description: string; version: string; source_id: string; content_hash: string; status: PackInstallStatus; setup: PackSetup; instructions: string; permissions: PackPermissions; connections: PackSetupConnectionState[]; ready: boolean }
+/** `oneiron::task_verb::sdk_host::PackSetupStoreSecret` */
+export type PackSetupStoreSecret = { door: string; connection: string; name: string; effector: string }
+/** `oneiron::task_verb::sdk_host::PackSetupReceipt` */
+export type PackSetupReceipt = { setup: PackSetupView; cards: unknown[]; text: string; store_secret?: PackSetupStoreSecret | null }
+/** `oneiron::skill_hub::pack_catalog::setup_session::PackSetupAnswer` */
+export type PackSetupAnswer = { answer: "secret_stored"; connection: string; secret: string } | { answer: "allow"; connection: string; permissions: string[] } | { answer: "bind_key"; connection: string; key: string }
+/** `oneiron::lens::generated_ui::genui_state::GeneratedUiStateSnapshot` */
+export type GeneratedUiStateSnapshot = unknown
+/** `oneiron::task_verb::sdk_host::PackSetupCardActionInput` */
+export type PackSetupCardActionInput = { action_id: string; state?: Record<string, unknown> }
+/** `oneiron::task_verb::sdk_host::PackSetupAnswerRequest` */
+export type PackSetupAnswerRequest = { pack: string; source?: string | null; answer?: PackSetupAnswer | null; card_action?: PackSetupCardActionInput | null }
+/** `oneiron::task_verb::sdk_host::PackSetupVerifyRequest` */
+export type PackSetupVerifyRequest = { pack: string; source?: string | null; connection: string }
+/** `oneiron::receipt::authority_audit::AuthorityAuditEventKind` */
+export type AuthorityAuditEventKind = "grant" | "revoke" | "confirm" | "other"
+/** `oneiron::receipt::authority_audit::AuthorityAuditQuery` */
+export type AuthorityAuditQuery = { after?: EntityId | null; limit?: number | null; kinds?: AuthorityAuditEventKind[] }
+/** `oneiron::receipt::authority_audit::AuthorityAuditRow` */
+export type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] }
+/** `oneiron::receipt::authority_audit::AuthorityAuditOrder` */
+export type AuthorityAuditOrder = "entry_ref_ascending"
+/** `oneiron::receipt::authority_audit::AuthorityAuditPage` */
+export type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number }
+/** `oneiron::lens::inspection::InspectionResolveRequest` */
+export type InspectionResolveRequest = { handle: string }
+/** `oneiron::lens::mediation::mediation_backing::LensBackingTargetKind` */
+export type LensBackingTargetKind = "entity" | "claim"
+/** `oneiron::lens::inspection::InspectionState` */
+export type InspectionState = { target_ref: EntityId; target_kind: LensBackingTargetKind }
+/** `oneiron::lens::inspection::InspectionHandle` */
+export type InspectionHandle = string
+/** `oneiron::memory::structural::types::EntityView` */
+export type EntityView = { id_hex: string; short_ref?: string | null; kind: string; occurred_start: number; occurred_end: number; learned_at: number; body?: unknown | null }
+/** `oneiron::lens::inspection::InspectionResolved` */
+export type InspectionResolved = { state: InspectionState; handle: InspectionHandle; item?: EntityView | null; narrowing: ScopedReadReceipt }
+/** `oneiron::task_verb::sdk_shared::SharedVaultRequest` */
+export type SharedVaultRequest = { vault_id: number }
+/** `oneiron::federation::grant::FederationGrantRole` */
+export type FederationGrantRole = "owner" | "admin" | "member" | "viewer" | "auditor" | "delegate" | "guest"
+/** `oneiron::federation::pending_act::ActExecution` */
+export type ActExecution = { request: string; receipt?: string | null }
+/** `oneiron::federation::pending_act::PendingAuthorityAct` */
+export type PendingAuthorityAct = { id: string; vault_id: number; act: string; payload: number[]; starter: string; started_at: number; deadline: number; objector_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; objections: string[]; completed: boolean; execution?: ActExecution | null }
+/** `oneiron::task_verb::sdk_shared::SharedTransferRequest` */
+export type SharedTransferRequest = { vault_id: number; to: string; from_keeps?: FederationGrantRole | null }
+/** `oneiron::task_verb::sdk_shared::SharedRemoveOwnerRequest` */
+export type SharedRemoveOwnerRequest = { vault_id: number; target: string; successor?: string | null; target_keeps?: FederationGrantRole | null; export_first: boolean }
+/** `oneiron::task_verb::sdk_shared::SharedActRequest` */
+export type SharedActRequest = { act_id: string }
+/** `oneiron::federation::shared_act::SharedVaultChange` */
+export type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } }
+/** `oneiron::batch::export::archive_types::ExportDiaryRead` */
+export type ExportDiaryRead = { agent: string; diaries: number; reason: string }
+/** `oneiron::federation::shared_act::SharedActExport` */
+export type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] }
+/** `oneiron::federation::shared_act::SharedActExecutionReceipt` */
+export type SharedActExecutionReceipt = { id: string; vault_id: number; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; completed_at: number }
+/** `oneiron::task_verb::sdk_shared::SharedActExecuted` */
+export type SharedActExecuted = { receipt: SharedActExecutionReceipt; export?: MemoryExport | null }
+/** `oneiron::task_verb::sdk_shared::SharedReceiptRequest` */
+export type SharedReceiptRequest = { receipt_id: string }
+/** `oneiron::federation::shared_act::SharedActOutcome` */
+export type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: number; recipient: string; change: SharedVaultChange; completed_at: number }
+/** `oneiron::task_verb::sdk::EmptyRequest` */
+export type EmptyRequest = Record<string, never>
+/** `oneiron::federation::shared_act::SharedVaultDeletion` */
+export type SharedVaultDeletion = { vault_id: number; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number }
+/** `oneiron::task_verb::sdk_shared::SharedMemberAddRequest` */
+export type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null }
+/** `oneiron::task_verb::sdk_shared::SharedMemberRoleRequest` */
+export type SharedMemberRoleRequest = { vault_id: number; member: string; role: FederationGrantRole }
+/** `oneiron::task_verb::sdk_shared::SharedMemberRequest` */
+export type SharedMemberRequest = { vault_id: number; member: string }
+/** `oneiron::authority::handoff_equivocation::AuthorityHandoffAlarmAck` */
+export type AuthorityHandoffAlarmAck = { by: string; at: number }
+/** `oneiron::authority::handoff_equivocation::AuthorityHandoffAlarm` */
+export type AuthorityHandoffAlarm = { signer: string; refused: string; handoffs: string[]; raised_at: number; acknowledged?: AuthorityHandoffAlarmAck | null; seen: string[] }
+/** `oneiron::task_verb::sdk_shared::HandoffAlarmRequest` */
+export type HandoffAlarmRequest = { signer: string }
+/** `oneiron::deletion::legal_hold::types::LegalHoldTarget` */
+export type LegalHoldTarget = { record: EntityId } | { gate_partition: EntityId | null }
+/** `oneiron::task_verb::sdk_legal_hold::LegalHoldPlaceRequest` */
+export type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null }
+/** `oneiron::deletion::legal_hold::types::LegalHoldKind` */
+export type LegalHoldKind = "customer" | "host_order"
+/** `oneiron::deletion::legal_hold::types::LegalHoldActorKind` */
+export type LegalHoldActorKind = "owner" | "member" | "agent" | "timer" | "host" | "unattributed"
+/** `oneiron::deletion::legal_hold::types::LegalHold` */
+export type LegalHold = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; placed_by?: string | null; placed_by_kind: LegalHoldActorKind; placed_at: number; ends_at?: number | null; secret_until?: number | null; matter_ref?: string | null; lifted_at?: number | null; owner_told?: boolean }
+/** `oneiron::task_verb::sdk_legal_hold::LegalHoldWidenRequest` */
+export type LegalHoldWidenRequest = { hold_id: EntityId; targets: LegalHoldTarget[] }
+/** `oneiron::deletion::legal_hold::types::LegalHoldEventKind` */
+export type LegalHoldEventKind = "placed" | "scope_changed" | "delete_refused" | "lift_and_erase_confirmed" | "erase_completed" | "lifted"
+/** `oneiron::deletion::legal_hold::types::LegalHoldReason` */
+export type LegalHoldReason = "owner_placed" | "host_placed" | "legal_order" | "scope_widened" | "scope_narrowed_by_erase" | "end_date_changed" | "held_record" | "privacy_erase_kept" | "owner_confirmed" | "completion_pending" | "receipt_completed" | "authority_released" | "order_ended" | "host_released" | "secrecy_ended"
+/** `oneiron::deletion::legal_hold::types::LegalHoldEvent` */
+export type LegalHoldEvent = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; actor_ref?: string | null; actor_kind: LegalHoldActorKind; at: number; event: LegalHoldEventKind; reason: LegalHoldReason; matter_ref?: string | null; request_id?: string | null }
+/** `oneiron::task_verb::sdk_legal_hold::LegalHoldLiftAndEraseRequest` */
+export type LegalHoldLiftAndEraseRequest = { records: EntityId[] }
+/** `oneiron::task_verb::sdk_legal_hold::LegalHoldEraseState` */
+export type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending" } | { state: "kept_by_legal_order" } | { state: "failed"; message: string }
+/** `oneiron::task_verb::sdk_legal_hold::LegalHoldErasedRecord` */
+export type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState }
+/** `oneiron::task_verb::sdk_legal_hold::LegalHoldLiftAndErased` */
+export type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[] }
+/** `oneiron::lens::proposal::LensSlot` */
+export type LensSlot = { pack_name: string; skill_id: string }
+/** `oneiron::lens::proposal::LensProposeRequest` */
+export type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string }
+/** `oneiron::receipt::lens::LensApproval` */
+export type LensApproval = "proposed"
+/** `oneiron::receipt::lens::LensProposalReceipt` */
+export type LensProposalReceipt = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; approval: LensApproval; proposed_by: string; proposed_at: number }
+/** `oneiron::lens::activation::LensActivateRequest` */
+export type LensActivateRequest = { lens_ref: string; compiled_hash: string; expected_active_ref?: string | null }
+/** `oneiron::receipt::lens::LensSlotDecision` */
+export type LensSlotDecision = "activated" | "deactivated"
+/** `oneiron::receipt::lens::LensActivationReceipt` */
+export type LensActivationReceipt = { decision: LensSlotDecision; pack_name: string; skill_id: string; lens_ref: string; compiled_hash: string; previous_ref?: string | null; decided_by: string; decision_ref: string; authenticated_under: string; decided_at: number }
+/** `oneiron::lens::activation::LensDeactivateRequest` */
+export type LensDeactivateRequest = { slot: LensSlot; expected_active_ref: string }
+/** `oneiron::lens::proposal::LensListRequest` */
+export type LensListRequest = { pack_name?: string | null; after?: string | null; limit?: number | null; with_compiled?: boolean }
+/** `oneiron::lens::proposal::LensProposalState` */
+export type LensProposalState = "proposed" | "active"
+/** `oneiron::lens::proposal::LensListRow` */
+export type LensListRow = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; kit_version: number; apps_contract_version: number; proposed_by: string; proposed_at: number; state: LensProposalState; mounted: boolean; compiled?: GeneratedLens | null }
+/** `oneiron::lens::proposal::LensListPage` */
+export type LensListPage = { rows: LensListRow[]; next_after?: string | null }
+/** `oneiron::lens::sdk::LensDossierSource` */
+export type LensDossierSource = { entity_ref: string; title: string }
+/** `oneiron::lens::sdk::LensDefaultRequest` */
+export type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[] }
+/** `oneiron::claim::scoped_read::receipt::ScopedReadResult` */
+export type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt }
+/** `oneiron_authority::federation::scope::ScopeAxis` */
+export type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] }
+/** `oneiron_authority::federation::scope::ScopeId` */
+export type ScopeId = string
+/** `oneiron_authority::federation::scope::Sensitivity` */
+export type Sensitivity = "public" | "private" | "sensitive" | "restricted"
+/** `oneiron_authority::federation::scope::SensitivityCeiling` */
+export type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity }
+/** `oneiron_authority::federation::scope::Scope` */
+export type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling }
+/** `oneiron::task_verb::sdk_disclosure::DisclosureOfferRequest` */
+export type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number }
+/** `oneiron::task_verb::sdk_disclosure::DisclosureOffered` */
+export type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number }
+/** `oneiron::share_travel::BornWithField` */
+export type BornWithField = "prompt" | "why" | "keep" | "intent_prompt"
+/** `oneiron::share_travel::TravelChoice` */
+export type TravelChoice = { born_with?: BornWithField[] }
+/** `oneiron::task_verb::sdk_share::ShareCreateRequest` */
+export type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null }
+/** `oneiron::task_verb::sdk_share::ShareCreated` */
+export type ShareCreated = { share_id: string; recipient: string; brief_ref: string; created_at: number; expires_at?: number | null; travel: TravelChoice }
+/** `oneiron::task_verb::sdk_share::ShareRevokeRequest` */
+export type ShareRevokeRequest = { share_ref: string }
+/** `oneiron::receipt::share_doors::ShareRevokeReceipt` */
+export type ShareRevokeReceipt = { share_ref: string; status: string; revoked_at?: number | null }
+/** `oneiron::task_verb::sdk_share::ShareViewNarrowing` */
+export type ShareViewNarrowing = { world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean }
+/** `oneiron::task_verb::sdk_share::ShareViewRequest` */
+export type ShareViewRequest = { share_ref: string; narrowing?: ShareViewNarrowing | null }
+/** `oneiron::receipt::share_doors::SharedBriefCitation` */
+export type SharedBriefCitation = { claim_ref: string; stale: boolean; drifted: boolean; redacted: boolean; confidence?: number | null; lifecycle?: string | null; quote?: string | null }
+/** `oneiron::share_travel::BornWith` */
+export type BornWith = Record<string, string>
+/** `oneiron::receipt::share_doors::SharedBriefView` */
+export type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith }
+/** `oneiron::task_verb::sdk_host::HooksReplayRequest` */
+export type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null }
+/** `oneiron::runtime_hooks::source::FactPositionHex` */
+export type FactPositionHex = string
+/** `oneiron::runtime_hooks::source::FactKind` */
+export type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled"
+/** `oneiron::task_verb::sdk_host::HookReplayOutcome` */
+export type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string }
+/** `oneiron::task_verb::sdk_host::HookReplayRow` */
+export type HookReplayRow = { position: FactPositionHex; kind: FactKind; entity: string; result: HookReplayOutcome }
+/** `oneiron::blob_artifact::verbs::ArtifactRefRequest` */
+export type ArtifactRefRequest = { artifact_ref: string }
+/** `oneiron::blob_artifact::family::ArtifactKind` */
+export type ArtifactKind = "document" | "sheet" | "deck" | "code" | "canvas" | "image" | "file"
+/** `oneiron::provenance::made_by::MadeByInputRole` */
+export type MadeByInputRole = "input" | "prompt"
+/** `oneiron::provenance::made_by::MadeByInput` */
+export type MadeByInput = { row: string; role: MadeByInputRole }
+/** `oneiron::provenance::made_by::MadeByClass` */
+export type MadeByClass = "stated" | "concluded"
+/** `oneiron::provenance::made_by::MadeByProcess` */
+export type MadeByProcess = { actor: string; class: MadeByClass; identity: string; version: string; params_hash: string }
+/** `oneiron::provenance::made_by::MadeByTrigger` */
+export type MadeByTrigger = { task: string } | { ask: string } | { run: string } | { skill: string }
+/** `oneiron::provenance::made_by::MadeBy` */
+export type MadeBy = { inputs: MadeByInput[]; process: MadeByProcess; at: number; trigger?: MadeByTrigger | null }
+/** `oneiron::blob_artifact::born_from::BornFromSource` */
+export type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string }
+/** `oneiron::blob_artifact::family::ArtifactVersionView` */
+export type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[] }
+/** `oneiron::blob_artifact::family::ArtifactView` */
+export type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] }
+/** `oneiron::blob_artifact::verbs::ArtifactExportRequest` */
+export type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null }
+/** `oneiron::blob_artifact::verbs::ArtifactExportFile` */
+export type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string }
+/** `oneiron::blob_artifact::verbs::BornFromRequest` */
+export type BornFromRequest = { task_ref?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; agent_run?: string | null }
+/** `oneiron::blob_artifact::born_from::BornFromArtifact` */
+export type BornFromArtifact = { artifact_id: EntityId; version: number; at: number }
+/** `oneiron::blob_artifact::verbs::BornFromView` */
+export type BornFromView = { born: EntityId[]; versions: BornFromArtifact[] }
+/** `oneiron::edit_settle::pending::PendingProposalKind` */
+export type PendingProposalKind = "edit" | "output"
+/** `oneiron::edit_settle::pending::PendingProposalView` */
+export type PendingProposalView = { artifact_id: EntityId; proposal_ref: string; kind: PendingProposalKind; base_version?: number | null; content_hash: string; byte_len: number; retained_by: EntityId; retained_at: number; made_by?: MadeBy | null; summary: unknown }
+/** `oneiron::edit_settle::organ_wait::OrganWaitView` */
+export type OrganWaitView = { artifact_id: EntityId; run_ref: string; organ: string; verb: string; held_by: EntityId; held_at: number; reason: string; tries: number; last_try_at: number; failed?: string | null }
+/** `oneiron::blob_artifact::verbs::ProposalSettleRequest` */
+export type ProposalSettleRequest = { artifact_ref: string; proposal_ref: string; brief_ref?: string | null; reason?: string | null }
+/** `oneiron::blob_artifact::verbs::ReleasedWait` */
+export type ReleasedWait = { released: boolean }
+/** `oneiron::blob_artifact::verbs::SlideReviewUnitInput` */
+export type SlideReviewUnitInput = { target: unknown; review_image: string; renderer: string }
+/** `oneiron::blob_artifact::verbs::SlideReviewSubmit` */
+export type SlideReviewSubmit = { artifact_ref: string; run_ref: string; units: SlideReviewUnitInput[]; question: unknown; author: unknown; labels: unknown; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null }
+/** `oneiron::blob_artifact::verbs::SlideUnitRefused` */
+export type SlideUnitRefused = { target: unknown; reason: string; offer?: unknown | null }
+/** `oneiron::blob_artifact::verbs::SlideReviewOutcome` */
+export type SlideReviewOutcome = { proposed?: PendingProposalView | null; abstained: unknown[]; refused: SlideUnitRefused[] }
+/** `oneiron::blob_artifact::verbs::DeckProposeRequest` */
+export type DeckProposeRequest = { artifact_ref: string; transaction: unknown; run_ref: string; context?: unknown; made_by?: unknown | null }
+/** `oneiron::blob_artifact::verbs::DeckProposeOutcome` */
+export type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: unknown | null }
+/** `oneiron::blob_artifact::verbs::NativeOutputRequest` */
+export type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: unknown | null }
+/** `oneiron::receipt::kernel::ReceiptKind` */
+export type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal"
+/** `oneiron::receipt::kernel::ReceiptRecord` */
+export type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> }
+/** `oneiron::blob_artifact::verbs::KeptProposal` */
+export type KeptProposal = { version: ArtifactVersionView; stranded: boolean; remapped: number; drifted: number; receipt: ReceiptRecord }
+/** `oneiron::blob_artifact::verbs::DiscardedProposal` */
+export type DiscardedProposal = { receipt: ReceiptRecord }
+/** `oneiron::edit_settle::undo::KeepUndo` */
+export type KeepUndo = { proposal_ref: string; kept_version: number; restored_version: number; version: number; actor: EntityId; at: number }
+/** `oneiron::blob_artifact::verbs::UndoneKeep` */
+export type UndoneKeep = { undo: KeepUndo; version: ArtifactVersionView; reattached: number }
+/** `oneiron::task_verb::consult_payload::ConsultPayloadRef` */
+export type ConsultPayloadRef = { claim: EntityId } | { turn: EntityId }
+/** `oneiron::task_verb::ask_types::TaskAskElectorate` */
+export type TaskAskElectorate = "any" | { people: EntityId[] }
+/** `oneiron::task_verb::ask_types::TaskAskOptionId` */
+export type TaskAskOptionId = string
+/** `oneiron::task_verb::ask_types::TaskAskDecide` */
+export type TaskAskDecide = "first" | { all: { of: TaskAskElectorate; answer: TaskAskOptionId } } | { at_least: { count: number; of: TaskAskElectorate; answer: TaskAskOptionId } }
+/** `oneiron::task_verb::ask_types::TaskAskDefault` */
+export type TaskAskDefault = "proceed" | "hold" | "ask_me"
+/** `oneiron::task_verb::ask_types::TaskAskSurface` */
+export type TaskAskSurface = "card" | "none"
+/** `oneiron::task_verb::ask_types::TaskAskClass` */
+export type TaskAskClass = { key: string; version: number; governance: boolean; deadline_seconds: number; allowed_recipients: EntityId[]; required_people: EntityId[]; minimum_responses: number; required_sources: ConsultPayloadRef[]; decision?: TaskAskDecide | null; disclosure: Record<string, ConsultPayloadRef[]>; fallback: TaskAskDefault[]; guest_fact_limit?: number | null; soft_confirm_surface?: TaskAskSurface | null; remind: number[] }
+/** `oneiron::task_verb::ask_types::AskAuthorityScopeWire` */
+export type AskAuthorityScopeWire = { class: string; selectors: string[]; target?: string | null; budget?: number | null; receipt_required: boolean }
+/** `oneiron::task_verb::ask_types::AskAuthorityScope` */
+export type AskAuthorityScope = AskAuthorityScopeWire
+/** `oneiron::task_verb::ask_types::TaskAskGuest` */
+export type TaskAskGuest = { companion_ref: EntityId; disclosure_grant_ref: string }
+/** `oneiron::task_verb::ask_types::TaskAskTarget` */
+export type TaskAskTarget = { authority: AskAuthorityScope } | { responder: TaskAssignee } | { people: EntityId[] } | { guests: Record<string, TaskAskGuest> }
+/** `oneiron::llm::decision::questions::records::OutcomeSource` */
+export type OutcomeSource = { kind: "claim"; predicate: string } | { kind: "edge"; relation: string } | { kind: "stage"; campaign: string } | { kind: "event"; predicate: string }
+/** `oneiron::llm::decision::questions::records::OutcomeBinding` */
+export type OutcomeBinding = { source: OutcomeSource; horizon: number; mapping: Record<string, boolean>; noise_weight: number; linked_by?: string | null }
+/** `oneiron::llm::decision::types::DecisionRung` */
+export type DecisionRung = "rule" | "local" | "system_one" | "escalation" | "big" | "human"
+/** `oneiron::task_verb::ask_types::TaskAskLadderPrediction` */
+export type TaskAskLadderPrediction = { option: TaskAskOptionId; rung: DecisionRung; probability?: number | null }
+/** `oneiron::task_verb::ask_types::TaskAskQuestion` */
+export type TaskAskQuestion = { reference: ConsultPayloadRef; revision: number; options: Record<string, string>; context_refs: ConsultPayloadRef[]; label?: string | null; outcome_binding?: OutcomeBinding | null; ladder_answer?: TaskAskLadderPrediction | null; class_key?: string | null; commitment?: boolean }
+/** `oneiron::task_verb::ask_types::TaskAskNeed` */
+export type TaskAskNeed = { count: number; of?: TaskAskElectorate }
+/** `oneiron::task_verb::ask_types::TaskAskProvisional` */
+export type TaskAskProvisional = "inform"
+/** `oneiron::task_verb::ask_types::TaskAskBranch` */
+export type TaskAskBranch = "hold" | "proceed"
+/** `oneiron::task_verb::ask_types::TaskAskDisagree` */
+export type TaskAskDisagree = { branch: TaskAskBranch; surface: TaskAskSurface }
+/** `oneiron::task_verb::ask_types::TaskAskSpec` */
+export type TaskAskSpec = { intent_key: string; task_ref?: EntityId | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: TaskAskProvisional; on_disagree?: TaskAskDisagree; remind?: number[] | null }
+/** `oneiron::task_verb::sdk::TaskCanAskRequest` */
+export type TaskCanAskRequest = { ask: TaskAskSpec }
+/** `oneiron::task_verb::ask_types::TaskAskPreflightRecipient` */
+export type TaskAskPreflightRecipient = { who: EntityId; face?: string | null; channel?: string | null; word_required: boolean }
+/** `oneiron::task_verb::ask_types::TaskAskPreflight` */
+export type TaskAskPreflight = { recipients: TaskAskPreflightRecipient[] }
+/** `oneiron::task_verb::ask_types::TaskAskHandle` */
+export type TaskAskHandle = { group_ref: EntityId }
+/** `oneiron::task_verb::ask_soft_confirm_types::TaskAskConfirmationDecision` */
+export type TaskAskConfirmationDecision = "approve" | "reject"
+/** `oneiron::task_verb::ask_soft_confirm_types::TaskAskConfirmation` */
+export type TaskAskConfirmation = { revision: number; companion_answer_ref: EntityId; decision: TaskAskConfirmationDecision }
+/** `oneiron::task_verb::ask_types::TaskAskWord` */
+export type TaskAskWord = { result_ref: EntityId; option?: TaskAskOptionId | null; inform_for?: EntityId | null; companion_for?: EntityId | null; confirmation?: TaskAskConfirmation | null; provenance_refs?: ConsultPayloadRef[] }
+/** `oneiron::task_verb::ask_types::TaskAskPersonKind` */
+export type TaskAskPersonKind = "word" | "companion" | "default" | "unknown"
+/** `oneiron::task_verb::ask_types::TaskAskPersonEvidence` */
+export type TaskAskPersonEvidence = { who: EntityId; answer?: TaskAskWord | null; kind: TaskAskPersonKind; at: number; source?: EntityId | null }
+/** `oneiron::task_verb::sdk::TaskAskShort` */
+export type TaskAskShort = { who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault }
+/** `oneiron::task_verb::sdk::TaskAskRequest` */
+export type TaskAskRequest = TaskAskSpec | TaskAskShort
+/** `oneiron::task_verb::ask_types::TaskAskHoldReason` */
+export type TaskAskHoldReason = "NoLiveRoute"
+/** `oneiron::agent_dispatch::fanout_statement::PeerCount` */
+export type PeerCount = { peer: EntityId; count: number }
+/** `oneiron::agent_dispatch::spend_calibration::SpendBasis` */
+export type SpendBasis = "calibrated" | "prior"
+/** `oneiron::agent_dispatch::spend_calibration::ExpectedSpend` */
+export type ExpectedSpend = { units: number; samples: number; basis: SpendBasis }
+/** `oneiron::llm::run_admission::declaration::LeaseUnit` */
+export type LeaseUnit = string
+/** `oneiron::agent_dispatch::spend_record::SpendScopeId` */
+export type SpendScopeId = string
+/** `oneiron::agent_dispatch::launch::SpendCapView` */
+export type SpendCapView = { scope?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; available_units: number; hard: boolean }
+/** `oneiron::agent_dispatch::fanout_statement::WidthCheckClass` */
+export type WidthCheckClass = { kind: "auto_clear"; policy_ref?: string | null } | { kind: "asked"; row_ref: string }
+/** `oneiron::agent_dispatch::fanout_statement::ExceptionalWidthCheck` */
+export type ExceptionalWidthCheck = { count: number; threshold: number; classification: WidthCheckClass }
+/** `oneiron::agent_dispatch::fanout_statement::FanoutStatement` */
+export type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number }
+/** `oneiron::task_verb::ask_types::TaskAskReceipt` */
+export type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null }
+/** `oneiron::task_verb::sdk::TaskWaitRequest` */
+export type TaskWaitRequest = { handle: TaskAskHandle; step_key: string }
+/** `oneiron::task_verb::ask_types::TaskAskEffectAuthorization` */
+export type TaskAskEffectAuthorization = "not_evaluated_by_ask"
+/** `oneiron::task_verb::ask_types::TaskAskCoverage` */
+export type TaskAskCoverage = { met: boolean; required: number; responded: EntityId[]; unknown: EntityId[]; unmet_people: EntityId[] }
+/** `oneiron::task_verb::ask_types::TaskAskAnswer` */
+export type TaskAskAnswer = { task_ref: EntityId; actor_ref: EntityId; result_ref: EntityId; word_ref: EntityId }
+/** `oneiron::task_verb::ask_types::TaskAskDecision` */
+export type TaskAskDecision = "collected" | { first: TaskAskAnswer } | { answer: TaskAskOptionId } | "no" | "conflict" | "unknown"
+/** `oneiron::task_verb::ask_types::TaskAskFallback` */
+export type TaskAskFallback = { branch: TaskAskDefault; surface: TaskAskSurface }
+/** `oneiron::task_verb::ask_types::TaskAskSource` */
+export type TaskAskSource = "human" | "foreign_stated" | "companion" | "inform" | "executor"
+/** `oneiron::task_verb::ask_types::TaskAskEvidenceReason` */
+export type TaskAskEvidenceReason = "counted" | "companion_hint" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"
+/** `oneiron::task_verb::ask_types::TaskAskEvidence` */
+export type TaskAskEvidence = { answer: TaskAskAnswer; word: TaskAskWord; source: TaskAskSource; person_ref: EntityId; order: number; reason: TaskAskEvidenceReason; ladder_changed?: boolean | null; soft_confirm?: boolean; delegation_grant_ref?: string | null }
+/** `oneiron::task_verb::ask_types::TaskAskSettlementReason` */
+export type TaskAskSettlementReason = "first_word" | "all_responded" | "deadline" | "stale"
+/** `oneiron::task_verb::ask_types::TaskAskSettlement` */
+export type TaskAskSettlement = { group_ref: EntityId; reference: EntityId; revision: number; at: number; cutoff_order: number; reason: TaskAskSettlementReason; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: EntityId[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref?: EntityId | null; policy_surface: TaskAskSurface; link_result_proof?: number[] | null }
+/** `oneiron::task_verb::ask_types::TaskAskResult` */
+export type TaskAskResult = { effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback?: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement }
+/** `oneiron::code_run::types::SelfEffect` */
+export type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold"
+/** `oneiron::code_run::types::SelfDurableWaitReason` */
+export type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult"
+/** `oneiron::code_run::types::SelfDurableWait` */
+export type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null }
+/** `oneiron::task_verb::ask_types::TaskAskWait` */
+export type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait }
+/** `oneiron::task_verb::sdk::TaskAnswerRequest` */
+export type TaskAnswerRequest = { handle: TaskAskHandle; word: TaskAskWord }
+/** `oneiron::llm::decision::types::ImageBox` */
+export type ImageBox = { top: number; bottom: number; left: number; right: number }
+/** `oneiron::llm::decision::types::DecisionAnswer` */
+export type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "abstain" }
+/** `oneiron::llm::decision::questions::records::OutcomeLabel` */
+export type OutcomeLabel = { answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number }
+/** `oneiron::llm::decision::questions::records::CalibrationPair` */
+export type CalibrationPair = { prediction: DecisionAnswer; probability: number; outcome: OutcomeLabel }
+/** `oneiron::workspace_roster::project::RoomOriginCard` */
+export type RoomOriginCard = { room: string; thread: string; message: string; at: number }
+/** `oneiron::workspace_roster::project::ProjectRoom` */
+export type ProjectRoom = { schema_version: number; kind: string; project_id: string; memberIds: string[]; claims_scope_ref: string; origin?: RoomOriginCard | null }
+/** `oneiron::task_verb::sdk::RoomEntry` */
+export type RoomEntry = { id: string; room: ProjectRoom }
+/** `oneiron::task_verb::sdk::RoomRequest` */
+export type RoomRequest = { room_ref: string; after?: string | null; limit?: number | null }
+/** `oneiron::workspace_roster::rooms::RoomTurn` */
+export type RoomTurn = { turn_id: string; room_id: string; actor: string; addressed_agents: string[]; message_ids: string[]; reply_to?: string | null; thread_of?: string | null; at: number; task_ids?: string[]; converted_project?: string | null }
+/** `oneiron::workspace_roster::rooms::RoomPage` */
+export type RoomPage = { rows: RoomTurn[]; next_after?: string | null; scope: Scope }
+/** `oneiron::workspace_roster::rooms::participants::ParticipantsRequest` */
+export type ParticipantsRequest = { room: EntityId; branch?: EntityId | null; after?: string | null; limit?: number | null }
+/** `oneiron::workspace_roster::join_consent::JoinSubject` */
+export type JoinSubject = { kind: "person"; id: EntityId } | { kind: "agent"; id: EntityId }
+/** `oneiron::workspace_roster::rooms::participation::JoinCause` */
+export type JoinCause = { kind: "wrote"; turn: EntityId } | { kind: "addressed"; turn: EntityId } | { kind: "task"; task: EntityId } | { kind: "offer"; offer_id: string }
+/** `oneiron::workspace_roster::rooms::participants::ParticipantView` */
+export type ParticipantView = { subject: JoinSubject; causes: JoinCause[]; since: number; currently_eligible: boolean; receipt_ref?: string | null }
+/** `oneiron::workspace_roster::rooms::participants::ParticipantsPage` */
+export type ParticipantsPage = { rows: ParticipantView[]; next_after?: string | null }
+/** `oneiron::task_verb::sdk::RoomRefRequest` */
+export type RoomRefRequest = { room_ref: string }
+/** `oneiron::workspace_roster::rooms::RoomThreadPage` */
+export type RoomThreadPage = { rows: EntityId[]; next_after?: EntityId | null }
+/** `oneiron::task_verb::sdk::RoomTurnRequest` */
+export type RoomTurnRequest = { room_ref: string; turn_ref: string }
+/** `oneiron::workspace_roster::rooms::liveness::RoomWaitKind` */
+export type RoomWaitKind = "Ask" | "Hold" | "HumanTask"
+/** `oneiron::workspace_roster::rooms::liveness::RoomThreadWait` */
+export type RoomThreadWait = { task: EntityId; kind: RoomWaitKind; who: EntityId; since: number; next_nudge?: number | null; until?: number | null }
+/** `oneiron::workspace_roster::rooms::liveness::RoomThread` */
+export type RoomThread = { handle: EntityId; trunk: EntityId; last_message_at: number; open_tasks: number; waits: RoomThreadWait[]; result_header?: EntityId | null; converted_project?: EntityId | null }
+/** `oneiron::workspace_roster::rooms::RoomTrunkHeader` */
+export type RoomTrunkHeader = { thread: EntityId; task: EntityId; result_ref: EntityId }
+/** `oneiron::workspace_roster::rooms::RoomTrunk` */
+export type RoomTrunk = { turn: RoomTurn; headers: RoomTrunkHeader[] }
+/** `oneiron::conversation_dag::quote_strips::ReplyStripsRequest` */
+export type ReplyStripsRequest = { room_ref: string; thread_ref: string; after?: string | null; limit?: number | null }
+/** `oneiron::conversation_dag::quote_strips::QuoteStripStatus` */
+export type QuoteStripStatus = "live" | "edited" | "drifted" | "redacted"
+/** `oneiron::conversation_dag::quote_strips::QuoteReplyStrip` */
+export type QuoteReplyStrip = { reply_turn: string; reply_message?: string | null; pin_ref: string; excerpt?: string | null; status: QuoteStripStatus }
+/** `oneiron::conversation_dag::quote_strips::QuoteReplyGroup` */
+export type QuoteReplyGroup = { message_ref: string; strips: QuoteReplyStrip[] }
+/** `oneiron::conversation_dag::quote_strips::ReplyStripsPage` */
+export type ReplyStripsPage = { groups: QuoteReplyGroup[]; next_after?: string | null }
+/** `oneiron::task_verb::sdk::RoomClaimRequest` */
+export type RoomClaimRequest = { room_ref: string; turn_ref: string }
+/** `oneiron::workspace_roster::rooms::RoomClaimReceipt` */
+export type RoomClaimReceipt = { room_id: string; turn_id: string; actor: string; receipt_ref: string; at: number }
+/** `oneiron::workspace_roster::rooms::RoomClaimOutcome` */
+export type RoomClaimOutcome = { Claimed: RoomClaimReceipt } | { HeldBy: RoomClaimReceipt } | "NotAddressed"
+/** `oneiron::genui::project_proposal::ProjectGoalDraft` */
+export type ProjectGoalDraft = { goal: string; why: string; axes: string[] }
+/** `oneiron::genui::project_proposal::ProjectProposalPicks` */
+export type ProjectProposalPicks = { leader_agent_def_ref: string; board_human_refs: string[]; budget_share_bps: number; starting_skill_refs: string[] }
+/** `oneiron::workspace_roster::project::proposal::ProjectProposalRequest` */
+export type ProjectProposalRequest = { card_id: string; source_message_ref: string; goal: ProjectGoalDraft; picks: ProjectProposalPicks }
+/** `oneiron::genui::project_proposal::ProjectProposalCard` */
+export type ProjectProposalCard = { card_id: string; principal_ref: string; source_message_ref: string; source_room_ref?: string | null; source_thread_ref?: string | null; goal: ProjectGoalDraft; leader_agent_def_ref: string; board_human_refs: string[]; budget_share_bps: number; starting_skill_refs: string[] }
+/** `oneiron::task_verb::sdk::ProjectConversationRequest` */
+export type ProjectConversationRequest = { conversation_ref: string }
+/** `oneiron::workspace_roster::project::proposal::ProjectCardState` */
+export type ProjectCardState = "proposed" | { minted: { project: EntityId } } | "dismissed"
+/** `oneiron::workspace_roster::project::proposal::ProjectCardRecord` */
+export type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: EntityId; state: ProjectCardState; at: number }
+/** `oneiron::task_verb::sdk::ProjectCardRequest` */
+export type ProjectCardRequest = { card_id: string }
+/** `oneiron::task_verb::sdk::ProjectCardDismissal` */
+export type ProjectCardDismissal = { card_id: string; dismissed: boolean }
+/** `oneiron::workspace_roster::project::proposal::ProjectCardConfirmRequest` */
+export type ProjectCardConfirmRequest = { card_id: string; action_id: string; occurred_at: number }
+/** `oneiron::store::gate_decision::types::GateDecisionId` */
+export type GateDecisionId = { bytes: number[] }
+/** `oneiron::workspace_roster::project::mint::ProjectMintReceipt` */
+export type ProjectMintReceipt = { project_id: string; card_id: string; grant_decision_id: GateDecisionId; grant_ref: string }
+/** `oneiron::task_verb::sdk::ProjectRefRequest` */
+export type ProjectRefRequest = { project_ref: string }
+/** `oneiron::workspace_roster::project::goal::GoalPreference` */
+export type GoalPreference = { prefer: string; over: string; reason: string }
+/** `oneiron::skill_optimize::gate::project_goal::ProjectGoalRevisionProposal` */
+export type ProjectGoalRevisionProposal = { project: EntityId; goal_claim: EntityId; preference: GoalPreference; question_digest: string; picked_by: EntityId; at: number }
+/** `oneiron::workspace_roster::project::goal::context::ProjectGoalInterviewContext` */
+export type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] }
+/** `oneiron::workspace_roster::join_consent::JoinRequest` */
+export type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string }
+/** `oneiron::workspace_roster::join_consent::ConsentPart` */
+export type ConsentPart = "spend" | "membership" | "admission"
+/** `oneiron::workspace_roster::join_consent::RequiredParty` */
+export type RequiredParty = { payer: EntityId } | "payer_unknown" | { vault_admin: { vault: number } } | { room_host: { room: EntityId } }
+/** `oneiron::workspace_roster::join_consent::ConsentNeed` */
+export type ConsentNeed = { part: ConsentPart; party: RequiredParty }
+/** `oneiron::workspace_roster::join_consent::JoinRefusal` */
+export type JoinRefusal = { denied: { part: ConsentPart; party: EntityId; answer_ref: string } } | "unknown_subject" | { foreign_house_agent: { org: EntityId } } | "unknown_room" | { unknown_spend_scope: { scope: SpendScopeId } } | { forged_payer: { scope: SpendScopeId } }
+/** `oneiron::workspace_roster::join_consent::JoinDecision` */
+export type JoinDecision = "ready" | { hold: { needs: ConsentNeed[] } } | { refuse: JoinRefusal }
+/** `oneiron::workspace_roster::join_consent::ConsentDenial` */
+export type ConsentDenial = { party: EntityId; answer_ref: string }
+/** `oneiron::workspace_roster::join_consent::ConsentState` */
+export type ConsentState<T> = { missing: ConsentNeed } | { granted: T } | { denied: ConsentDenial }
+/** `oneiron::workspace_roster::join_consent::SpendConsent` */
+export type SpendConsent = { paid: { payer: EntityId; granted_by: EntityId; scope: SpendScopeId; unit: LeaseUnit; cap_units: number; at_ms: number } } | "no_paid_work"
+/** `oneiron::workspace_roster::join_consent::MembershipConsent` */
+export type MembershipConsent = { vault_owner: { person: EntityId } } | { member: { person: EntityId; grant: EntityId } } | { companion_of_member: { companion: EntityId; principal: EntityId; grant?: EntityId | null } } | { scoped_guest: { person: EntityId; guest_grant: EntityId } } | { house_agent: { org: EntityId } }
+/** `oneiron::workspace_roster::join_consent::AdmissionBasis` */
+export type AdmissionBasis = "room_owner" | "delegated_host" | "standing_home_roster" | { host_answer: { answer_ref: string } } | { through_principal: { principal: EntityId } }
+/** `oneiron::workspace_roster::join_consent::AdmissionConsent` */
+export type AdmissionConsent = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; granted_by: EntityId; basis: AdmissionBasis }
+/** `oneiron::workspace_roster::join_consent::ConsentSet` */
+export type ConsentSet = { spend: ConsentState<SpendConsent>; membership: ConsentState<MembershipConsent>; admission: ConsentState<AdmissionConsent> }
+/** `oneiron::workspace_roster::join_receipt::JoinParticipation` */
+export type JoinParticipation = "ledger_seat" | "already_seated" | "home_room_receipt" | "branch_receipt" | "agent_receipt" | "principal_receipt"
+/** `oneiron::workspace_roster::join_door::JoinDecisionView` */
+export type JoinDecisionView = { state: JoinDecision; consents: ConsentSet; participation?: JoinParticipation | null }
+/** `oneiron::workspace_roster::join_door::JoinOutcome` */
+export type JoinOutcome = { join_ref: string; decision: JoinDecisionView; receipt_ref?: string | null }
+/** `oneiron::workspace_roster::join_door::ConsentAnswer` */
+export type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null }
+/** `oneiron::workspace_roster::rooms::offers::OfferDraft` */
+export type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; intent_key: string }
+/** `oneiron::llm::run_admission::job_maximum::DeclaredMaximum` */
+export type DeclaredMaximum = { units: number; unit: LeaseUnit }
+/** `oneiron::workspace_roster::rooms::offers::OfferState` */
+export type OfferState = { kind: "open"; needs: ConsentNeed[] } | { kind: "joined"; turn: EntityId; receipt_ref: string } | { kind: "not_now"; diary_ref?: EntityId | null } | { kind: "superseded"; by: string } | { kind: "aged_out" }
+/** `oneiron::workspace_roster::rooms::offers::OfferCard` */
+export type OfferCard = { offer_id: string; room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; lease_cap?: DeclaredMaximum | null; payer?: EntityId | null; spend_scope?: SpendScopeId | null; join_ref: string; state: OfferState; created_at: number }
+/** `oneiron::workspace_roster::rooms::offer_settle::OfferAnswer` */
+export type OfferAnswer = "join" | "not_now"
+/** `oneiron::workspace_roster::rooms::offer_settle::OfferAnswerRequest` */
+export type OfferAnswerRequest = { offer_id: string; action: OfferAnswer; intent_key: string }
+/** `oneiron::workspace_roster::rooms::offer_settle::OfferSettlement` */
+export type OfferSettlement = { offer_id: string; state: OfferState; join?: JoinOutcome | null; turn_ref?: string | null; diary_ref?: string | null }
+/** `oneiron::workspace_roster::rooms::offers::OffersRequest` */
+export type OffersRequest = { room: EntityId; branch?: EntityId | null; after?: string | null; limit?: number | null }
+/** `oneiron::workspace_roster::rooms::offers::OffersPage` */
+export type OffersPage = { rows: OfferCard[]; next_after?: string | null }
+/** `oneiron::task_verb::sdk::ProjectGoalDismissRequest` */
+export type ProjectGoalDismissRequest = { project_ref: string; expected_goal_ref: string; question_digest: string }
+/** `oneiron::task_verb::sdk::ProjectGoalDismissReceipt` */
+export type ProjectGoalDismissReceipt = { dismissed: boolean }
+/** `oneiron::task_verb::sdk::ProjectTradeoffRouteRequest` */
+export type ProjectTradeoffRouteRequest = { task_ref: string; proposal_ref: string }
+/** `oneiron::conversation::turn_actions::TurnActionRequest` */
+export type TurnActionRequest = { turn_id: string }
+/** `oneiron::conversation::turn_actions::TurnAction` */
+export type TurnAction = "continue" | "retry"
+/** `oneiron::conversation::turn_actions::TurnActionReceipt` */
+export type TurnActionReceipt = { action: TurnAction; turn_id: string; message_id: string; attempt_id: string }
+/** `oneiron::task_verb::sdk::RoomHostRequest` */
+export type RoomHostRequest = { room_ref: string; session_ref?: string | null }
+/** `oneiron::workspace_roster::rooms::hosting::HostPinKind` */
+export type HostPinKind = "pinned" | "handed_off"
+/** `oneiron::workspace_roster::rooms::hosting::HostPin` */
+export type HostPin = { agent: EntityId; by: EntityId; kind: HostPinKind; at: number }
+/** `oneiron::workspace_roster::rooms::hosting::RoomHosting` */
+export type RoomHosting = { host?: EntityId | null; candidates: EntityId[]; pin?: HostPin | null }
+/** `oneiron::workspace_roster::rooms::hosting::RoomSpeakingRole` */
+export type RoomSpeakingRole = "host" | "member"
+/** `oneiron::workspace_roster::rooms::hosting::RoomStanding` */
+export type RoomStanding = { hosting: RoomHosting; role?: RoomSpeakingRole | null }
+/** `oneiron::workspace_roster::rooms::hosting::RoomHostPin` */
+export type RoomHostPin = { room: EntityId; agent?: EntityId | null }
+/** `oneiron::workspace_roster::rooms::hosting::RoomHostHand` */
+export type RoomHostHand = { room: EntityId; to: EntityId; session?: EntityId | null }
+/** `oneiron::workspace_roster::sharing::RoomSharingClamp` */
+export type RoomSharingClamp = { clamp: "worlds" } | { clamp: "facets" } | { clamp: "contact_clearance"; members: number } | { clamp: "unknown"; members: number }
+/** `oneiron::workspace_roster::sharing::RoomSharingView` */
+export type RoomSharingView = { room: EntityId; effective: Scope; clamps: RoomSharingClamp[] }
+/** `oneiron::task_verb::sdk::CompanionSharingRequest` */
+export type CompanionSharingRequest = { companion_ref: string; contact_ref: string }
+/** `oneiron::workspace_roster::sharing::CompanionSharingTarget` */
+export type CompanionSharingTarget = { companion: EntityId; contact: EntityId }
+/** `oneiron::workspace_roster::sharing::CompanionSharingStored` */
+export type CompanionSharingStored = { scope: Scope; purpose: string; revoked: boolean; updated_at: number }
+/** `oneiron::workspace_roster::sharing::CompanionSharingView` */
+export type CompanionSharingView = { target: CompanionSharingTarget; stored?: CompanionSharingStored | null; effective: Scope }
+/** `oneiron::task_verb::sdk::CompanionSharingSetRequest` */
+export type CompanionSharingSetRequest = { companion_ref: string; contact_ref: string; proposal_ref: string; expected_delta: string }
+/** `oneiron::task_verb::sdk::WorkspaceRefRequest` */
+export type WorkspaceRefRequest = { workspace_ref: string }
+/** `oneiron::workspace_roster::work_companion::WorkCompanionPolicy` */
+export type WorkCompanionPolicy = "choose" | "suggest" | "require"
+/** `oneiron::task_verb::sdk::WorkCompanionSetRequest` */
+export type WorkCompanionSetRequest = { workspace_ref: string; policy: WorkCompanionPolicy }
+/** `oneiron::skill::helper::SkillSourceFile` */
+export type SkillSourceFile = { path: string; content: string }
+/** `oneiron::skill::helper::SkillSaveRequest` */
+export type SkillSaveRequest = { id?: string | null; files: SkillSourceFile[]; expected_version?: string | null }
+/** `oneiron::memory::skill_authoring::SkillAuthoringReceipt` */
+export type SkillAuthoringReceipt = { skill_id: string; author: string; author_receipt: string; version: string }
+/** `oneiron::skill::helper::SkillForkRequest` */
+export type SkillForkRequest = { parent: string; id?: string | null; skill_id: string }
+/** `oneiron::skill::helper::CallableCardView` */
+export type CallableCardView = { skill: string; skill_id: string; version: string; desc: string; reference: string; arguments: unknown; returns: unknown }
+/** `oneiron::task_verb::sdk_host::AiOptionsRequest` */
+export type AiOptionsRequest = { operation?: string | null; inputs?: string[] }
+/** `oneiron::task_verb::sdk_host::AiOptions` */
+export type AiOptions = { options: unknown[]; media_units_left?: number | null }
+/** `oneiron::task_verb::sdk_host::AiPart` */
+export type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] }
+/** `oneiron::task_verb::sdk_host::AiCallRequest` */
+export type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown> }
+/** `oneiron_model::llm::media::MediaUsage` */
+export type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown }
+/** `oneiron::task_verb::sdk_host::AiAnswer` */
+export type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage }
+/** `oneiron_model::llm::media::AiOperation` */
+export type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed"
+/** `oneiron::task_verb::sdk_host::AiVideoTicket` */
+export type AiVideoTicket = { job: string; model: string; operation: AiOperation }
+/** `oneiron::task_verb::sdk_host::AiVideoJobRequest` */
+export type AiVideoJobRequest = { job: string }
+/** `oneiron_model::llm::error::SpentKind` */
+export type SpentKind = "window" | "credit"
+/** `oneiron_model::llm::error::RetryableLlmError` */
+export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[] } } | "ServerError" | "Timeout" | "StreamCut"
+/** `oneiron_model::llm::catalog::LlmCapability` */
+export type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input"
+/** `oneiron_model::llm::model_id::ModelId` */
+export type ModelId = string
+/** `oneiron_model::llm::error::UnsupportedCapability` */
+export type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null }
+/** `oneiron_model::llm::error::LabelReadFailure` */
+export type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed"
+/** `oneiron_model::llm::error::FatalLlmError` */
+export type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure }
+/** `oneiron_model::llm::error::BudgetDenied` */
+export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied"
+/** `oneiron_model::llm::error::LlmError` */
+export type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied }
+/** `oneiron::task_verb::sdk_host::AiVideoJob` */
+export type AiVideoJob = { state: "queued" } | { state: "running"; progress?: number | null } | { state: "done"; answer: AiAnswer } | { state: "failed"; error: LlmError }
+/** `oneiron::task_verb::sdk_host::AiVideoCancelled` */
+export type AiVideoCancelled = { job: string }
+/** `oneiron::task_verb::sdk_host::AiVerdictReversibility` */
+export type AiVerdictReversibility = "reversible_read" | "outbound_effect"
+/** `oneiron::task_verb::sdk_host::AiVerdictRequest` */
+export type AiVerdictRequest = { question: string; options?: string[]; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; locate?: boolean; misses?: number; until_ms?: number | null }
+/** `oneiron::llm::decision::types::ProviderPin` */
+export type ProviderPin = { rung: DecisionRung; model: string; version: string }
+/** `oneiron::llm::decision::types::DecisionBand` */
+export type DecisionBand = { low: number; high: number }
+/** `oneiron::llm::decision::types::EvidenceVersion` */
+export type EvidenceVersion = { id: string; body_hash: number[] }
+/** `oneiron::llm::decision::types::PairedReading` */
+export type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number }
+/** `oneiron::llm::decision::types::StopCause` */
+export type StopCause = "done" | "deadline" | "provider_failure"
+/** `oneiron::llm::decision::types::ReasoningCause` */
+export type ReasoningCause = "paired_high" | "small_margin" | "second_measurement"
+/** `oneiron::llm::decision::types::Reasoning` */
+export type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause }
+/** `oneiron::llm::decision::types::DecisionTime` */
+export type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning }
+/** `oneiron::llm::decision::types::DecisionReceipt` */
+export type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null }
+/** `oneiron::llm::decision::types::HumanAskReason` */
+export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline"
+/** `oneiron::llm::decision::routine::RoutineOutcome` */
+export type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found: ImageBox } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null }
+/** `oneiron::task_verb::sdk_host::AiVerdict` */
+export type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null }
+/** `oneiron::llm::decision::types::DecisionClass` */
+export type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance"
+/** `oneiron::llm::decision::types::AnswerContract` */
+export type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" }
+/** `oneiron::llm::decision::types::DecisionQuestion` */
+export type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean }
+/** `oneiron::receipt::questions::GraphAskSelection` */
+export type GraphAskSelection = { entity_type: number; limit: number }
+/** `oneiron::receipt::questions::GraphAskRequest` */
+export type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null }
+/** `oneiron::llm::decision::types::TypedDecision` */
+export type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null }
+/** `oneiron::llm::decision::questions::records::AnswerRecord` */
+export type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number }
+/** `oneiron::receipt::questions::GraphAskDeclined` */
+export type GraphAskDeclined = { unit: EntityId; decision: TypedDecision }
+/** `oneiron::receipt::questions::GraphAskOutcome` */
+export type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[] }
+/** `oneiron::llm::decision::types::DecisionDial` */
+export type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: DecisionBand }
+/** `oneiron::llm::decision::questions::records::QuestionActivation` */
+export type QuestionActivation = "one_off" | "standing"
+/** `oneiron::llm::decision::questions::records::RefreshPolicy` */
+export type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null }
+/** `oneiron::llm::decision::questions::records::QuestionDefinition` */
+export type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null }
+/** `oneiron::receipt::questions::QuestionCreateRequest` */
+export type QuestionCreateRequest = { definition: QuestionDefinition }
+/** `oneiron::llm::decision::questions::records::QuestionRecord` */
+export type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition; created_at: number }
+/** `oneiron::receipt::questions::QuestionEditRequest` */
+export type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinition }
+/** `oneiron::receipt::questions::QuestionPauseRequest` */
+export type QuestionPauseRequest = { id: EntityId; paused: boolean }
+/** `oneiron::receipt::questions::QuestionPaused` */
+export type QuestionPaused = { id: EntityId; paused: boolean }
+/** `oneiron::receipt::questions::QuestionReadRequest` */
+export type QuestionReadRequest = { id: EntityId; version?: number | null }
+/** `oneiron::receipt::questions::QuestionAnswersRequest` */
+export type QuestionAnswersRequest = { id: EntityId }
+/** `oneiron::task_verb::sdk_connector::ConnectorListRequest` */
+export type ConnectorListRequest = { query?: string | null }
+/** `oneiron::task_verb::sdk_connector::ConnectorEntry` */
+export type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number }
+/** `oneiron::task_verb::sdk_connector::ConnectorNameRequest` */
+export type ConnectorNameRequest = { name: string }
+/** `oneiron::task_verb::sdk_connector::ConnectorView` */
+export type ConnectorView = { key_ref: string; entry: ConnectorEntry; status: string; secret_ref?: string | null; key_generation: number; registered_at: number; status_changed_at?: number | null; budgeted_as_sends: boolean }
+/** `oneiron::task_verb::sdk_memory::CommitRequest` */
+export type CommitRequest = { claims: ClaimInput[] }
+/** `oneiron::task_verb::sdk_memory::ClaimRefRequest` */
+export type ClaimRefRequest = { claim_ref: string }
+/** `oneiron::task_verb::sdk_memory::ForgetPredicateRequest` */
+export type ForgetPredicateRequest = { subject_ref: string; predicate: string }
+/** `oneiron::task_verb::sdk_memory::ForgetRequest` */
+export type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
+/** `oneiron::memory::reads::ClaimListFilter` */
+export type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number }
+/** `oneiron::memory::claims::SafeDeleteReason` */
+export type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete"
+/** `oneiron::task_verb::sdk_memory::SafeDeleteRequest` */
+export type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason }
+/** `oneiron::memory::claims::DeleteReceipt` */
+export type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null }
+/** `oneiron::task_verb::sdk::ReceiptsRequest` */
+export type ReceiptsRequest = { limit?: number | null }
+/** `oneiron::memory::claims::PendingWrite` */
+export type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null }
+/** `oneiron::task_verb::sdk_memory::HydrateRequest` */
+export type HydrateRequest = { refs: string[] }
+/** `oneiron::task_verb::sdk_memory::EntityRequest` */
+export type EntityRequest = { entity_ref: string }
+/** `oneiron::lens::record_ref::ResolveRecordRefRequest` */
+export type ResolveRecordRefRequest = { reference: string }
+/** `oneiron::lens::record_ref::RecordRefPreview` */
+export type RecordRefPreview = { record: RecordRef; revision?: string | null; snippet?: string | null }
+/** `oneiron::lens::record_ref::RecordLinksRequest` */
+export type RecordLinksRequest = { text?: string | null; turn_ref?: string | null }
+/** `oneiron::lens::record_ref::ProseSpan` */
+export type ProseSpan = { kind: "plain"; start: number; end: number; text: string } | { kind: "link"; start: number; end: number; label: string; record: RecordRef }
+/** `oneiron::lens::record_ref::LinkedText` */
+export type LinkedText = { message_id?: string | null; spans: ProseSpan[] }
+/** `oneiron::lens::record_ref::RecordLinks` */
+export type RecordLinks = { texts: LinkedText[] }
+/** `oneiron::task_verb::sdk_memory::QueryBm25Request` */
+export type QueryBm25Request = { query: string; limit: number }
+/** `oneiron::memory::reads::LexicalHit` */
+export type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null }
+/** `oneiron::memory::reads::NeighborOpts` */
+export type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number }
+/** `oneiron::task_verb::sdk_memory::NeighborsRequest` */
+export type NeighborsRequest = { entity_ref: string; opts: NeighborOpts }
+/** `oneiron::memory::reads::NeighborHit` */
+export type NeighborHit = { short_id: string; kind: string; edge_kind: string; weight: number; direction: string }
+/** `oneiron::memory::structural::types::TextIndexField` */
+export type TextIndexField = { field: string; value: string }
+/** `oneiron::memory::structural::types::StructuralEdgeSpec` */
+export type StructuralEdgeSpec = { edge_kind: string; target_ref: string; weight?: number | null }
+/** `oneiron::memory::structural::types::StructuralPutInput` */
+export type StructuralPutInput = { id?: string | null; kind: string; body: unknown; text_fields?: TextIndexField[] | null; edges?: StructuralEdgeSpec[] | null; occurred_at: number; learned_at?: number | null }
+/** `oneiron::memory::structural::types::EntityRefReceipt` */
+export type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string }
+/** `oneiron::memory::structural::types::HabitCheckinInput` */
+export type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null }
+/** `oneiron::memory::structural::types::AdmitImportedClaimInput` */
+export type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null }
+/** `oneiron::memory::structural::types::BlobArtifactInput` */
+export type BlobArtifactInput = { id?: string | null; name: string; media_type: string; occurred_at: number; learned_at?: number | null }
+/** `oneiron::task_verb::sdk_memory::AppendBlobVersionRequest` */
+export type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null }
+/** `oneiron::memory::structural::types::BlobVersionView` */
+export type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number }
+/** `oneiron::task_verb::sdk_memory::ReadBlobVersionRequest` */
+export type ReadBlobVersionRequest = { artifact_ref: string; version: number }
+/** `oneiron::task_verb::sdk_memory::BlobContent` */
+export type BlobContent = { content_base64: string }
+/** `oneiron::task_verb::sdk_connector::OutboundScheduleRequest` */
+export type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null }
+/** `oneiron::memory::outbound::types::OutboundIntentReceipt` */
+export type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean }
+/** `oneiron::task_verb::sdk_memory::CreateNoteRequest` */
+export type CreateNoteRequest = { kind: string; markdown: string }
+/** `oneiron::task_verb::sdk_memory::CreateNoteFromEntityRequest` */
+export type CreateNoteFromEntityRequest = { source_ref: string; kind: string }
+/** `oneiron::note::documents::NoteAnchor` */
+export type NoteAnchor = { note: string; head: string; cursor: number[] }
+/** `oneiron::note::documents::NoteVersion` */
+export type NoteVersion = { note: string; head: string; frontier: number[] }
+/** `oneiron::note::documents::NoteEdit` */
+export type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string }
+/** `oneiron::task_verb::sdk_memory::EditNoteRequest` */
+export type EditNoteRequest = { note_ref: string; edit: NoteEdit }
+/** `oneiron::note::documents::NoteEditOutcome` */
+export type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt }
