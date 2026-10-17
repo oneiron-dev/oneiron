@@ -782,6 +782,12 @@ impl OneironClient {
                 "vault.artifacts.body.fork.discard" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyFork,
                 >(client, verb, &input),
+                "vault.artifacts.body.proposal.read" => remote_agent_verb_output::<
+                    oneiron::office_body::OfficeBodyProposal,
+                >(client, verb, &input),
+                "vault.artifacts.body.proposal.settle" => remote_agent_verb_output::<
+                    oneiron::office_body::OfficeBodyProposal,
+                >(client, verb, &input),
                 "vault.artifacts.body.export" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyExportView,
                 >(client, verb, &input),
@@ -3875,7 +3881,7 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.body.fork.diff", value)
     }
-    /// A person lands a reviewed fork.
+    /// Lands one reviewed fork on an answer.
     pub fn vault_artifacts_body_fork_merge(
         &self,
         input: &oneiron::office_body::OfficeBodyForkMergeRequest,
@@ -3900,6 +3906,32 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.body.fork.discard", value)
+    }
+    /// An office proposal: its members, answers and settlement.
+    pub fn vault_artifacts_body_proposal_read(
+        &self,
+        input: &oneiron::office_body::OfficeBodyProposalRequest,
+    ) -> Result<oneiron::office_body::OfficeBodyProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.proposal.read", value)
+    }
+    /// Accepts or rejects an office proposal's reviewed forks.
+    pub fn vault_artifacts_body_proposal_settle(
+        &self,
+        input: &oneiron::office_body::OfficeBodyProposalSettleRequest,
+    ) -> Result<oneiron::office_body::OfficeBodyProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.proposal.settle", value)
     }
     /// Exports the live body as the artifact's next version.
     pub fn vault_artifacts_body_export(
