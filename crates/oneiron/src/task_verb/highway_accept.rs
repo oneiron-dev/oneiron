@@ -257,8 +257,12 @@ impl Memory<'_> {
             },
             (Lane::External, _) => {
                 let lease_owner = lease_owner_for(self.actor(), generation.as_ref());
-                let payload = rmp_serde::to_vec_named(&body.brief.as_ref().map(StoredBrief::stamp))
-                    .map_err(|_| MemoryError::bad_request("brief stamp does not encode"))?;
+                // The try freezes the brief revision and the TASK's team run;
+                // an existing try keeps the payload it was enqueued with.
+                let payload = super::external_attempt::encode(
+                    body.brief.as_ref().map(StoredBrief::stamp),
+                    body.team.clone(),
+                )?;
                 let enqueued = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
                     wtxn,
                     EnqueueAttempt {

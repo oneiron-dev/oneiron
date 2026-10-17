@@ -720,13 +720,14 @@ impl Memory<'_> {
         now: u64,
         provenance: Value,
     ) -> MemoryResult<(EntityId, Option<String>)> {
-        self.persist_task_proposal_with_origin(predicate, value, subject, now, provenance, None)
+        self.persist_proposal_claim(predicate, value, subject, now, provenance, |_, _| Ok(()))
     }
 
-    /// [`Self::persist_task_proposal`] for a create a host bound to its
-    /// creator (OF-532): the creator is re-proved and witnessed under the
-    /// proposal id in the proposal's own transaction, before the claim
-    /// lands, so no settlement can see the proposal without its origin.
+    /// [`Self::persist_task_proposal`] for a create (OF-532): a creator a
+    /// host bound is re-proved and witnessed under the proposal id in the
+    /// proposal's own transaction, before the claim lands, so no settlement
+    /// can see the proposal without its origin. A root create keeps a
+    /// witness only for the conversation the host stamped (OF-221).
     pub(super) fn persist_task_proposal_with_origin(
         &self,
         predicate: &str,
@@ -735,6 +736,25 @@ impl Memory<'_> {
         now: u64,
         provenance: Value,
         creator: Option<&HostBinding>,
+    ) -> MemoryResult<(EntityId, Option<String>)> {
+        self.persist_proposal_claim(predicate, value, subject, now, provenance, |wtxn, id| {
+            if let Some(origin) = task_create_origin_in_txn(self, &*wtxn, creator)? {
+                put_proposal_origin_in_txn(self.vault(), wtxn, id, &origin)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// One Proposed task CLAIM, and whatever `witness` writes beside it under
+    /// its id in the same transaction, before the claim lands.
+    fn persist_proposal_claim(
+        &self,
+        predicate: &str,
+        value: Value,
+        subject: EntityId,
+        now: u64,
+        provenance: Value,
+        witness: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<(EntityId, Option<String>)> {
         let proposal_ref = self.vault().store.clock.entity_id()?;
         let mut candidate = ClaimCandidate::new(
@@ -765,10 +785,7 @@ impl Memory<'_> {
             end: now,
         };
         self.with_verified_actor_write_txn(|wtxn| {
-            if let Some(binding) = creator {
-                let origin = task_create_origin_in_txn(self, &*wtxn, binding)?;
-                put_proposal_origin_in_txn(self.vault(), wtxn, proposal_ref, &origin)?;
-            }
+            witness(wtxn, proposal_ref)?;
             apply_ops_with_gate_mode(
                 &self.vault().store,
                 &self.vault().config,

@@ -57,7 +57,6 @@ impl TaskAskOptionId {
     pub fn new(id: impl Into<String>) -> MemoryResult<Self> {
         let id = id.into();
         if id.is_empty()
-            || id.len() > 64
             || !id
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.'))
@@ -315,24 +314,14 @@ impl TaskAskSpec {
         now: u64,
         bound: Option<TaskAskClass>,
     ) -> MemoryResult<Self> {
+        // Counts and sizes never refuse here: an ask's rows measure them
+        // where it is kept (`ask_limits`), and it is served whole.
         if self.intent_key.trim().is_empty()
-            || self.intent_key.len() > 256
             || self.what.revision == 0
             || self.what.revision > u64::from(u32::MAX)
-            || self.what.options.len() > 256
-            || self.what.options.values().any(|text| text.len() > 4096)
-            || self.what.context_refs.len() > 64
             || who.is_empty()
-            || who.len() > 64
         {
             return Err(MemoryError::bad_request("invalid ask spec"));
-        }
-        if rmp_serde::to_vec_named(self)
-            .map_err(|_| MemoryError::bad_request("ask encoding"))?
-            .len()
-            > 64 * 1024
-        {
-            return Err(MemoryError::bad_request("ask spec too large"));
         }
         let mut effective = self.clone();
         if let Some(bound) = bound {
@@ -359,12 +348,7 @@ impl TaskAskSpec {
         {
             return Err(MemoryError::bad_request("invalid ask ladder prediction"));
         }
-        if self
-            .what
-            .class_key
-            .as_ref()
-            .is_some_and(|key| key.is_empty() || key.len() > 256)
-        {
+        if self.what.class_key.as_ref().is_some_and(String::is_empty) {
             return Err(MemoryError::bad_request("invalid ask question class"));
         }
         if let Some(binding) = &self.what.outcome_binding {
@@ -383,7 +367,6 @@ impl TaskAskSpec {
             }
             effective.what.class_key = Some(class.key.clone());
             if class.key.is_empty()
-                || class.key.len() > 256
                 || class.version == 0
                 || class.deadline_seconds == 0
                 || !who.is_subset(&class.allowed_recipients)
@@ -513,12 +496,11 @@ impl TaskAskSpec {
         }
         let remind = effective.remind.get_or_insert_with(Vec::new);
         if remind.iter().any(|delay| now.checked_add(*delay).is_none())
-            || remind.len() > 16
             || remind.first() == Some(&0)
             || remind.windows(2).any(|pair| pair.first() >= pair.get(1))
         {
             return Err(MemoryError::bad_request(
-                "ask reminders must be bounded and increasing",
+                "ask reminders must be positive, increasing, and without time overflow",
             ));
         }
         Ok(effective)

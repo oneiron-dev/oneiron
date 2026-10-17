@@ -299,6 +299,23 @@ impl LiveActHolder {
     }
 }
 impl Vault {
+    /// How many distinct live Owners shared vault `vault_id` has on the store
+    /// clock. The veto window applies with two or more (ARCH-0043).
+    pub(crate) fn live_shared_owner_count_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+    ) -> Result<usize> {
+        let now = self.store.clock.now_recorded_at();
+        Ok(self
+            .live_act_holders(txn, vault_id, now)?
+            .iter()
+            .filter(|holder| holder.role == Role::Owner)
+            .map(|holder| holder.member)
+            .collect::<BTreeSet<_>>()
+            .len())
+    }
+
     pub(super) fn live_act_holders(
         &self,
         txn: &heed::RoTxn<'_>,

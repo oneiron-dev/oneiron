@@ -210,6 +210,14 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
+    /// The lasting call receipt the last verb's reply stated, as
+    /// `call:<32hex>`, whether it answered or refused. `None` for an embedded
+    /// handle, before any call, after a call that reached no server, and for
+    /// an anonymous off-record call.
+    fn last_receipt_ref(&self) -> Option<String> {
+        self.inner.last_receipt_ref()
+    }
+
     // BEGIN GENERATED AGENT VERBS
     fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "report")?;
@@ -250,6 +258,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.identity.settle")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.identity.settle", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_inbox_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.inbox.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.inbox.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_inbox_mark(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.inbox.mark")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.inbox.mark", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -1573,6 +1595,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_decisions_asks_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.decisions.asks.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.decisions.asks.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_decisions_asks_climb(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.decisions.asks.climb")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.decisions.asks.climb", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_decisions_asks(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.decisions.asks")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.decisions.asks", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn connector_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "connector.list")?;
         let output = py
@@ -1724,6 +1767,27 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.artifacts.read")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.artifacts.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_enqueue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.enqueue")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.enqueue", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_seed(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.seed")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.seed", input))
             .map_err(raise)?;
         encode(&output)
     }
