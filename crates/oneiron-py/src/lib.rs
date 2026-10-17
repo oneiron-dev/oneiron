@@ -419,6 +419,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_fanout_launch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.launch")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.launch", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_fanout_resume(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.resume")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.resume", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_fanout_ack(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.ack")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.ack", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn tasks_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "tasks.update")?;
         let output = py
@@ -442,7 +463,7 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None, query_affect_json=None))]
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -457,6 +478,7 @@ impl NativeClient {
         as_of: Option<u64>,
         deadline_ms: Option<u64>,
         media_json: Option<&str>,
+        query_affect_json: Option<&str>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -467,6 +489,9 @@ impl NativeClient {
 
         let media_json: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media_json
             .map(|value| decode(value, "recall media"))
+            .transpose()?;
+        let query_affect_json: Option<oneiron::task_verb::sdk::QueryAffect> = query_affect_json
+            .map(|value| decode(value, "recall query affect"))
             .transpose()?;
         let inner = &slf.inner;
         let py = slf.py();
@@ -481,6 +506,7 @@ impl NativeClient {
                     as_of,
                     deadline_ms,
                     media_json,
+                    query_affect_json,
                 )
             })
             .map_err(raise)?;
@@ -1084,6 +1110,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.settings.learning.clear", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_secrets_lift_history(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.secrets.lift_history")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.secrets.lift_history", input))
             .map_err(raise)?;
         encode(&output)
     }

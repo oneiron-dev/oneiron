@@ -2,11 +2,11 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Vault;
 use crate::campaign::CRM_PACK_ID;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{StructuralKindRegistration, TypeByteFamily};
+use crate::{EdgeActorClass, Vault};
 
 // Referenced only by an intra-doc link on `QueryScope::admits`; gated so the
 // name is in scope for rustdoc without being an unused import.
@@ -60,6 +60,10 @@ pub struct SavedQueryDefinition {
     pub schema_version: u32,
     /// The principal whose reach bounds every evaluation of this query.
     pub owner_actor: EntityId,
+    /// The class `owner_actor` was verified as when it created the query.
+    /// Its read key is resolved under this class at every evaluation, and a
+    /// judge's spend is charged to it.
+    pub owner_actor_class: EdgeActorClass,
     /// Scope the owner DECLARED. The effective scope is this intersected with
     /// the owner's reach at evaluation time.
     pub scope: QueryScope,

@@ -5,7 +5,9 @@
 //! notice and the digest renders when the owner opens it. No composition
 //! policy lives here. Each published period with anything in it queues the
 //! lens's generate step (`weave_lens.rs`), whose render lands on the row.
-use super::weave_lens::{WeaveLensRender, settle_weave_lens_axes};
+use super::weave_lens::{
+    KeptLiveLens, WeaveLensRender, settle_live_weave_lens, settle_weave_lens_axes,
+};
 use super::{
     ScopedRead, ScopedReadReceipt, ScopedReadResult, WeaveItem, WeaveReader, WeaveReport,
     WeaveSection, WeaveSectionKind, WeaveSectionSpec,
@@ -24,6 +26,8 @@ use std::collections::BTreeSet;
 const SCHEDULE_PREFIX: &[u8] = b"weave:schedule:v1:";
 const DIGEST_PREFIX: &[u8] = b"weave:digest:v1:";
 const SOURCE_PREFIX: &[u8] = b"weave:digest_source:v1:";
+/// Each reader's newest live lens render, as [`KeptLiveLens`] keeps it.
+const LIVE_PREFIX: &[u8] = b"weave:live:v1:";
 /// The producer of a weave digest's inbox NOTIFICATION; `source.result` is
 /// the digest's period, its `scheduled_for` second.
 pub const WEAVE_DIGEST_NOTIFICATION_PRODUCER: &str = "weave.digest";
@@ -469,6 +473,9 @@ fn source_key(source: &EntityId, digest_key: &[u8]) -> Vec<u8> {
 /// A hard delete cannot leave a copied report body in vault metadata. This
 /// source-prefix index is populated in the same transaction as publication,
 /// and invalidated by the common deletion door in its erasure transaction.
+/// A deleted reader's own rows go too: its saved periods (a resident's carry
+/// its dreaming counters, which index no source), its schedule and its kept
+/// live render.
 pub(crate) fn invalidate_weave_digest_source_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -489,22 +496,48 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         {
             return Err(Error::CorruptedIndex("weave digest source index"));
         }
-        if let Some(raw) = store.vault_meta.get(&*txn, digest_key)? {
-            // Even an undecodable saved row is deleted. If it cannot be
-            // decoded, orphan index keys contain references but no body bytes.
-            if let Ok(wire) = serde_json::from_slice::<WireDigest>(&raw)
-                && let Ok(report) = wire.into_report()
-                && let Ok(sources) = report_sources(&report.value)
-            {
-                for other in sources {
-                    store
-                        .vault_meta
-                        .delete(txn, &source_key(&other, digest_key))?;
-                }
-            }
-            store.vault_meta.delete(txn, digest_key)?;
-        }
+        erase_weave_digest_in_txn(store, txn, digest_key)?;
         store.vault_meta.delete(txn, &index_key)?;
+    }
+    for reader in [
+        WeaveDigestReader::Person(*source),
+        WeaveDigestReader::Owner(*source),
+        WeaveDigestReader::Agent(*source),
+    ] {
+        let periods = store
+            .vault_meta
+            .prefix_iter(&*txn, &reader.key(DIGEST_PREFIX))?
+            .map(|row| row.map(|(key, _)| key.to_vec()))
+            .collect::<Result<Vec<_>>>()?;
+        for digest_key in periods {
+            erase_weave_digest_in_txn(store, txn, &digest_key)?;
+        }
+        store.vault_meta.delete(txn, &reader.key(SCHEDULE_PREFIX))?;
+        store.vault_meta.delete(txn, &reader.key(LIVE_PREFIX))?;
+    }
+    Ok(())
+}
+
+/// Deletes one saved period and the source-index keys its report wrote.
+fn erase_weave_digest_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    digest_key: &[u8],
+) -> Result<()> {
+    if let Some(raw) = store.vault_meta.get(&*txn, digest_key)? {
+        // Even an undecodable saved row is deleted. If it cannot be
+        // decoded, orphan index keys contain references but no body bytes.
+        if let Ok(wire) = serde_json::from_slice::<WireDigest>(&raw)
+            && let Ok(report) = wire.into_report()
+            && let Ok(sources) = report_sources(&report.value)
+        {
+            for other in sources {
+                store
+                    .vault_meta
+                    .delete(txn, &source_key(&other, digest_key))?;
+            }
+        }
+        store.vault_meta.delete(txn, digest_key)?;
     }
     Ok(())
 }
@@ -566,7 +599,10 @@ impl Vault {
         Ok(())
     }
 
-    /// Owner-only: stop one reader's digests. Its saved digests stay.
+    /// Owner-only: stop one reader's digests. Its saved digests stay, and
+    /// its newest rendered period settles on the weave-report skill's axes
+    /// now, since no next period will render to settle it (CALLS: OF-499
+    /// stopped digest settles at stop).
     pub fn clear_weave_digest_schedule(
         &self,
         owner: &AuthenticatedOwner,
@@ -580,6 +616,19 @@ impl Vault {
                 .delete(txn, &reader.key(SCHEDULE_PREFIX))?)
         })?;
         self.store.notify_proactivity_changes();
+        if cleared && let Some((at, report, last)) = self.previous_weave_lens(reader, u64::MAX)? {
+            // Evidence about the skill, never a gate on the stop.
+            if let Err(error) = settle_weave_lens_axes(
+                self,
+                reader,
+                at,
+                &report,
+                &last,
+                self.store.clock.now_recorded_at(),
+            ) {
+                tracing::warn!(?error, "the stopped weave digest's last period did not settle");
+            }
+        }
         Ok(cleared)
     }
 
@@ -854,6 +903,41 @@ impl Vault {
             }
         }
         Ok(landed)
+    }
+
+    /// Keep a live lens's render as `reader`'s newest (OF-499), then settle
+    /// the one it replaces on the skill's corrections axis. The axis is
+    /// evidence about the skill, never a gate on the render.
+    pub(super) fn keep_live_weave_lens(
+        &self,
+        reader: WeaveReader<'_>,
+        report: &WeaveReport,
+        render: &WeaveLensRender,
+    ) -> Result<()> {
+        let id = {
+            let txn = self.store.env.read_txn()?;
+            reader.id(self, &txn)?
+        };
+        let reader = WeaveDigestReader::of(&reader, id);
+        let key = reader.key(LIVE_PREFIX);
+        let bytes = serde_json::to_vec(&KeptLiveLens::of(report, render)).map_err(|_| invalid())?;
+        let previous = self.with_write_txn_grouped(|txn| {
+            let previous = self
+                .store
+                .vault_meta
+                .get(&*txn, &key)?
+                .map(|bytes| serde_json::from_slice::<KeptLiveLens>(&bytes))
+                .transpose()
+                .map_err(|_| invalid())?;
+            self.store.vault_meta.put(txn, &key, &bytes)?;
+            Ok(previous)
+        })?;
+        if let Some(previous) = previous.filter(|kept| kept.rendered_at() < render.rendered_at)
+            && let Err(error) = settle_live_weave_lens(self, reader, &previous, render.rendered_at)
+        {
+            tracing::warn!(?error, "live weave lens axis did not settle");
+        }
+        Ok(())
     }
 
     /// The reader's newest period before `scheduled_for` that holds a render.

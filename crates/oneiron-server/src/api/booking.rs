@@ -56,6 +56,7 @@ use crate::server::SyncServer;
 mod admission;
 mod constants;
 mod free_text;
+mod front;
 mod helpers;
 mod instructions;
 mod lifecycle;

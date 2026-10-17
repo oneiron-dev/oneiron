@@ -449,6 +449,22 @@ pub(super) fn recall_media_to_engine(
     })
 }
 
+/// Lowers the boundary query affect onto the engine's; the recall door
+/// refuses a non-finite or out-of-range value with `BAD_REQUEST`.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "f64→f32 affect narrowing at the N-API boundary is intentional"
+)]
+pub(super) fn query_affect_to_engine(
+    affect: super::dtos::NapiQueryAffect,
+) -> oneiron::task_verb::sdk::QueryAffect {
+    oneiron::task_verb::sdk::QueryAffect {
+        valence: affect.valence as f32,
+        arousal: affect.arousal as f32,
+        dominance: affect.dominance as f32,
+    }
+}
+
 /// Lowers the boundary recall scope onto the engine's.
 pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallScope {
     scope.map_or_else(RecallScope::default, |scope| RecallScope {

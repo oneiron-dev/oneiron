@@ -1,6 +1,7 @@
 //! Narrow value and text edits in place (ARCH-0077, "Edit in place with
 //! passthrough"): `set_text`, `replace_run_text`, `set_run_props`,
-//! `set_xfrm`, `move_in_slide_space`, `set_picture` and `set_notes`.
+//! `set_xfrm`, `move_in_slide_space`, `set_picture`, `set_notes`,
+//! `set_preset` and `set_glue`.
 //!
 //! One edit is one checked operation on a copy of the package. Each verb
 //! derives its own allowed part set and its declared elements; the copy lands
@@ -13,6 +14,7 @@
 //! transform is not materialised, autofit metrics are kept as written, and a
 //! changed text body comes back [`FitUnverified`].
 mod check;
+pub(crate) mod geometry;
 mod media;
 mod structure;
 #[cfg(test)]
@@ -46,7 +48,7 @@ pub struct Target<'a> {
     pub expected: [u8; 32],
 }
 
-/// The seven value and text verbs.
+/// The nine value and text verbs.
 #[derive(Debug, Clone, Copy)]
 pub enum ValueEdit<'a> {
     /// The whole text body: `\n` separates paragraphs and U+000B is an
@@ -90,6 +92,17 @@ pub enum ValueEdit<'a> {
         slide: &'a str,
         expected: Option<&'a str>,
         text: &'a str,
+    },
+    /// A shape's or connector's preset geometry (`a:prstGeom/@prst`): a
+    /// [`Preset::name`] for a shape, a [`ConnectorPreset::name`] for a
+    /// connector. Its adjust values are dropped; custom geometry refuses.
+    SetPreset { target: Target<'a>, preset: &'a str },
+    /// A connector's glue: each end the native id of a shape on its slide
+    /// and that shape's connection site, or free. Its geometry stays.
+    SetGlue {
+        target: Target<'a>,
+        start: Option<(u32, u32)>,
+        end: Option<(u32, u32)>,
     },
 }
 
@@ -299,6 +312,14 @@ pub fn edit(deck: &mut Package, op: &ValueEdit<'_>) -> Result<EditReport, EditRe
                 return Err(EditRefusal::Missing("slide"));
             }
             media::set_notes(&mut next, slide, expected, text)?
+        }
+        ValueEdit::SetPreset { target, preset } => {
+            let (index, shape) = locate(&before, &target)?;
+            geometry::set_preset(&mut next, &before.slides[index], shape, preset)?
+        }
+        ValueEdit::SetGlue { target, start, end } => {
+            let (index, shape) = locate(&before, &target)?;
+            geometry::set_glue(&mut next, &before.slides[index], shape, start, end)?
         }
     };
     let changed = check::verify(deck, &next, &before, op, &written)?;

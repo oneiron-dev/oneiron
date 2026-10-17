@@ -1,5 +1,5 @@
 //! The host's saved-query sweep (ARCH-0059 `eval`): the queries a wake
-//! evaluates, the people it pages through, and the owner reach each query is
+//! evaluates, the people it pages through, and the owner read each query is
 //! evaluated under. Each wake keeps to the query's own `max_entities_per_wake`
 //! and `max_judges_per_wake`; the verdict memo makes an unmoved person free.
 //! A Reactive query is also re-checked for each person a claim write moves
@@ -8,10 +8,11 @@
 
 use std::collections::BTreeSet;
 
-use super::definition::{EvalMode, QueryScope, SavedQueryLifecycle, SavedQueryRecord};
+use super::definition::{EvalMode, SavedQueryLifecycle, SavedQueryRecord};
 use super::storage::{load_record_in_txn, saved_query_type_byte};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::ClaimSubject;
+use crate::claim::{ClaimSubject, ScopedReadActorKey};
+use crate::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND};
 use crate::ports::{ChangeLogStoreRead, EntityStoreRead};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
@@ -64,17 +65,44 @@ fn active_saved_queries(
     }
 }
 
-/// The reach a sweep evaluates `owner`'s query under, read now: all of the
-/// vault for the vault owner. `None` for any other owner, whose current
-/// grants no resolver maps to a [`QueryScope`] yet: the sweep leaves that
-/// query to an explicit evaluation rather than guess its reach.
-pub fn sweep_owner_grants(vault: &Vault, owner: EntityId) -> Result<Option<QueryScope>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let is_owner =
-        crate::memory::actor_is_vault_owner_in_txn(vault, &rtxn, owner, EdgeActorClass::Human)
-            .map_err(|error| Error::InvalidConfig(error.message))?;
-    Ok(is_owner.then(QueryScope::default))
+/// The read a sweep evaluates `owner`'s query under, resolved now: the key
+/// `owner`'s own Memory handle reads with, as `owner_class`
+/// ([`crate::memory::Memory::read_key`]). The vault owner reads all of its
+/// vault; any other actor reads what its live grants admit, rechecked by
+/// the lane on every read.
+///
+/// `None` when the owner has no usable read now: gone, a deleted shell, no
+/// longer of `owner_class`, or no key to build. The sweep then skips the
+/// query and never guesses a reach. An authority the store cannot compute
+/// is an error, and the sweep skips the query for it too.
+pub fn sweep_owner_read(
+    vault: &Vault,
+    owner: EntityId,
+    owner_class: EdgeActorClass,
+) -> Result<Option<ScopedReadActorKey>> {
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        if crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, &owner)?
+            .live_type()
+            .is_none()
+        {
+            return Ok(None);
+        }
+    }
+    match vault.memory(owner, owner_class).read_key() {
+        Ok(key) => Ok(Some(key)),
+        Err(error) if OWNER_READ_REFUSALS.contains(&error.code.as_str()) => Ok(None),
+        Err(error) => Err(Error::InvalidConfig(error.message)),
+    }
 }
+
+/// The refusals that mean the owner has no usable read now, as against an
+/// authority the store cannot compute.
+const OWNER_READ_REFUSALS: [&str; 3] = [
+    MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_BAD_REQUEST,
+    MEMORY_CODE_NOT_FOUND,
+];
 
 /// The people a run of the vault's change log moved, for Reactive saved
 /// queries.

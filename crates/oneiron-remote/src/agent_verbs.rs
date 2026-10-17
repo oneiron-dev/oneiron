@@ -118,6 +118,15 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.fanout.launch" => remote_agent_verb_output::<
+                    Option<oneiron::task_verb::sdk::FanoutLaunchView>,
+                >(client, verb, &input),
+                "vault.fanout.resume" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FanoutLaunchView,
+                >(client, verb, &input),
+                "vault.fanout.ack" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FanoutLaunchView,
+                >(client, verb, &input),
                 "tasks.update" => {
                     remote_agent_verb_output::<oneiron::task_verb::TaskUpdateReceipt>(
                         client, verb, &input,
@@ -352,6 +361,9 @@ impl OneironClient {
                 "vault.settings.learning.clear" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
+                "vault.secrets.lift_history" => remote_agent_verb_output::<
+                    oneiron::policy_model::SecretLiftStatus,
+                >(client, verb, &input),
                 "vault.widen_proposals" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::widen_doors::WidenProposalsView,
                 >(client, verb, &input),
@@ -385,7 +397,7 @@ impl OneironClient {
                     remote_agent_verb_output::<oneiron::lens::LensListPage>(client, verb, &input)
                 }
                 "vault.lenses.default" => remote_agent_verb_output::<
-                    oneiron::claim::ScopedReadResult<oneiron::lens::GeneratedLens>,
+                    oneiron::claim::ScopedReadResult<oneiron::lens::LensFrameCard>,
                 >(client, verb, &input),
                 "vault.disclosure.offer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DisclosureOffered,
@@ -1168,6 +1180,42 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("tasks.wave", value)
     }
+    pub fn vault_fanout_launch(
+        &self,
+        input: &oneiron::task_verb::sdk::FanoutLaunchRequest,
+    ) -> Result<Option<oneiron::task_verb::sdk::FanoutLaunchView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.fanout.launch", value)
+    }
+    pub fn vault_fanout_resume(
+        &self,
+        input: &oneiron::task_verb::sdk::FanoutResumeRequest,
+    ) -> Result<oneiron::task_verb::sdk::FanoutLaunchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.fanout.resume", value)
+    }
+    pub fn vault_fanout_ack(
+        &self,
+        input: &oneiron::task_verb::sdk::FanoutAckRequest,
+    ) -> Result<oneiron::task_verb::sdk::FanoutLaunchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.fanout.ack", value)
+    }
     pub fn tasks_update(
         &self,
         input: &oneiron::task_verb::sdk::TaskUpdateRequest,
@@ -1220,7 +1268,9 @@ impl OneironClient {
     /// server admits them on a line of its own and reranks on its `[models]`
     /// reranker, or runs them unreranked and says so when it has none.
     /// `media` is embedded by the server into its declared space; embedded,
-    /// it returns `MODEL_UNAVAILABLE`.
+    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,
+    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded
+    /// and remote alike; out of range it returns `BAD_REQUEST`.
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -1235,6 +1285,7 @@ impl OneironClient {
         as_of: Option<u64>,
         deadline_ms: Option<u64>,
         media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery>,
+        query_affect: Option<oneiron::task_verb::sdk::QueryAffect>,
     ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
         let input = oneiron::task_verb::sdk::RecallRequest {
             query: query.to_owned(),
@@ -1245,7 +1296,7 @@ impl OneironClient {
             as_of,
             deadline_ms,
             media,
-            ..Default::default()
+            query_affect,
         };
         oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit_nonzero(
@@ -2125,6 +2176,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.settings.learning.clear", value)
     }
+    pub fn vault_secrets_lift_history(
+        &self,
+        input: &oneiron::policy_model::SecretLiftRequest,
+    ) -> Result<oneiron::policy_model::SecretLiftStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.lift_history", value)
+    }
     pub fn vault_widen_proposals(
         &self,
         input: &oneiron::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -2248,7 +2311,7 @@ impl OneironClient {
     pub fn vault_lenses_default(
         &self,
         input: &oneiron::lens::LensDefaultRequest,
-    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::lens::GeneratedLens>, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::lens::LensFrameCard>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

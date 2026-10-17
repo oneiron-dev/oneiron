@@ -1,9 +1,9 @@
 //! The live arrangement read as a shape: every setup-plane row the vault
 //! holds now, under the names a seed declares. Entity-backed rows and the
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
-use super::{ShapeGrantBound, ShapeRow, invalid};
+use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, invalid};
 use crate::agent_def::decode_agent_definition;
-use crate::channel_identity::decode_channel_identity_body;
+use crate::channel_identity::{ChannelIdentityState, decode_channel_identity_body};
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::{
@@ -63,8 +63,9 @@ impl Vault {
 
     /// The live setup plane, keeping an entity-backed row only when
     /// `visible` admits its entity. Base reality and received worlds are not
-    /// this vault's arrangement, so they are not rows. A world with no name
-    /// is named by its id.
+    /// this vault's arrangement, so they are not rows, and neither is a
+    /// retired skill or channel identity. A world with no name is named by
+    /// its id.
     pub(super) fn read_live_shape(
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
@@ -82,6 +83,26 @@ impl Vault {
                 let name = world_name(&body).unwrap_or_else(|| id.to_hex());
                 rows.push((ShapeRow::World { name }, Some(id)));
             }
+            if let Some(shared) = self.shared_vault_creation_in_txn(&txn)? {
+                rows.push((
+                    ShapeRow::Shared {
+                        vault_id: shared.vault_id,
+                        preset: shared.preset.map(Into::into),
+                    },
+                    None,
+                ));
+                for (member, role) in self.shared_members_in_txn(&txn, shared.vault_id)? {
+                    if let Some(role) = ShapeMemberRole::of(role) {
+                        rows.push((
+                            ShapeRow::Member {
+                                member: member.to_hex(),
+                                role,
+                            },
+                            Some(member),
+                        ));
+                    }
+                }
+            }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_AGENT_DEF)? {
                 let def = decode_agent_definition(&body)?;
                 rows.push((
@@ -95,23 +116,36 @@ impl Vault {
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_SKILL)? {
                 let record = decode_skill_record(&body)?;
-                if record.lifecycle_status == SkillLifecycle::Superseded {
+                if matches!(
+                    record.lifecycle_status,
+                    SkillLifecycle::Superseded | SkillLifecycle::Quarantined
+                ) {
                     continue;
                 }
                 rows.push((
                     ShapeRow::Skill {
                         skill_id: record.skill_id,
                         version: Some(record.version),
+                        source: None,
                     },
                     Some(id),
                 ));
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_CHANNEL_IDENTITY)? {
                 let identity = decode_channel_identity_body(&body)?;
+                if matches!(
+                    identity.state(),
+                    ChannelIdentityState::Released
+                        | ChannelIdentityState::Quarantine
+                        | ChannelIdentityState::Tombstone
+                ) {
+                    continue;
+                }
                 rows.push((
                     ShapeRow::Channel {
                         channel: identity.channel().to_owned(),
                         address: identity.address_or_handle().to_owned(),
+                        provision: None,
                     },
                     Some(id),
                 ));
