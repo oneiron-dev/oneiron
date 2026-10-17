@@ -489,7 +489,9 @@ pub(crate) fn admit_turn(
     actor: EntityId,
     has_unattributed_message: bool,
 ) -> Result<Option<EntityId>> {
-    if crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &room)?.is_none() {
+    if crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, txn, &room, |_| Ok(()))?
+        .is_none()
+    {
         return Ok(None); // ordinary witness may mint a fresh Conversation
     }
     let body = crate::conversation::body_in(vault, txn, room)?;

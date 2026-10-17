@@ -34,11 +34,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/docx_body.rs` | src | s | 4 struct · 4 enum · 2 fn | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxParagraph, DocxRevision | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
 | `src/edit/check.rs` | src | m | 15 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/media.rs` | src | s | 5 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
-| `src/edit/mod.rs` | src | s | 5 struct · 3 enum · 1 fn · 1 mod · 2 re-export · 1 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, Target, ValueEdit, Xfrm | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
+| `src/edit/mod.rs` | src | m | 5 struct · 3 enum · 1 fn · 1 mod · 2 re-export · 1 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, Target, ValueEdit, Xfrm | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
+| `src/edit/structure/arrange.rs` | src | m | 4 crate-vis | — | The live-deck projector's shape verbs: a sibling reorder (z-order), an empty group framed over slide space… |
 | `src/edit/structure/check.rs` | src | m | 4 crate-vis | — | The independent check for structural edits |
-| `src/edit/structure/mod.rs` | src | m | 2 struct · 2 enum · 2 fn · 2 crate-vis | NewShape, Preset, StructureEdit, StructureReport | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
+| `src/edit/structure/mod.rs` | src | m | 3 struct · 2 enum · 2 fn · 2 crate-vis | NewGroup, NewShape, Preset, StructureEdit, StructureReport | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
 | `src/edit/structure/slides/check.rs` | src | m | 2 crate-vis | — | The independent check for slide-level edits |
-| `src/edit/structure/slides/mod.rs` | src | m | 5 crate-vis | — | Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and… |
+| `src/edit/structure/slides/lifecycle.rs` | src | s | 2 crate-vis | — | A blank slide over a layout, and a slide's removal from the list: the live-deck projector's slide verbs |
+| `src/edit/structure/slides/mod.rs` | src | m | 6 crate-vis | — | Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and… |
 | `src/edit/structure/slides/tests.rs` | test | m | — | — | Slide-level acceptance: a copy repairs its notes backlink, leaves the comments behind, keeps every… |
 | `src/edit/structure/tests.rs` | test | m | 1 crate-vis | — | ONE-2529 acceptance, first half (add, delete, reparent): high-water id allocation, the supported delete… |
 | `src/edit/structure/timing.rs` | src | s | 6 crate-vis | — | The delete cascade over a small, tested timing subset (ARCH-0077, "Animation dependencies") |
@@ -60,9 +62,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
 | `src/lib.rs` | src | s | 1 enum · 8 fn · 14 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
-| `src/live/deck_export.rs` | src | m | 6 struct · 1 enum · 5 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
+| `src/live/deck_export.rs` | src | L | 6 struct · 1 enum · 8 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
 | `src/live/mod.rs` | src | s | 1 enum · 2 mod · 2 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
-| `src/live/pptx.rs` | src | L | 16 struct · 6 enum · 20 fn | ApproveScope, AttributionIndex, ChangeKind, Conflict, DeckDiff, DeckFork, DeckNode, DeckOp +14 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
+| `src/live/pptx.rs` | src | L | 20 struct · 6 enum · 23 fn · 3 crate-vis | ApproveScope, AttributionIndex, ChangeKind, Conflict, DeckDiff, DeckFork, DeckNode, DeckOp +18 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 2 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a… |

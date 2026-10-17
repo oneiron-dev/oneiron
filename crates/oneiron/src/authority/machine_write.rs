@@ -280,9 +280,11 @@ fn names_machine(store: &Store, txn: &heed::RoTxn<'_>, entries: &[(Value, Value)
         if let Value::Binary(bytes) = value
             && let Ok(raw_id) = bytes.as_slice().try_into()
             && let Ok(actor_id) = EntityId::from_bytes(raw_id)
-            && let Some(raw) = EntityStoreRead::port_entity_raw_wiped(store, txn, &actor_id)?
-            && EntityMetadataHeader::parse(&raw)
-                .is_some_and(|header| header.entity_type == ENTITY_TYPE_MACHINE)
+            && EntityStoreRead::port_entity_with_raw(store, txn, &actor_id, |raw| {
+                Ok(EntityMetadataHeader::parse(raw)
+                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_MACHINE))
+            })?
+            .unwrap_or(false)
         {
             return Ok(true);
         }
@@ -419,7 +421,7 @@ pub(crate) fn machine_claim_read_admitted(
             if let Value::Binary(bytes) = value
                 && let Ok(raw_id) = bytes.as_slice().try_into()
                 && let Ok(actor) = EntityId::from_bytes(raw_id)
-                && EntityStoreRead::port_entity_raw_wiped(store, txn, &actor)?.is_none()
+                && EntityStoreRead::port_entity_with_raw(store, txn, &actor, |_| Ok(()))?.is_none()
                 && entries.iter().any(|(key, value)| {
                     key.as_str() == Some("actor_class")
                         && value.as_u64() == Some(EdgeActorClass::System as u64)
@@ -617,8 +619,10 @@ pub(crate) fn verify_machine_claim_in_txn(
             other => other,
         })?
         .ok_or_else(|| invalid_origin(replicated))?;
-    let actor_type = EntityStoreRead::port_entity_raw_wiped(store, txn, &actor)?
-        .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
+    let actor_type = EntityStoreRead::port_entity_with_raw(store, txn, &actor, |raw| {
+        Ok(EntityMetadataHeader::parse(raw).map(|header| header.entity_type))
+    })?
+    .flatten();
     if class != EdgeActorClass::System as u64
         || !replicated && actor_type != Some(ENTITY_TYPE_MACHINE)
         || actor_type.is_some_and(|kind| kind != ENTITY_TYPE_MACHINE)

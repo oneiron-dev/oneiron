@@ -31,6 +31,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::InvalidBlobArtifactBody
         | ErrorKind::InvalidWitnessMessageBody
         | ErrorKind::InvalidEditManifest
+        | ErrorKind::LiveDeckRefused
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidCodebaseSnapshotBody
         | ErrorKind::InvalidCodeSymbolManifestBody
