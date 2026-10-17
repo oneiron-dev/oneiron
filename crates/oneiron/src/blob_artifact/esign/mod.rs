@@ -25,7 +25,9 @@ pub use escalation::{HOLD_ALLOW, HOLD_DECLINE, HeldSigning, HeldSigningAnswer, H
 mod principals;
 pub use capability::EsignCapability;
 pub(crate) use capability::recipient_capability_unrevoked_in;
-pub use ceremony::{ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningOutcome, SigningPage};
+pub use ceremony::{
+    ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningCaller, SigningOutcome, SigningPage,
+};
 pub use principals::{SigningAutonomy, SigningPrincipal};
 pub(crate) use principals::{automated_outbound_allowed, automated_signing_allowed};
 

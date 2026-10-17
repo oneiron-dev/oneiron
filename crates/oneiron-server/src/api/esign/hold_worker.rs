@@ -1,11 +1,12 @@
 //! The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076
-//! #roles-everywhere): every tick it asks the vault owner role about each
-//! new hold and settles each answered one. The question starts at the owner
-//! role's rung: no rule or model rung answers whether a signature lands,
-//! because decide() advises and never grants. The ask is an e-signature act,
-//! so it resolves only to a natural person holding the role, who answers on
-//! the decision-ask door. A hold that fails a tick stays as it was for the
-//! next, never dropped.
+//! #roles-everywhere): every tick it asks each new hold up its role chain
+//! and settles each answered one. The question starts at the person rung:
+//! no rule or model rung answers whether a signature lands, because
+//! decide() advises and never grants. The ask goes first to the person the
+//! agent signs for (or the document's sender) and climbs to the vault
+//! owners; it is an e-signature act, so at every rung it resolves only to a
+//! natural person holding the role, who answers on the decision-ask door. A
+//! hold that fails a tick stays as it was for the next, never dropped.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,7 +15,7 @@ use oneiron::blob_artifact::esign::{
     HOLD_ALLOW, HOLD_DECLINE, HeldSigning, HeldSigningAnswer, HeldSigningState,
 };
 use oneiron::llm::decision::{
-    AskAct, AskRole, AskTo, DecisionAnswer, DecisionRung, Reversibility, RoleRank,
+    AskAct, AskTo, DecisionAnswer, DecisionRung, Reversibility, RoleRank,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{EntityId, Error, Result};
@@ -77,16 +78,18 @@ fn tick(server: &SyncServer) -> Result<()> {
     Ok(())
 }
 
-/// Puts one hold's question in the owner role's ask queue.
+/// Puts one hold's question in its first role's ask queue. The ladder call
+/// stays the owner's, so [`settle`] finds the answer whoever on the chain
+/// gave it.
 fn ask(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
     let host = server.decision_host();
     let question = held.question()?;
     let mut dial = host.dial(DecisionRung::Human);
     dial.first = DecisionRung::Human;
-    // An e-signature goes to a natural person holding the owner role, never
-    // to a bound agent that holds it too.
+    // An e-signature goes to a natural person holding each role, never to a
+    // board or a bound agent that holds it too.
     let signer = AskTo {
-        role: AskRole::Owner,
+        role: held.first_role(server.vault())?,
         ceiling: RoleRank::Owner,
         act: AskAct::ESignature,
     };
@@ -116,7 +119,7 @@ fn ask(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
         .esign_hold_asked(&held.document, &held.recipient, held.held_at, question.id)
 }
 
-/// Settles one asked hold once the owner role answered it.
+/// Settles one asked hold once a holder of its role answered it.
 fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
     let Some(ask) = server
         .decision_host()
@@ -129,7 +132,10 @@ fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()
         return Ok(());
     };
     let answer = match answer.answer {
-        DecisionAnswer::Choice(label) if label == HOLD_ALLOW => HeldSigningAnswer::Allow,
+        DecisionAnswer::Choice(label) if label == HOLD_ALLOW => HeldSigningAnswer::Allow {
+            by: answer.by,
+            role: answer.role.rank(),
+        },
         DecisionAnswer::Choice(label) if label == HOLD_DECLINE => HeldSigningAnswer::Decline,
         _ => return Ok(()),
     };
@@ -141,7 +147,7 @@ fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()
         document = %settled.document,
         recipient = %settled.recipient,
         state = ?settled.state,
-        "esign hold settled by the vault owner role"
+        "esign hold settled by its role's answer"
     );
     Ok(())
 }

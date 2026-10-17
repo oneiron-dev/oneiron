@@ -1,21 +1,25 @@
-//! The sign act the dial does not open goes up to the vault owner role
-//! (ARCH-0064 D6, ARCH-0064a, ARCH-0076 #roles-everywhere).
+//! The sign act the dial does not open goes up its role chain (ARCH-0064 D6,
+//! ARCH-0064a, ARCH-0076 #roles-everywhere).
 //!
 //! An automated recipient's Complete that the signing dial does not allow is
 //! held, never dropped: one hold per recipient, counting each repeat call.
-//! The host asks the vault owner role whether this one signature lands. No
-//! rule or model rung answers that question: decide() advises and never
-//! grants, so the ask goes straight to the owner role's queue. An allowed
-//! hold signs as the call would have, on the document as it stands at the
-//! answer; a declined one does not land, and the recipient's turn stays
-//! open for the document's sender to void or send again. A recipient
-//! whose signature the law keeps with a natural person is never automated,
-//! so it never reaches this path.
+//! The host asks whether this one signature lands, first of the person the
+//! agent signs for (or, with no principal named, the document's sender),
+//! then up the chain to the vault owners. The ask is an e-signature act, so
+//! at every rung only a natural person answers; a board or an agent holding
+//! the role never does. No rule or model rung answers that question:
+//! decide() advises and never grants, so the ask goes straight to the role
+//! queue. An allowed hold signs as the call would have, on the document as
+//! it stands at the answer, and its trail names who allowed it; a declined
+//! one does not land, and the recipient's turn stays open for the
+//! document's sender to void or send again. A recipient whose signature the
+//! law keeps with a natural person is never automated, so it never reaches
+//! this path.
 use super::ceremony::sign;
 use super::ledger::state_in;
 use super::model::*;
 use crate::llm::decision::catalogue;
-use crate::llm::decision::{AnswerContract, DecisionQuestion};
+use crate::llm::decision::{AnswerContract, AskRole, DecisionQuestion, RoleRank};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -23,9 +27,9 @@ use serde::{Deserialize, Serialize};
 /// Held automated sign act, one per recipient. Key: document hex32/recipient.
 const HELD: SideTable<String, HeldSigning, Named> = SideTable::new(&side_table::ESIGN_HELD_SIGNING);
 
-/// The owner role's answer that lands the held signature.
+/// The answer that lands the held signature.
 pub const HOLD_ALLOW: &str = "allow";
-/// The owner role's answer that keeps the signature from landing.
+/// The answer that keeps the signature from landing.
 pub const HOLD_DECLINE: &str = "decline";
 /// The most bytes of the document title the question quotes.
 const TITLE_MAX_BYTES: usize = 256;
@@ -34,23 +38,28 @@ const TITLE_MAX_BYTES: usize = 256;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum HeldSigningState {
-    /// Held; the host's next pass asks the vault owner role.
+    /// Held; the host's next pass asks its first role.
     Held,
-    /// Waits in the owner role's ask queue under `question` (hex).
+    /// Waits in the role ask queue under `question` (hex).
     Asked { question: String },
-    /// The owner role allowed it, and the signature landed.
+    /// A role holder allowed it, and the signature landed.
     Allowed { at: u64 },
-    /// The owner role declined it; the signature did not land.
+    /// A role holder declined it; the signature did not land.
     Declined { at: u64 },
     /// The document moved on before the answer could land: the recipient's
     /// turn passed or the document ended.
     Superseded { at: u64 },
 }
 
-/// The owner role's answer to one hold.
+/// A role holder's answer to one hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeldSigningAnswer {
-    Allow,
+    /// Lands the signature: `by` answered as the holder of a `role`, and the
+    /// signature's trail names both.
+    Allow {
+        by: EntityId,
+        role: RoleRank,
+    },
     Decline,
 }
 
@@ -83,7 +92,26 @@ impl HeldSigning {
         )
     }
 
-    /// The owner role's question for this hold, one per hold.
+    /// The role this hold's ask starts at: the principal the agent signs
+    /// for, or with none named, the document's sender; with neither, the
+    /// vault owners. Signing documents carry no project, so no board rung
+    /// sits between. A principal that is no live natural person (an
+    /// organisation, an agent) is passed over for the next rung.
+    ///
+    /// # Errors
+    /// The document's trail could not be read.
+    pub fn first_role(&self, vault: &Vault) -> Result<AskRole> {
+        let actor = match self.principal_ref.as_deref() {
+            Some(principal) => EntityId::from_hex(principal).ok(),
+            None => vault.esign_sender(EntityId::from_hex(&self.document)?)?,
+        };
+        Ok(actor.map_or(AskRole::Owner, |actor| AskRole::Responsible {
+            actor,
+            project: None,
+        }))
+    }
+
+    /// The question asked about this hold, one per hold.
     ///
     /// # Errors
     /// The question does not validate.
@@ -104,6 +132,15 @@ impl HeldSigning {
                 options: vec![HOLD_ALLOW.to_owned(), HOLD_DECLINE.to_owned()],
             },
         )
+    }
+}
+
+/// How a signature's trail names the role its allower answered as.
+fn role_name(role: RoleRank) -> &'static str {
+    match role {
+        RoleRank::Responsible => "responsible person",
+        RoleRank::Board => "board member",
+        RoleRank::Owner => "vault owner",
     }
 }
 
@@ -184,7 +221,20 @@ impl Vault {
         Ok(holds)
     }
 
-    /// Marks one hold as asked: its question waits in the owner role's queue.
+    /// The actor a document was sent as: its trail's Sent row, when that
+    /// names an entity.
+    ///
+    /// # Errors
+    /// The trail could not be read.
+    pub fn esign_sender(&self, document: EntityId) -> Result<Option<EntityId>> {
+        Ok(self
+            .esign_audit(document)?
+            .into_iter()
+            .find(|row| matches!(row.event, EsignEvent::Sent))
+            .and_then(|row| EntityId::from_hex(&row.actor.actor).ok()))
+    }
+
+    /// Marks one hold as asked: its question waits in the role ask queue.
     ///
     /// # Errors
     /// The hold is no longer open, or the write failed.
@@ -204,7 +254,7 @@ impl Vault {
         })
     }
 
-    /// Settles one hold with the owner role's answer. An allowed hold signs
+    /// Settles one hold with a role holder's answer. An allowed hold signs
     /// on the document as it stands now, after the same turn, expiry and
     /// field checks the call met; a document that moved on supersedes it.
     ///
@@ -223,7 +273,7 @@ impl Vault {
             let mut held = open_hold(self, txn, document, recipient, held_at)?;
             held.state = match answer {
                 HeldSigningAnswer::Decline => HeldSigningState::Declined { at: now },
-                HeldSigningAnswer::Allow => {
+                HeldSigningAnswer::Allow { by, role } => {
                     let id = EntityId::from_hex(document)?;
                     let state = state_in(self, txn, id)?;
                     let signed = EsignEvent::Signed {
@@ -236,7 +286,12 @@ impl Vault {
                         && state.clone().apply(&signed, now).is_ok();
                     if lands {
                         let actor = EsignAuditActor {
-                            actor: format!("{}; allowed by the vault owner role", held.actor.actor),
+                            actor: format!(
+                                "{}; allowed by the {} {}",
+                                held.actor.actor,
+                                role_name(role),
+                                by.to_hex()
+                            ),
                             ..held.actor.clone()
                         };
                         sign(self, txn, id, &state, recipient, &held.next, actor, now)?;
