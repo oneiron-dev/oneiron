@@ -209,8 +209,10 @@ conversation again in full. The owner can turn storing on with
 `POST /v1/owner/settings/models` and `{"responses_store": true}` (`GET` reads
 it): each turn then goes with `store = true`, the provider keeps the response,
 and a new socket resumes a conversation from its last stored response, sending
-only the new items. The server remembers the last stored response of the 32
-most recent conversations per provider, until restart. A socket is
+only the new items. The server keeps each conversation's last stored response
+in the vault, as this deployment's own state (never synced, and left out of a
+checkpoint), so a resume also survives a restart; a turn whose response the
+provider has since dropped goes whole. A socket is
 replaced 5 minutes before its age limit (60 minutes at OpenAI, 59 at xAI).
 Idle sockets wait 10 minutes for a next turn, at most 8 per provider. A
 call whose socket will not open, or that carries audio, goes out over

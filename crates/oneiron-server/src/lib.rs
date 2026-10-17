@@ -125,6 +125,7 @@ pub fn build_app_for_position(
 ) -> Router {
     // The owner's Responses `store` switch (OF-602); unreadable leaves it off.
     models::set_responses_store(server.vault().responses_store().unwrap_or(false));
+    models::set_responses_chain_vault(server.vault());
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {
