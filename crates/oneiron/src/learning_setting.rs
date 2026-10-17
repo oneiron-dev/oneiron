@@ -165,6 +165,7 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     crate::dreamer_runner::maintenance::agent_health::HEALTH_ESCALATE_TTL_HOURS,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_CARD_FLOOR,
     crate::skill::EXPLORATION_ASK_CLIMB_HOURS,
+    crate::skill::EXPLORATION_ASK_LAPSE_HOURS,
 ];
 
 /// The catalog row named `key`, if the engine knows it.
