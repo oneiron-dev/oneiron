@@ -56895,7 +56895,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DocxAnchor",
@@ -56904,15 +56904,18 @@
       "DocxCell",
       "DocxChange",
       "DocxLock",
+      "DocxMark",
       "DocxParagraph",
-      "DocxRevision"
+      "DocxRevision",
+      "DocxRun"
      ],
      "path": "src/docx_body.rs",
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")",
      "surface": {
-      "enum": 4,
-      "fn": 2,
-      "struct": 4
+      "const": 1,
+      "enum": 5,
+      "fn": 7,
+      "struct": 5
      }
     },
     {
@@ -57702,7 +57705,7 @@
     "docx_body": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
@@ -71661,6 +71664,8 @@
       "DocxBodyOp",
       "DocxBodyView",
       "DocxCellView",
+      "DocxMark",
+      "DocxRun",
       "DoneMeans",
       "EditNoteRequest",
       "EmbeddingSpaceBindRequest",
@@ -72264,8 +72269,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 227,
-      "struct": 575
+      "enum": 228,
+      "struct": 576
      }
     },
     {
