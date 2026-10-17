@@ -196,6 +196,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/guest_revoke.rs` | src | m | 2 fn · 2 crate-vis | — | OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one ask guest's… |
 | `src/authority/handoff_equivocation.rs` | src | m | 3 struct · 4 fn · 1 const · 4 crate-vis | AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation | Evidence that a retired key signed beside the handoff that retired it: the first record of OF-166, ahead of… |
 | `src/authority/history_coverage.rs` | src | s | 2 struct · 4 fn · 3 crate-vis | AuthorityHistoryCoverage, AuthorityHistoryRequest | What authority history this vault holds, and exactly what it lacks (OF-469) |
+| `src/authority/history_fetch.rs` | src | m | 3 struct · 4 fn · 1 const | AuthorityHistoryFetch, AuthorityHistoryPage, AuthorityHistoryVerificationCoverage | Exact-hash authority history fetch, and the coverage an asker verifies itself (OF-469) |
 | `src/authority/history_repair.rs` | src | s | 1 enum · 2 fn · 2 crate-vis | AuthorityRepairOutcome | Staged repair of missing authority history (OF-469) |
 | `src/authority/history_transfer.rs` | src | m | 1 struct · 7 fn · 7 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/host_actor.rs` | src | s | 1 crate-vis | — | The owner a self-hosted root binds (H149) |
@@ -216,7 +217,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_write.rs` | src | m | 4 fn · 9 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
 | `src/authority/mesh_machine.rs` | src | L | 2 struct · 10 fn · 1 const | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
-| `src/authority/mod.rs` | src | s | 31 re-export · 19 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mod.rs` | src | s | 32 re-export · 19 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 8 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
 | `src/authority/owner_project_slip.rs` | src | s | 1 fn | — | The host's owner-project slip (OF-497): the host-held project.write slip an [`OwnerProjectSigner`] signs the… |
@@ -2453,13 +2454,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/mod.rs` | src | s | 1 mod · 2 re-export · 7 crate-vis | — | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `src/off_record/promote.rs` | src | m | 2 struct · 2 fn · 3 const · 20 crate-vis | OffRecordPromoteReceipt, PromoteOutcome | Explicit promotion from an off-record session into the durable vault |
 | `src/off_record/tests.rs` | test | XL | — | — | — |
+| `src/office_body/consent.rs` | src | m | 7 struct · 4 enum · 2 fn · 1 const · 8 crate-vis | AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OfficeBodyProposal, ProposalHeader, ProposalMember, ProposalSettleRequest +3 | Office proposals (DEC-0006, "A content proposal is a set of forks that share its id"; ARCH-0035's embedded… |
 | `src/office_body/docx.rs` | src | m | 2 struct · 2 enum · 7 crate-vis | BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp | The DOCX body inside its Loro document, schema 1 |
 | `src/office_body/fork.rs` | src | s | 3 struct · 2 enum · 1 fn · 1 crate-vis | BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff | Three-way reads of a fork against the live body (ARCH-0077, "Machine work as fork and diff"): base is the… |
-| `src/office_body/mod.rs` | src | L | 7 struct · 2 enum · 17 fn · 7 re-export · 2 crate-vis | ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind +1 | Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body shape"): an imported DOCX, XLSX or… |
+| `src/office_body/mod.rs` | src | L | 7 struct · 2 enum · 17 fn · 8 re-export · 3 crate-vis | ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind +1 | Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body shape"): an imported DOCX, XLSX or… |
 | `src/office_body/pptx.rs` | src | m | 3 struct · 10 fn · 1 re-export · 5 crate-vis | PptxBody, PptxExport, PptxReview | The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door… |
 | `src/office_body/pptx/doc.rs` | src | L | 9 crate-vis | — | The PPTX body inside its Loro document, schema 1 (ARCH-0077, "One deck, one document") |
 | `src/office_body/pptx/verbs.rs` | src | m | 9 struct · 5 fn | DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest, DeckGateView, DeckNodeView, DeckOracleRequest +1 | `vault.artifacts.body.deck.*`: the deck doors the generic body verbs do not cover, as agent verbs (FIX 2284) |
-| `src/office_body/verbs.rs` | src | m | 15 struct · 2 enum · 12 fn · 3 crate-vis | DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest, OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest +9 | `vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, "An agent authors through… |
+| `src/office_body/verbs.rs` | src | m | 18 struct · 2 enum · 14 fn · 3 crate-vis | DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest, OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest +12 | `vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, "An agent authors through… |
 | `src/office_body/xlsx.rs` | src | m | 4 struct · 1 enum · 7 crate-vis | BodyCell, BodyName, BodySheet, XlsxBody, XlsxBodyOp | The XLSX body inside its Loro document, schema 1 (ARCH-0075: "XLSX is a map keyed by sheet and address") |
 | `src/origin/change_index.rs` | src | s | 1 struct · 2 fn · 2 const · 1 crate-vis | OriginChange | Commit-hash keyed LEDGER change identities |
 | `src/origin/conflict_tree.rs` | src | s | 1 struct · 1 fn · 1 const | ConflictTreeExport | Draft-v1 `.jjconflict`-shape export |
@@ -3538,7 +3540,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/replay.rs` | src | s | 1 struct · 2 fn | ReplicatedEntity | Explicit-tier entity replay for importers outside the window carrier |
 | `src/sync/residence.rs` | src | m | 2 struct · 13 fn · 2 const · 6 re-export · 6 crate-vis | IndexPage, WindowIndexEntry | Grant-checked, per-item residence projections over a window document |
 | `src/sync/residence/admission.rs` | src | s | 1 struct · 7 fn | ResidenceAdmission | One residence request's admission for the machine at the other end of the connection (OF-534 G6) |
-| `src/sync/residence/authority_tail.rs` | src | s | 1 struct · 5 fn · 1 const | AuthorityPageImport | Authority history for a machine that syncs what it opened (OF-469, the delivery half) |
+| `src/sync/residence/authority_tail.rs` | src | s | 1 struct · 6 fn · 1 const | AuthorityPageImport | Authority history for a machine that syncs what it opened (OF-469, the delivery half) |
 | `src/sync/residence/discover.rs` | src | s | 1 fn | — | Discover locally held world/month partitions without loading their Docs |
 | `src/sync/residence/policy.rs` | src | s | 1 struct · 5 fn | DeviceSyncPreference | This machine's residence choice: sync every window it may read, or sync what it opened |
 | `src/sync/residence/prune.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | WindowDemotion | Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window |
@@ -3696,7 +3698,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_disclosure.rs` | src | s | 2 struct · 1 fn | DisclosureOfferRequest, DisclosureOffered | `vault.disclosure.offer`: an agent OFFERS the owner a contact clearance (OF-365, the ILDF2 consent channel) |
 | `src/task_verb/sdk_embedding_space.rs` | src | m | 12 struct · 1 enum · 13 fn | EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest, EmbeddingSpaceMoveChecked, EmbeddingSpaceMoveOutcome, EmbeddingSpaceMoveRequest, EmbeddingSpaceProbe, EmbeddingSpaceProbeDeleteRequest +5 | The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host… |
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 5 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 305 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 307 fn · 2 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 20 struct · 5 enum · 16 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +17 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_legal_hold.rs` | src | s | 5 struct · 1 enum · 5 fn | LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest | The inputs and answers of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`… |
@@ -3793,7 +3795,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/training_pack/mod.rs` | src | s | 6 fn · 3 re-export | — | OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap |
 | `src/training_pack/promotion.rs` | src | s | 1 struct · 4 fn | TrainingEvalInput | Held-out scoring releases a counted cohort |
 | `src/training_pack/types.rs` | src | s | 21 struct · 5 enum | ArtifactPin, CalibrationResult, CheckpointFileKind, CheckpointFilePin, CheckpointFileUpload, CheckpointUpload, ComputeChoice, ComputePin +18 | Pins and receipts shared by the training pack and its host adapters |
-| `src/typed_body.rs` | src | m | 4 struct · 1 enum · 11 fn · 10 crate-vis | TypedBodyCommit, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
+| `src/typed_body.rs` | src | m | 4 struct · 1 enum · 11 fn · 11 crate-vis | TypedBodyCommit, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
 | `src/vault/actors_memory.rs` | src | m | 1 struct · 23 fn · 1 crate-vis | ActorBound | Vault actor binding, structural kinds and code-memory attachment |
 | `src/vault/database_digests.rs` | src | s | 1 fn · 3 crate-vis | — | One BLAKE3 digest per named database: the comparison two vaults given the same writes can be held to… |
 | `src/vault/doctor_manifest.rs` | src | m | 4 struct · 1 enum · 2 fn · 11 crate-vis | TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport | Vault doctor report and text-index manifest handshake |
