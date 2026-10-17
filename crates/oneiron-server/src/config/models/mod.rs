@@ -42,7 +42,8 @@ pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use planner::{PlannerSeatSetting, PlannerSettings};
 pub use provider::{
-    OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire, ResponsesSocket,
+    OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
+    ResponseFormatWire, ResponsesSocket,
 };
 pub use voice::VoiceSettings;
 
