@@ -916,7 +916,7 @@
      "path": "src/agent_dispatch/project_conversation.rs",
      "purpose": "The skill a project conversation's run loads before it starts (OF-501, ARCH-0067)",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -8265,7 +8265,7 @@
      "path": "src/channel_identity/assignment.rs",
      "purpose": "Two-slot channel assignment index",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -12115,7 +12115,7 @@
      "purpose": "Claim family predicates, key vocabulary, typed values, body build/parse/validate",
      "surface": {
       "const": 7,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 5,
       "fn": 8,
       "struct": 2,
@@ -12144,12 +12144,30 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "ClaimClassDescriptor",
+      "ClaimWriteClass",
+      "EnforcementStamp"
+     ],
+     "path": "src/comm/descriptor.rs",
+     "purpose": "ARCH-0057 claim-class descriptors as synced maintenance entities (OF-272)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 4
+      "crate-vis": 8,
+      "re-export": 5
      }
     },
     {
@@ -15542,8 +15560,8 @@
      "path": "src/counterparty_contact/doors.rs",
      "purpose": "Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply",
      "surface": {
-      "crate-vis": 5,
-      "fn": 6
+      "crate-vis": 6,
+      "fn": 7
      }
     },
     {
@@ -15553,7 +15571,7 @@
      "path": "src/counterparty_contact/lifecycle.rs",
      "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -15564,7 +15582,7 @@
      "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 6
      }
     },
@@ -15575,7 +15593,7 @@
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
@@ -24359,7 +24377,7 @@
      "path": "src/identity_topology/lifecycle_state.rs",
      "purpose": "Entity lifecycle state ([`EntityLifecycleState`]), its CRDT join, the zero-head-split ledger witness, and…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 1
      }
@@ -49838,8 +49856,8 @@
      "purpose": "—"
     },
     "comm": {
-     "files": 13,
-     "impl_vault": false,
+     "files": 14,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector"
@@ -51051,7 +51069,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3084,
+   "source_files": 3085,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53913,7 +53931,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 40,
+      "const": 41,
       "crate-vis": 1
      }
     },
@@ -65390,9 +65408,10 @@
       "SkillsConfig"
      ],
      "path": "src/config/skills.rs",
-     "purpose": "The `[skills]` section: how the skill-edit gate's live slice is funded at this server",
+     "purpose": "The `[skills]` section: how the skill-edit gate's live slice is funded at this server, and the skills a…",
      "surface": {
       "crate-vis": 4,
+      "fn": 1,
       "struct": 1
      }
     },
