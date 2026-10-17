@@ -906,6 +906,52 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
   one. Audio probes are only the ones you store.
 
+On a stopped vault the same acts run from the command line, and each prints what the route
+answers:
+
+```sh
+oneiron embedding-spaces list
+oneiron embedding-spaces declare ID --width N --accepts text,image [--query-towers text] [--floor F --strong S]
+oneiron embedding-spaces bind text|image|audio [SPACE]   # no SPACE: back to the default
+oneiron embedding-spaces one-space SPACE
+oneiron embedding-spaces retire SPACE
+oneiron embedding-spaces move CANDIDATE [--incumbent SPACE] [--margin F]
+oneiron embedding-spaces move-approve|move-undo|move-abandon CANDIDATE
+oneiron embedding-spaces probes list
+oneiron embedding-spaces probes put --kind text --query Q --family HEX [--target HEX] --author A
+oneiron embedding-spaces probes delete ID
+```
+
+A check runs the server's own `ai.embed` towers, so only a running server checks a move. It can
+take minutes, and `oneiron api raw` waits for it:
+
+```sh
+oneiron api raw POST /v1/owner/embedding-spaces/move/check --data '{"candidate": "SPACE"}'
+```
+
+The SDK verbs `vault.embedding_spaces.list`, `.declare`, `.bind`, `.one_space`, `.retire`,
+`.move`, `.move_check`, `.move_approve`, `.move_undo`, `.move_abandon`, `.probes.list`,
+`.probes.put` and `.probes.delete` do the same under the owner's credential, with the same
+bodies and answers. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
+SDK client waits up to 30 minutes for a check, as for an export.
+
+## Sign a secret's custody with your owner anchor
+
+A portable secret's custody moves between your machines under a signed transition. An install
+that cannot sign as one of your machines can have its current transition signed with the owner
+anchor of your recovery kit instead. The record keeps its generation, status and value, and the
+value is sealed to every machine of yours. The kit is read on this machine only: stop `serve`,
+then pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
+passphrase on the first line, and then one code is enough):
+
+```sh
+oneiron secrets anchor-sign --name NAME < kit.txt
+```
+
+It prints `{"name", "signed"}`. `signed` is false for a record that stays on its device
+(device-bound, cross-vault or "this device only") or a value no machine of yours here can open.
+No route or SDK verb takes the kit.
+
 ## Calling the owner routes
 
 Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live human owner of

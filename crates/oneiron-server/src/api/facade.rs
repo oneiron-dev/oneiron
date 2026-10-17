@@ -23,6 +23,7 @@
 
 pub(super) mod action_routes;
 mod agent_verbs;
+mod embedding_space_doors;
 mod graph_ask_doors;
 mod guest_doors;
 pub(super) mod host_doors;

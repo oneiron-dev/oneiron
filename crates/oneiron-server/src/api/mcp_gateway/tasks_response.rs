@@ -697,6 +697,19 @@ fn mcp_agent_verb_input(
         "vault.legal_holds.list" => Ok(Value::Object(serde_json::Map::new())),
         "vault.legal_holds.log" => Ok(Value::Object(serde_json::Map::new())),
         "vault.legal_holds.lift_and_erase" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.list" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.embedding_spaces.declare" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.bind" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.one_space" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.retire" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.move" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.move_check" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.move_approve" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.move_undo" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.move_abandon" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.probes.list" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.embedding_spaces.probes.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.embedding_spaces.probes.delete" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.propose" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.activate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.deactivate" => a.spec.clone().ok_or_else(invalid),
@@ -1136,6 +1149,41 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.legal_holds.list" => {}
         "vault.legal_holds.log" => {}
         "vault.legal_holds.lift_and_erase" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.list" => {}
+        "vault.embedding_spaces.declare" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.bind" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.one_space" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.retire" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.move" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.move_check" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.move_approve" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.move_undo" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.move_abandon" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.probes.list" => {}
+        "vault.embedding_spaces.probes.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.embedding_spaces.probes.delete" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.propose" => {
@@ -2392,6 +2440,183 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::vault_legal_holds_lift_and_erase(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_embedding_spaces_list(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.declare" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.declare", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceDeclareRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_embedding_spaces_declare(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.bind" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.bind", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceBindRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_embedding_spaces_bind(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.one_space" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.one_space", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_embedding_spaces_one_space(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.retire" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.retire", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_embedding_spaces_retire(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.move" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.move", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceMoveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_embedding_spaces_move(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.move_check" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.move_check", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_embedding_spaces_move_check(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.move_approve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.move_approve", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_embedding_spaces_move_approve(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.move_undo" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.move_undo", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_embedding_spaces_move_undo(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.move_abandon" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.move_abandon", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_embedding_spaces_move_abandon(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.probes.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.probes.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_embedding_spaces_probes_list(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.probes.put" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.probes.put", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceProbePutRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_embedding_spaces_probes_put(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.embedding_spaces.probes.delete" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.embedding_spaces.probes.delete", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_embedding_spaces_probes_delete(
                 server, auth, input,
             )
             .await

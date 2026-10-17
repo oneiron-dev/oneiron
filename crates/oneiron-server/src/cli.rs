@@ -22,6 +22,12 @@ pub use owner_args::{
     RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
     SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
+pub use owner_args::{
+    EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs,
+    EmbeddingSpaceDeclareArgs, EmbeddingSpaceMoveArgs, EmbeddingSpaceProbeDeleteArgs,
+    EmbeddingSpaceProbePutArgs, EmbeddingSpaceProbesCommand, EmbeddingSpacesCommand,
+    SecretAnchorSignArgs,
+};
 pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevokeArgs};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
@@ -115,6 +121,10 @@ pub enum Command {
     /// Your ask guests at this host: revoke one's access.
     #[command(subcommand)]
     Guests(GuestsCommand),
+    /// Your embedding spaces: declare, bind, retire, move a slot to a new
+    /// model version, and the probes a move's check runs.
+    #[command(subcommand)]
+    EmbeddingSpaces(EmbeddingSpacesCommand),
     /// Move a stopped vault to the configured embedding model: repin it and
     /// queue every record to be embedded again, which the next `serve` does.
     Reembed(Box<ReembedArgs>),
@@ -900,6 +910,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
         Command::Guests(command) => commands::guests(command),
+        Command::EmbeddingSpaces(command) => commands::embedding_spaces(command),
         // Blocking: an endpoint's transform is read over blocking HTTP.
         Command::Reembed(args) => {
             crate::logging::off_runtime("reembed", move || commands::reembed(*args)).await?
