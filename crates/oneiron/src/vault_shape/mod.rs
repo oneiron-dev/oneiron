@@ -16,19 +16,27 @@
 //! own; it says what should be true, never a new way of making it true.
 
 mod apply;
+mod channel;
 mod grant;
 mod live;
+mod manifest;
 mod member;
 mod plan;
 mod seed;
+mod skill;
 
 pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
+};
+pub use channel::{
+    ShapeChannelBinding, ShapeChannelCustody, ShapeChannelFulfillment, ShapeChannelProvision,
+    ShapeMailScope, ShapeSelfHeld,
 };
 pub use grant::ShapeGrantBound;
 pub use member::{ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick};
 pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
 pub use seed::StoredShapeSeed;
+pub use skill::ShapeSkillSource;
 
 use crate::EntityId;
 use crate::error::{Error, Result};
@@ -96,6 +104,9 @@ pub enum ShapeRow {
     },
     /// A world (ARCH-0022), by name. A missing world is created.
     World { name: String },
+    /// A facet (ARCH-0022): a named mask a person (entity id hex) wears.
+    /// A mask grants nothing; a missing one is created.
+    Facet { person: String, name: String },
     /// An installed pack, by name, optionally pinned to a version.
     Pack {
         name: String,
@@ -111,13 +122,23 @@ pub enum ShapeRow {
         enabled: bool,
     },
     /// A registered skill, by skill id, optionally pinned to a version.
+    /// Only a row naming its hub source can import a missing one.
     Skill {
         skill_id: String,
         #[serde(default)]
         version: Option<String>,
+        #[serde(default)]
+        source: Option<ShapeSkillSource>,
     },
     /// A channel identity (ARCH-0063), by channel and address or handle.
-    Channel { channel: String, address: String },
+    /// Only a row stating its custody, binding and fulfillment can
+    /// provision a missing one.
+    Channel {
+        channel: String,
+        address: String,
+        #[serde(default)]
+        provision: Option<ShapeChannelProvision>,
+    },
     /// A standing grant (DEC-0006), declared as its bound. Its registry
     /// reference is the bound's digest; a row may name the grant by that
     /// reference alone, but only a row carrying the bound can mint it. Every
@@ -128,6 +149,9 @@ pub enum ShapeRow {
         #[serde(default)]
         bound: Option<ShapeGrantBound>,
     },
+    /// A policy manifest (DEC-0005), by entity id hex, with its exact
+    /// MessagePack body as hex. Every change waits for the owner's word.
+    Manifest { manifest_ref: String, body: String },
     /// A sync declaration: whether one entity kind is on the wire. A shape
     /// can propose a federation; it never effects one.
     Sync { entity_kind: String, on_wire: bool },
@@ -143,11 +167,13 @@ pub enum ShapeTarget {
     Shared,
     Member { member: String },
     World { name: String },
+    Facet { person: String, name: String },
     Pack { name: String },
     Actor { agent_id: String },
     Skill { skill_id: String },
     Channel { channel: String, address: String },
     Grant { grant_ref: String },
+    Manifest { manifest_ref: String },
     Sync { entity_kind: String },
 }
 
@@ -159,12 +185,14 @@ impl ShapeTarget {
             Self::Shared => 0,
             Self::Member { .. } => 1,
             Self::World { .. } => 2,
-            Self::Pack { .. } => 3,
-            Self::Actor { .. } => 4,
-            Self::Skill { .. } => 5,
-            Self::Channel { .. } => 6,
-            Self::Grant { .. } => 7,
-            Self::Sync { .. } => 8,
+            Self::Facet { .. } => 3,
+            Self::Pack { .. } => 4,
+            Self::Actor { .. } => 5,
+            Self::Skill { .. } => 6,
+            Self::Channel { .. } => 7,
+            Self::Grant { .. } => 8,
+            Self::Manifest { .. } => 9,
+            Self::Sync { .. } => 10,
         }
     }
 
@@ -173,10 +201,12 @@ impl ShapeTarget {
             Self::Shared => Vec::new(),
             Self::Member { member } => vec![member.as_str()],
             Self::World { name } | Self::Pack { name } => vec![name.as_str()],
+            Self::Facet { person, name } => vec![person.as_str(), name.as_str()],
             Self::Actor { agent_id } => vec![agent_id.as_str()],
             Self::Skill { skill_id } => vec![skill_id.as_str()],
             Self::Channel { channel, address } => vec![channel.as_str(), address.as_str()],
             Self::Grant { grant_ref } => vec![grant_ref.as_str()],
+            Self::Manifest { manifest_ref } => vec![manifest_ref.as_str()],
             Self::Sync { entity_kind } => vec![entity_kind.as_str()],
         }
     }
@@ -193,6 +223,10 @@ impl ShapeRow {
                 member: member.clone(),
             },
             Self::World { name } => ShapeTarget::World { name: name.clone() },
+            Self::Facet { person, name } => ShapeTarget::Facet {
+                person: person.clone(),
+                name: name.clone(),
+            },
             Self::Pack { name, .. } => ShapeTarget::Pack { name: name.clone() },
             Self::Actor { agent_id, .. } => ShapeTarget::Actor {
                 agent_id: agent_id.clone(),
@@ -200,7 +234,9 @@ impl ShapeRow {
             Self::Skill { skill_id, .. } => ShapeTarget::Skill {
                 skill_id: skill_id.clone(),
             },
-            Self::Channel { channel, address } => ShapeTarget::Channel {
+            Self::Channel {
+                channel, address, ..
+            } => ShapeTarget::Channel {
                 channel: channel.clone(),
                 address: address.clone(),
             },
@@ -214,6 +250,9 @@ impl ShapeRow {
                 } else {
                     grant_ref.clone()
                 },
+            },
+            Self::Manifest { manifest_ref, .. } => ShapeTarget::Manifest {
+                manifest_ref: manifest_ref.clone(),
             },
             Self::Sync { entity_kind, .. } => ShapeTarget::Sync {
                 entity_kind: entity_kind.clone(),
@@ -240,10 +279,17 @@ impl ShapeRow {
                 },
                 Self::Skill { version: have, .. },
             ) => have.as_ref() == Some(want),
+            // A source or provision says how to make a missing one; the
+            // live row is what it made.
             (Self::Pack { version: None, .. }, Self::Pack { .. })
-            | (Self::Skill { version: None, .. }, Self::Skill { .. }) => true,
+            | (Self::Skill { version: None, .. }, Self::Skill { .. })
+            | (Self::Channel { .. }, Self::Channel { .. }) => true,
             // One reference is one bound: a grant read by it is the grant.
             (Self::Grant { .. }, Self::Grant { .. }) => self.target() == live.target(),
+            // The vault stores a manifest as its install door completes it.
+            (Self::Manifest { body: want, .. }, Self::Manifest { body: have, .. }) => {
+                manifest::manifest_as_stored(want).as_ref() == Some(have)
+            }
             _ => self == live,
         }
     }
@@ -271,10 +317,19 @@ impl ShapeSeed {
         }
         let mut seen = BTreeSet::new();
         for row in &self.rows {
-            if let ShapeRow::Member { member, .. } = row
-                && EntityId::from_hex(member).is_err()
+            if let ShapeRow::Member { member: person, .. } | ShapeRow::Facet { person, .. } = row
+                && EntityId::from_hex(person).is_err()
             {
-                return Err(invalid("a member row names a person by entity id hex"));
+                return Err(invalid(
+                    "a member or facet row names a person by entity id hex",
+                ));
+            }
+            if let ShapeRow::Manifest { manifest_ref, .. } = row
+                && EntityId::from_hex(manifest_ref).is_err()
+            {
+                return Err(invalid(
+                    "a manifest row names its manifest by entity id hex",
+                ));
             }
             if let ShapeRow::Grant {
                 grant_ref,

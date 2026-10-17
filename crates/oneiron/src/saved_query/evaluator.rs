@@ -1,10 +1,15 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 
 use serde_json::{Map as JsonMap, Value};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
-use crate::claim::{ClaimBody, claim_surfaceable, decode_claim_body};
+use crate::claim::{
+    ClaimBody, ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, claim_surfaceable,
+    decode_claim_body,
+};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -21,7 +26,7 @@ use super::evidence::{
     SavedQueryDerivationEnvelope, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport,
     compute_evidence_hash, put_verdict_memo, verdict_memo,
 };
-use super::filter::{MatcherSpec, evaluate_filter, filter_dependencies};
+use super::filter::{HiddenDependencies, MatcherSpec, evaluate_filter, filter_dependencies};
 use super::membership::MembershipCause;
 use super::storage::{load_record, matcher_to_json};
 use super::support::{
@@ -50,14 +55,21 @@ pub struct SavedQueryJudgeBinding<'a> {
 
 /// Staged evaluator over one vault.
 ///
-/// `owner_grants` is the saved query owner's reach AT EVALUATION TIME. There is
-/// deliberately no viewer/caller principal on this struct: a viewer cannot
-/// change membership because a viewer is not an input to it.
+/// `owner_read` and `owner_grants` are the saved query owner's authority AT
+/// EVALUATION TIME. There is deliberately no viewer/caller principal on this
+/// struct: a viewer cannot change membership because a viewer is not an
+/// input to it.
 pub struct SavedQueryEvaluator<'a> {
     /// Vault the evidence is read from.
     pub vault: &'a Vault,
-    /// The owner's reach; intersected with the definition's declared scope.
+    /// The owner's reach on the scope axes; intersected with the definition's
+    /// declared scope. The sweep passes the unrestricted axes: the owner's
+    /// read authority is `owner_read`.
     pub owner_grants: &'a QueryScope,
+    /// The owner's read key ([`crate::saved_query::sweep_owner_read`]). The
+    /// candidate and every row of evidence are read through its lane, so a
+    /// query reads what its owner may read now and nothing more.
+    pub owner_read: &'a ScopedReadActorKey,
     /// Judge dependency; absent means no LLM matcher can run.
     pub judge: Option<SavedQueryJudgeBinding<'a>>,
 }
@@ -98,6 +110,8 @@ pub(super) struct CollectedEvidence {
     pub(super) evidence: RelevantEvidence,
     /// A relevant claim awaits its owner's critical confirm.
     pub(super) held: bool,
+    /// What the owner's read withheld among the dependencies.
+    pub(super) hidden: HiddenDependencies,
     pub(super) subject_vector: Option<Vec<f32>>,
     pub(super) exemplar_vectors: Vec<(EntityId, Option<Vec<f32>>)>,
 }
@@ -105,8 +119,8 @@ pub(super) struct CollectedEvidence {
 impl SavedQueryEvaluator<'_> {
     /// Evaluates one entity against one definition.
     ///
-    /// Order is the cost model: scope gate, evidence, memo, stage 1, stage 2.
-    /// Stage 2 is reached from exactly one place — inside the stage-1 success
+    /// Order is the cost model: scope and read gates, evidence, memo, stage 1,
+    /// stage 2. Stage 2 is reached from exactly one place — inside the stage-1 success
     /// branch — so a failing filter cannot spend a judge call.
     ///
     /// # Errors
@@ -130,7 +144,7 @@ impl SavedQueryEvaluator<'_> {
         // outlive the grant that produced it — the owner loses the world, the
         // memo keeps answering "member".
         let Some(effective_scope) = request.definition.scope.intersect(self.owner_grants) else {
-            return Self::denied_outcome(request);
+            return Self::denied_outcome(request, SAVED_QUERY_WHY_SCOPE_CLOSED);
         };
 
         // Evaluate against the definition AS IT WILL ACTUALLY RUN: the declared
@@ -141,20 +155,28 @@ impl SavedQueryEvaluator<'_> {
             scope: effective_scope,
             ..request.definition.clone()
         };
-        let collected = self.collect_evidence(&definition, request.entity_ref, request.valid_at)?;
+        let collected = match self.admitted_evidence(request, &definition)? {
+            ControlFlow::Continue(collected) => collected,
+            ControlFlow::Break(answer) => return Ok(answer),
+        };
         let evidence_hash = compute_evidence_hash(&definition, &collected.evidence)?;
         // A held claim may only exclude, and under a negation its absence
         // would include: the row fails closed until its owner answers, before
         // any memo (the hash cannot see a hold) and without writing one.
         if collected.held {
-            return Ok(StagedOutcome {
-                outcome: EvaluationOutcome {
-                    decision: no_match("a relevant claim awaits its critical confirm"),
-                    evidence_hash,
-                    memo_hit: false,
-                },
-                judge_ran: false,
-            });
+            return Ok(unmemoized(
+                no_match("a relevant claim awaits its critical confirm"),
+                evidence_hash,
+            ));
+        }
+        // So does a row the owner's read withholds, wherever it could change
+        // the verdict: it is not absent, only unread, and the hash covers
+        // only what was read.
+        if hidden_undecides(&definition, &collected) {
+            return Ok(unmemoized(
+                no_match(SAVED_QUERY_WHY_DEPENDENCY_UNREADABLE),
+                evidence_hash,
+            ));
         }
         let key = VerdictMemoKey {
             query_ref: request.query_ref,
@@ -175,25 +197,15 @@ impl SavedQueryEvaluator<'_> {
             });
         }
 
-        // Stage 0: the entity must be INSIDE the effective scope. A closed
-        // intersection is not the only way to be out of reach — a query
-        // declared for world A must not enroll a person who lives in world B or
-        // in no world at all, however well that person's claims read. The
-        // entity's membership is in the evidence hash, so joining or leaving a
-        // world invalidates this verdict instead of freezing it.
-        let (decision, judge_ran) = if definition
-            .scope
-            .admits(&collected.evidence.scope_membership)
-        {
-            if evaluate_filter(&definition.filter, &collected.evidence) {
+        let (decision, judge_ran) =
+            if evaluate_filter(&definition.filter, &collected.evidence, &collected.hidden)
+                == Some(true)
+            {
                 self.run_stage_two(request.query_ref, &definition, &collected)
                     .await?
             } else {
                 (no_match("stage-1 filter did not match"), false)
-            }
-        } else {
-            (no_match(SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE), false)
-        };
+            };
 
         put_verdict_memo(
             self.vault,
@@ -216,11 +228,83 @@ impl SavedQueryEvaluator<'_> {
         })
     }
 
-    /// The closed-scope answer: no evidence is read, no memo is touched, and the
-    /// reported hash is the definition over an EMPTY evidence set — an honest
-    /// statement that nothing was examined, and one that cannot collide with the
-    /// hash of a verdict derived while the grant still held.
-    fn denied_outcome(request: &EvaluationRequest<'_>) -> Result<StagedOutcome> {
+    /// Stage 0 and the evidence, both read through the owner's lane, which is
+    /// gone again before any stage awaits. `Break` is an answer reached
+    /// before any evidence or memo.
+    ///
+    /// The owner must read the candidate, and the candidate must be INSIDE
+    /// the effective scope. A closed intersection is not the only way to be
+    /// out of reach — a query declared for world A must not enroll a person
+    /// who lives in world B or in no world at all, however well that person's
+    /// claims read. Neither answer is memoized: each is authority, read fresh
+    /// every time.
+    fn admitted_evidence(
+        &self,
+        request: &EvaluationRequest<'_>,
+        definition: &SavedQueryDefinition,
+    ) -> Result<ControlFlow<StagedOutcome, CollectedEvidence>> {
+        let lane = self.owner_lane(&definition.scope)?;
+        if !lane.is_entity_readable(&request.entity_ref)? {
+            return Self::denied_outcome(request, SAVED_QUERY_WHY_ENTITY_UNREADABLE)
+                .map(ControlFlow::Break);
+        }
+        let scope_membership =
+            self.scope_membership(&lane, request.entity_ref, &definition.scope)?;
+        if !definition.scope.admits(&scope_membership) {
+            let evidence = RelevantEvidence {
+                entity_ref: request.entity_ref,
+                claim_values: Vec::new(),
+                edge_targets: Vec::new(),
+                semantic_inputs: Vec::new(),
+                scope_membership,
+            };
+            return Ok(ControlFlow::Break(unmemoized(
+                no_match(SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE),
+                compute_evidence_hash(definition, &evidence)?,
+            )));
+        }
+        self.collect_evidence(
+            &lane,
+            definition,
+            request.entity_ref,
+            request.valid_at,
+            scope_membership,
+        )
+        .map(ControlFlow::Continue)
+    }
+
+    /// The owner's lane for one evaluation: its key, admitting claims of
+    /// every status (the evaluator applies its own effective-truth rule),
+    /// narrowed to the query's effective worlds so its dependencies keep to
+    /// them too. Base reality stays readable: the candidate and the records
+    /// its edges reach live there.
+    fn owner_lane(&self, scope: &QueryScope) -> Result<ScopedRead<'_>> {
+        // A room turn's receipt counts nothing withheld, so a hidden row
+        // could not fail closed under it.
+        if self.owner_read.room_turn().is_some() {
+            return Err(invalid(
+                "a saved query reads under its owner's own key, never a room turn",
+            ));
+        }
+        let lane = self
+            .vault
+            .scoped_read(self.owner_read.clone())
+            .with_claim_status(ClaimReadStatus::Recorded);
+        if scope.worlds.is_empty() {
+            return Ok(lane);
+        }
+        Ok(lane.within_worlds(crate::pipeline::WorldAuthoritySet::new(
+            true,
+            scope.worlds.iter().copied(),
+        )?))
+    }
+
+    /// The closed-scope and unreadable-candidate answer: no evidence is read,
+    /// no memo is touched, and the reported hash is the definition over an
+    /// EMPTY evidence set — an honest statement that nothing was examined,
+    /// and one that cannot collide with the hash of a verdict derived while
+    /// the grant still held.
+    fn denied_outcome(request: &EvaluationRequest<'_>, why: &str) -> Result<StagedOutcome> {
         let evidence = RelevantEvidence {
             entity_ref: request.entity_ref,
             claim_values: Vec::new(),
@@ -228,14 +312,10 @@ impl SavedQueryEvaluator<'_> {
             semantic_inputs: Vec::new(),
             scope_membership: QueryScope::default(),
         };
-        Ok(StagedOutcome {
-            outcome: EvaluationOutcome {
-                decision: no_match(SAVED_QUERY_WHY_SCOPE_CLOSED),
-                evidence_hash: compute_evidence_hash(request.definition, &evidence)?,
-                memo_hit: false,
-            },
-            judge_ran: false,
-        })
+        Ok(unmemoized(
+            no_match(why),
+            compute_evidence_hash(request.definition, &evidence)?,
+        ))
     }
 
     /// Stage 2. Only ever called from the stage-1 success branch.
@@ -248,7 +328,7 @@ impl SavedQueryEvaluator<'_> {
         let evidence = &collected.evidence;
         match &definition.matcher {
             MatcherSpec::Hard { expression } => Ok((
-                if evaluate_filter(expression, evidence) {
+                if evaluate_filter(expression, evidence, &collected.hidden) == Some(true) {
                     MatchDecision {
                         verdict: MatchVerdict::Match,
                         why: "hard matcher expression matched".to_owned(),
@@ -349,19 +429,31 @@ impl SavedQueryEvaluator<'_> {
         Ok(report)
     }
 
-    /// Reads the entity's effective claims and edges, narrowed to the declared
-    /// axes and to the effective scope.
+    /// Reads the entity's effective claims and edges through the owner's
+    /// lane, narrowed to the declared axes and to the effective scope, and
+    /// notes each dependency the lane withheld.
     fn collect_evidence(
         &self,
+        lane: &ScopedRead<'_>,
         definition: &SavedQueryDefinition,
         entity_ref: EntityId,
         valid_at: u64,
+        scope_membership: QueryScope,
     ) -> Result<CollectedEvidence> {
         let deps = filter_dependencies(&definition.filter, &definition.matcher);
-        let scope_membership = self.scope_membership(entity_ref, &definition.scope)?;
-        let (claim_values, held) =
-            self.relevant_claim_values(entity_ref, &deps.claim_predicates, definition, valid_at)?;
-        let edge_targets = self.relevant_edge_targets(entity_ref, &deps.edge_kinds)?;
+        let mut hidden = HiddenDependencies::default();
+        let (claim_values, held) = self.relevant_claim_values(
+            lane,
+            entity_ref,
+            &deps.claim_predicates,
+            definition,
+            valid_at,
+            &mut hidden,
+        )?;
+        let edge_targets =
+            self.relevant_edge_targets(lane, entity_ref, &deps.edge_kinds, &mut hidden)?;
+        // Stage 0 admitted the candidate, so its own vector is the owner's to
+        // read; an exemplar's only once the lane admits it.
         let subject_vector = if deps.semantic_exemplars.is_empty() {
             None
         } else {
@@ -370,7 +462,12 @@ impl SavedQueryEvaluator<'_> {
         let mut exemplar_vectors = Vec::with_capacity(deps.semantic_exemplars.len());
         let mut semantic_inputs = Vec::with_capacity(deps.semantic_exemplars.len());
         for exemplar in &deps.semantic_exemplars {
-            let against = self.vault.get_vector(exemplar)?;
+            let against = if lane.is_ref_readable(exemplar)? {
+                self.vault.get_vector(exemplar)?
+            } else {
+                hidden.exemplars = true;
+                None
+            };
             semantic_inputs.push((
                 *exemplar,
                 vector_pair_fingerprint(&subject_vector, &against),
@@ -386,34 +483,40 @@ impl SavedQueryEvaluator<'_> {
                 scope_membership,
             },
             held,
+            hidden,
             subject_vector,
             exemplar_vectors,
         })
     }
 
-    /// The entity's own world/facet membership, narrowed to `scope`.
+    /// The entity's own world/facet membership, narrowed to `scope`, from
+    /// the edges the owner's lane admits.
     ///
     /// Worlds come from `in_world` edges and facets from `has_facet` edges,
     /// with a facet spelled as its FACET entity's canonical hex — the same
     /// spelling `gate.rs` uses for a facet reference in a scoped-read grant.
-    fn scope_membership(&self, entity_ref: EntityId, scope: &QueryScope) -> Result<QueryScope> {
-        if scope.worlds.is_empty() && scope.facets.is_empty() {
-            return Ok(QueryScope::default());
-        }
+    /// A withheld edge is no membership: it can only leave the entity out.
+    fn scope_membership(
+        &self,
+        lane: &ScopedRead<'_>,
+        entity_ref: EntityId,
+        scope: &QueryScope,
+    ) -> Result<QueryScope> {
         let mut worlds = Vec::new();
-        let mut facets = Vec::new();
-        for edge in self.vault.edges_out(&entity_ref)? {
-            match edge.kind {
-                EdgeKind::InWorld if scope.worlds.contains(&edge.target) => {
+        if !scope.worlds.is_empty() {
+            for edge in admitted_edges_out(lane, entity_ref, EdgeKind::InWorld)? {
+                if scope.worlds.contains(&edge.target) {
                     worlds.push(edge.target);
                 }
-                EdgeKind::HasFacet => {
-                    let token = edge.target.to_hex();
-                    if scope.facets.contains(&token) {
-                        facets.push(token);
-                    }
+            }
+        }
+        let mut facets = Vec::new();
+        if !scope.facets.is_empty() {
+            for edge in admitted_edges_out(lane, entity_ref, EdgeKind::HasFacet)? {
+                let token = edge.target.to_hex();
+                if scope.facets.contains(&token) {
+                    facets.push(token);
                 }
-                _ => {}
             }
         }
         worlds.sort_unstable();
@@ -424,35 +527,90 @@ impl SavedQueryEvaluator<'_> {
     }
 
     /// The relevant values, and whether a relevant claim is held.
+    ///
+    /// The claims about the entity are listed and read through the owner's
+    /// lane; a claim it withholds marks the claims hidden. Each body is
+    /// effective truth at `valid_at` (see [`claim_effective_at`]), and whether
+    /// it is held is read on the SAME snapshot as the body: an owner's answer
+    /// landing between two reads would pass a stale body.
     fn relevant_claim_values(
         &self,
+        lane: &ScopedRead<'_>,
         entity_ref: EntityId,
         predicates: &[String],
         definition: &SavedQueryDefinition,
         valid_at: u64,
+        hidden: &mut HiddenDependencies,
     ) -> Result<(Vec<(String, Value)>, bool)> {
         if predicates.is_empty() {
             return Ok((Vec::new(), false));
         }
-        let mut values = Vec::new();
-        let mut held = false;
-        for edge in self.vault.edges_in(&entity_ref)? {
-            if edge.kind != EdgeKind::ClaimOf {
-                continue;
-            }
-            let Some((body, claim_held)) = self.effective_claim_body(&edge.target, valid_at)?
-            else {
-                continue;
-            };
-            if predicates.contains(&body.predicate) && claim_in_scope(&body, &definition.scope) {
-                // Its value is withheld; `evaluate_staged` decides the row.
-                if claim_held {
-                    held = true;
-                    continue;
-                }
-                values.push((body.predicate, rmpv_to_json(&body.value)));
-            }
+        let listed = lane.neighborhood_projected(
+            &entity_ref,
+            Some(EdgeKind::ClaimOf),
+            None,
+            usize::MAX,
+            |_, neighbors| {
+                Ok::<_, Error>(neighbors.map(|rows| {
+                    rows.into_iter()
+                        .filter(|row| !row.outbound)
+                        .map(|row| row.edge.target)
+                        .collect::<Vec<EntityId>>()
+                }))
+            },
+        )?;
+        let Some(claim_refs) = listed.value else {
+            hidden.claims = true;
+            return Ok((Vec::new(), false));
+        };
+        if listed.receipt.suppressed_count > 0 {
+            hidden.claims = true;
         }
+        let reads: Vec<_> = claim_refs.iter().copied().map(PointRead::id).collect();
+        let withheld = Cell::new(false);
+        let read = lane.read_projected_opaque(
+            &reads,
+            None,
+            |_, _| {
+                withheld.set(true);
+                Ok::<_, Error>(false)
+            },
+            |txn, rows| -> Result<(Vec<(String, Value)>, bool)> {
+                let mut values = Vec::new();
+                let mut held = false;
+                for row in rows.into_iter().flatten() {
+                    if row.entity_type != ENTITY_TYPE_CLAIM {
+                        continue;
+                    }
+                    // An erased claim keeps a header-only shell: no claim.
+                    let Some(raw) = row.body.filter(|body| !body.is_empty()) else {
+                        continue;
+                    };
+                    let body = decode_claim_body(&raw, true)?;
+                    if !claim_effective_at(&body, valid_at)
+                        || !predicates.contains(&body.predicate)
+                        || !claim_in_scope(&body, &definition.scope)
+                    {
+                        continue;
+                    }
+                    // Its value is withheld; `evaluate_staged` decides the row.
+                    if !crate::gate::claim_critical_confirm_settled_in_txn(
+                        &self.vault.store,
+                        txn,
+                        &row.id,
+                    )? {
+                        held = true;
+                        continue;
+                    }
+                    values.push((body.predicate, rmpv_to_json(&body.value)));
+                }
+                Ok((values, held))
+            },
+        )?;
+        if withheld.get() {
+            hidden.claims = true;
+        }
+        let (mut values, held) = read.value;
         // Claim discovery order is edge-index order; the hash must not depend
         // on it.
         values.sort_by(|left, right| {
@@ -461,88 +619,90 @@ impl SavedQueryEvaluator<'_> {
         Ok((values, held))
     }
 
-    /// The claim body at `claim_ref` IF it is effective truth at `valid_at`.
-    ///
-    /// "Active" alone is not effective: an `Active` `Proposed` claim is an
-    /// unapproved suggestion, a `stale` derived claim is known to be behind its
-    /// source, and a claim whose valid-time window has not opened (or has
-    /// closed) is not true now. Membership derived from any of those would
-    /// enroll a person on evidence the rest of the engine refuses to read, so
-    /// this mirrors `claim.rs`'s `claim_surfaceable` plus `comm.rs`'s
-    /// valid-time window rather than inventing a looser rule.
-    ///
-    /// Also whether the claim is held, read on the SAME snapshot as the body:
-    /// an owner's answer landing between two reads would pass a stale body.
-    fn effective_claim_body(
-        &self,
-        claim_ref: &EntityId,
-        valid_at: u64,
-    ) -> Result<Option<(ClaimBody, bool)>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let Some(row) =
-            crate::ports::EntityStoreRead::port_entity_record(&self.vault.store, &rtxn, claim_ref)?
-        else {
-            return Ok(None);
-        };
-        if row.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(None);
-        }
-        // `Vault::get` on this snapshot: a soft-erased shell is an empty body.
-        let raw = match crate::ports::safe_read_text(self.vault, &rtxn, claim_ref)? {
-            Some(raw) => raw,
-            None => {
-                let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(
-                    self.vault, &rtxn, claim_ref,
-                )?;
-                let shell = row.body.is_empty()
-                    && visibility.deleted
-                    && !visibility.archived
-                    && !visibility.stale;
-                if !shell {
-                    return Ok(None);
-                }
-                Vec::new()
-            }
-        };
-        let body = decode_claim_body(&raw, true)?;
-        let held = !crate::gate::claim_critical_confirm_settled_in_txn(
-            &self.vault.store,
-            &rtxn,
-            claim_ref,
-        )?;
-        Ok(claim_effective_at(&body, valid_at).then_some((body, held)))
-    }
-
+    /// The targets of the entity's relevant edges, each edge admitted with
+    /// both endpoints by the owner's lane; a kind with a withheld edge is
+    /// hidden.
     fn relevant_edge_targets(
         &self,
+        lane: &ScopedRead<'_>,
         entity_ref: EntityId,
         edge_kinds: &[String],
+        hidden: &mut HiddenDependencies,
     ) -> Result<Vec<(String, EntityId)>> {
-        if edge_kinds.is_empty() {
-            return Ok(Vec::new());
+        let mut targets = Vec::new();
+        for name in edge_kinds {
+            let Some(kind) = edge_kind_from_name(name) else {
+                continue;
+            };
+            let read = lane.edges_out_of_kind(&entity_ref, kind)?;
+            if read.receipt.suppressed_count > 0 || read.value.is_none() {
+                hidden.edge_kinds.insert(name.clone());
+            }
+            targets.extend(
+                read.value
+                    .into_iter()
+                    .flatten()
+                    .map(|edge| (name.clone(), edge.target)),
+            );
         }
-        let wanted = edge_kinds
-            .iter()
-            .filter_map(|name| edge_kind_from_name(name).map(|kind| (kind, name.clone())))
-            .collect::<Vec<(EdgeKind, String)>>();
-        let mut targets = self
-            .vault
-            .edges_out(&entity_ref)?
-            .into_iter()
-            .filter_map(|edge| {
-                wanted
-                    .iter()
-                    .find(|(kind, _)| *kind == edge.kind)
-                    .map(|(_, name)| (name.clone(), edge.target))
-            })
-            .collect::<Vec<_>>();
         if edge_kinds.iter().any(|kind| kind == "task_owner")
             && let Some(owner) = self.vault.indexed_task_owner(entity_ref)?
         {
-            targets.push(("task_owner".to_owned(), owner));
+            if lane.is_ref_readable(&owner)? {
+                targets.push(("task_owner".to_owned(), owner));
+            } else {
+                hidden.edge_kinds.insert("task_owner".to_owned());
+            }
         }
         targets.sort_unstable();
         Ok(targets)
+    }
+}
+
+/// The entity's outbound edges of `kind` the lane admits, both endpoints
+/// included; none when it withholds the entity itself.
+fn admitted_edges_out(
+    lane: &ScopedRead<'_>,
+    entity_ref: EntityId,
+    kind: EdgeKind,
+) -> Result<Vec<crate::EdgeInfo>> {
+    Ok(lane
+        .edges_out_of_kind(&entity_ref, kind)?
+        .value
+        .unwrap_or_default())
+}
+
+/// Whether a dependency the owner's read withheld leaves this candidate's
+/// verdict undecided: stage 1 or a hard matcher it could flip, a judge that
+/// would read only the admitted part of the evidence, or an exemplar the
+/// owner may not read.
+fn hidden_undecides(definition: &SavedQueryDefinition, collected: &CollectedEvidence) -> bool {
+    let hidden = &collected.hidden;
+    if hidden.is_empty() {
+        return false;
+    }
+    match evaluate_filter(&definition.filter, &collected.evidence, hidden) {
+        None => true,
+        Some(false) => false,
+        Some(true) => match &definition.matcher {
+            MatcherSpec::Hard { expression } => {
+                evaluate_filter(expression, &collected.evidence, hidden).is_none()
+            }
+            MatcherSpec::SemanticThreshold { .. } => hidden.exemplars,
+            MatcherSpec::LlmJudge { .. } => true,
+        },
+    }
+}
+
+/// An answer no memo records: authority, a hold, or an undecided row.
+fn unmemoized(decision: MatchDecision, evidence_hash: [u8; EVIDENCE_HASH_LEN]) -> StagedOutcome {
+    StagedOutcome {
+        outcome: EvaluationOutcome {
+            decision,
+            evidence_hash,
+            memo_hit: false,
+        },
+        judge_ran: false,
     }
 }
 
@@ -719,9 +879,49 @@ pub const SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE: &str = "entity is outside the ef
 /// both are named.
 pub const SAVED_QUERY_WHY_SCOPE_CLOSED: &str = "effective scope is closed against owner grants";
 
+/// The answer when the owner's read does not admit the candidate itself.
+const SAVED_QUERY_WHY_ENTITY_UNREADABLE: &str =
+    "entity is not readable under the owner's authority";
+
+/// The answer when a row the verdict depends on is withheld from the owner.
+const SAVED_QUERY_WHY_DEPENDENCY_UNREADABLE: &str =
+    "a relevant row is not readable under the owner's authority";
+
 fn no_match(why: &str) -> MatchDecision {
     MatchDecision {
         verdict: MatchVerdict::NoMatch,
         why: why.to_owned(),
+    }
+}
+
+/// What visiting one candidate cost a wake: what a wake loop outside this
+/// module (the campaign enrollment wake) counts against the query's
+/// `max_entities_per_wake` and `max_judges_per_wake`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct WakeVisit {
+    /// The verdict came from the memo.
+    pub(crate) memo_hit: bool,
+    /// A stage-2 judge actually ran.
+    pub(crate) judge_ran: bool,
+}
+
+impl SavedQueryEvaluator<'_> {
+    /// [`Self::evaluate_entity`], plus what the evaluation cost a wake, so a
+    /// wake built outside this module counts judges that ran rather than
+    /// inferring them from the verdict.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate_entity`].
+    pub(crate) async fn evaluate_entity_visit(
+        &self,
+        request: &EvaluationRequest<'_>,
+    ) -> Result<(EvaluationOutcome, WakeVisit)> {
+        let staged = self.evaluate_staged(request).await?;
+        let visit = WakeVisit {
+            memo_hit: staged.outcome.memo_hit,
+            judge_ran: staged.judge_ran,
+        };
+        Ok((staged.outcome, visit))
     }
 }

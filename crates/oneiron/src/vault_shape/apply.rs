@@ -8,7 +8,7 @@
 //! item, and an actor's apply lands nothing and leaves every item waiting.
 //! A new grant an actor declares also goes to the owner's widen inbox, filed
 //! under the actor's own credential.
-use super::live::world_name;
+use super::live::{facet_name, world_name};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::{AgentDefinition, AgentScope};
@@ -20,9 +20,11 @@ use crate::channel_identity_lifecycle::{
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::federation::InitialSharedMember;
-use crate::registry::ENTITY_TYPE_WORLD;
+use crate::ports::EdgeDirection;
+use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::SkillLifecycle;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
@@ -326,7 +328,17 @@ impl Vault {
                 }
                 ShapeItemState::Proposed => {
                     match self.land_shape_item(owner, slips, &item, &live, now) {
-                        Ok(receipt) => ShapeItemState::Landed { at: now, receipt },
+                        Ok(receipt) => {
+                            // The skills a pack bundles, and the actors a
+                            // channel binds, read live for the items after.
+                            if matches!(
+                                item.target,
+                                ShapeTarget::Pack { .. } | ShapeTarget::Actor { .. }
+                            ) {
+                                live = self.live_by_target()?;
+                            }
+                            ShapeItemState::Landed { at: now, receipt }
+                        }
                         Err(error) => ShapeItemState::Refused {
                             reason: error.to_string(),
                         },
@@ -487,6 +499,16 @@ impl Vault {
             }
             (
                 ShapeChange::Create,
+                ShapeTarget::Facet {
+                    person: wearer,
+                    name,
+                },
+                _,
+            ) => Ok(self
+                .create_facet(owner, person(wearer)?, name, now)?
+                .to_hex()),
+            (
+                ShapeChange::Create,
                 ShapeTarget::Actor { agent_id },
                 Some(ShapeRow::Actor {
                     ceiling, enabled, ..
@@ -562,6 +584,15 @@ impl Vault {
                     PackInstallDisposition::Blocked { reason } => Err(invalid(reason)),
                 }
             }
+            (
+                ShapeChange::Create,
+                ShapeTarget::Skill { skill_id },
+                Some(ShapeRow::Skill {
+                    version,
+                    source: Some(source),
+                    ..
+                }),
+            ) => self.import_shape_skill(owner, skill_id, version.as_deref(), source, now),
             (ShapeChange::Retire, ShapeTarget::Skill { .. }, _) => {
                 // Retiring a skill quarantines it: out of every pack, its
                 // evidence kept, revivable. The owner's word is the consent
@@ -573,6 +604,22 @@ impl Vault {
                 owner.revalidate(self)?;
                 self.update_skill_record(&id, &record, occurred, now)?;
                 Ok(id.to_hex())
+            }
+            (
+                ShapeChange::Create,
+                ShapeTarget::Channel { channel, address },
+                Some(ShapeRow::Channel {
+                    provision: Some(provision),
+                    ..
+                }),
+            ) => {
+                let binding = provision.binding.resolve(|agent_id| {
+                    live.get(&ShapeTarget::Actor {
+                        agent_id: agent_id.to_owned(),
+                    })
+                    .and_then(|(_, entity)| *entity)
+                })?;
+                self.provision_shape_channel(owner, channel, address, provision, binding, now)
             }
             (ShapeChange::Retire, ShapeTarget::Channel { .. }, _) => {
                 // Retiring a channel identity releases it through its
@@ -639,6 +686,18 @@ impl Vault {
                 let _receipt = self.revoke_consent_grant(owner, grant_ref)?;
                 Ok(grant_ref.clone())
             }
+            (
+                ShapeChange::Create | ShapeChange::Update,
+                ShapeTarget::Manifest { manifest_ref },
+                Some(ShapeRow::Manifest { body, .. }),
+            ) => self.install_shape_manifest(owner, manifest_ref, body, now),
+            (ShapeChange::Retire, ShapeTarget::Manifest { .. }, _) => {
+                // A manifest is never deleted. Retiring one quarantines its
+                // exact bytes, so it stops counting and stays stored.
+                let id = entity.ok_or_else(stale)?;
+                self.quarantine_manifest_contribution(owner, id)?;
+                Ok(id.to_hex())
+            }
             _ => Err(invalid("the vault has no door for this item")),
         }
     }
@@ -684,6 +743,80 @@ impl Vault {
                     now,
                     &body,
                 )
+                .apply(txn)?;
+            Ok(id)
+        })
+    }
+
+    /// Creates a facet named `name` that `person` wears, as `owner`: a mask
+    /// that grants nothing (ARCH-0022), wired by its has_facet edge in the
+    /// same writer. A live mask of that person already carrying the name
+    /// refuses.
+    ///
+    /// # Errors
+    ///
+    /// A blank or taken name, a wearer who is not a live person, an owner
+    /// proof that no longer holds, or a store failure.
+    pub fn create_facet(
+        &self,
+        owner: &AuthenticatedOwner,
+        person: EntityId,
+        name: &str,
+        now: u64,
+    ) -> Result<EntityId> {
+        if name.trim().is_empty() || name.len() > super::SHAPE_NAME_MAX_BYTES {
+            return Err(invalid("a facet's name is 1 to 256 bytes and not blank"));
+        }
+        let body = rmpv::Value::Map(vec![
+            ("label".into(), name.into()),
+            ("sensitivity".into(), "sensitive".into()),
+        ]);
+        let mut data = Vec::new();
+        rmpv::encode::write_value(&mut data, &body)
+            .map_err(|_| invalid("facet encoding failed"))?;
+        let weight = EdgeKind::HasFacet
+            .default_weight()
+            .ok_or_else(|| invalid("has_facet carries no default weight"))?;
+        let id = EntityId::now();
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            if !matches!(
+                live_entity_row_in_txn(&self.store, txn, &person)?,
+                LiveEntityRow::Live {
+                    entity_type: ENTITY_TYPE_PERSON,
+                    ..
+                }
+            ) {
+                return Err(invalid("a facet's wearer is a live person"));
+            }
+            for mask in self.filtered_edge_peers(
+                txn,
+                EdgeDirection::Out,
+                &person,
+                EdgeKind::HasFacet,
+                Some(ENTITY_TYPE_FACET),
+            )? {
+                if let LiveEntityRow::Live { body, .. } =
+                    live_entity_row_in_txn(&self.store, txn, &mask)?
+                    && facet_name(&body).as_deref() == Some(name)
+                {
+                    return Err(invalid(
+                        "a live facet of that person already carries that name",
+                    ));
+                }
+            }
+            self.batch_in()
+                .put(
+                    &id,
+                    ENTITY_TYPE_FACET,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &data,
+                )
+                .edge_with_created_at(&person, EdgeKind::HasFacet, &id, weight, now)
                 .apply(txn)?;
             Ok(id)
         })

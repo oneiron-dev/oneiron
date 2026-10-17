@@ -5,11 +5,12 @@
 //! itself (its Loro document, actors and forks) lives in the engine; this module
 //! knows only DOCX.
 
-use crate::{ArchiveLimits, DoceditError, Document, preflight_with_limits, revise_with_limits};
+use crate::{ArchiveLimits, DoceditError, Document, preflight_with_limits};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use similar::{Algorithm, DiffOp, capture_diff_slices};
+use stemma::edit::EditTransaction;
 use stemma::view::{BlockRole, BlockView, SegmentView, TextMark, TrackStatus};
 
 /// One top-level block of the imported document, in document order.
@@ -272,7 +273,8 @@ pub enum DocxChange {
     },
     /// Replace a paragraph's text and inline marks, keeping its role. A mark
     /// that changes on text the paragraph keeps lands as a tracked formatting
-    /// change; new text carries its own marks on top of its neighbour's.
+    /// change, as does a Word mark new text takes from its neighbour that the
+    /// body does not carry.
     SetRuns {
         block: String,
         runs: Vec<DocxRun>,
@@ -344,7 +346,8 @@ pub fn project_docx(
         return Ok(source.to_vec());
     }
     preflight_with_limits(source, limits)?;
-    let view = Document::parse(source)?.read();
+    let document = Document::parse(source)?;
+    let view = document.read();
     let find = |id: &str| {
         view.blocks
             .iter()
@@ -358,6 +361,7 @@ pub fn project_docx(
         };
         find(id).map(|block| json!({"anchor": block.id.to_string(), "position": position}))
     };
+    let mut patches = Vec::new();
     let mut ops: Vec<Value> = Vec::with_capacity(changes.len());
     for change in changes {
         match change {
@@ -372,9 +376,12 @@ pub fn project_docx(
             }
             DocxChange::SetRuns { block, runs } => {
                 let block = find(block)?;
-                // Formatting first: the guard pins text, not marks, so the
-                // replace after it still reads the block it was read against.
-                ops.extend(formats(block, runs)?);
+                // Formatting goes first, as a pass of its own: the guard pins
+                // text, not marks, so the replace after it still reads the
+                // block it was read against.
+                if let Some(patch) = kept_marks(block, runs)? {
+                    patches.push((block, patch));
+                }
                 if runs_text(runs) != block.text {
                     ops.push(json!({
                         "op": "replace",
@@ -415,14 +422,33 @@ pub fn project_docx(
             }
         }
     }
-    if ops.is_empty() {
+    if patches.is_empty() && ops.is_empty() {
         return Ok(source.to_vec());
     }
+    let mut edited = document;
+    if !patches.is_empty() {
+        edited = remark(&edited, &patches, revision).ok_or_else(|| {
+            DoceditError::InvalidTransaction(
+                "a mark change on text its paragraph cannot address".to_owned(),
+            )
+        })?;
+    }
+    if !ops.is_empty() {
+        edited = edited.apply(&native(ops, revision)?)?;
+    }
+    if let Some(remarked) = inherited(&edited, changes, revision) {
+        edited = remarked;
+    }
+    crate::export_redline(&edited, limits)
+}
+
+/// `ops` as one tracked transaction under the projection's revision.
+fn native(ops: Vec<Value>, revision: &DocxRevision) -> Result<EditTransaction, DoceditError> {
     let transaction = json!({
         "ops": ops,
         "revision": {"author": revision.author, "date": revision.date, "apply_op_id": revision.group},
     });
-    revise_with_limits(source, &transaction.to_string(), limits)
+    crate::parse_native_revision(&transaction.to_string())
 }
 
 fn paragraph(role: Option<&str>, text: &str) -> Value {
@@ -462,20 +488,19 @@ fn marked_paragraph(role: Option<&str>, runs: &[DocxRun]) -> Value {
     json!({"type": "paragraph", "role": role, "content": content})
 }
 
-/// The tracked formatting changes that move the source paragraph's marks to
-/// `runs` on the text both keep, aligned by a character diff. Each changed
-/// stretch is addressed by its text and its copy among that text's repeats.
-fn formats(block: &BlockView, runs: &[DocxRun]) -> Result<Vec<Value>, DoceditError> {
-    let source = source_runs(block);
-    if runs_text(&source) != block.text {
+/// Per character of the source paragraph, the marks it gains and loses where
+/// the body keeps it, aligned by a character diff. None when no kept mark
+/// changes.
+fn kept_marks(block: &BlockView, runs: &[DocxRun]) -> Result<Option<Vec<(u8, u8)>>, DoceditError> {
+    let letters = letters(block);
+    let old: Vec<char> = letters.iter().map(|letter| letter.ch).collect();
+    if old.iter().collect::<String>() != block.text {
         return Err(DoceditError::InvalidTransaction(format!(
             "block {} does not read as plain runs",
             block.id
         )));
     }
-    let (old, old_marks) = flatten(&source);
     let (new, new_marks) = flatten(runs);
-    // Per source character: the marks it gains, and the marks it loses.
     let mut patch = vec![(0u8, 0u8); old.len()];
     for op in capture_diff_slices(Algorithm::Myers, &old, &new) {
         if let DiffOp::Equal {
@@ -485,50 +510,230 @@ fn formats(block: &BlockView, runs: &[DocxRun]) -> Result<Vec<Value>, DoceditErr
         } = op
         {
             for offset in 0..len {
-                let was = old_marks[old_index + offset];
+                let was = letters[old_index + offset].marks;
                 let now = new_marks[new_index + offset];
                 patch[old_index + offset] = (now & !was, was & !now);
             }
         }
     }
-    let mut ops = Vec::new();
-    let mut start = 0;
-    while start < old.len() {
-        let change = patch[start];
-        let end = start
-            + patch[start..]
-                .iter()
-                .take_while(|other| **other == change)
-                .count();
-        if change != (0, 0) {
-            let expect: String = old[start..end].iter().collect();
-            let occurrence = copy(&block.text, &expect, start).ok_or_else(|| {
-                DoceditError::InvalidTransaction(format!(
-                    "block {}: a mark change on text its paragraph cannot address",
-                    block.id
-                ))
-            })?;
-            let mut marks = Map::new();
-            for mark in DocxMark::ALL {
-                if change.0 & mark.bit() != 0 {
-                    marks.insert(mark.key().to_owned(), Value::Bool(true));
-                }
-                if change.1 & mark.bit() != 0 {
-                    marks.insert(mark.key().to_owned(), Value::Bool(false));
+    Ok(patch.iter().any(|change| *change != (0, 0)).then_some(patch))
+}
+
+/// Stemma's replace lays a new run's marks over its neighbour's Word
+/// formatting, so text the body typed unmarked beside a bold word arrives
+/// bold, and text typed at a paragraph's start takes the marks after it. This
+/// pass gives each edited paragraph the body's marks again, except on a
+/// character whose formatting the projection already changed. A paragraph
+/// that no longer reads as its body, or a pass that cannot land, keeps the
+/// replace as written.
+fn inherited(
+    edited: &Document,
+    changes: &[DocxChange],
+    revision: &DocxRevision,
+) -> Option<Document> {
+    let view = edited.read();
+    let patches: Vec<_> = changes
+        .iter()
+        .filter_map(|change| {
+            let DocxChange::SetRuns { block, runs } = change else {
+                return None;
+            };
+            let block = live(&view.blocks, block)?;
+            let letters = letters(block);
+            let kept: Vec<usize> = (0..letters.len())
+                .filter(|&at| {
+                    !matches!(
+                        letters[at].status,
+                        TrackStatus::Deleted(_) | TrackStatus::InsertedThenDeleted { .. }
+                    )
+                })
+                .collect();
+            let (text, want) = flatten(runs);
+            if !kept.iter().map(|&at| letters[at].ch).eq(text) {
+                return None;
+            }
+            let mut patch = vec![(0u8, 0u8); letters.len()];
+            for (&at, &now) in kept.iter().zip(&want) {
+                let was = letters[at].marks;
+                if !letters[at].revised {
+                    patch[at] = (now & !was, was & !now);
                 }
             }
-            ops.push(json!({
-                "op": "set_format",
-                "target": block.id.to_string(),
-                "expect": expect,
-                "occurrence": occurrence,
-                "semantic_hash": block.guard,
-                "marks": marks,
-            }));
+            patch
+                .iter()
+                .any(|change| *change != (0, 0))
+                .then_some((block, patch))
+        })
+        .collect();
+    if patches.is_empty() {
+        return None;
+    }
+    remark(edited, &patches, revision)
+}
+
+/// Apply tracked mark changes as one pass, each patch running over its
+/// paragraph's [`letters`]. A changed stretch is addressed whole, or a
+/// character at a time when it starts inside an overlapping repeat of its own
+/// text. A pass that misses or lands elsewhere (a bookmark inside a stretch
+/// splits the runs stemma matches within) is redone a character at a time,
+/// which always addresses exactly. None when neither pass lands.
+fn remark(
+    document: &Document,
+    patches: &[(&BlockView, Vec<(u8, u8)>)],
+    revision: &DocxRevision,
+) -> Option<Document> {
+    [false, true].into_iter().find_map(|split| {
+        let ops: Vec<Value> = patches
+            .iter()
+            .flat_map(|(block, patch)| set_formats(block, patch, split))
+            .collect();
+        let next = document.apply(&native(ops, revision).ok()?).ok()?;
+        let view = next.read();
+        patches
+            .iter()
+            .all(|(block, patch)| {
+                let want = letters(block)
+                    .into_iter()
+                    .zip(patch)
+                    .map(|(letter, (gain, lose))| (letter.ch, (letter.marks | gain) & !lose));
+                live(&view.blocks, &block.id.to_string()).is_some_and(|landed| {
+                    letters(landed)
+                        .into_iter()
+                        .map(|letter| (letter.ch, letter.marks))
+                        .eq(want)
+                })
+            })
+            .then_some(next)
+    })
+}
+
+/// The `set_format` ops that move `block`'s letters by `patch`: one per
+/// changed stretch within a tracked segment, or one per character when
+/// `split`.
+fn set_formats(block: &BlockView, patch: &[(u8, u8)], split: bool) -> Vec<Value> {
+    let letters = letters(block);
+    let len = patch.len().min(letters.len());
+    let mut ops = Vec::new();
+    let mut start = 0;
+    while start < len {
+        let change = patch[start];
+        let end = if split {
+            start + 1
+        } else {
+            start
+                + patch[start..len]
+                    .iter()
+                    .zip(&letters[start..len])
+                    .take_while(|(other, letter)| {
+                        **other == change && letter.status == letters[start].status
+                    })
+                    .count()
+        };
+        if change != (0, 0) {
+            match occurrence(&letters, start, end) {
+                Some(copy) => ops.push(set_format(block, &letters[start..end], copy, change)),
+                // One character always has a copy of its own.
+                None => ops.extend((start..end).filter_map(|at| {
+                    let copy = occurrence(&letters, at, at + 1)?;
+                    Some(set_format(block, &letters[at..=at], copy, change))
+                })),
+            }
         }
         start = end;
     }
-    Ok(ops)
+    ops
+}
+
+fn set_format(
+    block: &BlockView,
+    letters: &[Letter<'_>],
+    occurrence: usize,
+    (gain, lose): (u8, u8),
+) -> Value {
+    let mut marks = Map::new();
+    for mark in DocxMark::ALL {
+        if gain & mark.bit() != 0 {
+            marks.insert(mark.key().to_owned(), Value::Bool(true));
+        }
+        if lose & mark.bit() != 0 {
+            marks.insert(mark.key().to_owned(), Value::Bool(false));
+        }
+    }
+    json!({
+        "op": "set_format",
+        "target": block.id.to_string(),
+        "expect": letters.iter().map(|letter| letter.ch).collect::<String>(),
+        "occurrence": occurrence,
+        "semantic_hash": block.guard,
+        "marks": marks,
+    })
+}
+
+/// One character of a paragraph's text segments, deleted ones included, in
+/// the order stemma's formatting verb numbers its matches.
+struct Letter<'a> {
+    ch: char,
+    /// Its marks as bits.
+    marks: u8,
+    status: &'a TrackStatus,
+    /// It already carries a pending formatting change.
+    revised: bool,
+}
+
+fn letters(block: &BlockView) -> Vec<Letter<'_>> {
+    let mut letters = Vec::new();
+    for segment in &block.segments {
+        if let SegmentView::Text {
+            text,
+            status,
+            marks,
+            format_revision,
+            ..
+        } = segment
+        {
+            let bits = marks
+                .iter()
+                .fold(0, |bits, mark| bits | text_mark(*mark).bit());
+            letters.extend(text.chars().map(|ch| Letter {
+                ch,
+                marks: bits,
+                status,
+                revised: format_revision.is_some(),
+            }));
+        }
+    }
+    letters
+}
+
+/// The 1-based copy of `letters[start..end]` as stemma's formatting verb
+/// numbers them: non-overlapping matches within each tracked segment, the
+/// segments in order. None when the stretch starts inside an overlapping
+/// repeat of its own text.
+fn occurrence(letters: &[Letter<'_>], start: usize, end: usize) -> Option<usize> {
+    let expect: String = letters[start..end].iter().map(|letter| letter.ch).collect();
+    let (mut earlier, mut from) = (0, 0);
+    while from < letters.len() {
+        let to = from
+            + letters[from..]
+                .iter()
+                .take_while(|letter| letter.status == letters[from].status)
+                .count();
+        let text: String = letters[from..to].iter().map(|letter| letter.ch).collect();
+        if start < to {
+            return copy(&text, &expect, start - from).map(|copy| earlier + copy);
+        }
+        earlier += text.matches(expect.as_str()).count();
+        from = to;
+    }
+    None
+}
+
+/// The block `id` names in an edited document, unless a move or a delete
+/// left it pending.
+fn live<'a>(blocks: &'a [BlockView], id: &str) -> Option<&'a BlockView> {
+    blocks
+        .iter()
+        .find(|block| block.id.to_string() == id && block.block_status == TrackStatus::Normal)
 }
 
 /// Each character of `runs` with its marks as bits.

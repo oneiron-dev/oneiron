@@ -1,7 +1,6 @@
 use crate::ports::EntityStoreRead;
 use serde_json::{Map as JsonMap, Value};
 
-use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::campaign::CRM_PACK_ID;
 use crate::campaign::claims::{CampaignMemberValue, encode_campaign_member_value};
@@ -9,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideKey, SideTable};
 use crate::temporal::TimeRange;
+use crate::{EdgeActorClass, Vault};
 
 use super::definition::{
     QueryScope, SAVED_QUERY_SHORT_ID_PREFIX, SavedQueryDefinition, SavedQueryRecord,
@@ -19,8 +19,10 @@ use super::membership::{MembershipCause, MembershipEvent, MembershipTransition};
 use super::pack_drift::{PackDrift, PackMigrationMap, PackMove};
 use super::support::{canonical_json_bytes, hex_lower, invalid, parse_entity_ref};
 
-/// Node-local fast-path watermark for one `(query, entity)` pair's last-applied epoch.
-pub(super) const WATERMARK: SideTable<(EntityId, EntityId), Watermark, Raw> =
+/// Node-local fast-path watermark for one `(query, entity, campaign)` triple's
+/// last-applied epoch. Each campaign a query feeds holds its own sequence, so
+/// one campaign's entry never reads as another's.
+pub(super) const WATERMARK: SideTable<(EntityId, EntityId, EntityId), Watermark, Raw> =
     SideTable::new(&side_table::SAVED_QUERY_WATERMARK);
 
 pub(super) struct Watermark {
@@ -40,10 +42,13 @@ impl RawValue for Watermark {
 }
 
 /// Durable append-only membership-transition event history, keyed by
-/// `(query, entity, epoch)` so a prefix scan over `(query, entity)` returns
-/// history in epoch order.
-pub(super) const MEMBERSHIP_EVENTS: SideTable<(EntityId, EntityId, u64), MembershipEvent, Raw> =
-    SideTable::new(&side_table::SAVED_QUERY_MEMBERSHIP_EVENT);
+/// `(query, entity, (campaign, epoch))` so a prefix scan over `(query, entity)`
+/// returns every campaign's history, each campaign's in epoch order.
+pub(super) const MEMBERSHIP_EVENTS: SideTable<
+    (EntityId, EntityId, (EntityId, u64)),
+    MembershipEvent,
+    Raw,
+> = SideTable::new(&side_table::SAVED_QUERY_MEMBERSHIP_EVENT);
 
 impl RawValue for MembershipEvent {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -55,7 +60,8 @@ impl RawValue for MembershipEvent {
     }
 }
 
-/// The `(query, entity)` key prefix selecting one pair's whole event history.
+/// The `(query, entity)` key prefix selecting one pair's whole event history,
+/// across every campaign.
 pub(super) fn event_pair_prefix(query_ref: &EntityId, entity_ref: &EntityId) -> Vec<u8> {
     let mut prefix = query_ref.as_bytes().to_vec();
     prefix.extend_from_slice(entity_ref.as_bytes());
@@ -252,9 +258,10 @@ pub(super) fn read_watermark(
     rtxn: &heed::RoTxn<'_>,
     query_ref: EntityId,
     entity_ref: EntityId,
+    campaign_ref: EntityId,
 ) -> Result<Option<(u64, [u8; EVIDENCE_HASH_LEN])>> {
     Ok(WATERMARK
-        .get(&vault.store, rtxn, &(query_ref, entity_ref))?
+        .get(&vault.store, rtxn, &(query_ref, entity_ref, campaign_ref))?
         .map(|watermark| (watermark.epoch, watermark.content)))
 }
 
@@ -320,6 +327,10 @@ pub(super) fn definition_to_json(definition: &SavedQueryDefinition) -> Result<Va
         "owner_actor".to_owned(),
         Value::String(definition.owner_actor.to_hex()),
     );
+    root.insert(
+        "owner_actor_class".to_owned(),
+        Value::String(definition.owner_actor_class.gate_actor_class().to_owned()),
+    );
     root.insert("scope".to_owned(), scope_to_json(&definition.scope));
     root.insert(
         "definition_version".to_owned(),
@@ -347,6 +358,7 @@ pub(super) fn definition_from_json(value: &Value) -> Result<SavedQueryDefinition
         schema_version: u32::try_from(required_u64(value, "schema_version", CONTEXT)?)
             .map_err(|_| Error::CorruptedIndex(CONTEXT))?,
         owner_actor: required_entity_ref(value, "owner_actor", CONTEXT)?,
+        owner_actor_class: required_actor_class(value, "owner_actor_class", CONTEXT)?,
         scope: scope_from_json(scope)?,
         definition_version: required_u64(value, "definition_version", CONTEXT)?,
         filter: parse_filter_ast(value.get("filter").ok_or(Error::CorruptedIndex(CONTEXT))?)
@@ -664,6 +676,15 @@ fn required_string(value: &Value, key: &str, context: &'static str) -> Result<St
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or(Error::CorruptedIndex(context))
+}
+
+fn required_actor_class(value: &Value, key: &str, context: &'static str) -> Result<EdgeActorClass> {
+    match required_string(value, key, context)?.as_str() {
+        "human" => Ok(EdgeActorClass::Human),
+        "agent" => Ok(EdgeActorClass::Agent),
+        "system" => Ok(EdgeActorClass::System),
+        _ => Err(Error::CorruptedIndex(context)),
+    }
 }
 
 fn required_u64(value: &Value, key: &str, context: &'static str) -> Result<u64> {

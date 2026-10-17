@@ -526,6 +526,8 @@ every one as rejected. Either way one receipt represents the run. Routes: `GET
 /v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…` (or `?run_ref=…`), `POST /v1/owner/runs/approve` or
 `/decline` with `{"run_id": "…", "bundle_id": "…"}` (or `"run_ref"` in place of `"run_id"`).
 
+The SDK verbs `vault.fanout.resume` (approve a held fan-out once, approve and remember it under a cap, or deny it) and `vault.fanout.ack` (acknowledge the width check of one that already went out) take the plan digest you saw from `vault.fanout.launch` and run under the owner's credential, over the facade and MCP.
+
 ## Settle an open contradiction
 
 When two claims disagree and nothing settled them, the vault keeps a `conflict.open` marker
@@ -834,8 +836,10 @@ oldest first (50 unless `limit` says fewer, at most 500). Each ask carries:
 - the principal it is for, and the evidence ids;
 - why it was asked;
 - the answer the ladder held, if any, and the model that read it;
-- your answer, once given.
-`open=true` keeps only the unanswered asks.
+- your answer, once given;
+- `withdrawn_at`, when the decision stopped waiting on it (an exploration
+  overrun ask that lapsed, for example).
+`open=true` keeps only the asks that are neither answered nor withdrawn.
 
 Answer one with `POST /v1/owner/decisions/asks/answer`:
 
@@ -848,7 +852,8 @@ options) or `score` (a number in its range). An abstention is not an answer.
 The decision waiting on the ask gets your answer. When your answer differs
 from the ladder's, the case is kept for the Coach, which tunes when the
 ladder asks you. Sending the same answer again changes nothing. A different
-answer to an answered ask is refused.
+answer to an answered ask is refused, and so is any answer to a withdrawn
+ask.
 
 ## The vault key on a new host
 
@@ -924,12 +929,23 @@ opens. With no keystore, serve unlocks them with the password the service manage
 holds as `vault_password`. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On
 another device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device
 --unlock password` (or `passkey`, `escrow`, or `kit` with the world kit's pieces); `oneiron
-vault-key prf-input NAME` gives a passkey's input before the vault opens. A credential whose wrap was removed or replaced opens nothing, even if an interrupted change
-left it in the mirror; the next open with a current one repairs the mirror. Where the mirror is but
+vault-key prf-input NAME` gives a passkey's input before the vault opens. A credential whose wrap
+was removed or replaced opens nothing, even if an interrupted change left it in the mirror; the next open with a current one repairs the mirror. Where the mirror is but
 the vault's data is not, init, serve and restore refuse: move the mirror away to create a new vault,
-since it may be the only copy of that vault's wraps. A restore makes a plain vault, so it is refused
-over a sealed one; restore to another `--vault-path`. Body files, `.lines`, LFS staging and lock
+since it may be the only copy of that vault's wraps. Body files, `.lines`, LFS staging and lock
 files stay outside the tier.
+
+A restore never converts a vault: it makes a new vault and copies the backup's rows into it, sealed
+or plain by one rule. Over a vault, and in a rehearsal beside it, the copy keeps that vault's tier:
+a sealed vault's copy is sealed under its own data key with a fresh incarnation, and its wraps stay
+as they are. Where no vault is, the copy follows the config's `maximum_tier`, sealed under the
+backup's own data key, and is kept only once its key is wrapped to this install. `--activate` keeps
+the archive's own tier and unlocks its pages from the mirror beside it. A sealed vault this install
+holds no wrap of unlocks for a restore over or beside it with the restore's own `--unlock`. While a
+restore over a sealed vault swaps the copy in, the mirrors beside both directories name both
+incarnations, and an open takes the one that opens its vault; once the swap is on disk, the mirror
+names the copy's alone. A rehearsal beside a running `serve` reads the vault with its unlocked page
+seal.
 
 A managed vault is plain unless its supervisor passes `--maximum-tier` when the vault is created.
 Its pages then seal under the data key the supervisor delivers at every start, with a fresh vault
@@ -1112,10 +1128,44 @@ The core conversation writes and the atomic batch are verbs too:
   them below it, which refuses a put that turns an agent definition back on.
 
 Each REST route (`POST /v1/core/conversations`, `.../{id}/turns`, `.../{id}/records`,
-`/v1/core/batch`) runs its verb as an action of your credential. It runs the verb's own door
-instead when the request is larger than one action argument (16 KiB of JSON), names a room
-turn, or comes from a credential that binds no person or agent. The route picks the path before
-it writes. A TURN write wakes the Dreamer once on either path.
+`/v1/core/batch`) runs its verb as an action of your credential: a person's, an agent's or a
+system job's. The whole body rides as one structured argument, so every size the route accepts
+runs as an action. It runs the verb's own door instead when the request names a room turn, or
+comes from a credential that binds no principal or read key. The route picks the path before it
+writes. A refusal answers with the code, words and suggestions the verb's own route refused
+with (a replay of a refused key keeps the code). A TURN write wakes the Dreamer once on either
+path.
+
+## Live agent runs
+
+The actions that act for one running agent need a live-run handle: `tasks.refuse`,
+`self.agents.spawn`, `self.team.start`, `self.team.record`, and the leader's
+`self.leader.advice` and `self.leader.pattern`. An outside harness gets and uses one like this:
+1. Pair a credential with write scope to that agent's AGENT_DEF: `POST /v1/core/pairing/links`
+   with `principal.holder_ref` set to the AGENT_DEF id and `principal.actor_class` set to
+   `agent`. The harness redeems the link at `POST /v1/core/pairing/redeem`.
+2. While the server runs the agent, call `POST /v1/core/live-runs/{run}/attach` with that
+   credential. It answers `{"liveRun": "<handle>"}` to this caller only.
+3. Send `"liveRun": "<handle>"` in the body of `POST /v1/core/actions/{verb}`.
+
+A handle has no expiry time. It holds while the run keeps its lease, and a run parked on a
+durable wait keeps its handle. Once the run ends or takes a new lease, attach again. One
+credential attaches per lease: the same credential gets the same handle back, and another
+credential is refused. The run's record keeps the attachment, so a handle still works after a
+restart once the runner holds the same lease again. An action and the run's own step never run
+at once. Refusals carry these codes:
+- 400 `live_run_required`: a live-run action named no handle.
+- 400 `live_run_invalid`: the handle is malformed.
+- 403 `live_run_unavailable`: an unknown run, a credential or agent that is not the attached
+  one, or a run with no attachment. All of these get the same answer.
+- 409 `live_run_stale`: the run's lease moved on.
+- 409 `code_run_busy`: the run is mid-step or mid-action. Retry.
+- 409 `live_run_attached`: another credential is attached to this lease.
+
+A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
+`POST /v1/owner/weave/lens` return, for your credential:
+- `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
+- `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
 
 ## Widen proposals
 

@@ -353,25 +353,97 @@ fn collect_filter_dependencies(
     }
 }
 
-pub(super) fn evaluate_filter(ast: &FilterAst, evidence: &RelevantEvidence) -> bool {
+/// The dependencies the owner's read withheld for one candidate: rows that
+/// exist but that its authority does not admit. Their values are unknown, so
+/// a term one of them could change is undecided rather than false.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct HiddenDependencies {
+    /// A claim about the candidate was withheld. Its predicate is unknown
+    /// too, so it bears on every claim term.
+    pub(super) claims: bool,
+    /// Edge kinds (`task_owner` included) with a withheld edge.
+    pub(super) edge_kinds: BTreeSet<String>,
+    /// A semantic exemplar the owner may not read.
+    pub(super) exemplars: bool,
+}
+
+impl HiddenDependencies {
+    /// Whether the read withheld nothing the definition depends on.
+    pub(super) fn is_empty(&self) -> bool {
+        !self.claims && self.edge_kinds.is_empty() && !self.exemplars
+    }
+}
+
+/// Stage 1 over the admitted evidence. `None` is undecided: a withheld row
+/// could change the answer, so the caller fails closed instead of letting
+/// a hidden row vanish and satisfy a negation.
+pub(super) fn evaluate_filter(
+    ast: &FilterAst,
+    evidence: &RelevantEvidence,
+    hidden: &HiddenDependencies,
+) -> Option<bool> {
     match ast {
-        FilterAst::TaskOwner { owner } => evidence
-            .edge_targets
-            .iter()
-            .any(|(kind, target)| kind == "task_owner" && target == owner),
-        FilterAst::All { terms } => terms.iter().all(|term| evaluate_filter(term, evidence)),
-        FilterAst::Any { terms } => terms.iter().any(|term| evaluate_filter(term, evidence)),
-        FilterAst::Not { term } => !evaluate_filter(term, evidence),
+        FilterAst::TaskOwner { owner } => witnessed(
+            evidence
+                .edge_targets
+                .iter()
+                .any(|(kind, target)| kind == "task_owner" && target == owner),
+            hidden.edge_kinds.contains("task_owner"),
+        ),
+        FilterAst::All { terms } => {
+            let mut decided = Some(true);
+            for term in terms {
+                match evaluate_filter(term, evidence, hidden) {
+                    Some(false) => return Some(false),
+                    None => decided = None,
+                    Some(true) => {}
+                }
+            }
+            decided
+        }
+        FilterAst::Any { terms } => {
+            let mut decided = Some(false);
+            for term in terms {
+                match evaluate_filter(term, evidence, hidden) {
+                    Some(true) => return Some(true),
+                    None => decided = None,
+                    Some(false) => {}
+                }
+            }
+            decided
+        }
+        FilterAst::Not { term } => evaluate_filter(term, evidence, hidden).map(|value| !value),
         FilterAst::Claim {
             predicate,
             cmp,
             value,
-        } => evaluate_claim_term(evidence, predicate, *cmp, value),
-        FilterAst::EdgeExists { edge_kind, target } => {
+        } => {
+            let seen = evaluate_claim_term(evidence, predicate, *cmp, value);
+            if *cmp == ClaimComparison::NotEq {
+                // "No live value equals": a hidden value can only make it false.
+                witnessed(!seen, hidden.claims).map(|equal| !equal)
+            } else {
+                witnessed(seen, hidden.claims)
+            }
+        }
+        FilterAst::EdgeExists { edge_kind, target } => witnessed(
             evidence.edge_targets.iter().any(|(kind, edge_target)| {
                 kind == edge_kind && target.is_none_or(|wanted| wanted == *edge_target)
-            })
-        }
+            }),
+            hidden.edge_kinds.contains(edge_kind),
+        ),
+    }
+}
+
+/// A term an admitted row witnesses holds whatever else is hidden; one no
+/// admitted row witnesses is false only when no row it reads is hidden.
+fn witnessed(seen: bool, hidden: bool) -> Option<bool> {
+    if seen {
+        Some(true)
+    } else if hidden {
+        None
+    } else {
+        Some(false)
     }
 }
 
