@@ -23,7 +23,7 @@ use crate::dto::{
     EntityRefReceipt, EntityView, EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput,
     LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance, MentionProvenance,
     NeighborHit, NeighborHits, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt,
-    PendingWrite, ReadReceipt, ReadScope, RecallScope, RerankReport, RerankSkip,
+    PendingWrite, QuoteSpan, ReadReceipt, ReadScope, RecallScope, RerankReport, RerankSkip,
     RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
     StructuralPutInput, TemporalHint, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt,
     WitnessTurn,
@@ -223,8 +223,25 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
         Ok(engine::WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
+            quote: self.quote.lower()?,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
+        })
+    }
+}
+
+impl Lower<oneiron::conversation_dag::QuoteSpan> for QuoteSpan {
+    fn lower(self) -> Result<oneiron::conversation_dag::QuoteSpan, OneironError> {
+        let message = oneiron::EntityId::from_hex(&self.message).map_err(|_| {
+            bad_request(
+                "quote.message must be the quoted MESSAGE's 32-hex id".to_owned(),
+                "Name the quoted message by its 32-hex id.",
+            )
+        })?;
+        Ok(oneiron::conversation_dag::QuoteSpan {
+            message,
+            start: self.start,
+            end: self.end,
         })
     }
 }

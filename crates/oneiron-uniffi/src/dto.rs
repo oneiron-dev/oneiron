@@ -94,11 +94,25 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// Turn ref (create-or-get); omitted means a fresh turn.
     pub turn_ref: Option<String>,
+    /// A quote on a project room's thread reply: a scalar span of one MESSAGE
+    /// in the room. Omitted means no quote.
+    pub quote: Option<QuoteSpan>,
     /// Messages, attributed to the bound actor unless authored by `System`.
     pub messages: Vec<WitnessMessage>,
     /// Unix seconds; omitted is stamped with the current time at the call
     /// boundary.
     pub occurred_at: Option<i64>,
+}
+
+/// The quoted span of one MESSAGE: the message and its scalar range.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct QuoteSpan {
+    /// The quoted MESSAGE (not the TURN that holds it), as 32 hex.
+    pub message: String,
+    /// First quoted scalar.
+    pub start: u32,
+    /// One past the last quoted scalar.
+    pub end: u32,
 }
 
 /// Receipt for one witnessed turn.
