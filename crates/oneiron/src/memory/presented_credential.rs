@@ -11,4 +11,11 @@ impl Memory<'_> {
     pub(crate) fn presented_credential(&self) -> Option<&VerifiedSlip> {
         self.read_proof.as_ref()
     }
+
+    /// The ask guest's grant a host bound to this handle
+    /// ([`Memory::with_task_grant`]), as task verbs prove its actor by it.
+    #[must_use]
+    pub fn presented_task_grant(&self) -> Option<crate::EntityId> {
+        self.task_grant.map(|grant| grant.grant())
+    }
 }

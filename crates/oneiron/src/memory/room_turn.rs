@@ -203,6 +203,7 @@ impl<'v> Memory<'v> {
                 invocation: self.invocation,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
+                task_grant: self.task_grant,
                 origin_conversation: self.origin_conversation,
                 task_host: None,
                 off_record_session: self.off_record_session.clone(),
