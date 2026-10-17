@@ -1,7 +1,7 @@
 //! Claim-before-speaking guard inside the existing witness transaction.
 use super::audience::{
-    ThreadBinding, names_actor_in, thread_audience_allows_in, thread_audience_in, thread_binding,
-    thread_root_readable_in, validate_private_audience_in,
+    ThreadBinding, names_actor_in, record_thread_admits_in, thread_audience_allows_in,
+    thread_audience_in, thread_binding, thread_root_readable_in, validate_private_audience_in,
 };
 use super::participation::{
     addressable_agent_in_txn, admit_speech_in, agent_standing_in_txn, participant_in_txn,
@@ -9,7 +9,7 @@ use super::participation::{
 };
 use super::*;
 use crate::conversation_dag::{ProvenRoomQuote, QuotedReply};
-use crate::edge::EdgeActorClass;
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::memory::{WitnessAuthor, WitnessTurn};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::JoinSubject;
@@ -27,11 +27,120 @@ pub(crate) struct RoomWitness {
     pub(crate) thread: Option<ThreadBinding>,
 }
 
+/// A Retry's leave to answer a project room's claimed turn again (FIX
+/// 3149). It is proven inside the Retry's own transactions from its action
+/// and the answering agent, never carried in a message's metadata.
+/// RESPONSE keeps the claim's first answer as its slot: a regenerated
+/// answer answers the same parent, in the same thread, naming the same
+/// agents, and its `regenerates` lineage reaches that slot. It bypasses no
+/// audience, participation, speaking role, write ceiling or claim check.
+pub(crate) struct RoomRegenerationPermit {
+    /// The room row of the turn the Retry answers again.
+    pub(crate) source: RoomTurn,
+    /// The answer RESPONSE holds for the claimed parent.
+    slot: EntityId,
+}
+
+impl RoomRegenerationPermit {
+    /// Proves `action`, a standing Retry, lets `actor` answer its source's
+    /// claimed parent again: the source is `actor`'s room turn of the
+    /// action's conversation holding its MESSAGE, `actor` and the requester
+    /// both still read its thread, `actor` still holds the parent's claim,
+    /// and the MESSAGE's `regenerates` lineage, each step `actor`'s live
+    /// answer to the same parent in the same thread, reaches the slot.
+    pub(crate) fn prove_in(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        action: &crate::conversation::TurnActionAttempt,
+        actor: EntityId,
+    ) -> Result<Self> {
+        let old = turn_in(vault, txn, action.assistant_turn)?;
+        if action.action != crate::conversation::TurnAction::Retry
+            || !action.requester_live_in(vault, txn)
+            || old.room_id != action.conversation.to_hex()
+            || old.actor != actor.to_hex()
+            || !old.message_ids.contains(&action.message.to_hex())
+        {
+            return Err(invalid());
+        }
+        for reader in [actor, action.actor] {
+            if !record_thread_admits_in(vault, txn, action.assistant_turn, reader)? {
+                return Err(invalid());
+            }
+        }
+        let parent = EntityId::from_hex(old.reply_to.as_deref().ok_or_else(invalid)?)?;
+        let parent_row = turn_in(vault, txn, parent)?;
+        let claim = CLAIMS
+            .get(&vault.store, txn, &parent)?
+            .ok_or_else(invalid)?;
+        if parent_row.room_id != old.room_id
+            || claim.room_id != old.room_id
+            || claim.actor != old.actor
+        {
+            return Err(invalid());
+        }
+        let slot = RESPONSE
+            .get(&vault.store, txn, &parent)?
+            .ok_or_else(invalid)?;
+        let edge = |message: &EntityId, kind: EdgeKind| {
+            crate::memory::sole_edge_target(&vault.store, txn, message, kind, "message")
+                .map_err(|_| invalid())
+        };
+        let mut cursor = action.message;
+        let mut seen = BTreeSet::new();
+        loop {
+            if !seen.insert(cursor) || seen.len() > crate::limits::MAX_ANCESTOR_DEPTH {
+                return Err(invalid());
+            }
+            if !live_entity_row_in_txn(&vault.store, txn, &cursor)?.is_live()
+                || edge(&cursor, EdgeKind::AuthoredBy)? != Some(actor)
+                || edge(&cursor, EdgeKind::BelongsTo)? != Some(action.conversation)
+            {
+                return Err(invalid());
+            }
+            let turn = edge(&cursor, EdgeKind::PartOf)?.ok_or_else(invalid)?;
+            let row = turn_in(vault, txn, turn)?;
+            if row.actor != old.actor
+                || row.room_id != old.room_id
+                || row.reply_to != old.reply_to
+                || row.thread_of != old.thread_of
+            {
+                return Err(invalid());
+            }
+            if turn == slot {
+                return Ok(Self { source: old, slot });
+            }
+            cursor = edge(&cursor, EdgeKind::Regenerates)?.ok_or_else(invalid)?;
+        }
+    }
+
+    /// Whether `actor`'s answer in `room` to `reply_to`, in `thread_of`,
+    /// naming `mentions`, while RESPONSE holds `prior`, is the one this
+    /// permit proved.
+    fn admits(
+        &self,
+        room: EntityId,
+        actor: EntityId,
+        reply_to: Option<EntityId>,
+        thread_of: Option<EntityId>,
+        mentions: &BTreeSet<String>,
+        prior: EntityId,
+    ) -> bool {
+        self.slot == prior
+            && self.source.room_id == room.to_hex()
+            && self.source.actor == actor.to_hex()
+            && self.source.reply_to == reply_to.map(|id| id.to_hex())
+            && self.source.thread_of == thread_of.map(|id| id.to_hex())
+            && self.source.addressed_agents == *mentions
+    }
+}
+
 /// The guard every base witness passes in its write transaction: the
 /// room's claim, participation and quote rules, and a thread's audience
 /// (FIX 2951), checked before any message. `quote_key` is the speaker's
 /// read key, taken before the writer opened, that a quote's selection is
-/// read under (FIX 2027).
+/// read under (FIX 2027). `regeneration` is a Retry's proven leave to
+/// answer a claimed turn again (FIX 3149); every other witness has none.
 #[expect(
     clippy::too_many_arguments,
     reason = "binds the witness transaction to its resolved actor, container and message ids"
@@ -46,6 +155,7 @@ pub(crate) fn admit_witness(
     input: &WitnessTurn,
     messages: &[EntityId],
     quote_key: Option<&crate::claim::ScopedReadActorKey>,
+    regeneration: Option<&RoomRegenerationPermit>,
 ) -> Result<RoomWitness> {
     // OF-530 ruling A: a room-wide offer card a new message names, or a
     // reply answers, is engaged in this write: here in an ordinary room, and
@@ -62,8 +172,8 @@ pub(crate) fn admit_witness(
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         // An ordinary room's thread opens on its DAG, so a witness opens
         // none; one adding to a private thread's TURN writes from its
-        // audience.
-        if input.thread_audience.is_some() {
+        // audience. A room regeneration answers a project room's claim.
+        if input.thread_audience.is_some() || regeneration.is_some() {
             return Err(invalid());
         }
         if let Some(Some(binding)) = &stored
@@ -282,6 +392,10 @@ pub(crate) fn admit_witness(
     // addressed turn. The speaking role and the author ceiling still decide.
     let accepted_offer = is_response
         && super::offers::accepts_offer_in_txn(vault, txn, room, branch, actor, turn_id)?;
+    // A regeneration answers a claimed turn, nothing else (FIX 3149).
+    if regeneration.is_some() && (!is_response || accepted_offer) {
+        return Err(invalid());
+    }
     if accepted_offer {
         admit_speech_in(vault, txn, room, actor, standing.as_ref())?;
     } else if is_response {
@@ -295,12 +409,22 @@ pub(crate) fn admit_witness(
         if claim.actor != actor.to_hex() || claim.room_id != room.to_hex() {
             return Err(invalid());
         }
-        if let Some(prior) = RESPONSE.get(&vault.store, txn, &parent)?
-            && prior != turn_id
-        {
-            return Err(invalid());
+        // RESPONSE keeps the claim's first answer as its slot. A Retry's
+        // answer leaves it there, linked to it by its `regenerates` lineage
+        // (FIX 3149).
+        let prior = RESPONSE.get(&vault.store, txn, &parent)?;
+        if let Some(permit) = regeneration {
+            if !prior.is_some_and(|prior| {
+                permit.admits(room, actor, reply_to, thread_of, &mentions, prior)
+            }) {
+                return Err(invalid());
+            }
+        } else {
+            if prior.is_some_and(|prior| prior != turn_id) {
+                return Err(invalid());
+            }
+            RESPONSE.put(&vault.store, txn, &parent, &turn_id)?;
         }
-        RESPONSE.put(&vault.store, txn, &parent, &turn_id)?;
     }
     // FIX 2027: the selection is one the speaker's own read admits under the
     // destination's ceiling: the thread's the turn lands in, or the room's

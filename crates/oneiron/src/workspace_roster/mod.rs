@@ -173,6 +173,7 @@ pub(crate) use project::{
 };
 
 mod rooms;
+pub(crate) use rooms::RoomRegenerationPermit;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub(crate) use rooms::{
     ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in, record_thread_admits_in,

@@ -7,6 +7,7 @@ use crate::batch::secret_scan::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::conversation::{TurnAction, TurnActionAttempt};
 use crate::edge::EdgeKind;
 use crate::error::Error;
 use crate::gate::{check_witness_message_ceiling, resolve_policy_manifest};
@@ -41,33 +42,94 @@ impl Memory<'_> {
         mode: Option<MessageWriteMode>,
         at: u64,
     ) -> MessageStreamResult<MessageStreamHandle> {
-        self.begin_message_stream_open(turn, mode, at, None)
+        self.begin_message_stream_open(turn, mode, at, None, None)
     }
-    /// Starts a Retry's new reply: a new companion MESSAGE that answers
-    /// `source`, an earlier companion reply by the same writer in the same
-    /// conversation, again. Its terminal transaction writes the
-    /// `regenerates` edge from the new MESSAGE to `source`; the old reply
-    /// stays as it is.
+    /// Starts a Retry's new reply (FIX 3152): a new companion MESSAGE that
+    /// answers `action`'s reply, an earlier one by this agent in the same
+    /// conversation, again, in a new TURN that nothing writes until the
+    /// reply's terminal lands both. The opening proves the Retry as that
+    /// terminal will, under the agent's and the requester's reads, and the
+    /// reply takes the source MESSAGE's metadata. A project room's source
+    /// answers again under its regeneration permit (FIX 3149): the reply
+    /// keeps its room links, and a private thread root's Retry is born with
+    /// that root's audience. The terminal writes the `regenerates` edge to
+    /// the source; the old reply stays as it is.
     pub fn begin_message_regeneration(
         &self,
         turn: &WitnessTurn,
-        source: EntityId,
+        action: &TurnActionAttempt,
         mode: Option<MessageWriteMode>,
     ) -> MessageStreamResult<MessageStreamHandle> {
-        self.begin_message_stream_open(turn, mode, now_ms(), Some(source))
+        if action.action != TurnAction::Retry || turn.turn_ref.is_some() || turn.messages.len() != 1
+        {
+            return Err(MessageStreamError::InvalidRequest(
+                "a regeneration opens one reply to a Retry, in a turn of its own",
+            ));
+        }
+        let mut turn = turn.clone();
+        let (writer, requester) = self.retry_lanes(action)?;
+        let thread_audience = {
+            let txn = self.vault.store.env.read_txn()?;
+            let permit = self.check_action_retry_in(&txn, action, &writer, &requester)?;
+            let source = committed_body(self.vault, &txn, &action.message)?
+                .ok_or(MessageStreamError::Engine(Error::EntityNotFound))?;
+            let mut metadata = source
+                .get("metadata")
+                .filter(|value| !value.is_null())
+                .cloned();
+            let mut audience = None;
+            if let Some(permit) = &permit {
+                let fields = metadata
+                    .get_or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+                    .ok_or(MessageStreamError::InvalidRequest(
+                        "invalid regeneration source",
+                    ))?;
+                for (field, value) in [
+                    ("room_reply_to", &permit.source.reply_to),
+                    ("room_thread_of", &permit.source.thread_of),
+                ] {
+                    if let Some(value) = value {
+                        fields.insert(field.to_owned(), value.clone().into());
+                    }
+                }
+                if let crate::vault::LiveEntityRow::Live {
+                    entity_type: crate::registry::ENTITY_TYPE_TURN,
+                    body,
+                } = crate::vault::live_entity_row_in_txn(
+                    &self.vault.store,
+                    &txn,
+                    &action.assistant_turn,
+                )? && crate::workspace_roster::thread_binding(&body)?
+                    .is_some_and(|binding| binding.root == action.assistant_turn)
+                {
+                    audience = crate::workspace_roster::thread_audience_in(
+                        self.vault,
+                        &txn,
+                        action.conversation,
+                        action.assistant_turn,
+                    )?;
+                }
+            }
+            turn.messages[0].metadata = metadata;
+            audience
+        };
+        self.begin_message_stream_open(&turn, mode, now_ms(), Some(action), thread_audience)
     }
     fn begin_message_stream_open(
         &self,
         turn: &WitnessTurn,
         mode: Option<MessageWriteMode>,
         at: u64,
-        regenerates: Option<EntityId>,
+        action: Option<&TurnActionAttempt>,
+        thread_audience: Option<std::collections::BTreeSet<EntityId>>,
     ) -> MessageStreamResult<MessageStreamHandle> {
         if turn.messages.len() != 1 {
             return Err(MessageStreamError::InvalidRequest("one message required"));
         }
         // A stream keeps no audience to stamp at its first checkpoint, so a
-        // private thread opens with a witnessed turn (FIX 2951).
+        // private thread opens with a witnessed turn (FIX 2951). Only a
+        // Retry of a private root inherits one, its source's (FIX 3149).
         if turn.thread_audience.is_some() {
             return Err(MessageStreamError::InvalidRequest(
                 "a private thread opens with a witnessed turn, not a stream",
@@ -115,7 +177,9 @@ impl Memory<'_> {
             mode,
             idle_timeout_ms: policy.idle_timeout_ms,
             continuation: false,
-            regenerates,
+            regenerates: action.map(|action| action.message),
+            action: action.cloned(),
+            thread_audience,
             saved: String::new(),
         };
         let handle = MessageStreamHandle {
@@ -552,20 +616,29 @@ pub(super) fn authorize(
 }
 /// The reply a Retry's seed answers again, checked at its opening and again
 /// in its terminal transaction: a live companion MESSAGE by the same writer
-/// in the same conversation, other than the new one. A continuation answers
-/// nothing again.
+/// in the same conversation, other than the new one, and the one the seed's
+/// Retry names (FIX 3152). A continuation answers nothing again, and only a
+/// Retry's seed carries an inherited audience.
 pub(super) fn validate_regeneration(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     seed: &Seed,
 ) -> MessageStreamResult<()> {
+    let bad = || MessageStreamError::InvalidRequest("invalid regeneration source");
     let Some(source) = seed.regenerates else {
+        if seed.action.is_some() || seed.thread_audience.is_some() {
+            return Err(bad());
+        }
         return Ok(());
     };
-    let bad = || MessageStreamError::InvalidRequest("invalid regeneration source");
     if seed.continuation
         || source == seed.message_id
         || seed.author != crate::memory::WitnessAuthor::Companion
+        || !seed.action.as_ref().is_some_and(|action| {
+            action.action == TurnAction::Retry
+                && action.message == source
+                && action.conversation == seed.conversation
+        })
     {
         return Err(bad());
     }

@@ -119,6 +119,33 @@ pub(crate) fn append_in_txn(
     summary: Option<EntityId>,
     thread: bool,
 ) -> Result<AppendedRecord> {
+    append_at_in_txn(
+        vault,
+        txn,
+        input,
+        summary,
+        thread,
+        vault.store.clock.entity_id()?,
+    )
+}
+
+/// [`append_in_txn`] under the record id `id` its caller allocated: a
+/// Retry's TURN lands at the id its reply's stream opened under, in the
+/// stream's terminal write (FIX 3152). An id any row or erase marker holds
+/// is refused.
+pub(crate) fn append_at_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    input: &AppendRecord,
+    summary: Option<EntityId>,
+    thread: bool,
+    id: EntityId,
+) -> Result<AppendedRecord> {
+    if crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &id)?
+        || vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
+    {
+        return Err(invalid("retry TURN id is not fresh"));
+    }
     actor_in_txn(&vault.store, txn, input.actor)?;
     if !crate::conversation::room_person_write_allowed(
         &vault.store,
@@ -224,7 +251,6 @@ pub(crate) fn append_in_txn(
         }
     }
     // The record id is the citation a quote pins under.
-    let id = vault.store.clock.entity_id()?;
     let quote = input
         .quote
         .map(|quote| super::quote::prove_in_txn(vault, txn, input, quote, id))

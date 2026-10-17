@@ -30,6 +30,7 @@ use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute, TxnSegmentGuard};
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
+use crate::workspace_roster::RoomRegenerationPermit;
 use crate::write_envelope::WriteActor;
 
 /// Where a witness is asked to land. The session is the one parameter the two
@@ -225,13 +226,15 @@ impl Memory<'_> {
             target,
             door,
             before_txn,
-            prepare,
+            |txn| prepare(txn).map(|()| None),
             effect,
         )
     }
 
     /// [`Self::run_witness`] through the write door `callback` names: an
     /// `effect` that runs host code is [`crate::store::Callback::Opaque`].
+    /// Its `prepare` may prove a Retry's room regeneration permit, which the
+    /// room guard admits the witness under (FIX 3149).
     #[expect(
         clippy::too_many_arguments,
         reason = "the write door joins the witness program's inputs"
@@ -243,7 +246,7 @@ impl Memory<'_> {
         target: WitnessTarget<'_, '_>,
         door: WitnessDoor,
         before_txn: impl FnOnce(),
-        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<Option<RoomRegenerationPermit>>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         validate_witness_origin(turn, door.is_host())?;

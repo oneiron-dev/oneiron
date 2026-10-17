@@ -943,9 +943,13 @@ pub(crate) struct Answer {
 pub(crate) enum AnswerOpen {
     /// A new MESSAGE in the turn this names.
     Turn(WitnessTurn),
-    /// A Retry's new MESSAGE in the turn this names, answering `source`
-    /// again: its terminal links the two by a `regenerates` edge.
-    Retry { turn: WitnessTurn, source: EntityId },
+    /// A Retry's new MESSAGE, answering `action`'s reply again in a new
+    /// TURN that its terminal lands with it (FIX 3152), linked to the old
+    /// reply by a `regenerates` edge.
+    Retry {
+        turn: WitnessTurn,
+        action: Box<TurnActionAttempt>,
+    },
     /// More of an existing MESSAGE, after its saved text.
     Continue(EntityId),
 }
@@ -997,8 +1001,8 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         let memory = answer_memory(&vault, agent, session_key);
         match &open {
             AnswerOpen::Turn(turn) => memory.begin_message_stream(turn, Some(mode)),
-            AnswerOpen::Retry { turn, source } => {
-                memory.begin_message_regeneration(turn, *source, Some(mode))
+            AnswerOpen::Retry { turn, action } => {
+                memory.begin_message_regeneration(turn, action, Some(mode))
             }
             AnswerOpen::Continue(message) => memory.begin_message_continuation(message, Some(mode)),
         }
@@ -1033,9 +1037,17 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         });
     let stream = match started {
         Ok(stream) => stream,
+        // A Retry its budget refused never started: its stream goes and no
+        // TURN or MESSAGE is left (FIX 3152).
         Err(reason) => {
-            let _ = answer_memory(&vault, agent, session_key)
-                .cancel_stream(handle, StreamCancelReason::AgentAborted);
+            let memory = answer_memory(&vault, agent, session_key);
+            if matches!(open, AnswerOpen::Retry { .. }) {
+                memory
+                    .abandon_unstarted_retry(handle)
+                    .map_err(|error| AnswerRefused::Engine(error.to_string()))?;
+            } else {
+                let _ = memory.cancel_stream(handle, StreamCancelReason::AgentAborted);
+            }
             return Err(AnswerRefused::NotAdmitted(reason));
         }
     };
