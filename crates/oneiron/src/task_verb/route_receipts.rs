@@ -194,8 +194,8 @@ pub struct TaskUpdateReceipt {
 }
 
 /// What `describe` returns: the TASKS section when no task is named, the
-/// named task's card, or the vault's shape card.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// named task's card, the vault's shape card, or a highway handle's status.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind")]
 pub enum TaskDescription {
     #[serde(rename = "tasks_section")]
@@ -209,4 +209,8 @@ pub enum TaskDescription {
     /// `describe(vault)`: the vault's shape card.
     #[serde(rename = "vault_card")]
     VaultCard { card: crate::vault_shape::ShapeCard },
+    /// `describe({handle, after})` (OF-220): the highway's status answer for
+    /// one handle, or its poll.
+    #[serde(rename = "task_status")]
+    Status { receipt: super::TaskCallReceipt },
 }

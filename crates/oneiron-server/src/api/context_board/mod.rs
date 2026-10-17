@@ -738,6 +738,20 @@ pub(crate) async fn describe_self_for_auth(
             Some("self"),
         ));
     }
+    // describe(self) names the run's own brief and nothing else: a card key
+    // or a highway handle beside it is refused, never silently dropped.
+    if request.key.is_some() {
+        return Err(crate::error::ApiError::bad_request(
+            "describe(self) names no board card key",
+            Some("key"),
+        ));
+    }
+    if request.handle.is_some() || request.after.is_some() {
+        return Err(crate::error::ApiError::bad_request(
+            "describe(self) names no task highway handle",
+            Some("handle"),
+        ));
+    }
     let actor = auth
         .principal_ref()
         .and_then(|id| oneiron::EntityId::from_hex(id).ok())

@@ -49,6 +49,10 @@ struct WitnessTurnInput {
     turn_ref: Option<String>,
     messages: Vec<WitnessMessageInput>,
     occurred_at: Option<f64>,
+    /// A quote on a project room's thread reply (OF-460): a span of one
+    /// MESSAGE in the room; omitted ⇒ no quote.
+    #[serde(default)]
+    quote: Option<oneiron::conversation_dag::QuoteSpan>,
     /// A new project room thread root's audience; omitted ⇒ it reads as its
     /// room does.
     #[serde(default)]
@@ -80,7 +84,7 @@ impl WitnessTurnInput {
         Ok(WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
-            quote: None,
+            quote: self.quote,
             thread_audience: self.thread_audience,
             messages,
             occurred_at,
@@ -499,6 +503,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "tasks.update")?;
         let output = py
             .detach(|| self.inner.agent_verb("tasks.update", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_accept(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.accept")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.accept", input))
             .map_err(raise)?;
         encode(&output)
     }

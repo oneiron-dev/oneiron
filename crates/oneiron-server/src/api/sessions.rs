@@ -88,5 +88,13 @@ pub(super) async fn presence(
         .vault
         .set_presence(id, &req.ids, actor(&auth, req.actor)?)
         .map_err(|e| core_engine_error("session presence failed", e))?;
-    Ok(Json(json!({"active_participant_ids":req.ids})))
+    // The stored arrival order, not the order this request named: a
+    // participant who stays keeps its place and newcomers follow (OF-528).
+    let presence = server
+        .vault
+        .session_presence(id)
+        .map_err(|e| core_engine_error("session presence failed", e))?;
+    Ok(Json(
+        json!({"active_participant_ids":presence.active_participant_ids}),
+    ))
 }

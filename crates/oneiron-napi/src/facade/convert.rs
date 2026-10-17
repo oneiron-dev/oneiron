@@ -12,9 +12,9 @@ use super::boundary::{
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
     NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem,
-    NapiMemoryPack, NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope,
-    NapiRecordRef, NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
-    NapiWitnessReceipt, NapiWitnessTurn,
+    NapiMemoryPack, NapiMemoryProvenance, NapiQuoteSpan, NapiReadReceipt, NapiReadScope,
+    NapiRecallScope, NapiRecordRef, NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput,
+    NapiTemporalHint, NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -120,13 +120,45 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
                 .collect::<BoundaryResult<std::collections::BTreeSet<_>>>()
         })
         .transpose()?;
+    let quote = turn.quote.as_ref().map(quote_to_engine).transpose()?;
     Ok(WitnessTurn {
         conversation_ref: turn.conversation_ref.clone(),
         turn_ref: turn.turn_ref.clone(),
-        quote: None,
+        quote,
         thread_audience,
         messages,
         occurred_at: ts_to_engine(turn.occurred_at, "occurred_at")?,
+    })
+}
+
+/// One quote as the JS boundary carries it (OF-460): the quoted MESSAGE's
+/// id parsed, and each bound checked a whole Unicode scalar index in the
+/// unsigned 32-bit range before it narrows. The engine's witness proves the
+/// span against the message in its own write.
+fn quote_to_engine(quote: &NapiQuoteSpan) -> BoundaryResult<oneiron::conversation_dag::QuoteSpan> {
+    let message = oneiron::EntityId::from_hex(&quote.message).map_err(|_| {
+        format!(
+            "quote.message must be the quoted MESSAGE's 32-hex id; got {:?}",
+            quote.message
+        )
+    })?;
+    let bound = |value: f64, field: &str| -> BoundaryResult<u32> {
+        if !value.is_finite()
+            || value.fract() != 0.0
+            || !(0.0..=f64::from(u32::MAX)).contains(&value)
+        {
+            return Err(format!(
+                "quote.{field} must be a whole Unicode scalar index from 0 to {}",
+                u32::MAX
+            ));
+        }
+        // A whole number in the u32 range narrows exactly.
+        Ok(value as u32)
+    };
+    Ok(oneiron::conversation_dag::QuoteSpan {
+        message,
+        start: bound(quote.start, "start")?,
+        end: bound(quote.end, "end")?,
     })
 }
 

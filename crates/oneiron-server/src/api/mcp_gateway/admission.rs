@@ -163,6 +163,12 @@ fn mcp_admit_verb_scope(
         // connector cannot read it.
         mcp_admit_unscoped_execution(actor, tool.name, "arguments.vault")?;
     }
+    if arguments.handle.is_some() {
+        // `describe(handle)` answers the highway's status of a handle, which
+        // carries no world/facet projection: a narrowed connector cannot
+        // read it.
+        mcp_admit_unscoped_execution(actor, tool.name, "arguments.handle")?;
+    }
     if let Some(scopes) = arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
     }
