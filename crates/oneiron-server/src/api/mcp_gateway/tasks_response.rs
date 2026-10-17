@@ -2364,17 +2364,25 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.fanout.resume" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.fanout.resume", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FanoutResumeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_fanout_resume(&memory, input)
+            let output = crate::api::facade::host_doors::vault_fanout_resume(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.fanout.ack" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.fanout.ack", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FanoutAckRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_fanout_ack(&memory, input)
+            let output = crate::api::facade::host_doors::vault_fanout_ack(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
