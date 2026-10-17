@@ -180,6 +180,10 @@ pub(crate) struct McpCallContext {
     /// The logical verb this request runs, when it named one: its verb hooks
     /// fire once for it, however many wrappers it crosses (ARCH-0080 §3).
     pub(crate) invocation: Option<oneiron::runtime_hooks::InvocationId>,
+    /// The off-record session the request names, bound to its rows' memory
+    /// surface: inside an anonymous one a reference refusal writes no
+    /// receipt, as the call writes none (OF-063, OF-538).
+    pub(crate) off_record_session: Option<String>,
 }
 
 impl std::ops::Deref for McpCallContext {

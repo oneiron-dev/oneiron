@@ -197,6 +197,7 @@
     {
       "name": "cancel",
       "description": "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work.",
+      "refs": ["/task_ref"],
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
@@ -311,6 +312,7 @@
     {
       "name": "tasks.update",
       "description": "Records the owner's acknowledgement of a failed TASK; any other task stays as it was.",
+      "refs": ["/task_ref"],
       "input": "TaskUpdateRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
@@ -331,7 +333,6 @@
     {
       "name": "vault.witness",
       "description": "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch.",
-      "prose_links": ["/messages/*[author=companion]/content"],
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.witness(&input)?",
@@ -592,6 +593,7 @@
     {
       "name": "vault.kv.put",
       "description": "Synchronous gated write of one key; a write that needs review fails without changing the key.",
+      "prose_links": ["/value"],
       "input": "crate::memory::KeyValuePut",
       "output": "crate::memory::KeyValuePutReceipt",
       "call": "memory.key_value_put(&input)?",
@@ -1405,6 +1407,7 @@
     {
       "name": "vault.artifacts.keep",
       "description": "Settles one waiting artifact proposal into a version.",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::KeptProposal",
       "call": "memory.artifacts_keep(&input)?",
@@ -1429,6 +1432,7 @@
     {
       "name": "vault.artifacts.discard",
       "description": "Drops one waiting artifact proposal, once.",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::DiscardedProposal",
       "call": "memory.artifacts_discard(&input)?",
@@ -1453,6 +1457,7 @@
     {
       "name": "vault.artifacts.undo",
       "description": "Undoes one Keep by appending a new version.",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::UndoneKeep",
       "call": "memory.artifacts_undo(&input)?",
@@ -1744,7 +1749,6 @@
     {
       "name": "vault.rooms.speak",
       "description": "Speaks one turn into the current room turn's room, through the normal witness gate.",
-      "prose_links": ["/messages/*[author=companion]/content"],
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
@@ -2754,6 +2758,7 @@
     {
       "name": "vault.claims.retract",
       "description": "Retracts one active claim: a deliberate withdrawal that preserves the record.",
+      "refs": ["/claim_ref"],
       "uniffi": {
         "args": {
           "claim_ref": "String"
@@ -2774,6 +2779,7 @@
     {
       "name": "vault.forget",
       "description": "Retracts claims by exact claim or by subject and predicate; never a hard delete.",
+      "refs": ["/claim_ref"],
       "uniffi": {
         "args": {
           "selector": "ForgetSelector"
@@ -3233,6 +3239,7 @@
     {
       "name": "vault.notes.create",
       "description": "Creates a NOTE of a registered kind, its first authored text as its birth.",
+      "prose_links": ["/markdown"],
       "input": "CreateNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "memory.create_note(&input.kind, &input.markdown)?",
@@ -3269,6 +3276,8 @@
     {
       "name": "vault.notes.edit",
       "description": "Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending.",
+      "refs": ["/note_ref"],
+      "prose_links": ["/edit/text"],
       "input": "EditNoteRequest",
       "output": "crate::note::NoteProgramEditOutcome",
       "call": "memory.edit_note(&input.note_ref, &input.edit)?",
