@@ -2,11 +2,12 @@
 //! the engine's pass ([`oneiron::Vault::housekeeping`]) on a blocking thread,
 //! off the request path, unless the last pass is still running; the engine
 //! decides which sweeps are due. After it, the host prunes what only the
-//! process holds, MCP credentials that were revoked or have expired. Hourly,
-//! on a task of its own, the host runs the served repositories' git
-//! maintenance, each repository waiting for a git exchange permit. The
-//! owner's "run now" is a pass of the same kind. Every pass is held in
-//! [`HousekeepingPasses`], so stopping the host stops and waits for each.
+//! process holds: MCP credentials that were revoked or have expired, and live
+//! runs whose lease has gone. Hourly, on a task of its own, the host runs the
+//! served repositories' git maintenance, each repository waiting for a git
+//! exchange permit. The owner's "run now" is a pass of the same kind. Every
+//! pass is held in [`HousekeepingPasses`], so stopping the host stops and
+//! waits for each.
 //!
 //! Log lines carry a sweep's code, its counts and an error's kind, never row
 //! text or an error's message.
@@ -141,6 +142,14 @@ impl SyncServer {
                 }
             }
             server.prune_mcp_credentials().await;
+            // OF-181: a parked run cancelled, which no entry or call touches
+            // again, leaves the host's live runs here.
+            let live = Arc::clone(&server);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || live.live_runs.prune(live.vault())).await
+            {
+                tracing::warn!(panicked = error.is_panic(), "live-run prune failed");
+            }
             let courier = Arc::clone(&server);
             if let Err(error) =
                 tokio::task::spawn_blocking(move || courier.deliver_cooperative_deletions()).await
