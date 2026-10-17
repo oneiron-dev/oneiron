@@ -155,19 +155,6 @@ pub(super) fn attach_local_read_tee(
     tee
 }
 
-/// Whether raw `update` bytes of a window stay on this server: its world is
-/// flagged device-only, the window now carries such a world's claim, the
-/// bytes' own operations insert one, or the bytes cannot be read in full.
-/// Read against the flag as it stands now.
-pub(crate) fn withheld_from_peers(
-    manager: &Arc<WindowManager>,
-    window_key: &str,
-    update: &[u8],
-) -> bool {
-    oneiron::sync::window::raw_update_verdict(manager, window_key, update)
-        != oneiron::sync::window::UpdateVerdict::Portable
-}
-
 /// Bridges the engine's Observer-A local-update path into `broadcast_tx`.
 ///
 /// Until now only *relayed* writes produced a change notice: a client's update
@@ -183,7 +170,9 @@ pub(crate) fn withheld_from_peers(
 ///
 /// The frames are CRDT updates, so the handful of call sites that also publish
 /// their own coarse delta stay correct: a client importing the same update
-/// twice converges to the same state.
+/// twice converges to the same state. Each socket's delivery judges a frame
+/// for the machine it serves, so a private world's window reaches only the
+/// machines that may read it (`window_delivery`).
 ///
 /// Does nothing outside a Tokio runtime (synchronous unit-test construction).
 /// The attach therefore happens only once the relay task can actually run, so
@@ -221,9 +210,7 @@ pub(super) fn spawn_local_change_producer(
     runtime.spawn(async move {
         while let Some(update) = updates_rx.recv().await {
             let window_key = update.window_key;
-            if manager.upgrade().is_none_or(|manager| {
-                withheld_from_peers(&manager, &window_key, &update.update_bytes)
-            }) {
+            if manager.strong_count() == 0 {
                 continue;
             }
             match crate::protocol::encode_window_sync(
