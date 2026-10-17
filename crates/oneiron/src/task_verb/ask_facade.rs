@@ -905,6 +905,8 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
             groups.insert(group);
         }
     }
+    // OF-533: a canonical code run parked on an ask (a pumped `tasks.wait`) waits too.
+    groups.extend(crate::code_run::canonical_wait_ids(vault, &txn)?);
     drop(txn);
     for group in groups {
         super::ask_settlement::settle_ask_if_due(vault, group)?;

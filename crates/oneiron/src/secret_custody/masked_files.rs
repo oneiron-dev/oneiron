@@ -8,6 +8,14 @@
 //! stored bytes; every other reader a copy with each key's span overwritten
 //! by filler of the same length. The stored bytes never change, and a copy
 //! the release door's scan still reads as secret is refused, never served.
+//!
+//! A key inside a container's member (a ZIP entry, a gzip payload, a PDF
+//! stream) is marked at its span in the decoded member (OF-067 C). Its copy
+//! is rebuilt: the member decoded, its keys overwritten, the container
+//! encoded around it again (`batch::secret_scan::container`). A container
+//! the write door kept no keys in is still read whole before a masked reader
+//! gets it: one that holds a key no mark places, or that cannot be read, is
+//! refused.
 
 use heed::{RoTxn, RwTxn};
 
@@ -35,13 +43,62 @@ const MASKED_FILE: SideTable<[u8; 32], MaskedFile, Named> =
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct MaskedFile {
     pub(crate) band: Sensitivity,
-    /// In byte order; none overlaps the next.
+    /// In the stored bytes, in byte order; none overlaps the next.
     pub(crate) keys: Vec<KeySpan>,
     pub(crate) masked_at: u64,
+    /// The keys inside the file's members, one entry per member, in the
+    /// order the walk meets them. A row written before members were read
+    /// has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) members: Vec<MemberKeys>,
 }
 
-/// One key: its byte span in the stored file and the custody record that
-/// holds its value.
+/// The keys in one member of a stored container: its path from the stored
+/// bytes down, and each key's span in the member's decoded bytes, in byte
+/// order. The path names no member by its name, which may hold a key.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct MemberKeys {
+    pub(crate) path: Vec<MemberStep>,
+    pub(crate) keys: Vec<KeySpan>,
+}
+
+/// One step from a container into a member it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MemberStep {
+    /// A ZIP entry, by its place in the central directory.
+    Zip { entry: u32 },
+    /// A gzip file's payload: every member it chains, read as one.
+    Gzip,
+    /// A PDF stream, by its object's id.
+    PdfStream { object: u32, generation: u16 },
+}
+
+/// Where a file's keys sit, without their records: one entry per place, the
+/// stored bytes' own (an empty path) and each member's, with its spans.
+pub(crate) type KeyPlaces = Vec<(Vec<MemberStep>, Vec<(u64, u64)>)>;
+
+impl MaskedFile {
+    /// Each place this row marks keys at.
+    pub(crate) fn places(&self) -> KeyPlaces {
+        let spans = |keys: &[KeySpan]| -> Vec<(u64, u64)> {
+            keys.iter().map(|key| (key.start, key.end)).collect()
+        };
+        let mut places = Vec::with_capacity(self.members.len() + 1);
+        if !self.keys.is_empty() {
+            places.push((Vec::new(), spans(&self.keys)));
+        }
+        places.extend(
+            self.members
+                .iter()
+                .map(|member| (member.path.clone(), spans(&member.keys))),
+        );
+        places
+    }
+}
+
+/// One key: its byte span in the stored file, or in the decoded member that
+/// holds it, and the custody record that holds its value.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct KeySpan {
     pub(crate) start: u64,
@@ -58,7 +115,7 @@ pub enum SecretSight {
     /// the stored bytes.
     Owner,
     /// Every other reader (an agent, a contact, a link): each key's span
-    /// overwritten.
+    /// overwritten, in the file or in the member that holds it.
     Masked,
 }
 
@@ -94,21 +151,32 @@ pub(crate) fn filled(bytes: &[u8], spans: impl IntoIterator<Item = (u64, u64)>) 
 }
 
 /// `bytes`, read from the store, as `sight` reads them. A file the write
-/// door kept no keys in is served as it is.
+/// door kept no keys in is served as it is, once a container's members read
+/// clean to the write door.
 pub(crate) fn sighted_bytes_in_txn(
     store: &impl SideTableDbs,
     txn: &RoTxn<'_>,
     bytes: Vec<u8>,
     sight: SecretSight,
 ) -> Result<Vec<u8>> {
+    use crate::batch::secret_scan;
     if sight == SecretSight::Owner {
         return Ok(bytes);
     }
     let Some(file) = masked_file_in_txn(store, txn, blake3::hash(&bytes).as_bytes())? else {
+        // A container stored with the scan off, or one no mark covers, may
+        // hold keys in its members: it is read before it is served.
+        if secret_scan::is_container(&bytes) && secret_scan::scan_container_members(&bytes).is_err()
+        {
+            return Err(Error::InvariantViolation(
+                "an unmarked file's members hold keys or cannot be read",
+            ));
+        }
         return Ok(bytes);
     };
-    let copy = filled(&bytes, file.keys.iter().map(|key| (key.start, key.end)))?;
-    if crate::batch::secret_scan::scan_file_content("", &copy).is_some() {
+    let copy = secret_scan::masked_copy(&bytes, &file.places())
+        .map_err(|_| Error::InvariantViolation("a masked file's copy could not be rebuilt"))?;
+    if secret_scan::scan_file_content("", &copy).is_some() {
         return Err(Error::InvariantViolation(
             "a masked file still reads as secret",
         ));
