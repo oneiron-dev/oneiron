@@ -1,29 +1,32 @@
-//! The XLSX body inside its Loro document, schema 1 (ARCH-0075: "XLSX is a map
+//! The XLSX body inside its Loro document, schema 2 (ARCH-0075: "XLSX is a map
 //! keyed by sheet and address").
 //!
-//! Root `office` holds the kind, schema and date system, and what the import
-//! fixes: the worksheet names in workbook order, each sheet's read-only ranges
-//! and the workbook's cell formats. Root `cells` maps each sheet to a map from
-//! A1 address to one cell value: its content (`t` type, `v` value, `f`
-//! formula), its format `s` and its import lock. A cell is one value, so
-//! concurrent writes to it resolve last-writer-wins and a three-way read names
-//! them. Clearing a cell keeps its entry. Root `names` maps `sheet!name` (lower
-//! case; an empty sheet for a workbook name) to a defined name.
+//! Root `office` holds the kind, schema and date system, the worksheets in
+//! workbook order as `[key, name]` pairs, each sheet's read-only ranges by key
+//! and the workbook's cell formats. A sheet's key is its imported name, or one
+//! minted when the body adds it, so renaming or moving a sheet changes only the
+//! list. Root `cells` maps each sheet key to a map from A1 address to one cell
+//! value: its content (`t` type, `v` value, `f` formula), its format `s` and
+//! its import lock. A cell is one value, so concurrent writes to it resolve
+//! last-writer-wins and a three-way read names them. Clearing a cell keeps its
+//! entry; a deleted sheet's cells stay under its key, which is never reused.
+//! Root `names` maps `key!name` (lower case; an empty key for a workbook name)
+//! to a defined name.
 
 use super::fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 use super::invalid;
 use crate::error::Result;
 use loro::{Container, LoroDoc, LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 use oneiron_docedit::xlsx_body::{
-    XlsxArea, XlsxBook, XlsxChange, XlsxLock, XlsxStyle, XlsxValue, a1, check_cell, check_name,
-    parse_a1,
+    SheetFate, XlsxArea, XlsxBook, XlsxChange, XlsxLock, XlsxSheetPlan, XlsxStyle, XlsxValue, a1,
+    check_cell, check_name, check_sheet_name, parse_a1, retarget_sheets,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const OFFICE: &str = "office";
 const CELLS: &str = "cells";
 const NAMES: &str = "names";
-pub(super) const SCHEMA: u32 = 1;
+pub(super) const SCHEMA: u32 = 2;
 /// The most stored cells a live body holds.
 const MAX_CELLS: usize = 200_000;
 
@@ -32,8 +35,8 @@ const MAX_CELLS: usize = 200_000;
 pub struct XlsxBody {
     pub date1904: bool,
     pub sheets: Vec<BodySheet>,
-    /// Defined names by key: `sheet!name` in lower case, the sheet empty for a
-    /// workbook name.
+    /// Defined names by key: the sheet's key and the name in lower case,
+    /// `key!name`, the key empty for a workbook name.
     pub names: BTreeMap<String, BodyName>,
     /// The workbook's cell formats, by index.
     pub styles: Vec<XlsxStyle>,
@@ -41,6 +44,9 @@ pub struct XlsxBody {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BodySheet {
+    /// The sheet's key in the body: its imported name, or one minted when the
+    /// body added it. A rename keeps it.
+    pub key: String,
     pub name: String,
     /// `(row, col)` to cell, in row-major order.
     pub cells: BTreeMap<(u32, u32), BodyCell>,
@@ -107,6 +113,28 @@ pub enum XlsxBodyOp {
         name: String,
         sheet: Option<String>,
     },
+    /// Add an empty worksheet at `at` in the workbook's order (0 is first),
+    /// or last.
+    AddSheet {
+        sheet: String,
+        at: Option<u32>,
+    },
+    /// Rename a worksheet; every formula and defined name that names it
+    /// follows. Text in a string literal stays.
+    RenameSheet {
+        sheet: String,
+        name: String,
+    },
+    /// Move a worksheet to `at` in the workbook's order (0 is first).
+    MoveSheet {
+        sheet: String,
+        at: u32,
+    },
+    /// Delete a worksheet with its cells and its own defined names; formulas
+    /// that named it read `#REF!`. A workbook keeps one worksheet.
+    DeleteSheet {
+        sheet: String,
+    },
 }
 
 /// Write the imported workbook into a fresh document.
@@ -124,12 +152,12 @@ pub(super) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<()> {
     office.insert("kind", "xlsx").map_err(loro)?;
     office.insert("schema", i64::from(SCHEMA)).map_err(loro)?;
     office.insert("date1904", book.date1904).map_err(loro)?;
-    let names: Vec<LoroValue> = book
+    let sheets: Vec<(String, String)> = book
         .sheets
         .iter()
-        .map(|sheet| sheet.name.as_str().into())
+        .map(|sheet| (sheet.name.clone(), sheet.name.clone()))
         .collect();
-    office.insert("sheets", names).map_err(loro)?;
+    set_sheet_list(doc, &sheets)?;
     let locked: HashMap<String, LoroValue> = book
         .sheets
         .iter()
@@ -215,12 +243,9 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
         Some(LoroValue::List(list)) => Ok(list.clone()),
         _ => Err(invalid("XLSX body metadata")),
     };
-    let sheet_names = list("sheets")?
+    let sheet_list = list("sheets")?
         .iter()
-        .map(|name| match name {
-            LoroValue::String(name) => Ok(name.to_string()),
-            _ => Err(invalid("XLSX body sheet name")),
-        })
+        .map(decode_sheet)
         .collect::<Result<Vec<_>>>()?;
     let Some(LoroValue::Map(locked)) = meta.get("locked") else {
         return Err(invalid("XLSX body locks"));
@@ -242,9 +267,9 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
         })
         .collect::<Result<Vec<_>>>()?;
     let grids = doc.get_map(CELLS);
-    let mut sheets = Vec::with_capacity(sheet_names.len());
-    for name in sheet_names {
-        let grid = child_map(&grids, &name).ok_or_else(|| invalid("XLSX body sheet"))?;
+    let mut sheets = Vec::with_capacity(sheet_list.len());
+    for (key, name) in sheet_list {
+        let grid = child_map(&grids, &key).ok_or_else(|| invalid("XLSX body sheet"))?;
         let LoroValue::Map(entries) = grid.get_value() else {
             return Err(invalid("XLSX body sheet"));
         };
@@ -253,7 +278,8 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
             let (col, row) = parse_a1(address).ok_or_else(|| invalid("XLSX body cell address"))?;
             cells.insert((row, col), decode_cell(address, value)?);
         }
-        let areas = match locked.get(&name) {
+        let areas = match locked.get(&key) {
+            None => Vec::new(),
             Some(LoroValue::List(areas)) => areas
                 .iter()
                 .map(|area| match area {
@@ -270,6 +296,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
             _ => return Err(invalid("XLSX body locks")),
         };
         sheets.push(BodySheet {
+            key,
             name,
             cells,
             locked: areas,
@@ -280,9 +307,17 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
     };
     let mut names = BTreeMap::new();
     for (key, value) in entries.iter() {
-        let name = decode_name(value)?;
+        let mut name = decode_name(value)?;
         if *key != name_key(&name.name, name.sheet.as_deref()) {
             return Err(invalid("XLSX body name key"));
+        }
+        // A local name reads its sheet's name; one whose sheet a concurrent
+        // edit deleted is gone with it.
+        if let Some(scope) = &name.sheet {
+            let Some(sheet) = sheets.iter().find(|sheet| sheet.key == *scope) else {
+                continue;
+            };
+            name.sheet = Some(sheet.name.clone());
         }
         names.insert(key.clone(), name);
     }
@@ -346,16 +381,16 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
             let formula = formula.strip_prefix('=').unwrap_or(formula);
             check_cell(&XlsxValue::Blank, Some(formula))
                 .map_err(|_| invalid("a name's formula is 1 to 8,192 characters"))?;
-            if let Some(sheet) = sheet {
-                child_map(&doc.get_map(CELLS), sheet)
-                    .ok_or_else(|| invalid("no such worksheet in the body"))?;
-            }
+            let scope = sheet
+                .as_deref()
+                .map(|sheet| sheet_key(doc, sheet))
+                .transpose()?;
             let names = doc.get_map(NAMES);
-            let key = name_key(name, sheet.as_deref());
+            let key = name_key(name, scope.as_deref());
             writable_name(&names, &key)?;
             let body = BodyName {
                 name: name.clone(),
-                sheet: sheet.clone(),
+                sheet: scope,
                 formula: formula.to_owned(),
                 hidden: *hidden,
                 locked: None,
@@ -363,14 +398,141 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
             names.insert(&key, encode_name(&body)).map_err(loro)
         }
         XlsxBodyOp::DeleteName { name, sheet } => {
+            let scope = sheet
+                .as_deref()
+                .map(|sheet| sheet_key(doc, sheet))
+                .transpose()?;
             let names = doc.get_map(NAMES);
-            let key = name_key(name, sheet.as_deref());
+            let key = name_key(name, scope.as_deref());
             if !writable_name(&names, &key)? {
                 return Err(invalid("no such defined name in the body"));
             }
             names.delete(&key).map_err(loro)
         }
+        XlsxBodyOp::AddSheet { sheet, at } => {
+            check_sheet_name(sheet).map_err(|_| invalid("not a valid worksheet name"))?;
+            let mut list = sheet_list(doc)?;
+            free_name(&list, sheet, None)?;
+            let at = at.map_or(list.len(), |at| at as usize);
+            if at > list.len() {
+                return Err(invalid("a sheet position past the last sheet"));
+            }
+            let cells = doc.get_map(CELLS);
+            let mut key = format!("+{sheet}");
+            let mut n = 1;
+            while cells.get(&key).is_some() {
+                n += 1;
+                key = format!("+{sheet}#{n}");
+            }
+            cells.insert_container(&key, LoroMap::new()).map_err(loro)?;
+            list.insert(at, (key, sheet.clone()));
+            set_sheet_list(doc, &list)
+        }
+        XlsxBodyOp::RenameSheet { sheet, name } => {
+            check_sheet_name(name).map_err(|_| invalid("not a valid worksheet name"))?;
+            let mut list = sheet_list(doc)?;
+            let at = sheet_at(&list, sheet)?;
+            free_name(&list, name, Some(at))?;
+            list[at].1.clone_from(name);
+            set_sheet_list(doc, &list)?;
+            let old = sheet.to_lowercase();
+            retarget_body(doc, &list, &|held: &str| {
+                if held.to_lowercase() == old {
+                    SheetFate::Rename(name.clone())
+                } else {
+                    SheetFate::Keep
+                }
+            })
+        }
+        XlsxBodyOp::MoveSheet { sheet, at } => {
+            let mut list = sheet_list(doc)?;
+            let from = sheet_at(&list, sheet)?;
+            let at = *at as usize;
+            if at >= list.len() {
+                return Err(invalid("a sheet position past the last sheet"));
+            }
+            let held = list.remove(from);
+            list.insert(at, held);
+            set_sheet_list(doc, &list)
+        }
+        XlsxBodyOp::DeleteSheet { sheet } => {
+            let mut list = sheet_list(doc)?;
+            let at = sheet_at(&list, sheet)?;
+            if list.len() == 1 {
+                return Err(invalid("a workbook keeps at least one worksheet"));
+            }
+            let (key, _) = list.remove(at);
+            set_sheet_list(doc, &list)?;
+            let names = doc.get_map(NAMES);
+            let LoroValue::Map(entries) = names.get_value() else {
+                return Err(invalid("XLSX body names"));
+            };
+            for held in entries.keys() {
+                if held.rsplit_once('!').is_some_and(|(scope, _)| scope == key) {
+                    names.delete(held).map_err(loro)?;
+                }
+            }
+            let old = sheet.to_lowercase();
+            retarget_body(doc, &list, &|held: &str| {
+                if held.to_lowercase() == old {
+                    SheetFate::Delete
+                } else {
+                    SheetFate::Keep
+                }
+            })
+        }
     }
+}
+
+/// Retarget every writable formula and defined name in the body's sheets
+/// that names a renamed or deleted sheet. A formula loses its cached value.
+fn retarget_body(
+    doc: &LoroDoc,
+    sheets: &[(String, String)],
+    fate: &dyn Fn(&str) -> SheetFate,
+) -> Result<()> {
+    let grids = doc.get_map(CELLS);
+    for (key, _) in sheets {
+        let grid = child_map(&grids, key).ok_or_else(|| invalid("XLSX body sheet"))?;
+        let LoroValue::Map(entries) = grid.get_value() else {
+            return Err(invalid("XLSX body sheet"));
+        };
+        for (address, value) in entries.iter() {
+            let cell = decode_cell(address, value)?;
+            if cell.locked.is_some() {
+                continue;
+            }
+            let Some(formula) = cell
+                .formula
+                .as_deref()
+                .and_then(|formula| retarget_sheets(formula, fate))
+            else {
+                continue;
+            };
+            let cell = BodyCell {
+                value: XlsxValue::Blank,
+                formula: Some(formula),
+                ..cell
+            };
+            grid.insert(address, encode_cell(&cell)).map_err(loro)?;
+        }
+    }
+    let names = doc.get_map(NAMES);
+    let LoroValue::Map(entries) = names.get_value() else {
+        return Err(invalid("XLSX body names"));
+    };
+    for (key, value) in entries.iter() {
+        let name = decode_name(value)?;
+        if name.locked.is_some() {
+            continue;
+        }
+        if let Some(formula) = retarget_sheets(&name.formula, fate) {
+            names
+                .insert(key, encode_name(&BodyName { formula, ..name }))
+                .map_err(loro)?;
+        }
+    }
+    Ok(())
 }
 
 /// Refuse operations read at `base` that write a cell or name `head` has
@@ -394,38 +556,74 @@ pub(super) fn admit_at(base: &LoroDoc, head: &LoroDoc, ops: &[XlsxBodyOp]) -> Re
                 !same_cell(find(&base).as_ref(), find(&head).as_ref())
             }
             XlsxBodyOp::SetName { name, sheet, .. } | XlsxBodyOp::DeleteName { name, sheet } => {
-                let key = name_key(name, sheet.as_deref());
-                base.names.get(&key) != head.names.get(&key)
+                let lower = name.to_lowercase();
+                let find = |body: &XlsxBody| {
+                    body.names
+                        .values()
+                        .find(|held| held.name.to_lowercase() == lower && held.sheet == *sheet)
+                        .cloned()
+                };
+                find(&base) != find(&head)
             }
+            XlsxBodyOp::AddSheet { .. }
+            | XlsxBodyOp::RenameSheet { .. }
+            | XlsxBodyOp::MoveSheet { .. }
+            | XlsxBodyOp::DeleteSheet { .. } => layout(&base) != layout(&head),
         };
         if moved {
             return Err(invalid(
-                "a cell or name changed since the base; read it again",
+                "a cell, name or sheet changed since the base; read it again",
             ));
         }
     }
     Ok(())
 }
 
-/// The changes that turn the imported `base` into `current`: each cell whose
-/// content or format differs, then each defined name.
+/// The body's worksheets in order, by key and name.
+fn layout(body: &XlsxBody) -> Vec<(&str, &str)> {
+    body.sheets
+        .iter()
+        .map(|sheet| (sheet.key.as_str(), sheet.name.as_str()))
+        .collect()
+}
+
+/// A defined name's sheet key, from its body key; empty for a workbook name.
+fn scope_of(key: &str) -> &str {
+    key.rsplit_once('!').map_or("", |(scope, _)| scope)
+}
+
+/// The changes that turn the imported `base` into `current`: the sheet layout
+/// when a sheet was added, renamed, moved or deleted, each cell whose content
+/// or format differs, then each defined name.
 pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxChange>> {
-    if base.sheets.len() != current.sheets.len() {
-        return Err(invalid("the body's sheets changed"));
-    }
     let mut changes = Vec::new();
-    for (before, after) in base.sheets.iter().zip(&current.sheets) {
-        if before.name != after.name {
-            return Err(invalid("the body's sheets changed"));
-        }
-        let addresses: BTreeSet<(u32, u32)> = before
-            .cells
-            .keys()
-            .chain(after.cells.keys())
-            .copied()
-            .collect();
+    if layout(base) != layout(current) {
+        changes.push(XlsxChange::Sheets {
+            sheets: current
+                .sheets
+                .iter()
+                .map(|sheet| XlsxSheetPlan {
+                    name: sheet.name.clone(),
+                    source: base
+                        .sheets
+                        .iter()
+                        .find(|held| held.key == sheet.key)
+                        .map(|held| held.name.clone()),
+                })
+                .collect(),
+        });
+    }
+    let empty = BTreeMap::new();
+    for after in &current.sheets {
+        let before = base
+            .sheets
+            .iter()
+            .find(|held| held.key == after.key)
+            .map_or(&empty, |held| &held.cells);
+        let addresses: BTreeSet<(u32, u32)> =
+            before.keys().chain(after.cells.keys()).copied().collect();
         for key in addresses {
-            let (old, new) = (before.cells.get(&key), after.cells.get(&key));
+            let (old, new) = (before.get(&key), after.cells.get(&key));
             if same_cell(old, new) {
                 continue;
             }
@@ -446,10 +644,19 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
             });
         }
     }
-    let keys: BTreeSet<&String> = base.names.keys().chain(current.names.keys()).collect();
+    // A name local to a deleted sheet leaves with the sheet's layout.
+    let keys: BTreeSet<&String> = base
+        .names
+        .keys()
+        .chain(current.names.keys())
+        .filter(|key| {
+            let scope = scope_of(key);
+            scope.is_empty() || current.sheets.iter().any(|sheet| sheet.key == scope)
+        })
+        .collect();
     for key in keys {
         let (old, new) = (base.names.get(key), current.names.get(key));
-        if old == new {
+        if same_name(old, new) {
             continue;
         }
         if old.is_some_and(|name| name.locked.is_some()) {
@@ -464,7 +671,11 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
             },
             (Some(name), None) => XlsxChange::DeleteName {
                 name: name.name.clone(),
-                sheet: name.sheet.clone(),
+                sheet: current
+                    .sheets
+                    .iter()
+                    .find(|sheet| sheet.key == scope_of(key))
+                    .map(|sheet| sheet.name.clone()),
             },
             (None, None) => continue,
         });
@@ -472,9 +683,22 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
     Ok(changes)
 }
 
-/// A fork's proposal against the live body. Units are `Sheet!A1` cells and
-/// `name:<key>` names. A cell or name both sides set differently is a
-/// conflict: last-writer-wins would drop one side's write silently.
+/// Whether two reads of one name key hold the same name; the sheet it is
+/// local to may have been renamed in between.
+fn same_name(old: Option<&BodyName>, new: Option<&BodyName>) -> bool {
+    match (old, new) {
+        (Some(old), Some(new)) => {
+            old.name == new.name && old.formula == new.formula && old.hidden == new.hidden
+        }
+        (old, new) => old.is_none() && new.is_none(),
+    }
+}
+
+/// A fork's proposal against the live body. Units are `key!A1` cells (a
+/// sheet's key is its imported name), `name:<key>` names and the `sheets`
+/// layout. A unit both sides set differently is a conflict: last-writer-wins
+/// would drop one side's write silently. So is a cell or name one side wrote
+/// in a sheet the other side deleted.
 pub(super) fn diff(
     base: &XlsxBody,
     current: &XlsxBody,
@@ -500,6 +724,24 @@ pub(super) fn diff(
             },
         });
     }
+    let gone = |body: &XlsxBody| -> BTreeSet<String> {
+        base.sheets
+            .iter()
+            .filter(|sheet| !body.sheets.iter().any(|held| held.key == sheet.key))
+            .map(|sheet| sheet.key.clone())
+            .collect()
+    };
+    for (written, deleted) in [(&ours, gone(current)), (&theirs, gone(proposal))] {
+        for unit in written.keys() {
+            let scope = scope_of(unit.strip_prefix("name:").unwrap_or(unit));
+            if deleted.contains(scope) && !conflicts.iter().any(|held| held.block == *unit) {
+                conflicts.push(BodyConflict {
+                    block: unit.clone(),
+                    kind: ConflictKind::DeleteEdit,
+                });
+            }
+        }
+    }
     let list = |changes: BTreeMap<String, (ChangeKind, State<'_>)>| {
         changes
             .into_iter()
@@ -521,19 +763,28 @@ pub(super) fn diff(
 enum State<'a> {
     Cell(Option<&'a BodyCell>),
     Name(Option<&'a BodyName>),
+    Sheets(Vec<(&'a str, &'a str)>),
 }
 
 fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> BTreeMap<String, (ChangeKind, State<'a>)> {
     let mut changes = BTreeMap::new();
-    for (before, after) in base.sheets.iter().zip(&other.sheets) {
-        let addresses: BTreeSet<(u32, u32)> = before
-            .cells
-            .keys()
-            .chain(after.cells.keys())
-            .copied()
-            .collect();
+    if layout(base) != layout(other) {
+        changes.insert(
+            "sheets".to_owned(),
+            (ChangeKind::Moved, State::Sheets(layout(other))),
+        );
+    }
+    let empty = BTreeMap::new();
+    for after in &other.sheets {
+        let before = base
+            .sheets
+            .iter()
+            .find(|held| held.key == after.key)
+            .map_or(&empty, |held| &held.cells);
+        let addresses: BTreeSet<(u32, u32)> =
+            before.keys().chain(after.cells.keys()).copied().collect();
         for key in addresses {
-            let (old, new) = (before.cells.get(&key), after.cells.get(&key));
+            let (old, new) = (before.get(&key), after.cells.get(&key));
             if same_cell(old, new) {
                 continue;
             }
@@ -542,7 +793,7 @@ fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> BTreeMap<String, (ChangeKin
             } else {
                 ChangeKind::Cells
             };
-            let unit = format!("{}!{}", after.name, a1(key.1, key.0));
+            let unit = format!("{}!{}", after.key, a1(key.1, key.0));
             changes.insert(unit, (kind, State::Cell(new)));
         }
     }
@@ -550,7 +801,7 @@ fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> BTreeMap<String, (ChangeKin
     for key in keys {
         let (old, new) = (base.names.get(key), other.names.get(key));
         let kind = match (old, new) {
-            (old, new) if old == new => continue,
+            (old, new) if same_name(old, new) => continue,
             (None, _) => ChangeKind::Added,
             (_, None) => ChangeKind::Deleted,
             _ => ChangeKind::Text,
@@ -586,14 +837,14 @@ fn write_cell(
 ) -> Result<()> {
     let (col, row) = parse_a1(cell).ok_or_else(|| invalid("not a cell address"))?;
     let address = a1(col, row);
-    let grid = child_map(&doc.get_map(CELLS), sheet)
-        .ok_or_else(|| invalid("no such worksheet in the body"))?;
+    let key = sheet_key(doc, sheet)?;
+    let grid = child_map(&doc.get_map(CELLS), &key).ok_or_else(|| invalid("XLSX body sheet"))?;
     let office = doc.get_map(OFFICE);
     let locked = match office.get("locked") {
         Some(ValueOrContainer::Value(LoroValue::Map(locked))) => locked,
         _ => return Err(invalid("XLSX body locks")),
     };
-    if let Some(LoroValue::List(areas)) = locked.get(sheet) {
+    if let Some(LoroValue::List(areas)) = locked.get(&key) {
         for area in areas.iter() {
             if let LoroValue::List(pair) = area
                 && let [LoroValue::String(reference), _] = pair.as_slice()
@@ -634,6 +885,66 @@ fn writable_name(names: &LoroMap, key: &str) -> Result<bool> {
         }
         Some(_) => Err(invalid("XLSX body name")),
     }
+}
+
+/// The body's worksheets in workbook order, as `(key, name)`.
+fn sheet_list(doc: &LoroDoc) -> Result<Vec<(String, String)>> {
+    match doc.get_map(OFFICE).get("sheets") {
+        Some(ValueOrContainer::Value(LoroValue::List(list))) => {
+            list.iter().map(decode_sheet).collect()
+        }
+        _ => Err(invalid("XLSX body metadata")),
+    }
+}
+
+fn set_sheet_list(doc: &LoroDoc, sheets: &[(String, String)]) -> Result<()> {
+    let list: Vec<LoroValue> = sheets
+        .iter()
+        .map(|(key, name)| {
+            LoroValue::from(vec![
+                LoroValue::from(key.as_str()),
+                LoroValue::from(name.as_str()),
+            ])
+        })
+        .collect();
+    doc.get_map(OFFICE).insert("sheets", list).map_err(loro)
+}
+
+fn decode_sheet(value: &LoroValue) -> Result<(String, String)> {
+    match value {
+        LoroValue::List(pair) => match pair.as_slice() {
+            [LoroValue::String(key), LoroValue::String(name)] => {
+                Ok((key.to_string(), name.to_string()))
+            }
+            _ => Err(invalid("XLSX body sheet")),
+        },
+        _ => Err(invalid("XLSX body sheet")),
+    }
+}
+
+fn sheet_at(sheets: &[(String, String)], name: &str) -> Result<usize> {
+    sheets
+        .iter()
+        .position(|(_, held)| held == name)
+        .ok_or_else(|| invalid("no such worksheet in the body"))
+}
+
+fn sheet_key(doc: &LoroDoc, name: &str) -> Result<String> {
+    let sheets = sheet_list(doc)?;
+    Ok(sheets[sheet_at(&sheets, name)?].0.clone())
+}
+
+/// Refuse a sheet name another sheet holds, in any case.
+fn free_name(sheets: &[(String, String)], name: &str, except: Option<usize>) -> Result<()> {
+    let lower = name.to_lowercase();
+    if sheets
+        .iter()
+        .enumerate()
+        .any(|(at, (_, held))| Some(at) != except && held.to_lowercase() == lower)
+    {
+        return Err(invalid("another sheet has that name"));
+    }
+    Ok(())
 }
 
 fn read_styles_len(doc: &LoroDoc) -> Result<usize> {
