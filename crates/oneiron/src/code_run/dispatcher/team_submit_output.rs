@@ -3,7 +3,8 @@
 //! That claim is the exact blob version's `blob.version` claim, or the code
 //! revision's provenance claim. The review copies its scope, so it is never
 //! wider than the output; an output with no such claim is refused, and the
-//! vault's default scope never stands in for it.
+//! vault's default scope never stands in for it. A scope whose relationship
+//! is no longer a live RELATIONSHIP is refused in the review's writer.
 
 use heed::RoTxn;
 use rmpv::Value;
@@ -11,7 +12,7 @@ use rmpv::Value;
 use crate::code_revision::CodeRevisionKind;
 use crate::code_run::team_submit::OutputRevision;
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_RELATIONSHIP};
 use crate::{ClaimBody, ClaimCandidate, EntityId, Vault};
 
 /// The output is not there as pinned.
@@ -20,6 +21,10 @@ const OUTPUT_MISSING: &str = "team_submit_output_missing";
 /// The output has no recorded claim to take its scope from, or that claim
 /// cannot be read.
 const OUTPUT_UNSCOPED: &str = "team_submit_output_unscoped";
+
+/// The output's recorded claim names a relationship that is no longer a
+/// live RELATIONSHIP, so no review can stand in its scope.
+const SCOPE_STALE: &str = "team_submit_scope_stale";
 
 /// A read of the output, or the guest's failure code.
 type Read<T> = std::result::Result<T, &'static str>;
@@ -68,6 +73,21 @@ impl OutputDescriptor {
             && body.scope == self.scope
             && body.scope_facet == self.facet
             && body.scope_project == self.project
+    }
+
+    /// Whether the output's scope still stands in `txn`: the relationship it
+    /// names, if any, must still be a live RELATIONSHIP, as the review's own
+    /// write requires. A refusal is the guest's failure code.
+    pub(super) fn scope_stands_in_txn(&self, vault: &Vault, txn: &RoTxn<'_>) -> Result<Read<()>> {
+        let Some(rel) = self.rel else {
+            return Ok(Ok(()));
+        };
+        let found = crate::vault::live_entity_row_in_txn(&vault.store, txn, &rel)?.live_type();
+        Ok(if found == Some(ENTITY_TYPE_RELATIONSHIP) {
+            Ok(())
+        } else {
+            Err(SCOPE_STALE)
+        })
     }
 }
 

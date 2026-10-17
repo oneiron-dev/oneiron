@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 20] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 21] = [
     "schema_version",
     "target",
     "agent_def",
@@ -51,6 +51,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 20] = [
     "join",
     "team",
     "plan",
+    "objectives",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -83,6 +84,8 @@ pub(super) const KEY_JOIN: &str = AGENT_DISPATCH_INPUT_KEYS[17];
 pub(super) const KEY_TEAM: &str = AGENT_DISPATCH_INPUT_KEYS[18];
 /// OF-541: the planner receipt the launch ran under.
 pub(super) const KEY_PLAN: &str = AGENT_DISPATCH_INPUT_KEYS[19];
+/// OF-544: the objectives the caller gave the dispatch.
+pub(super) const KEY_OBJECTIVES: &str = AGENT_DISPATCH_INPUT_KEYS[20];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -170,6 +173,10 @@ pub struct AgentDispatchInput {
     /// attempt: what was asked, what was resolved, and why. `None` for a
     /// spawn that was not planned. A plan is never authority.
     pub plan: Option<super::SpawnPlanReceipt>,
+    /// OF-544: the objectives the caller gave this dispatch, verbatim and in
+    /// order; its confession seals against them. `None`: none were given,
+    /// and the runner infers its own.
+    pub objectives: Option<Vec<String>>,
 }
 
 impl AgentDispatchInput {
@@ -193,6 +200,7 @@ impl AgentDispatchInput {
             join: None,
             team: None,
             plan: None,
+            objectives: None,
         }
     }
 }
@@ -243,6 +251,10 @@ pub struct AgentSpawnContext {
     /// the target to be the seat it resolved. It never mints a TASK, a team
     /// run or authority.
     pub plan: Option<super::SpawnPlanReceipt>,
+    /// OF-544: the objectives the caller assigns this agent, kept verbatim
+    /// and in order; its confession seals against them. `None` lets the
+    /// runner infer its own. Never inherited from the parent.
+    pub objectives: Option<Vec<String>>,
 }
 
 impl AgentSpawnContext {

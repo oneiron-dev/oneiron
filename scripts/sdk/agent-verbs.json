@@ -1189,7 +1189,7 @@
     },
     {
       "name": "vault.authority.audit",
-      "description": "One page of the dated authority log audit: grants, revokes and confirms, for the owner.",
+      "description": "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind.",
       "input": "crate::receipt::AuthorityAuditQuery",
       "output": "crate::receipt::AuthorityAuditPage",
       "call": "crate::receipt::authority_audit_embedded(memory, input)?",
@@ -3125,6 +3125,7 @@
       "call": "memory.projects_confirm(&input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_session": true,
       "scope": "Write",
       "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",
@@ -4194,16 +4195,16 @@
     },
     {
       "name": "vault.commit",
-      "description": "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist.",
+      "description": "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
         },
-        "output": "Vec<CommitReceipt>"
+        "output": "Vec<CommitOutcome>"
       },
       "input": "CommitRequest",
-      "output": "Vec<crate::memory::CommitReceipt>",
+      "output": "Vec<crate::memory::CommitOutcome>",
       "call": "memory.commit(&input.claims)?",
       "scope": "Write",
       "admission": {
@@ -5398,16 +5399,16 @@
     },
     {
       "name": "vault.claims.seed",
-      "description": "Seeds claims through their individual gates, forced proposed, returning one receipt per claim.",
+      "description": "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt.",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
         },
-        "output": "Vec<CommitReceipt>"
+        "output": "Vec<CommitOutcome>"
       },
       "input": "CommitRequest",
-      "output": "Vec<crate::memory::CommitReceipt>",
+      "output": "Vec<crate::memory::CommitOutcome>",
       "call": "memory_requests::seed_claims(memory, input)?",
       "scope": "Write",
       "admission": {

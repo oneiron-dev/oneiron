@@ -35,6 +35,8 @@ mod catalog;
 mod cooldown;
 mod decision_read;
 mod declared;
+#[cfg(feature = "mesh")]
+mod discovered;
 mod driven;
 #[cfg(test)]
 mod fallback_tests;
@@ -75,6 +77,8 @@ use cooldown::FallbackRung;
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
+#[cfg(feature = "mesh")]
+pub(crate) use discovered::MeshRoutes;
 pub use hosted_speech::HostedCloner;
 pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
@@ -514,6 +518,18 @@ impl ModelRuntime {
     #[must_use]
     pub fn router(&self) -> Option<Arc<ModelRouter>> {
         self.router.clone()
+    }
+
+    /// Serves on this runtime's router, beside the configured models, the
+    /// ones the owner's other nodes offer over `mesh` (FIX 3229), as the
+    /// vault's discovery rows hold them now and after each refresh.
+    #[cfg(feature = "mesh")]
+    pub(crate) fn mesh_routes(
+        &self,
+        vault: &Arc<oneiron::Vault>,
+        mesh: Arc<dyn oneiron_mesh_transport::MeshTransport>,
+    ) -> MeshRoutes {
+        MeshRoutes::new(self.router.clone(), Arc::clone(&self.rests), vault, mesh)
     }
 
     #[must_use]

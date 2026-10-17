@@ -12,9 +12,13 @@ use std::collections::HashSet;
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptInterventionKind, ClaimAttempt, ClaimOutcome, DialLandingReserve,
-    InterveneAttempt,
+    AttemptId, AttemptInterventionKind, AttemptRecord, ClaimAttempt, ClaimOutcome,
+    DialLandingReserve, InterveneAttempt,
 };
+
+/// A routed runner line's total (FIX 1152): the line is accounting only, so
+/// its row never refuses a reserve or a settlement.
+const ROUTED_LINE_TOTAL_UNITS: u64 = u64::MAX / 4;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 
@@ -245,11 +249,25 @@ impl DreamerRunnerStore<'_> {
     /// # Errors
     ///
     /// Storage errors; the queue's own admission errors.
+    /// `route` names the runner line a candidate debits instead of the
+    /// pass's, from the host (a resident dreaming on its own model, FIX
+    /// 1152). A routed line is accounting only and never refuses.
     pub fn admit_next_resident_dream(
         &self,
         input: AdmitDreamerAttempt,
+        route: &mut dyn FnMut(&AttemptRecord) -> Option<String>,
     ) -> Result<DreamerAdmissionOutcome> {
-        self.admit_next_kind(DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, input)
+        validate_admission_input(&input)?;
+        let result = self.vault.with_write_txn_grouped(|wtxn| {
+            self.admit_next_kind_in_txn(
+                wtxn,
+                DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+                input,
+                Some(route),
+            )
+        })?;
+        self.vault.store.notify_attempt_observers();
+        Ok(result.outcome)
     }
 
     /// Atomically admits the next queued realization of a Dreamer-lane TASK.
@@ -346,8 +364,12 @@ impl DreamerRunnerStore<'_> {
 
                 let budget_trap_budget_id = input.admission.budget_id.clone();
                 let budget_trap_now = input.admission.now;
-                let result =
-                    self.admit_next_kind_in_txn(wtxn, input.scope.attempt_kind(), input.admission)?;
+                let result = self.admit_next_kind_in_txn(
+                    wtxn,
+                    input.scope.attempt_kind(),
+                    input.admission,
+                    None,
+                )?;
                 match (tournament_grant, result.outcome) {
                     (Some(grant), DreamerAdmissionOutcome::BudgetExhausted(budget)) => {
                         let Some(attempt_id) = result.budget_exhausted_candidate else {
@@ -393,9 +415,9 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         validate_admission_input(&input)?;
-        let result = self
-            .vault
-            .with_write_txn_grouped(|wtxn| self.admit_next_kind_in_txn(wtxn, queue_kind, input))?;
+        let result = self.vault.with_write_txn_grouped(|wtxn| {
+            self.admit_next_kind_in_txn(wtxn, queue_kind, input, None)
+        })?;
         self.vault.store.notify_attempt_observers();
         Ok(result.outcome)
     }
@@ -404,7 +426,8 @@ impl DreamerRunnerStore<'_> {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         queue_kind: &str,
-        input: AdmitDreamerAttempt,
+        mut input: AdmitDreamerAttempt,
+        route: Option<&mut dyn FnMut(&AttemptRecord) -> Option<String>>,
     ) -> Result<DreamerKindAdmissionResult> {
         let candidate = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
             self.ready_macro_candidate_in_txn(wtxn, &input)?
@@ -418,6 +441,16 @@ impl DreamerRunnerStore<'_> {
                 budget_exhausted_candidate: None,
             });
         };
+        // A routed candidate debits its own line, before any budget row is
+        // read; that row is accounting only, so its total never refuses.
+        if let Some(route) = route
+            && let Some(record) = self.attempts.get_in_txn(wtxn, candidate_attempt_id)?
+            && let Some(line) = route(&record)
+        {
+            validate_budget_id(&line)?;
+            input.budget_id = line;
+            input.budget_total_units = ROUTED_LINE_TOTAL_UNITS;
+        }
 
         let mut budget = read_or_initialize_budget_in_txn(
             self.vault,
