@@ -119,8 +119,8 @@ pub struct RoomHostHand {
     pub session: Option<EntityId>,
 }
 
-fn refused() -> Error {
-    Error::Record(RecordError::ConversationDenied)
+fn refused(actor: EntityId) -> Error {
+    Error::Record(RecordError::RoomSpeakerIneligible { actor })
 }
 
 fn lacks(reason: &'static str) -> Error {
@@ -238,7 +238,7 @@ pub(crate) fn admit_room_host_in(
     actor: EntityId,
 ) -> Result<()> {
     if !may_host_in(vault, txn, room, actor)? {
-        return Err(refused());
+        return Err(refused(actor));
     }
     Ok(())
 }
@@ -254,7 +254,7 @@ pub(crate) fn admit_room_speech_in(
 ) -> Result<()> {
     room_speaking_role_in(vault, txn, room, actor, &RoomHosting::default())?
         .map(|_| ())
-        .ok_or_else(refused)
+        .ok_or_else(|| refused(actor))
 }
 
 /// The agents among `present` who may hold `room`'s duty by presence,

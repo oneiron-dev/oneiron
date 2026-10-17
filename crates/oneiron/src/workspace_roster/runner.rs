@@ -127,7 +127,9 @@ impl Vault {
                 // Refused before anything is written; the companion step
                 // reads the policy again in the transaction that binds her.
                 if stored.is_some_and(|stored| !stored.work_companion.admits(&intent.companion)) {
-                    return Err(invalid(WORK_COMPANION_REQUIRED));
+                    return Err(Error::Record(
+                        crate::error::RecordError::WorkCompanionRequired,
+                    ));
                 }
                 write_journal(
                     self,

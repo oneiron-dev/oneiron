@@ -74,11 +74,6 @@ impl WorkCompanionPolicy {
     }
 }
 
-/// The reason a `require` workspace refuses a brought companion. Callers
-/// match on it; the refusal never falls back to a work companion birth.
-pub const WORK_COMPANION_REQUIRED: &str =
-    "workspace work_companion policy is require: start a work companion; a brought one is refused";
-
 impl Vault {
     /// `workspace`'s `work_companion` policy. A workspace nobody has
     /// onboarded into or established has no preset yet, so it has no policy

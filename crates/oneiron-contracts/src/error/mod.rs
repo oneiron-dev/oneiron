@@ -81,6 +81,8 @@ pub enum ErrorKind {
     ConnectorCharterMissing,
     InvalidChannelIdentityBody,
     WorkspaceMailboxAutonomyNotReady,
+    /// A `require` workspace refused a brought companion.
+    WorkCompanionRequired,
     InvalidCounterpartyContactBody,
     InvalidCommRecordBody,
     InvalidDiagnosticBody,

@@ -38,24 +38,9 @@ use crate::llm::run_admission::LeaseUnit;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
-/// Who asks to take part. Resolved from stored bindings, never from labels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
-pub enum JoinSubject {
-    /// A PERSON: a human, or a companion, who is a person everywhere.
-    Person(EntityId),
-    /// An AGENT_DEF. An agent never takes a room seat.
-    Agent(EntityId),
-}
-
-impl JoinSubject {
-    #[must_use]
-    pub const fn id(&self) -> EntityId {
-        match self {
-            Self::Person(id) | Self::Agent(id) => *id,
-        }
-    }
-}
+pub use oneiron_contracts::room_join::{
+    ConsentNeed, ConsentPart, JoinSubject, RequiredParty, RoomJoinHold,
+};
 
 /// The room a piece of work runs in, and its thread when the work is
 /// narrower than the room.
@@ -84,43 +69,6 @@ pub struct JoinRequest {
     pub spend_scope: Option<SpendScopeId>,
     /// The caller's idempotency key: the same key replays this join.
     pub intent_key: String,
-}
-
-/// The consents a join collects, one from each party.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConsentPart {
-    Subject,
-    Spend,
-    Membership,
-    Admission,
-}
-
-/// The party a missing consent waits on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RequiredParty {
-    /// The subject itself, or its principal: an invitation waits on its own
-    /// yes, given through the consent door.
-    Subject(JoinSubject),
-    /// The PERSON who funds the named scope; only they say yes for it.
-    Payer(EntityId),
-    /// No scope with a payer's consent is named yet: whoever will pay opens
-    /// one and says yes. Never the room host's or the vault owner's funds.
-    PayerUnknown,
-    /// The vault's Owner or Admin, through the membership doors (add a
-    /// member, grant guest access). `vault` is the shared vault's id; 0 is a
-    /// personal vault, whose owner alone stands in it.
-    VaultAdmin { vault: u64 },
-    /// The room's owner or a delegated host.
-    RoomHost { room: EntityId },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConsentNeed {
-    pub part: ConsentPart,
-    pub party: RequiredParty,
 }
 
 /// A party's recorded no.

@@ -19,6 +19,7 @@ pub mod record_layout;
 pub mod registry;
 pub mod retrieval_quality;
 pub mod retrieval_telemetry;
+pub mod room_join;
 pub mod secret_custody;
 pub mod secret_lease;
 pub mod serialize;

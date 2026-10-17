@@ -379,7 +379,9 @@ pub(super) fn bring_companion(
             .ok_or_else(|| invalid("workspace preset is not settled"))?
             .work_companion;
         if !policy.admits(&intent.companion) {
-            return Err(invalid(WORK_COMPANION_REQUIRED));
+            return Err(Error::Record(
+                crate::error::RecordError::WorkCompanionRequired,
+            ));
         }
         if proof.revalidate_person_in_txn(vault, txn)? != intent.person_ref {
             return Err(Error::Gate(

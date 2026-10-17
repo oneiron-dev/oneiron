@@ -1444,7 +1444,7 @@ export type RoomTurn = { turn_id: string; room_id: string; actor: string; addres
 export type RoomPage = { rows: RoomTurn[]; next_after?: string | null; scope: Scope }
 /** `oneiron::workspace_roster::rooms::participants::ParticipantsRequest` */
 export type ParticipantsRequest = { room: EntityId; branch?: EntityId | null; after?: string | null; limit?: number | null }
-/** `oneiron::workspace_roster::join_consent::JoinSubject` */
+/** `oneiron_contracts::room_join::JoinSubject` */
 export type JoinSubject = { kind: "person"; id: EntityId } | { kind: "agent"; id: EntityId }
 /** `oneiron::workspace_roster::rooms::participation::JoinCause` */
 export type JoinCause = { kind: "wrote"; turn: EntityId } | { kind: "addressed"; turn: EntityId } | { kind: "task"; task: EntityId } | { kind: "offer"; offer_id: string }
@@ -1534,11 +1534,11 @@ export type ProjectBudgetShare = { project_id: string; parent_id: string; share_
 export type ProjectRecord = { role: ProjectRole; schema_version: number; depth?: number; parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice?: ScopeScope; depth_limit?: number; depth_remaining?: number; write_proof?: ProjectWriteProof | null; leader: string; board: string[]; roster: string[]; sessions: string[]; tasks: string[]; branches: string[]; skill_forks: string[]; goal?: string | null; goal_record?: ProjectGoalRecord | null; why?: string | null; born_from?: string | null; budget?: string | null; budget_share?: ProjectBudgetShare | null; asks: string[]; home_room: string; origin_room?: string | null; origin_thread?: string | null; origin_at?: number | null; wrapper_task?: string | null }
 /** `oneiron::workspace_roster::project::roster::ProjectRosterWriteRequest` */
 export type ProjectRosterWriteRequest = { project: EntityId; record: unknown }
-/** `oneiron::workspace_roster::join_consent::ConsentPart` */
+/** `oneiron_contracts::room_join::ConsentPart` */
 export type ConsentPart = "subject" | "spend" | "membership" | "admission"
-/** `oneiron::workspace_roster::join_consent::RequiredParty` */
+/** `oneiron_contracts::room_join::RequiredParty` */
 export type RequiredParty = { subject: JoinSubject } | { payer: EntityId } | "payer_unknown" | { vault_admin: { vault: number } } | { room_host: { room: EntityId } }
-/** `oneiron::workspace_roster::join_consent::ConsentNeed` */
+/** `oneiron_contracts::room_join::ConsentNeed` */
 export type ConsentNeed = { part: ConsentPart; party: RequiredParty }
 /** `oneiron::workspace_roster::join_consent::JoinRefusal` */
 export type JoinRefusal = { denied: { part: ConsentPart; party: EntityId; answer_ref: string } } | "unknown_subject" | { foreign_house_agent: { org: EntityId } } | "unknown_room" | { unknown_spend_scope: { scope: SpendScopeId } } | { forged_payer: { scope: SpendScopeId } }

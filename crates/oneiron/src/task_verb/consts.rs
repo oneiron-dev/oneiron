@@ -42,12 +42,11 @@ pub(super) const TASK_BRIEF_PROPOSAL_PREDICATE: &str = "tasks.brief";
 pub(crate) const TASK_EXTERNAL_ATTEMPT_KIND: &str = "tasks.external";
 /// The one schema of [`QueueTaskBrief`](super::QueueTaskBrief).
 pub(super) const TASK_BRIEF_SCHEMA: u8 = 1;
-/// Derived TASK id of an Auto post. Parts: actor, intent key. The store-local
-/// vault id is left out on purpose: every replica of one vault holds its own,
-/// and one post must name one TASK on all of them.
-pub(super) const TASK_POST_ID_DOMAIN: &[u8] = b"oneiron.tasks.post.v1";
-/// Derived TASK id of a settled create proposal. Parts: the proposal claim id.
-pub(super) const TASK_SETTLE_ID_DOMAIN: &[u8] = b"oneiron.tasks.settle.v1";
+/// Derived TASK ids of an Auto post and of a settled create proposal, as the
+/// contracts registry names them.
+pub(super) use crate::entity_id::derived_domains::{
+    TASK_POST as TASK_POST_ID_DOMAIN, TASK_SETTLE as TASK_SETTLE_ID_DOMAIN,
+};
 /// The proposal-value key the highway's typed post stamp rides under.
 pub(super) const TASK_POST_STAMP_KEY: &str = "post";
 /// The stored predicate of the question an engine block asks a TASK's owner
