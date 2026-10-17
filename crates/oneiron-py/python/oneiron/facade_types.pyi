@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 261 facade rows, 988 declarations.
-Inputs: 217 of 261 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 211 of 261 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
-Opaque serde_json::Value leaves: 68; unread shapes: 1.
+Census: 262 facade rows, 992 declarations.
+Inputs: 218 of 262 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 211 of 262 fully typed, 41 typed down to an opaque serde_json::Value leaf, 10 with a shape the generator could not read
+Opaque serde_json::Value leaves: 67; unread shapes: 2.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1704,12 +1704,39 @@ class GeneratedLens(TypedDict):
     kit_version: int
     apps_contract_version: int
     root: LensNode
+class WeaveLensRefusal(TypedDict):
+    reason: str
+    skill_ref: str
+    skill_version: str
+    model: str
+    refused_at: int
 class WeaveDigestView(TypedDict):
     scheduled_for: int
     rendered_at: int
     sections: list[WeaveSectionView]
     narrowing: ScopedReadReceipt
     lens: NotRequired[GeneratedLens | None]
+    lens_refused: NotRequired[WeaveLensRefusal | None]
+GeneratedUiCatalog = Literal["lens_atom_kit"]
+GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
+GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
+class GeneratedUiActionDeclaration(TypedDict):
+    elementId: str
+    actionId: str
+    tier: GeneratedUiActionTier
+    action: SelfUiAction
+GeneratedUiStateSnapshot = Any
+GeneratedUiCardPhase = Literal["generating", "active", "responded", "archived"]
+GeneratedUiArchiveReason = Literal["completed", "expired", "dismissed", "superseded"]
+class GeneratedUiCardLifecycle(TypedDict):
+    phase: GeneratedUiCardPhase
+    revision: int
+    archiveReason: NotRequired[GeneratedUiArchiveReason | None]
+GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+class LensFrameCard(TypedDict):
+    card_id: str
+    render: GeneratedUiRender
+    lens: GeneratedLens
 class WeaveWrongLinkRequest(TypedDict):
     source_ref: str
     kind: str
@@ -1910,10 +1937,9 @@ class PackSetupAnswerBindKey(TypedDict):
     connection: str
     key: str
 PackSetupAnswer = PackSetupAnswerSecretStored | PackSetupAnswerAllow | PackSetupAnswerBindKey
-GeneratedUiStateSnapshot = Any
 class PackSetupCardActionInput(TypedDict):
     action_id: str
-    state: NotRequired[dict[str, Any]]
+    state: NotRequired[GeneratedUiStateSnapshot]
 class PackSetupAnswerRequest(TypedDict):
     pack: str
     source: NotRequired[str | None]
@@ -2615,25 +2641,6 @@ class LensDefaultRequest(TypedDict):
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt
-GeneratedUiCatalog = Literal["lens_atom_kit"]
-GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
-GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
-class GeneratedUiActionDeclaration(TypedDict):
-    elementId: str
-    actionId: str
-    tier: GeneratedUiActionTier
-    action: SelfUiAction
-GeneratedUiCardPhase = Literal["generating", "active", "responded", "archived"]
-GeneratedUiArchiveReason = Literal["completed", "expired", "dismissed", "superseded"]
-class GeneratedUiCardLifecycle(TypedDict):
-    phase: GeneratedUiCardPhase
-    revision: int
-    archiveReason: NotRequired[GeneratedUiArchiveReason | None]
-GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
-class LensFrameCard(TypedDict):
-    card_id: str
-    render: GeneratedUiRender
-    lens: GeneratedLens
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):
@@ -3962,6 +3969,8 @@ class DecisionReceipt(TypedDict):
     person: NotRequired[list[PairedReading]]
     time: NotRequired[DecisionTime | None]
     images: NotRequired[list[ImagePin]]
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
@@ -5069,6 +5078,22 @@ class DeckGateView(TypedDict):
     receipt: NotRequired[OracleReceipt | None]
 class DeckOracleRequest(TypedDict):
     receipt: OracleReceipt
+class DeckPreviewRequest(TypedDict):
+    artifact_ref: str
+    slides: list[int]
+class DeckPreviewSlide(TypedDict):
+    slide: int
+    media_type: str
+    image_hash: str
+    content_base64: str
+class DeckPreview(TypedDict):
+    frontier: list[int]
+    profile: str
+    projector: str
+    export_key: str
+    renderer: str
+    provisional: bool
+    slides: list[DeckPreviewSlide]
 class AppendBlobVersionRequest(TypedDict):
     artifact_ref: str
     content_base64: str
