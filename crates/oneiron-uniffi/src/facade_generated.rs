@@ -216,10 +216,10 @@ export_facade! {
     let output = client.vault_weave_digest(&input)?;
     crate::codec::lift_record("vault.weave.digest", &output)
 };
-"vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveReportRequest) -> GeneratedLens = |client| {
+"vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveReportRequest) -> WireJson = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.lens", input)?;
     let output = client.vault_weave_lens(&input)?;
-    crate::codec::lift_record("vault.weave.lens", &output)
+    crate::codec::encode("vault.weave.lens", &output)
 };
 "vault.weave.link.wrong" => fn vault_weave_link_wrong(&self, input: WeaveWrongLinkRequest) -> WeaveLinkCorrectionView = |client| {
     let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.link.wrong", input)?;
@@ -241,8 +241,8 @@ export_facade! {
     let output = client.vault_packs_setup_get(&input)?;
     crate::codec::lift_record("vault.packs.setup.get", &output)
 };
-"vault.packs.setup.answer" => fn vault_packs_setup_answer(&self, input: PackSetupAnswerRequest) -> PackSetupReceipt = |client| {
-    let input: oneiron::task_verb::sdk::PackSetupAnswerRequest = crate::codec::lower_record("vault.packs.setup.answer", input)?;
+"vault.packs.setup.answer" => fn vault_packs_setup_answer(&self, input: WireJson) -> PackSetupReceipt = |client| {
+    let input: oneiron::task_verb::sdk::PackSetupAnswerRequest = crate::codec::decode("vault.packs.setup.answer", &input)?;
     let output = client.vault_packs_setup_answer(&input)?;
     crate::codec::lift_record("vault.packs.setup.answer", &output)
 };

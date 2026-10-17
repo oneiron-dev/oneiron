@@ -1133,7 +1133,8 @@ instead when the request is larger than one action argument (16 KiB of JSON), na
 turn, or comes from a credential that binds no person or agent. The route picks the path before
 it writes. A TURN write wakes the Dreamer once on either path.
 
-A running server holds the frame of each card `vault.lenses.default` returns, for your credential:
+A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
+`POST /v1/owner/weave/lens` return, for your credential:
 - `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
 - `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
 

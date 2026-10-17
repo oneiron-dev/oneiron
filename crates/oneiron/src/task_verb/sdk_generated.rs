@@ -5324,7 +5324,7 @@ pub fn vault_weave_digest(
 pub fn vault_weave_lens(
     memory: &Memory<'_>,
     input: crate::claim::WeaveReportRequest,
-) -> MemoryResult<crate::lens::GeneratedLens> {
+) -> MemoryResult<crate::lens::LensFrameCard> {
     crate::task_verb::sdk::host_only(memory, "vault.weave.lens", &input)
 }
 pub fn vault_weave_link_wrong(

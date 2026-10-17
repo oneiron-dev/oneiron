@@ -5,9 +5,9 @@ Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
 Census: 259 facade rows, 976 declarations.
-Inputs: 215 of 259 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 209 of 259 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
-Opaque serde_json::Value leaves: 68; unread shapes: 1.
+Inputs: 215 of 259 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 208 of 259 fully typed, 41 typed down to an opaque serde_json::Value leaf, 10 with a shape the generator could not read
+Opaque serde_json::Value leaves: 67; unread shapes: 2.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1710,6 +1710,26 @@ class WeaveDigestView(TypedDict):
     sections: list[WeaveSectionView]
     narrowing: ScopedReadReceipt
     lens: NotRequired[GeneratedLens | None]
+GeneratedUiCatalog = Literal["lens_atom_kit"]
+GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
+GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
+class GeneratedUiActionDeclaration(TypedDict):
+    elementId: str
+    actionId: str
+    tier: GeneratedUiActionTier
+    action: SelfUiAction
+GeneratedUiStateSnapshot = Any
+GeneratedUiCardPhase = Literal["generating", "active", "responded", "archived"]
+GeneratedUiArchiveReason = Literal["completed", "expired", "dismissed", "superseded"]
+class GeneratedUiCardLifecycle(TypedDict):
+    phase: GeneratedUiCardPhase
+    revision: int
+    archiveReason: NotRequired[GeneratedUiArchiveReason | None]
+GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+class LensFrameCard(TypedDict):
+    card_id: str
+    render: GeneratedUiRender
+    lens: GeneratedLens
 class WeaveWrongLinkRequest(TypedDict):
     source_ref: str
     kind: str
@@ -1910,10 +1930,9 @@ class PackSetupAnswerBindKey(TypedDict):
     connection: str
     key: str
 PackSetupAnswer = PackSetupAnswerSecretStored | PackSetupAnswerAllow | PackSetupAnswerBindKey
-GeneratedUiStateSnapshot = Any
 class PackSetupCardActionInput(TypedDict):
     action_id: str
-    state: NotRequired[dict[str, Any]]
+    state: NotRequired[GeneratedUiStateSnapshot]
 class PackSetupAnswerRequest(TypedDict):
     pack: str
     source: NotRequired[str | None]
@@ -2615,25 +2634,6 @@ class LensDefaultRequest(TypedDict):
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt
-GeneratedUiCatalog = Literal["lens_atom_kit"]
-GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
-GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
-class GeneratedUiActionDeclaration(TypedDict):
-    elementId: str
-    actionId: str
-    tier: GeneratedUiActionTier
-    action: SelfUiAction
-GeneratedUiCardPhase = Literal["generating", "active", "responded", "archived"]
-GeneratedUiArchiveReason = Literal["completed", "expired", "dismissed", "superseded"]
-class GeneratedUiCardLifecycle(TypedDict):
-    phase: GeneratedUiCardPhase
-    revision: int
-    archiveReason: NotRequired[GeneratedUiArchiveReason | None]
-GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
-class LensFrameCard(TypedDict):
-    card_id: str
-    render: GeneratedUiRender
-    lens: GeneratedLens
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):
