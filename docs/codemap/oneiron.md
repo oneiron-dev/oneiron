@@ -2318,12 +2318,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/campaign.rs` | src | s | 14 fn | — | Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`… |
 | `src/memory/caps.rs` | src | m | 14 fn · 13 const · 1 crate-vis | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
 | `src/memory/caps/tests.rs` | test | s | — | — | — |
-| `src/memory/chat.rs` | src | m | 3 struct · 3 enum · 1 trait · 3 fn · 1 type | ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatOptions, ChatResponse, ChatScope, ComposedChatAnswer | The `.chat` answer verb (OF-228/OF-096): depth-as-cost tiers over [`Memory::recall`], answering only with… |
+| `src/memory/chat.rs` | src | L | 3 struct · 3 enum · 1 trait · 3 fn · 1 type | ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatOptions, ChatResponse, ChatScope, ComposedChatAnswer | The `.chat` answer verb (OF-228/OF-096): depth-as-cost tiers over [`Memory::recall`], answering only with… |
 | `src/memory/chat/tests.rs` | test | L | — | — | `.chat` acceptance tests: depth→effort mapping, composer call counts, the zero-model minimal tier, the typed… |
 | `src/memory/claim_conflict.rs` | src | m | 3 struct · 1 enum · 4 fn · 1 crate-vis | ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt | Content-bound conflict questions and owner/delegated-admin rulings |
 | `src/memory/claims/commit.rs` | src | m | 5 crate-vis | — | — |
 | `src/memory/claims/lifecycle.rs` | src | s | 5 fn · 4 crate-vis | — | — |
-| `src/memory/claims/mod.rs` | src | s | 5 struct · 1 enum · 2 fn · 1 const · 2 crate-vis | ClaimInput, CommitReceipt, DeleteReceipt, MemoryReceipt, PendingWrite, SafeDeleteReason | Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate… |
+| `src/memory/claims/mod.rs` | src | m | 6 struct · 3 enum · 4 fn · 1 const · 5 crate-vis | ClaimInput, CommitOutcome, CommitReceipt, DeleteReceipt, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason +1 | Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate… |
 | `src/memory/conflict_settle.rs` | src | m | 8 fn | — | The authorised responder's door to a parked contradiction (OF-023) |
 | `src/memory/conversation_list.rs` | src | m | 3 struct · 1 fn | ConversationListFilter, ConversationListPage, ConversationListRow | The conversation list, read as the bound actor (ARCH-0006a, DEC-0005) |
 | `src/memory/conversation_list/tests.rs` | test | L | — | — | The conversation list is what its reader may read of the vault (ARCH-0006a, DEC-0005): only the… |
@@ -2928,7 +2928,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
 | `src/receipt/questions.rs` | src | m | 11 struct · 2 enum · 3 fn · 2 const | GraphAskDeclined, GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest +5 | OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs |
 | `src/receipt/record.rs` | src | m | 14 crate-vis | — | First-class, replicated immutable terminal outbound receipt record, the served-form receipt record a read… |
-| `src/receipt/reference_refusal.rs` | src | s | 5 crate-vis | — | Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer |
+| `src/receipt/reference_refusal.rs` | src | s | 6 crate-vis | — | Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer |
 | `src/receipt/send_receipt_txn.rs` | src | s | 3 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
 | `src/receipt/served_form.rs` | src | m | 1 struct · 2 enum · 9 fn · 2 crate-vis | PixelPull, ServedForm, ServedRung | Served-form receipts (OF-329): which rung of the lazy-image ladder a read served an ASSET at, to which… |
 | `src/receipt/session.rs` | src | s | 2 struct · 7 fn | SessionLocalReceiptLog, SessionReceiptClose | — |
