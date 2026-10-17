@@ -982,6 +982,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
             (
+                "self.team.start",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamStartInput>(),
+            ),
+            (
+                "self.team.record",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
+            ),
+            (
                 "self.spawn",
                 crate::code_run::vault_read::request_schema::<crate::code_run::ReaderSpawnInput>(),
             ),
