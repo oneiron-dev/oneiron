@@ -109,6 +109,16 @@ pub enum EngineScan {
     RoomHistoryRows,
     /// The TASK rows one board assembly reads.
     TaskBoardRows,
+    /// One room's thread-children index rows a hang check walks, for one
+    /// room or parent turn.
+    RoomThreadChildRows,
+    /// The message-to-project origin index rows a hang check walks, for one
+    /// message.
+    MessageOriginRows,
+    /// A thread's bound and moved tasks, counted at bind and conversion.
+    ThreadTaskCensus,
+    /// The task and ask lists one PROJECT body's normalization reads.
+    ProjectTaskRows,
     /// The vault's inbound STOPs this replica has not projected yet, which
     /// each external send reads. A STOP the projector keeps refusing stays.
     PendingCommStops,
@@ -119,7 +129,7 @@ pub enum EngineScan {
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 38] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -152,6 +162,10 @@ impl EngineScan {
         Self::RoomPageRows,
         Self::RoomHistoryRows,
         Self::TaskBoardRows,
+        Self::RoomThreadChildRows,
+        Self::MessageOriginRows,
+        Self::ThreadTaskCensus,
+        Self::ProjectTaskRows,
         Self::PendingCommStops,
         Self::PartyContactClaims,
     ];
@@ -200,6 +214,10 @@ impl EngineScan {
             Self::RoomPageRows => "room_page_rows",
             Self::RoomHistoryRows => "room_history_rows",
             Self::TaskBoardRows => "task_board_rows",
+            Self::RoomThreadChildRows => "room_thread_child_rows",
+            Self::MessageOriginRows => "message_origin_rows",
+            Self::ThreadTaskCensus => "thread_task_census",
+            Self::ProjectTaskRows => "project_task_rows",
             Self::PendingCommStops => "pending_comm_stops",
             Self::PartyContactClaims => "party_contact_claims",
         }
@@ -239,6 +257,10 @@ impl EngineScan {
             Self::RoomPageRows => 36,
             Self::RoomHistoryRows => 37,
             Self::TaskBoardRows => 38,
+            Self::RoomThreadChildRows => 39,
+            Self::MessageOriginRows => 40,
+            Self::ThreadTaskCensus => 41,
+            Self::ProjectTaskRows => 42,
             Self::PendingCommStops => 64,
             Self::PartyContactClaims => 65,
         }]
