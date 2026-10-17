@@ -289,7 +289,9 @@ impl Vault {
                 .as_ref()
                 .ok_or_else(|| invalid("the decision ask has no role to answer for"))?;
             if !self.holds_ask_role_in_txn(txn, ask, actor, kind)? {
-                return Err(invalid("the answerer does not hold the decision ask's role"));
+                return Err(invalid(
+                    "the answerer does not hold the decision ask's role",
+                ));
             }
             Ok((actor, role.role.clone(), kind))
         })
@@ -375,11 +377,7 @@ impl Vault {
     /// [`Self::climb_decision_ask`] for an actor, verified as the writer in the snapshot the
     /// ask climbs in: a holder of the role the ask is at now (it passes the ask up), the
     /// principal the ask is for, or a live owner of the vault.
-    pub fn climb_decision_ask_as(
-        &self,
-        by: &WriteActor,
-        seq: u64,
-    ) -> Result<Option<ResolvedRole>> {
+    pub fn climb_decision_ask_as(&self, by: &WriteActor, seq: u64) -> Result<Option<ResolvedRole>> {
         let actor = by.entity_ref();
         self.climb_decision_ask_with(seq, |txn, ask| {
             self.verify_write_actor_in_txn(txn, by)?;
