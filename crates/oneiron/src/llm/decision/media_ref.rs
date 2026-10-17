@@ -217,9 +217,7 @@ impl MediaCall {
     pub fn state(&self, mut state: serde_json::Value) -> LlmResult<serde_json::Value> {
         let entries =
             serde_json::to_value(&self.entries).map_err(|_| FatalLlmError::InvalidRequest)?;
-        let object = state
-            .as_object_mut()
-            .ok_or(FatalLlmError::InvalidRequest)?;
+        let object = state.as_object_mut().ok_or(FatalLlmError::InvalidRequest)?;
         object.insert(MEDIA_FIELD.to_owned(), entries);
         Ok(state)
     }
@@ -307,6 +305,8 @@ impl DecisionLadder<'_> {
         dial: DecisionDial,
         media: Vec<ResolvedMedia>,
     ) -> LlmResult<MediaCall> {
-        MediaCall::of(dial, media, |images| self.first_taking(question, dial, images))
+        MediaCall::of(dial, media, |images| {
+            self.first_taking(question, dial, images)
+        })
     }
 }

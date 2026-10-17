@@ -27,9 +27,9 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
-pub use host_holds::HostOrderHolds;
 pub use commitment::CheckpointSigner;
 use heed::types::Bytes;
+pub use host_holds::HostOrderHolds;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

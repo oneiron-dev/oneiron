@@ -269,7 +269,12 @@ fn weave_report_instruction(vault: &Vault) -> Result<Option<(EntityId, String, S
     }
     let instruction = vault
         .runtime_skill_package_in_txn(&txn, &skill, &record)?
-        .and_then(|package| package.files.into_iter().find(|file| file.path == SKILL_FILE))
+        .and_then(|package| {
+            package
+                .files
+                .into_iter()
+                .find(|file| file.path == SKILL_FILE)
+        })
         .and_then(|file| String::from_utf8(file.content).ok());
     Ok(instruction.map(|instruction| (skill, record.version, instruction)))
 }
