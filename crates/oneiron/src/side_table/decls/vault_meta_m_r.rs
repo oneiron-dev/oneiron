@@ -57,6 +57,9 @@ side_tables! {
     /// A NOTE's current title reservation; value is NOTE_TITLE_RESERVATION's full key. Key:
     /// hex32(note).
     NOTE_TITLE_BY_NOTE: VaultMeta b"note.title/v1/id/" Raw;
+    /// The archive an archived NOTE was read in since it was archived, and when (OF-073,
+    /// FIX 2419). Key: id16(note).
+    NOTE_ARCHIVE_READ: VaultMeta b"note_archive_read:v1:" Named;
     /// Recorded NOTE fork awaiting review/decision. Key: id16(fork head).
     NOTE_FORK: VaultMeta b"note_fork:v1:" Named;
     /// A NOTE's current head document id and head-move sequence number. Key: id16.
@@ -75,6 +78,11 @@ side_tables! {
     /// A NOTE's seal: the head document and frontier it froze, its sealer and time (ARCH-0032
     /// lifecycle). Key: id16(note).
     NOTE_SEAL: VaultMeta b"note_seal:v1:" Named;
+    /// A NOTE tombstone the monthly review proposed for the owner: the archive it holds for, and
+    /// when the owner declined it, if they did (OF-073, FIX 2419). Key: id16(note).
+    NOTE_TOMBSTONE_PROPOSAL: VaultMeta b"note_tombstone:v1:" Named;
+    /// The last UTC calendar month the NOTE tombstone review ran (FIX 2419). Key: ().
+    NOTE_TOMBSTONE_REVIEW: VaultMeta b"note_tombstone_review:v1" Named;
     /// One live office body commit's receipt: peer, operation span and MadeBy. Key: id16 (artifact
     /// or fork) + u64be (sequence).
     OFFICE_BODY_COMMIT: VaultMeta b"office_body:commit:v1:" Named;

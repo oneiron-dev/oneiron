@@ -22,6 +22,9 @@
 //! `keep_missed` (FIX 2240). The next Nightly review asks for those lines
 //! once more, the rest of the pad blanked; a line missed again stays a
 //! recorded miss and is not asked for a third time.
+//!
+//! The first review to finish in a calendar month also runs the NOTE
+//! tombstone review (`note/tombstone_review.rs`, FIX 2419).
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -179,6 +182,9 @@ impl ConsolidationExecutor<'_> {
                     None => CURSOR.delete(&ctx.vault.store, txn, &()).map(|_| ()),
                 })?;
             if !full {
+                // The month's first finished NOTE review also proposes the
+                // month's NOTE tombstones (FIX 2419); it only asks the owner.
+                crate::note::review_note_tombstones(ctx.vault)?;
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
                 });
