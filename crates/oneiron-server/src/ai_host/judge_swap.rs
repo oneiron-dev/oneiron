@@ -6,9 +6,7 @@ use std::collections::BTreeMap;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::llm::decision::{DecisionAnswer, Reversibility, TypedDecision};
-use oneiron::skill_optimize::{
-    HeldOutReplayNotes, JudgeShadowAnswer, JudgeShadowCase, JudgeShadowHost,
-};
+use oneiron::skill_optimize::{JudgeShadowAnswer, JudgeShadowCase, JudgeShadowHost};
 use oneiron::{Error, Vault};
 
 use crate::replay_judge::{JournalRow, ServeReplayJudge};
@@ -78,7 +76,7 @@ impl JudgeShadowHost for JournalShadow<'_> {
         };
         let state: serde_json::Value = serde_json::from_str(&row.state)
             .map_err(|_| Error::CorruptedIndex("skill judge journal"))?;
-        let decisions = self.judge.decisions();
+        let decisions = self.judge.configured_decisions();
         let decision = decisions.ladder.run(
             &row.question,
             decisions.principal,
