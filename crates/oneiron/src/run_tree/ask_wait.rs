@@ -136,8 +136,6 @@ impl RunTreeAdapter<'_> {
             || ctx.run_id.is_none()
             || handle.is_empty()
             || step_key.is_empty()
-            || handle.len() > 4096
-            || step_key.len() > 4096
         {
             return Err(Error::InvalidConfig("invalid ask wait context".into()));
         }

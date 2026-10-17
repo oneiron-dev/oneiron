@@ -590,6 +590,10 @@ side_tables! {
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
     /// regen decision waiting to be enacted. Key: id16 (binding).
     HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named Authored;
+    /// Each hook binding's runs in commit order, each naming its saved row: a fact run's memo or
+    /// a verb run's saved copy. Key: id16 (binding) + u64be (commit time, Unix ms) + hash32 (run
+    /// key).
+    HOOKS_RUN_INDEX: VaultMeta b"hooks:run_index:v1:" Named;
     /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
@@ -597,6 +601,13 @@ side_tables! {
     /// A call a verb hook's ask stopped: the call, its re-validated args, the hook's place in the
     /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
     HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
+    /// The instrument a credential caller's request was admitted on, pinned beside its stopped
+    /// call for the drain to verify again: a slip, its holder's challenge and signature, never a
+    /// secret. Pruned with the call. Key: id16 (invocation).
+    HOOKS_VERB_ASK_WITNESS: VaultMeta b"hooks:verb_ask_witness:v1:" Named;
+    /// A verb hook run's saved copy: the exact input its body saw, its read pins and the outcome it
+    /// returned. Key: hash32 (run key).
+    HOOKS_VERB_RUN: VaultMeta b"hooks:verb_run:v1:" Named Authored;
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;

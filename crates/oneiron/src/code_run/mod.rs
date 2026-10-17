@@ -10,8 +10,8 @@ pub mod blocked;
 pub mod consent;
 pub mod vault_read;
 
-// The guest authoring request is decoded only at the typed component bridge.
-#[cfg(any(test, feature = "code-sandbox-wasmtime"))]
+// The guest authoring request is decoded at the typed component bridge, and
+// a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
 mod codec;
 mod coordination_codec;
@@ -30,8 +30,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-#[cfg(feature = "code-sandbox-wasmtime")]
-pub(crate) use self::agent_authoring::parse_agent_put_request;
+pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
 pub(crate) use self::codec::encode_code_run_replay_value;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
@@ -71,6 +70,9 @@ pub(crate) use self::storage::{
     ReceiptSource, ReceiptTree,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
+pub(crate) use self::storage::{
+    canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
+};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
@@ -83,7 +85,7 @@ pub use self::reader::{
     SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat, SpawnParentBinding, SummarizeEffort,
     SummarizeRecipe, SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet,
     TaskWaitSetCall, TaskWaitSetResult, reader_task_brief, summary_exceeds_window,
-    summary_token_budget,
+    summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,

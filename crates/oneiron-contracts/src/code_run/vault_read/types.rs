@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::context_pack::ContextPackMediaQuery;
+
 /// Accepted default page limit, copied from the accepted route's
 /// `default_limit()`.
 ///
@@ -63,6 +65,11 @@ pub struct CoreQueryRequest {
     /// Optional vector query.
     #[serde(default, rename = "query_vector", alias = "queryVector")]
     pub query_vector: Option<Vec<f32>>,
+    /// Optional media seed (OF-370), the context pack's `media`: bytes the
+    /// host embeds into one declared space and searches as one more ranked
+    /// list beside `query` and `query_vector`. It seeds a query on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<ContextPackMediaQuery>,
     /// Maximum result count.
     #[serde(default = "default_limit")]
     pub limit: usize,

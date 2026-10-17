@@ -9,12 +9,9 @@ use crate::attempt_queue::{
 };
 use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::error::{Error, Result};
+use crate::limit_ask::{EngineLimit, LimitWatch};
 
 use super::RunTreeAdapter;
-
-const MAX_SIGNALS: usize = 1024;
-const MAX_ASKS: usize = 128;
-const MAX_FIELD: usize = 4096;
 
 /// Caller-authenticated control intent; the adapter must resolve the actor and
 /// cancel standing before calling this storage door.
@@ -109,22 +106,24 @@ pub enum RunAskState {
     Ready(RunAsk),
 }
 
+/// A Signal field of any length is kept whole (ABC): only an empty field or
+/// one with a control character is refused.
 fn field(value: &str) -> Result<()> {
-    if value.is_empty() || value.len() > MAX_FIELD || value.chars().any(char::is_control) {
+    if value.is_empty() || value.chars().any(char::is_control) {
         return Err(Error::InvalidConfig("invalid run Signal field".into()));
     }
     Ok(())
 }
 
 fn validate_questions(questions: &[RunAskQuestion]) -> Result<()> {
-    if questions.is_empty() || questions.len() > MAX_ASKS {
+    if questions.is_empty() {
         return Err(Error::InvalidConfig("invalid ask questions".into()));
     }
     let mut recipients = std::collections::HashSet::new();
     for question in questions {
         field(&question.who)?;
         field(&question.prompt)?;
-        if !recipients.insert(&question.who) || question.options.len() > 16 {
+        if !recipients.insert(&question.who) {
             return Err(Error::InvalidConfig("invalid ask question".into()));
         }
         for option in &question.options {
@@ -132,6 +131,20 @@ fn validate_questions(questions: &[RunAskQuestion]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A run ask's rows, as `tasks.ask` measures its own: its recipients (one
+/// per question), each question's options and its longest option text. A
+/// crossing asks whether everything is okay; the ask is kept either way.
+fn measure_questions(watch: &LimitWatch, questions: &[RunAskQuestion]) {
+    let measured = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+    watch.measure(EngineLimit::AskRecipients, measured(questions.len()));
+    for question in questions {
+        watch.measure(EngineLimit::AskOptions, measured(question.options.len()));
+        if let Some(longest) = question.options.iter().map(String::len).max() {
+            watch.measure(EngineLimit::AskOptionTextBytes, measured(longest));
+        }
+    }
 }
 
 fn live(state: AttemptState) -> bool {
@@ -183,9 +196,7 @@ impl RunTreeAdapter<'_> {
             }
             return Ok(existing.clone());
         }
-        if record.asks.len() >= MAX_ASKS {
-            return Err(Error::InvalidConfig("ask inbox full".into()));
-        }
+        measure_questions(&self.vault.store.limit_watch, &questions);
         let ask = RunAsk {
             handle: handle.into(),
             questions,
@@ -245,9 +256,6 @@ impl RunTreeAdapter<'_> {
         }
         if !live(record.state) {
             return Err(Error::InvalidConfig("Signal branch not live".into()));
-        }
-        if record.signals.len() >= MAX_SIGNALS {
-            return Err(Error::InvalidConfig("Signal inbox full".into()));
         }
         if matches!(input.kind, RunSignalKind::Cancel { .. }) {
             let pending = record
@@ -529,9 +537,6 @@ impl RunTreeAdapter<'_> {
 
 /// Corrupted persisted intent data fails at the read door, not just admission.
 pub(crate) fn validate_signal_rows(record: &crate::attempt_queue::AttemptRecord) -> Result<()> {
-    if record.signals.len() > MAX_SIGNALS || record.asks.len() > MAX_ASKS {
-        return Err(Error::InvalidConfig("invalid Signal inbox size".into()));
-    }
     let mut keys = std::collections::HashSet::new();
     for signal in &record.signals {
         field(&signal.key)?;

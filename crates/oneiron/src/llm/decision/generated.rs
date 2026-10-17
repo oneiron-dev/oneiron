@@ -7,7 +7,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::ladder::{OpenPack, ProviderDecision, Read, asked, joined, take, validate_pin};
+use super::ladder::{
+    OpenPack, PairedAnswer, ProviderDecision, Read, asked, joined, take, validate_pin,
+};
 use super::types::invalid;
 use super::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionPack,
@@ -85,11 +87,12 @@ enum Reply {
 impl DecisionLadder<'_> {
     /// [`Self::run_pack`] with the generated read as the dial's first rung, in place of
     /// that slot's provider. Each request asks the questions (the person's last, when the
-    /// dial reaches the person) over the call's state, and the reply gives a probability
-    /// per label; a question it leaves out, or answers with no weight, abstains, and so does
-    /// every question on the step's deterministic fallback. A step that traps, refuses or
-    /// fails, and a raw request the backend fails or the guard does not admit, returns to the
-    /// caller as its own outcome; it is not a decision.
+    /// dial reaches the person) over the call's state, with the ladder's paired question
+    /// beside each of the call's, and the reply gives a probability per label and the
+    /// paired P(yes) per question; a question it leaves out, or answers with no weight,
+    /// abstains, and so does every question on the step's deterministic fallback. A step
+    /// that traps, refuses or fails, and a raw request the backend fails or the guard does
+    /// not admit, returns to the caller as its own outcome; it is not a decision.
     #[expect(
         clippy::too_many_arguments,
         reason = "the generated rung joins run_pack's inputs"
@@ -201,7 +204,15 @@ impl DecisionLadder<'_> {
                     .map(Some),
             );
         }
-        let decisions = self.close(&pack, first, readings)?;
+        // The escalation past the first read asks the host's synchronous seats,
+        // which block on the host's runtime; a thread driving this future (the
+        // Dreamer's) cannot enter it, so the close runs on its own thread.
+        let decisions = std::thread::scope(|scope| {
+            scope
+                .spawn(move || self.close(&pack, first, readings))
+                .join()
+        })
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
         Ok(GeneratedDecisions::Decided {
             decisions,
             steps: spent.clone(),
@@ -217,7 +228,8 @@ async fn read(
     steps: &mut Vec<([u8; 32], LlmUsage)>,
 ) -> DurableStepResult<Reply> {
     let asked = asked(call, pack.person);
-    let request = (rung.seal)(request(rung.request.clone(), &asked, call.state))?;
+    let paired = pack.paired.map(|paired| (paired, call.questions));
+    let request = (rung.seal)(request(rung.request.clone(), &asked, paired, call.state))?;
     let hash = request.canonical_hash()?;
     let response = match rung.step {
         GeneratedStep::Durable { step, guard } => {
@@ -236,9 +248,10 @@ async fn read(
         },
     };
     steps.push((hash, response.usage.clone()));
-    Ok(Reply::Answers(answers(&response, &asked).and_then(
-        |answers| joined(answers, call.questions.len(), pack.person),
-    )))
+    Ok(Reply::Answers(
+        answers(&response, &asked, pack.paired)
+            .and_then(|answers| joined(answers, call.questions.len(), pack.person)),
+    ))
 }
 
 /// `request` on the raw seam under its own admission on `guard`, settled on what it spent.
@@ -278,8 +291,15 @@ impl Drop for Reserved<'_> {
 
 /// `shell` asking `asked` over `state`: after the host's own messages, one user turn names
 /// each question by id with its text and labels beside the state, and the answer format is
-/// a weight per label for each question id.
-fn request(mut shell: LlmRequest, asked: &[&DecisionQuestion], state: &Value) -> LlmRequest {
+/// a weight per label for each question id. With `paired`, the turn also names the paired
+/// question, and the format adds its P(yes) for each of the questions it pairs (Q2, asked
+/// in the same generation on the same state).
+fn request(
+    mut shell: LlmRequest,
+    asked: &[&DecisionQuestion],
+    paired: Option<(&DecisionQuestion, &[&DecisionQuestion])>,
+    state: &Value,
+) -> LlmRequest {
     let mut properties = Map::new();
     let questions: Vec<Value> = asked
         .iter()
@@ -306,6 +326,33 @@ fn request(mut shell: LlmRequest, asked: &[&DecisionQuestion], state: &Value) ->
             json!({"id": question.id.to_hex(), "question": question.text, "labels": labels})
         })
         .collect();
+    let mut turn = Map::new();
+    turn.insert("questions".into(), Value::Array(questions));
+    if let Some((paired, of)) = paired {
+        let each: Map<String, Value> = of
+            .iter()
+            .map(|question| {
+                (
+                    question.id.to_hex(),
+                    json!({"type": "number", "minimum": 0, "maximum": 1}),
+                )
+            })
+            .collect();
+        properties.insert(
+            paired.id.to_hex(),
+            json!({
+                "type": "object",
+                "description": "For each question id, the probability that this paired question's answer about it is yes.",
+                "properties": each,
+                "additionalProperties": false,
+            }),
+        );
+        turn.insert(
+            "paired".into(),
+            json!({"id": paired.id.to_hex(), "question": paired.text}),
+        );
+    }
+    turn.insert("state".into(), state.clone());
     shell.envelope.response_format = ResponseFormat::Json {
         schema: json!({
             "type": "object",
@@ -324,7 +371,7 @@ fn request(mut shell: LlmRequest, asked: &[&DecisionQuestion], state: &Value) ->
     shell.messages.push(LlmMessage {
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
-            text: json!({"questions": questions, "state": state}).to_string(),
+            text: Value::Object(turn).to_string(),
         }],
     });
     shell
@@ -339,8 +386,13 @@ fn labels_of(question: &DecisionQuestion) -> Vec<&str> {
 
 /// Each asked question's answer from `response`: the label with the most weight (the first
 /// wins a tie, so a tied noul reads yes) at its share of the question's weight. A noul's
-/// probability is P(yes), whichever way it reads.
-fn answers(response: &LlmResponse, asked: &[&DecisionQuestion]) -> Result<Vec<ProviderDecision>> {
+/// probability is P(yes), whichever way it reads. `paired`'s reading for a question is the
+/// P(yes) the reply gives it there; a missing or out-of-range one is no reading.
+fn answers(
+    response: &LlmResponse,
+    asked: &[&DecisionQuestion],
+    paired: Option<&DecisionQuestion>,
+) -> Result<Vec<ProviderDecision>> {
     let text: String = response
         .message
         .content
@@ -352,9 +404,21 @@ fn answers(response: &LlmResponse, asked: &[&DecisionQuestion]) -> Result<Vec<Pr
         .collect();
     let reply: Value = serde_json::from_str(text.trim())
         .map_err(|_| invalid("generated decision read is not JSON"))?;
+    let paired = paired.map(|paired| (paired, reply.get(paired.id.to_hex())));
     Ok(asked
         .iter()
         .map(|question| {
+            let paired = paired.and_then(|(paired, each)| {
+                each?
+                    .get(question.id.to_hex())
+                    .and_then(Value::as_f64)
+                    .filter(|probability| (0.0..=1.0).contains(probability))
+                    .map(|probability| PairedAnswer {
+                        question: paired.id,
+                        question_version: paired.version,
+                        probability,
+                    })
+            });
             let labels = labels_of(question);
             let weights: Option<Vec<f64>> = labels
                 .iter()
@@ -371,7 +435,7 @@ fn answers(response: &LlmResponse, asked: &[&DecisionQuestion]) -> Result<Vec<Pr
                 return ProviderDecision {
                     answer: DecisionAnswer::Abstain,
                     probability: None,
-                    paired: None,
+                    paired,
                     person: None,
                 };
             };
@@ -390,7 +454,7 @@ fn answers(response: &LlmResponse, asked: &[&DecisionQuestion]) -> Result<Vec<Pr
             ProviderDecision {
                 answer,
                 probability: Some((weight / total).clamp(0.0, 1.0)),
-                paired: None,
+                paired,
                 person: None,
             }
         })

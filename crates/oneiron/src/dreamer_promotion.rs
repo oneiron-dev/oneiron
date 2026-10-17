@@ -65,6 +65,8 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -291,11 +293,15 @@ fn promote_one(
     let mut envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
-        WriteProvenance::new(promotion_provenance(
-            run,
-            &candidate.provenance_chain,
-            import_review.as_deref(),
-        ))
+        WriteProvenance::new(
+            promotion_provenance(
+                run,
+                &candidate.provenance_chain,
+                import_review.as_deref(),
+                &candidate.decisions,
+            )
+            .map_err(|error| error.to_string())?,
+        )
         .map_err(|error| error.to_string())?,
         // Auto for every native candidate (ARCH-0067 §7). The gate may still
         // refuse; it may never turn this into an owner-review row.
@@ -314,6 +320,30 @@ fn promote_one(
             envelope.lineage().clone(),
         );
     }
+
+    // Rule A: the claim is concluded from the evidence that survived
+    // admission, the head it supersedes and the MESSAGEs its evidence cites,
+    // the first MAX_BIRTH_INPUTS of them, taken before `surviving` moves.
+    let birth = {
+        let cited = verified
+            .map(VerifiedEvidenceSet::cited_messages)
+            .unwrap_or_default();
+        let inputs: Vec<EntityId> = surviving
+            .iter()
+            .chain(&candidate.supersedes)
+            .chain(&cited)
+            .copied()
+            .take(MAX_BIRTH_INPUTS)
+            .collect();
+        RowBirth::written(
+            run.agent_actor,
+            MadeByClass::Concluded,
+            "dreamer.promotion",
+            &inputs,
+            &[],
+            candidate.learned_at,
+        )
+    };
 
     // Surviving evidence + the typed chain + the computed meet ride the
     // candidate's structured evidence payload: the envelope evidence map's
@@ -460,6 +490,16 @@ fn promote_one(
             #[cfg(test)]
             crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Promotion);
         }
+        // Both write paths reach here; a replayed attempt keeps the claim's
+        // first birth.
+        if let Some(birth) = &birth {
+            crate::provenance::birth::stamp_birth_if_absent_in_txn(
+                &vault.store,
+                wtxn,
+                &candidate.claim_id,
+                birth,
+            )?;
+        }
         // The MESSAGE words the evidence names become this claim's
         // dependencies in the claim's own transaction.
         match verified {
@@ -548,7 +588,8 @@ fn promotion_provenance(
     run: &DreamerRunContext,
     chain: &[ConsolidationProvenanceHop],
     import_review: Option<&str>,
-) -> Value {
+    decisions: &[crate::dreamer_consolidation::KeptDecision],
+) -> Result<Value> {
     let mut entries = vec![
         (
             Value::from("surface"),
@@ -592,11 +633,21 @@ fn promotion_provenance(
             Value::from(review),
         ));
     }
-    Value::Map(entries)
+    if !decisions.is_empty() {
+        entries.push((
+            Value::from(PROMOTION_PROVENANCE_DECISIONS_KEY),
+            crate::dreamer_consolidation::kept_decisions_value(decisions)?,
+        ));
+    }
+    Ok(Value::Map(entries))
 }
 
 /// Envelope-provenance key carrying the typed consolidation lineage.
 pub const PROMOTION_PROVENANCE_CHAIN_KEY: &str = "peer_answer_chain";
+
+/// Envelope-provenance key carrying the typed decisions behind a Dreamer
+/// write (ARCH-0076): each whole decision, and the ask it went up as.
+pub const PROMOTION_PROVENANCE_DECISIONS_KEY: &str = "decisions";
 
 /// Re-reads a landed claim and checks it is the claim we wrote. A missing
 /// or mismatched read moves the candidate to `rejected`. The source is

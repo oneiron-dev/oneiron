@@ -137,6 +137,13 @@ pub fn summary_exceeds_window(tokens: u64, window_tokens: u64) -> String {
     format!("{SUMMARY_GROUP_EXCEEDS_WINDOW} tokens={tokens} window_tokens={window_tokens}")
 }
 
+/// The reason a summary whose members hold `bytes`, past the `max_bytes`
+/// its window reads before any token is counted, settles with.
+#[must_use]
+pub fn summary_exceeds_window_bytes(bytes: u64, max_bytes: u64) -> String {
+    format!("{SUMMARY_GROUP_EXCEEDS_WINDOW} bytes={bytes} max_bytes={max_bytes}")
+}
+
 /// How hard one `summarize` works.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -178,11 +185,16 @@ impl SummarizeRecipe {
         }
     }
 
-    /// The recipe's bytes, as its memo key hashes them.
+    /// The recipe's bytes, as its memo key hashes them: its version, its
+    /// effort and the digest of the prompt it renders, so a summary made by
+    /// other words is never a hit for these, whether or not the version
+    /// moved with them.
     #[must_use]
     pub fn key_bytes(&self) -> Vec<u8> {
         let mut bytes = self.version.to_be_bytes().to_vec();
         bytes.extend_from_slice(self.effort.as_str().as_bytes());
+        let prompt = super::reader_fold::summarize_prompt(self);
+        bytes.extend_from_slice(blake3::hash(prompt.as_bytes()).as_bytes());
         bytes
     }
 }

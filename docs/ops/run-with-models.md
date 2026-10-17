@@ -121,8 +121,14 @@ the list says so; a `local-openai-compat` provider declares `streaming`, `json_r
 model's own list in place of `capabilities`, keyed by the model's name, so
 two models on one provider can differ: `model_capabilities = { "gpt-audio" =
 ["streaming", "audio_input"] }`; the Big rung hears a clip only on a model
-whose list has `audio_input`),
-`locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
+whose list has `audio_input`), `family` (the line of models one developer
+trains, for every model on the provider; unset, a model's family is unknown,
+never read off the provider's name), `model_families` (one wire model's own
+family in place of `family`: `model_families = { "claude-opus-5-5" = "claude",
+"gpt-6.1" = "gpt" }`; a judge's tie-breaker is asked only of a model whose
+family neither judge has),
+`locality` (`own_server` or `third_party`), `revision` (`live`) and
+`responses_socket` (below). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
 
@@ -169,6 +175,15 @@ A `key_secret` provider answers whole chat replies only for now: a streamed chat
 call to it is refused before it starts. Its media calls go through the same
 broker (§10).
 
+A managed vault (`serve --managed-by-hypnos`) reads no config file and no
+environment. Its supervisor passes the models table as `--models-file <path>`.
+The path is absolute and names a TOML file that holds only the `[models]`
+table, written as above. Relative `prompt_file` paths resolve beside it. Every
+provider there names its key with `key_secret`; a `key_env` provider or a
+`[models.decisions.system_one]` seat (whose bearer is an environment variable)
+stops the vault at start. Without the flag a managed vault runs with no model
+seats: its ladder is the rule table and the owner's asks.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
@@ -183,6 +198,21 @@ OpenAI-compatible endpoint reads it from `max_tokens` unless
 `output_limit_field = "max_completion_tokens"` says otherwise (some hosted
 reasoning models accept only that one). An Anthropic-compatible call always
 carries `max_tokens`, 4096 when nothing else names it.
+
+An `openai-compat` provider at `https://api.openai.com` or `https://api.x.ai`
+runs each call as one Responses turn on a held WebSocket at its
+`/v1/responses`. A call whose conversation extends the last response that
+socket finished sends only the new items, with `previous_response_id` and
+`store = false`; any other call sends the whole conversation. A socket is
+replaced 5 minutes before its age limit (60 minutes at OpenAI, 59 at xAI).
+Idle sockets wait 10 minutes for a next turn, at most 8 per provider. A
+call whose socket will not open, or that carries audio, goes out over
+`/v1/chat/completions` as before. An upgrade refused with a 4xx (other than
+408 or 429) keeps that provider on HTTP until restart. Set
+`responses_socket = false` to keep a provider on HTTP. Any other origin, a CPA
+route say, holds a socket when its entry sets `responses_socket = true` (a
+59-minute limit) or `responses_socket = { max_age_secs = 3600 }`. A
+`key_secret` provider stays on HTTP: the credential broker runs no socket yet.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
@@ -485,6 +515,30 @@ summary. A mark that fails its pass keeps why and waits for the next
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
 
+A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
+field's value, never as its value. `describe("sc12")` says what it names,
+where it was found and whether a reveal would deliver at once, ask the owner
+or be refused. `reveal({handle, why})` returns a pending reveal every time,
+and `wait(pending)` answers `pending`, `denied`, `expired` or `granted`. The
+first `granted` answer carries the value as `value` (or `value_base64`), and
+later ones carry only the receipt. The run's record keeps that answer without
+the value, so a resumed step must reveal again. The rows are `reveal`,
+`reveal.wait` and `reveal.describe` on every other door too.
+
+A run can also hand a secret to a trusted operation without reading it:
+`self.use({handle, operation, arguments})`. The operation presents the value
+at its own door and the run reads only what came back, with each copy of the
+value replaced by the handle. The v1 operations are the read-only provider
+checks `slack.auth_test`, `line.bot_info`, `gmail.profile` and
+`linkedin.session`, each answering the account the credential belongs to. The
+only grant is the secret's binding for the operation's effector (such as
+`connector:slack`): there is no ask, and a reveal's grant does not reach it. A
+secret the mask on write found has no binding, so `self.use` refuses it and
+names the owner door that adds one. Every use, and every refused one, leaves a
+Gate record with the handle, generation, effector, operation and send status.
+When the host's model ladder served the turn, each verb call the turn's
+program makes carries the provider that answered it.
+
 ### Reader children, summaries and fold receipts
 
 A run reads a result too big for its window with reader children
@@ -703,6 +757,7 @@ model = "house:qwen3.8-27b"
 recipe = "prompts/decision-read/recipe.toml"   # your prompt package; relative to this file
 max_response_bytes = 67108864                  # one answer body (the default, 64 MiB)
 person_threshold = 0.9                         # the PersonThreshold row's start value
+think_threshold = 0.8                          # the ThinkThreshold row's start value
 ```
 
 The recipe is yours, not the server's (`format = 3`): it names the plain
@@ -780,6 +835,16 @@ stays rare (0.9 asked nobody on test 5's held-out set) until the Coach tunes
 it from the cases where a person changed the answer. A host passes it to
 `DecisionBandPolicy::set_person_threshold`. Without the row, the person
 reading is recorded on every receipt and routes nothing.
+
+`think_threshold` starts the ThinkThreshold row: a paired "does this need
+more thinking?" reading (Q2) at or above it lets the call step up a rung
+while its clock allows (`ReasoningCause::PairedHigh`). The house read
+measures Q2 jointly with each question's labels. A generated read (a
+caller's own model, `DecisionLadder::run_pack_generated`) asks the ladder's
+paired question, the recipe's `paired` wording, beside each of its questions
+in the same generation, and reads its P(yes) per question. A host passes the
+value to `DecisionBandPolicy::set_think_threshold`. A door a host builds
+itself has no row, so its Q2 readings stay on the receipt and route nothing.
 
 "Ask a person?" asks for escalation, not for an actor. Who the ask goes to is
 the caller's: it sets `DecisionLadder.ask_to` to an `AskTo` (the role asked,
@@ -946,10 +1011,11 @@ The verbs, each the owner's and checked against the vault's inference policy:
 - `POST /v1/ai/video` answers `202` with a job ticket; `GET
   /v1/ai/video/{job}` polls it, and `DELETE` stops it or drops it once it
   ended. A job's permit is held while it renders and settled when it ends.
-  The server keeps each job in the vault: a restart loses none (the next
-  poll takes a running job up again on a fresh permit, and sends nothing
-  again), and a finished job answers with its clip on every poll, a lost
-  reply's included, until it is deleted.
+  The server keeps each job in the vault: a restart loses none (the server
+  takes each running job up again as it starts, on a fresh permit, and sends
+  nothing again; a job it could not take up is retried on its next poll),
+  and a finished job answers with its clip on every poll, a lost reply's
+  included, until it is deleted.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
@@ -1398,8 +1464,10 @@ bind:
   it holds no row for, so the call goes to the next rung.
 - **System One**: the seat `[models.decisions.system_one]` binds (below).
 - **Escalation**: the house model's decision read (section 9), when its
-  recipe names the paired question. The recipe's person question becomes the
-  ladder's "ask up?" question, and `person_threshold` becomes its row.
+  recipe names the paired question. The recipe's paired question becomes the
+  ladder's "need more thinking?" question, and `think_threshold` its row; its
+  person question becomes the ladder's "ask up?" question, and
+  `person_threshold` becomes its row.
 - **Big**: the big model, through the seat `[models.decisions.big]` names
   (below).
 - **The local head**: no typed provider fills it yet, so the ladder steps

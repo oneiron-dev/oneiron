@@ -103,6 +103,76 @@ pub struct PromotionCandidate {
     pub evidence_meet: ClaimSource,
     pub occurred: TimeRange,
     pub learned_at: u64,
+    /// The typed decisions that shaped it (ARCH-0076): the correction read
+    /// that bound it, the conflict pack that merged or kept it. The promotion
+    /// writer keeps them in the claim's provenance. Empty when none was asked.
+    pub decisions: Vec<KeptDecision>,
+}
+
+/// One typed question's decision as a consolidation write keeps it: the
+/// ladder's whole decision (all three answers, its pins, evidence versions,
+/// principal and clock) and, when it went up the role chain, that ask.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeptDecision {
+    pub decision: crate::llm::decision::TypedDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<KeptAsk>,
+}
+
+/// The ask a decision went up as: its arrival number, the route the Dreamer
+/// bound, and the holder's answer once one landed (who, as which role, person
+/// or agent). A request never reads as a grant.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeptAsk {
+    pub seq: u64,
+    pub to: crate::llm::decision::AskTo,
+    pub answer: Option<crate::llm::decision::AskAnswer>,
+}
+
+impl KeptDecision {
+    /// The answer the Dreamer acts on: the holder's when the decision went up
+    /// the role chain, the ladder's otherwise. None while the ask waits.
+    #[must_use]
+    pub fn answer(&self) -> Option<&crate::llm::decision::DecisionAnswer> {
+        match &self.ask {
+            Some(ask) => ask.answer.as_ref().map(|answer| &answer.answer),
+            None => Some(&self.decision.answer),
+        }
+    }
+
+    /// How sure the answer acted on is: a holder's answer is the answer.
+    #[must_use]
+    pub fn probability(&self) -> Option<f64> {
+        match &self.ask {
+            Some(ask) => ask.answer.as_ref().map(|_| 1.0),
+            None => self.decision.probability,
+        }
+    }
+
+    /// Whether the work this decides waits on a role's answer.
+    #[must_use]
+    pub fn waiting(&self) -> bool {
+        self.answer().is_none()
+    }
+}
+
+/// `incoming` joined onto `kept`, each decision once.
+pub(crate) fn join_decisions(kept: &mut Vec<KeptDecision>, incoming: &[KeptDecision]) {
+    for decision in incoming {
+        if !kept.contains(decision) {
+            kept.push(decision.clone());
+        }
+    }
+}
+
+/// `decisions` as the provenance value a consolidation write keeps.
+pub(crate) fn kept_decisions_value(decisions: &[KeptDecision]) -> Result<Value> {
+    let encoded = rmp_serde::to_vec_named(decisions)
+        .map_err(|_| invalid_consolidation("kept decisions do not encode"))?;
+    rmpv::decode::read_value(&mut encoded.as_slice())
+        .map_err(|_| invalid_consolidation("kept decisions do not decode"))
 }
 
 /// The structured evidence payload a promoted consolidation claim stores:

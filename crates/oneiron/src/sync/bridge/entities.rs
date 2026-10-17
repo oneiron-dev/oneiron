@@ -46,6 +46,15 @@ pub(super) fn materialize_entities_from_delta(
         .then(Vec::new)
 }
 
+/// Whether the doc's entities map now holds another binary carrier under
+/// `key` than the `blob` a delta brought.
+fn carrier_superseded(carriers: &loro::LoroMap, key: &str, blob: &[u8]) -> bool {
+    matches!(
+        carriers.get(key),
+        Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(current))) if current[..] != *blob
+    )
+}
+
 /// Revision receipts are retained only after the nested savepoint and outer
 /// materialization transaction have both committed.
 pub(super) fn materialize_entities_with_changes(
@@ -102,6 +111,7 @@ pub(super) fn materialize_entities_with_changes(
                 },
             },
         );
+        let carriers = doc.get_map("entities");
         for (key, new_val) in updates {
             let value = match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
@@ -113,6 +123,16 @@ pub(super) fn materialize_entities_with_changes(
                 // refuses it as an undecodable remote op.
                 Some(_) => None,
             };
+            // The live mirror can write a local edit of this row over the
+            // value this delta brought, after the import and before this
+            // callback took the materializer lock. LMDB already holds what
+            // the doc holds now, so the older value is not replayed over it;
+            // a later import's own delta carries anything newer.
+            if let Some(blob) = value
+                && carrier_superseded(&carriers, key.as_ref(), blob)
+            {
+                continue;
+            }
             let previous_revision = EntityId::from_hex(key.as_ref())
                 .ok()
                 .map(|id| revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live))
@@ -120,13 +140,7 @@ pub(super) fn materialize_entities_with_changes(
                 .flatten();
             let unborn = match EntityId::from_hex(key.as_ref()) {
                 Ok(id) if watches(vault, &id) => {
-                    crate::ports::EntityStoreRead::port_entity_with_raw(
-                        &vault.store,
-                        wtxn,
-                        &id,
-                        |_| Ok(()),
-                    )?
-                    .is_none()
+                    !crate::ports::EntityStoreRead::port_entity_present(&vault.store, wtxn, &id)?
                 }
                 _ => false,
             };

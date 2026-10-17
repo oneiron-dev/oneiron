@@ -272,6 +272,25 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;
     let unlock = vault_key::HostUnlock::read(&args, backup)?;
+    let restored = restore_unlocked(&args, &config, backup, keystore, &unlock);
+    // A registry capsule's recipient secret was released into this process,
+    // whether or not the restore went through (CROSS-ARCH-0022
+    // #ov-custody-backend).
+    if let Some(note) = unlock.released_note() {
+        eprintln!("{note}");
+    }
+    restored
+}
+
+/// The restore once its unlock is read: a new vault where none is, else a
+/// rehearsal or a restore over the vault.
+fn restore_unlocked(
+    args: &RestoreArgs,
+    config: &ServeConfig,
+    backup: &Path,
+    keystore: Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
+    unlock: &vault_key::HostUnlock,
+) -> anyhow::Result<()> {
     let pins = args
         .trust
         .as_deref()
@@ -279,10 +298,10 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         .transpose()?;
     if !args.rehearse && !config.vault_path.join("data.mdb").exists() {
         return emit(&vault_key::restore_fresh(
-            backup, &config, keystore, &unlock, pins,
+            backup, config, keystore, unlock, pins,
         )?);
     }
-    let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), &unlock, pins)?;
+    let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
         let mut source =
@@ -293,16 +312,16 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         let scratch = args.scratch.as_deref();
         return emit(&match key {
             Some(key) => {
-                backup::rehearse_keyed(backup, vault_config(&config), scratch, &source, key)?
+                backup::rehearse_keyed(backup, vault_config(config), scratch, &source, key)?
             }
-            None => backup::rehearse(backup, vault_config(&config), scratch, &source)?,
+            None => backup::rehearse(backup, vault_config(config), scratch, &source)?,
         });
     }
     emit(&match key {
         Some(key) => {
-            backup::restore_over_keyed(backup, &config.vault_path, vault_config(&config), key)?
+            backup::restore_over_keyed(backup, &config.vault_path, vault_config(config), key)?
         }
-        None => backup::restore_over(backup, &config.vault_path, vault_config(&config), keystore)?,
+        None => backup::restore_over(backup, &config.vault_path, vault_config(config), keystore)?,
     })
 }
 
@@ -549,8 +568,10 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
     match command {
         SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
         SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
-        // `run_cli` sends revoke straight to `revoke_secret`, before the read.
+        // `run_cli` sends revoke and reveal straight to their doors, before
+        // the read.
         SecretsCommand::Revoke(args) => revoke_secret(*args),
+        SecretsCommand::Reveal(args) => reveal_secret(*args),
         SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value)?),
     }
 }
@@ -647,6 +668,48 @@ pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
     let vault = open_vault(&config, "POST /v1/owner/secrets/revoke --data -")?;
     let owner = local_owner(&vault)?;
     emit(&secrets::revoke(&vault, &owner, &args.name)?)
+}
+
+/// Reads a secret's value through the engine door `POST /v1/owner/secrets/reveal`
+/// uses, as the local owner, with the reason its receipt keeps (OF-560). The
+/// value goes to stdout exactly as held, unbuffered, and the receipt to
+/// stderr. It reads nothing from stdin.
+pub fn reveal_secret(args: crate::cli::SecretRevealArgs) -> anyhow::Result<()> {
+    use oneiron::secret_custody::RevealTarget;
+    let target = match (args.handle, args.name) {
+        (Some(handle), None) => RevealTarget::Handle(handle),
+        (None, Some(name)) => RevealTarget::Name(name),
+        _ => anyhow::bail!("name the secret by exactly one of --handle or --name"),
+    };
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/reveal --data -")?;
+    let owner = local_owner(&vault)?;
+    let revealed = vault.reveal_secret_as_owner(&owner, &target, &args.reason)?;
+    let receipt = &revealed.receipt;
+    let receipt_ref = receipt
+        .decision
+        .map(|decision| format!("gate:{}", decision.to_hex()))
+        .unwrap_or_default();
+    eprintln!(
+        "revealed {} ({}); reveal {}, receipt {receipt_ref}",
+        receipt.handle,
+        receipt.class.as_str(),
+        receipt.reveal.to_hex(),
+    );
+    let mut stdout = raw_stdout()?;
+    stdout.write_all(&revealed.value)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Stdout's own file, unbuffered, so a value written to it is copied through
+/// no process-wide buffer that is never wiped.
+fn raw_stdout() -> io::Result<std::fs::File> {
+    #[cfg(unix)]
+    let owned = std::os::fd::AsFd::as_fd(&io::stdout()).try_clone_to_owned()?;
+    #[cfg(windows)]
+    let owned = std::os::windows::io::AsHandle::as_handle(&io::stdout()).try_clone_to_owned()?;
+    Ok(std::fs::File::from(owned))
 }
 
 /// Signs a portable secret's current custody transition with the owner
@@ -749,7 +812,32 @@ struct ImportedArchive {
     unchanged_secrets: usize,
     /// Secrets the archive carried as handles only: re-enter each one.
     missing_secrets: Vec<String>,
+    embedding_setup: ImportedEmbeddingSetup,
 }
+
+/// What the archive's embedding setup did (OF-370): descriptors only, so a
+/// stopped vault's media vectors wait for `serve` or the host's own backfill.
+#[derive(Serialize)]
+struct ImportedEmbeddingSetup {
+    /// [`EMBEDDING_SETUP_IMPORTED`] when the archive carried any setup.
+    status: Option<&'static str>,
+    declared_spaces: Vec<String>,
+    unchanged_spaces: Vec<String>,
+    /// Spaces this vault declares otherwise under the same id; its own stay.
+    conflicted_spaces: Vec<String>,
+    bound_slots: Vec<oneiron::embed::InputKind>,
+    unchanged_slots: Vec<oneiron::embed::InputKind>,
+    /// Slots this vault binds otherwise, or cannot bind as the archive did;
+    /// its own stay.
+    conflicted_slots: Vec<oneiron::embed::InputKind>,
+    /// Setup the export withheld as credential-shaped: spaces by count.
+    withheld_spaces: u64,
+    withheld_slots: Vec<oneiron::embed::InputKind>,
+}
+
+/// The archive import's embedding setup status: the setup came in, its
+/// vectors did not.
+const EMBEDDING_SETUP_IMPORTED: &str = "setup imported; vectors pending recompute";
 
 /// Re-imports a whole-vault archive through the vault's import doors.
 fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
@@ -760,6 +848,10 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
     let receipt = vault
         .import_whole_vault_archive(&bytes)
         .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?;
+    let setup = receipt.embedding_setup;
+    let status = setup
+        .vectors_pending_recompute()
+        .then_some(EMBEDDING_SETUP_IMPORTED);
     emit(&ImportedArchive {
         inserted_entities: receipt.inserted_entities,
         unchanged_entities: receipt.unchanged_entities,
@@ -774,6 +866,17 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
             .into_iter()
             .map(|secret| secret.name)
             .collect(),
+        embedding_setup: ImportedEmbeddingSetup {
+            status,
+            declared_spaces: setup.declared_spaces,
+            unchanged_spaces: setup.unchanged_spaces,
+            conflicted_spaces: setup.conflicted_spaces,
+            bound_slots: setup.bound_slots,
+            unchanged_slots: setup.unchanged_slots,
+            conflicted_slots: setup.conflicted_slots,
+            withheld_spaces: setup.withheld.spaces,
+            withheld_slots: setup.withheld.slots,
+        },
     })
 }
 

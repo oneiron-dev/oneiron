@@ -62,10 +62,14 @@ side_tables! {
     /// Where a mask on write found the secret one custody record holds: the record, the field and
     /// the key's kind (OF-560). Key: id16 (custody record id).
     SECRET_MASK_ORIGIN: VaultMeta b"secret_mask:origin:v1:" Named Custody;
-    /// A file stored with keys in it: each key's span in its bytes and the custody record that
-    /// holds it, and its band (OF-560, owner ruling G04 binary = C2). Key: hash32 (blake3 of the
-    /// stored bytes).
+    /// A file stored with keys in it: each key's span in its bytes, or in a container member it
+    /// holds (OF-067 C), the custody record that holds it, and its band (OF-560, owner ruling G04
+    /// binary = C2). Key: hash32 (blake3 of the stored bytes).
     SECRET_MASK_SPANS: VaultMeta b"secret_mask:spans:v1:" Named Custody;
+    /// One reveal of a secret's value by its handle: the agent's ask, the owner's answer and the
+    /// lease that delivered it, or the owner's own read with its reason (OF-560). Holds no value.
+    /// Key: id16 (reveal id).
+    SECRET_REVEAL: VaultMeta b"secret_reveal:v1:" Named;
     /// Durable attestation of one secret rotate-or-revoke op; carries no value bytes. Key:
     /// hex32(receipt id).
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;
@@ -77,6 +81,9 @@ side_tables! {
     SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
     /// Owner-reviewed T3 finding by family string, colon and diagnostic id16.
     SELF_HEAL_DISTILL: VaultMeta b"self_heal:distill:" Named;
+    /// The T2 the host's detector pass registered for one family from its reviewed T3 findings,
+    /// with the closed-form T1 that graduated it (OF-418). Key: the family string.
+    SELF_HEAL_MINTED: VaultMeta b"self_heal:minted:v1:" Named;
     /// Immutable attempt confession, audit draw and independently checked findings. Key: id16.
     SELF_HEAL_ATTEMPT_SEAL: VaultMeta b"self_heal:seal:v1:" Named;
     /// (diagnostic event id).
@@ -509,6 +516,9 @@ side_tables! {
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
+    /// A team deliverable's owner review: team, leader, root TASK, output revision, reviewed
+    /// claim fingerprint and what the review asks. Key: id16 (reviewed claim).
+    TEAM_DELIVERABLE: VaultMeta b"team:deliverable:v1:" Named;
     /// One run's market: signed referee, lease shares, central ledger, submissions and result.
     /// Key: string (team reference).
     TEAM_MARKET: VaultMeta b"team:market:v1:" Named;
@@ -518,6 +528,9 @@ side_tables! {
     /// One team run's receipt (type, pattern, models, shape, who decided, coverage, confessions,
     /// anchored outcome). Key: string (team reference).
     TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named;
+    /// One team start as the host saw it: stamp, leader, root TASK, queued members and widenings.
+    /// Key: string (leader attempt hex, `:`, team reference).
+    TEAM_RUN: VaultMeta b"team:run:v1:" Named;
     /// The pinned text analyzer manifest (JSON) and, under '_hash', its SHA-256. Key: string.
     TEXT_ANALYZER_MANIFEST: VaultMeta b"text_analyzer_manifest" Raw;
     /// BM25F field schema hash. Key: ().

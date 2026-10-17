@@ -90,6 +90,12 @@ pub struct HostSelfDispatcher<'a> {
     /// The host's planner (OF-541, OF-389): what a planned spawn and the
     /// leader's calls read. Host configuration; no guest call reaches it.
     pub(super) planner: Option<HostPlannerBinding<'a>>,
+    /// The model provider the host's ladder says answered the run's last
+    /// turn, whose program is the one running (OF-560). Host-internal: only
+    /// [`Self::observe_model_provider`] sets it, from the served receipt,
+    /// and every verb call's origin carries it. `None` when no ladder
+    /// stamped the turn.
+    pub(super) model_provider: RefCell<Option<String>>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -208,6 +214,7 @@ impl<'a> HostSelfDispatcher<'a> {
             reader_spawn: None,
             reader_child: None,
             planner: None,
+            model_provider: RefCell::new(None),
         })
     }
 
@@ -292,6 +299,18 @@ impl<'a> HostSelfDispatcher<'a> {
         self.observe_parked_hooks(bridge_calls);
     }
 
+    /// The HOST calls this with each turn's answer before its program runs:
+    /// the provider its ladder served the turn from, or `None` when no ladder
+    /// stamped it. Each verb call the program makes carries it on its origin.
+    pub(crate) fn observe_model_provider(&self, provider: Option<&str>) {
+        *self.model_provider.borrow_mut() = provider.map(str::to_owned);
+    }
+
+    /// The provider [`Self::observe_model_provider`] last recorded.
+    pub(super) fn model_provider(&self) -> Option<String> {
+        self.model_provider.borrow().clone()
+    }
+
     /// The bound session ref, or `None` for a canonical run.
     pub(crate) fn session_ref(&self) -> Option<&str> {
         self.storage.session_ref()
@@ -365,10 +384,12 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<SelfDispatchOutcome> {
         // A hook's view of an earlier call is never this call's.
         *self.hook_view.borrow_mut() = None;
-        // The descriptor bridge answers before the policy probe: that probe is
-        // itself a vault read, and `self.context` must perform none.
+        // The descriptor bridge answers before the policy probe and the door:
+        // a descriptor is no effect, so neither rules on it. Its own verb
+        // hooks run around it on canonical storage, reading as the run's
+        // actor; with none bound to it, it performs no read.
         if matches!(call, SelfCall::Context(_)) {
-            return self.dispatch_effect(call, site, None);
+            return self.dispatch_hooked(call, site, None);
         }
         // The halt rule and the door rule inside the bracket: a run whose
         // participant left the room hears `NotInRoom`, never their verdict.

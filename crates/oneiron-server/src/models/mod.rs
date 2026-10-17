@@ -38,6 +38,7 @@ mod declared;
 mod driven;
 #[cfg(test)]
 mod fallback_tests;
+mod family;
 mod forward;
 mod gemini_media;
 mod hosted_speech;
@@ -53,6 +54,7 @@ mod output_cap;
 mod raw;
 mod receipts;
 mod rerank;
+mod responses_socket;
 mod role_route;
 mod router;
 mod run_backend;
@@ -84,7 +86,7 @@ pub use router::ModelRouter;
 pub use run_backend::RunBackend;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 
-use catalog::{catalog_entry, engine_model_id, locality_rank};
+use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
 use offer::provider_offer;
 use output_cap::OutputCap;
@@ -297,6 +299,10 @@ impl ModelRuntime {
                                 model: ladder.model().clone(),
                                 ladder: Arc::downgrade(&ladder),
                             });
+                            router.chat_model(
+                                ladder.model().clone(),
+                                model_family(&model, provider).map(str::to_owned),
+                            );
                         }
                         router.insert(ladder.model().clone(), provider.locality, ladder);
                     }
@@ -541,14 +547,38 @@ fn build_provider(
     let backend: Arc<dyn SingleRouteBackend> = match provider.kind {
         ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
-            Arc::new(OpenAiCompatBackend::new(
+            let sockets = provider
+                .responses_socket
+                .map(|socket| {
+                    responses_socket::ResponsesSockets::new(
+                        provider,
+                        &http.url("/v1/responses"),
+                        socket.max_age_secs,
+                    )
+                })
+                .transpose()?;
+            let chat = OpenAiCompatBackend::new(
                 OpenAiCompatConfig::from_catalog(catalog),
                 openai::OpenAiHttp {
                     http,
                     cap: output_cap(provider),
                     response_format: provider.response_format,
                 },
-            ))
+            );
+            // A provider that serves Responses over a socket holds one by
+            // default (ARCH-0081 §5); its chat HTTP path is the fallback.
+            match sockets {
+                Some(sockets) => Arc::new(responses_socket::OpenAiSessions {
+                    chat,
+                    sockets,
+                    cap: OutputCap {
+                        field: "max_output_tokens",
+                        ..output_cap(provider)
+                    },
+                    response_format: provider.response_format,
+                }),
+                None => Arc::new(chat),
+            }
         }
         ProviderKind::AnthropicCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::ApiKeyHeader)?;

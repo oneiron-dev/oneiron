@@ -768,6 +768,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             tree,
             taint,
             substrate_ref,
+            unresolved: Vec::new(),
         };
         Ok(Ok((receipt, named)))
     }
@@ -1065,7 +1066,31 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             "executor result storage unavailable".into(),
         ))?;
         Ok(match self.checked_result(target)? {
-            Ok(read) => json!({"output": read.card(storage)?}),
+            Ok(read) => {
+                let mut card = read.card(storage)?;
+                // A whole fold result's card says what the fold covered, as
+                // its store's did: this step's receipt, or its committed one.
+                if read.range().is_none() {
+                    let output = read.output();
+                    let occurrence =
+                        OccurrenceRef::new(read.owner(), &output.path, &output.handle)?;
+                    let staged = self
+                        .receipts
+                        .iter()
+                        .find(|held| held.folded.occurrence == occurrence.occurrence)
+                        .cloned();
+                    let receipt = match staged {
+                        Some(receipt) => Some(receipt),
+                        None => storage.code_run_reader_fold(read.owner(), &output.path)?,
+                    };
+                    if let Some(receipt) =
+                        receipt.filter(|receipt| receipt.folded.handle == output.handle)
+                    {
+                        card["receipt"] = receipt.card();
+                    }
+                }
+                json!({ "output": card })
+            }
             Err(refused) => refused,
         })
     }

@@ -369,6 +369,7 @@ impl Vault {
         if let Some(old) = prior
             && old.content_hash != receipt.content_hash
         {
+            self.end_pack_setup_sessions_in_txn(txn, None, &old.pack_name, &old.content_hash)?;
             let from_version = self
                 .pack_source_in_txn(txn, &EntityId::from_hex(&old.source_id)?)?
                 .map(|old_source| old_source.manifest.version)

@@ -5,12 +5,14 @@
 //!
 //! Pinned: whether the agent reviews each read first, and the ruled readers
 //! of its sealed pads. Detail: each reader a `diary.read` Grant admits, then
-//! the newest logged reads and the review asks not yet spent. The rows read
-//! the engine's own reader list and read log
-//! ([`Memory::diary_reader_list`], [`Memory::diary_reads`]).
+//! the newest logged reads, each with what it opened (`diary` or `pad`), and
+//! the review asks not yet spent. A reader that is a person is named by its
+//! board mention, as TASKS names one. The rows read the engine's own reader
+//! list and read log ([`Memory::diary_reader_list`], [`Memory::diary_reads`]).
 
 use super::scratchpad::clip;
-use super::{BoardSection, SectionPolicy, ShedRank, quoted_leaf};
+use super::{BoardSection, PeopleView, SectionPolicy, ShedRank, quoted_leaf};
+use crate::EntityId;
 use crate::memory::{
     DiaryReadsRequest, DiaryReviewState, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult,
     SealedPadReader,
@@ -49,9 +51,19 @@ fn state_token(state: DiaryReviewState) -> &'static str {
     }
 }
 
+/// A Grant's reader as the board names it: its person's mention, else the
+/// ref the Grant holds.
+fn grant_reader_label(people: &PeopleView<'_>, actor_ref: &str) -> String {
+    EntityId::from_hex(actor_ref)
+        .ok()
+        .and_then(|id| people.mention(id))
+        .unwrap_or_else(|| quoted_leaf(actor_ref))
+}
+
 impl Memory<'_> {
-    /// The READERS block of this agent's board.
-    pub fn board_readers_section(&self) -> MemoryResult<BoardSection> {
+    /// The READERS block of this agent's board, naming each reader as
+    /// `people` names it.
+    pub fn board_readers_section(&self, people: &PeopleView<'_>) -> MemoryResult<BoardSection> {
         let list = self.diary_reader_list()?;
         let log = self.diary_reads(&DiaryReadsRequest {
             limit: Some(READS_SHOWN.max(ASKS_SHOWN)),
@@ -79,14 +91,15 @@ impl Memory<'_> {
                 };
                 format!(
                     "diary: {} class={class} {reach}",
-                    quoted_leaf(&reader.actor_ref)
+                    grant_reader_label(people, &reader.actor_ref)
                 )
             })
             .collect();
         rows.extend(log.reads.iter().take(READS_SHOWN as usize).map(|read| {
             format!(
-                "read: {} class={} at={} {}",
-                read.reader.to_hex(),
+                "read: {} source={} class={} at={} {}",
+                people.label(read.reader),
+                quoted_leaf(&read.source),
                 read.reader_class,
                 read.at,
                 quoted_leaf(clip(&read.reason, REASON_SHOWN_BYTES))
@@ -97,7 +110,7 @@ impl Memory<'_> {
                 "ask: {} {} {} {}",
                 ask.request.to_hex(),
                 state_token(ask.state),
-                ask.reader.to_hex(),
+                people.label(ask.reader),
                 quoted_leaf(clip(&ask.reason, REASON_SHOWN_BYTES))
             )
         }));

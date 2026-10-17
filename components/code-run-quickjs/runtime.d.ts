@@ -39,7 +39,7 @@ declare interface StoredResult {
   search(pattern: string, opts?: SearchOptions): Promise<SearchReply | WithheldReply>;
   query(q: string | QuerySelection): Promise<QueryReply | WithheldReply>;
   chunks(by: ChunkBy): ResultChunks;
-  describe(): Promise<StoredResult>;
+  describe(): Promise<StoredResult & { receipt?: FoldCoverage }>;
 }
 /** A result as the reads take it: its name (`r7`), its handle, a range of
  * either (`r7#0-4096`, byte offsets, half-open), or a card or chunk. */
@@ -174,7 +174,7 @@ declare interface ChunkRef {
   search(pattern: string, opts?: SearchOptions): Promise<SearchReply | WithheldReply>;
   query(q: string | QuerySelection): Promise<QueryReply | WithheldReply>;
   chunks(by: ChunkBy): ResultChunks;
-  describe(): Promise<StoredResult>;
+  describe(): Promise<StoredResult & { receipt?: FoldCoverage }>;
 }
 declare interface ChunkPage {
   ref: string;
@@ -202,13 +202,15 @@ declare interface StoreOptions {
   receipt?: { source: ResultRef; tasks: string[]; tree?: { summary: ResultRef; inputs: ResultRef[] }[]; recipe?: unknown };
 }
 /** What a fold read of its source, in its byte offsets: ranges its readers
- * finished, ranges none read, readers that stopped short and why, and how
- * many it named. */
+ * finished, ranges none read, readers that stopped short and why, how many
+ * it named, and, for a fold a document import restored, how many of the
+ * results it names did not come back. */
 declare interface FoldCoverage {
   read: [number, number][];
   unread: [number, number][];
   partial: { task: string; reason: string }[];
   children: number;
+  unresolved?: number;
 }
 /** One model call over a result and the results after it (`group`), made
  * by a host job, never inside the step, and memoised by those results and
@@ -242,8 +244,9 @@ declare function diff(a: ResultRef, b: ResultRef, opts?: { by?: "lines" | "bytes
     hunks?: { a: [number, number]; b: [number, number]; text: string; edge?: true; coarse?: true }[]; stored?: StoredResult } | { refused: string; ref: string; detail?: unknown }>;
 /** The card of a result of this run, by its name, its handle, a range or its
  * card. An unknown name throws `unknown_handle` with the live names. Start a
- * big result here: its `shape` says which read fits. */
-declare function describe(r: ResultRef): Promise<StoredResult>;
+ * big result here: its `shape` says which read fits. A whole fold result's
+ * card also says what the fold covered (`receipt`), as its store's did. */
+declare function describe(r: ResultRef): Promise<StoredResult & { receipt?: FoldCoverage }>;
 /** Bytes or lines of a result, at most one reply, with `next` to read on.
  * After `search`, slice around a match's `offset`. */
 declare function slice(r: ResultRef, sel: SliceSelection): Promise<SliceReply | WithheldReply>;

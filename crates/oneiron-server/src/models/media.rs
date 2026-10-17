@@ -288,6 +288,28 @@ pub struct MediaRuntime {
     live_asr: BTreeMap<String, Arc<SonioxRung>>,
 }
 
+/// A runtime that keeps its jobs hands each running job's permit off as it
+/// stops, charging nothing: the job runs on at its provider, and the runtime
+/// that takes it up from its kept row pays its end, once. A job in a poll
+/// that holds it is left to its own permit.
+impl Drop for MediaRuntime {
+    fn drop(&mut self) {
+        if self.store.is_none() {
+            return;
+        }
+        for job in self.lock_jobs().values() {
+            let Ok(mut job) = job.try_lock() else {
+                continue;
+            };
+            if let Some(permit) = job.permit.take()
+                && let Err(denied) = permit.hand_off_media()
+            {
+                tracing::error!(%denied, "a kept media job's permit was not handed off");
+            }
+        }
+    }
+}
+
 impl MediaRuntime {
     pub(super) fn empty() -> Self {
         Self {
@@ -712,6 +734,20 @@ impl MediaRuntime {
         Ok(Held::Running(job))
     }
 
+    /// Takes up every kept job a restart left running, so each one's
+    /// reservation is back on the meter before a new call can spend it. A
+    /// job that cannot be taken up stays kept, and its next poll tries again.
+    fn take_up_kept(&self) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        for ticket in store.tickets() {
+            if let Err(error) = self.held(&ticket) {
+                tracing::warn!(%error, %ticket, "a kept media job was not taken up");
+            }
+        }
+    }
+
     /// The end job `id`'s row keeps.
     fn ended(&self, id: &str) -> LlmResult<MediaJobState> {
         self.store
@@ -1059,5 +1095,13 @@ impl super::ModelRuntime {
     pub fn with_media_vault(mut self, vault: Arc<Vault>) -> Self {
         self.media.store = Some(JobStore::new(vault));
         self
+    }
+
+    /// Takes up, once the runtime is whole, every kept `ai.video` job a
+    /// restart left running: its permit is admitted again on the media meter
+    /// at start, not at its next poll, so new calls cannot spend what the
+    /// job will owe.
+    pub fn take_up_kept_media_jobs(&self) {
+        self.media.take_up_kept();
     }
 }

@@ -3,6 +3,7 @@
 
 use super::decisions::{id_options, named_id};
 use super::*;
+use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::llm::FinishReason;
 use crate::llm::decision::AnswerContract;
 use crate::llm::decision::catalogue::CORRECTION;
@@ -162,7 +163,8 @@ impl ConsolidationExecutor<'_> {
     /// candidate whose subject the listing shows claims about, that its child
     /// may read and write, gets one question over `none` and those claims'
     /// ids, all candidates in one pack; one with no such claim, or no answer,
-    /// corrects none. None when the step trapped.
+    /// corrects none. The pack's ask goes to its candidates' project's route,
+    /// or to the owners when they span projects. None when the step trapped.
     pub(in crate::dreamer_consolidation) async fn decide_corrections(
         &self,
         step_ctx: &DurableStepContext<'_>,
@@ -170,7 +172,7 @@ impl ConsolidationExecutor<'_> {
         parsed: &[ParsedCandidate<'_>],
         resources: &BranchResources<'_>,
         charges: &mut StepChargeTally,
-    ) -> DurableStepResult<Option<Vec<Option<EntityId>>>> {
+    ) -> DurableStepResult<Option<Vec<Correction>>> {
         let mut questions = Vec::new();
         // Each candidate's question indexes, and every listed claim asked about.
         let mut asks: Vec<Vec<usize>> = vec![Vec::new(); parsed.len()];
@@ -204,19 +206,37 @@ impl ConsolidationExecutor<'_> {
             }
         }
         if questions.is_empty() {
-            return Ok(Some(vec![None; parsed.len()]));
+            return Ok(Some(parsed.iter().map(|_| Correction::none()).collect()));
         }
         let state = correction_state(parsed, &asks, &questions, &listed);
-        let evidence: Vec<EntityId> = listed.iter().map(|row| row.0).collect();
+        let asked: Vec<&ParsedCandidate<'_>> = parsed
+            .iter()
+            .zip(&asks)
+            .filter(|(_, asked)| !asked.is_empty())
+            .map(|(candidate, _)| candidate)
+            .collect();
+        // The pack reads the listed claims and candidates drawn from these
+        // turns. The turns also keep one extraction's asks apart from
+        // another's over the same listing.
+        let mut evidence: Vec<EntityId> = listed.iter().map(|row| row.0).collect();
+        let mut turns: Vec<EntityId> = asked
+            .iter()
+            .flat_map(|candidate| candidate.evidence_turn_refs.iter().copied())
+            .filter(|turn| !evidence.contains(turn))
+            .collect();
+        turns.sort_unstable();
+        turns.dedup();
+        evidence.extend(turns);
+        let project = asked
+            .first()
+            .map(|candidate| candidate.project)
+            .filter(|project| asked.iter().all(|candidate| candidate.project == *project));
+        let to = self.ask_route(step_ctx.vault, project)?;
+        // The pack is the attempt's one correction read: the attempt names it.
+        let key = EntityId::from_bytes(*step_ctx.attempt_id.as_bytes()).map_err(crate::Error::from)?;
         let Some(decided) = self
             .decide(
-                step_ctx,
-                pass,
-                resources.scope(),
-                &questions,
-                &evidence,
-                &state,
-                charges,
+                step_ctx, pass, resources, &to, key, &questions, &evidence, &state, charges,
             )
             .await?
         else {
@@ -224,25 +244,40 @@ impl ConsolidationExecutor<'_> {
         };
         Ok(Some(
             asks.iter()
-                .map(|asked| named_id(asked.iter().map(|&at| &decided[at]).collect()))
+                .map(|asked| {
+                    let decisions: Vec<KeptDecision> =
+                        asked.iter().map(|&at| decided[at].clone()).collect();
+                    Correction {
+                        corrects: named_id(decisions.iter().collect()),
+                        decisions,
+                    }
+                })
                 .collect(),
         ))
     }
 
-    /// The candidates the branch takes, each bound to the claim it corrects.
+    /// The candidates the branch takes, each bound to the claim it corrects
+    /// and keeping its correction's decisions, and whether any candidate waits
+    /// on a role's answer: that one is not taken this pass.
     pub(in crate::dreamer_consolidation) fn build_candidates(
         parsed: Vec<ParsedCandidate<'_>>,
-        corrects: &[Option<EntityId>],
+        corrections: &[Correction],
         mut skipped: usize,
         partition: &ConsolidationPartitionKey,
         resources: &BranchResources<'_>,
         attempt_id: crate::attempt_queue::AttemptId,
         now_ms: u64,
-    ) -> Vec<super::super::evidence::ExtractedCandidate> {
+    ) -> (Vec<super::super::evidence::ExtractedCandidate>, bool) {
         let mut candidates = Vec::new();
-        for (candidate, corrects) in parsed.into_iter().zip(corrects) {
+        let mut waiting = false;
+        for (candidate, correction) in parsed.into_iter().zip(corrections) {
+            // Read again when the attempt comes back for the answer.
+            if correction.waiting() {
+                waiting = true;
+                continue;
+            }
             match build_candidate(
-                candidate, *corrects, partition, resources, attempt_id, now_ms,
+                candidate, correction, partition, resources, attempt_id, now_ms,
             ) {
                 Ok(candidate) => candidates.push(candidate),
                 Err(reason) => {
@@ -263,7 +298,29 @@ impl ConsolidationExecutor<'_> {
                 "extraction reply had candidates the branch could not take"
             );
         }
-        candidates
+        (candidates, waiting)
+    }
+}
+
+/// What the correction pack decided for one parsed candidate: the listed
+/// claim it corrects, if any, and its questions' decisions.
+pub(in crate::dreamer_consolidation) struct Correction {
+    corrects: Option<EntityId>,
+    decisions: Vec<KeptDecision>,
+}
+
+impl Correction {
+    /// A candidate the pack asked nothing about: it corrects none.
+    fn none() -> Self {
+        Self {
+            corrects: None,
+            decisions: Vec::new(),
+        }
+    }
+
+    /// Whether one of its questions waits on a role's answer.
+    fn waiting(&self) -> bool {
+        self.decisions.iter().any(KeptDecision::waiting)
     }
 }
 
@@ -413,14 +470,17 @@ fn correction_state(
 /// conflict and grant doors, and the verdict skips it.
 fn build_candidate(
     parsed: ParsedCandidate<'_>,
-    corrects: Option<EntityId>,
+    correction: &Correction,
     partition: &ConsolidationPartitionKey,
     resources: &BranchResources<'_>,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<super::super::evidence::ExtractedCandidate> {
     let scope = parsed.scope;
-    let corrects = corrects.map(|claim| resources.prior(claim)).transpose()?;
+    let corrects = correction
+        .corrects
+        .map(|claim| resources.prior(claim))
+        .transpose()?;
     let (subject, predicate) = match corrects {
         Some(prior) => {
             let ClaimSubject::Entity(subject) = prior.body.subject else {
@@ -521,6 +581,7 @@ fn build_candidate(
                 end: now_ms,
             },
             learned_at: now_ms,
+            decisions: correction.decisions.clone(),
         },
         parsed.locators,
     )?;
