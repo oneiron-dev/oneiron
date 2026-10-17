@@ -269,6 +269,7 @@ async fn execute(
             verb_door: Some(door),
             owner: owner.as_ref(),
             live_run: held.as_ref().map(HeldLiveRun::proof),
+            planner: None,
         };
         executor.execute_call(
             &vault,
