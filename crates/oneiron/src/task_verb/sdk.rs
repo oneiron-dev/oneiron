@@ -309,6 +309,7 @@ pub use super::sdk_connector::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_host::*;
+pub use super::sdk_legal_hold::*;
 pub use super::sdk_self::*;
 pub use super::sdk_share::*;
 pub use super::sdk_shared::*;

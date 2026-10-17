@@ -34,6 +34,7 @@ pub enum AgentVerb {
     VaultKvNamespaces,
     VaultWeaveReport,
     VaultWeaveDigest,
+    VaultWeaveLinkWrong,
     VaultPacksPut,
     VaultPacksSetupPrepare,
     VaultPacksSetupGet,
@@ -54,6 +55,11 @@ pub enum AgentVerb {
     VaultMembersLeave,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
+    VaultLegalHoldsPlace,
+    VaultLegalHoldsWiden,
+    VaultLegalHoldsList,
+    VaultLegalHoldsLog,
+    VaultLegalHoldsLiftAndErase,
     VaultLensesPropose,
     VaultLensesActivate,
     VaultLensesDeactivate,
@@ -97,12 +103,17 @@ pub enum AgentVerb {
     VaultProjectsGoalIntake,
     VaultRoomsJoin,
     VaultRoomsConsent,
+    VaultRoomsOffer,
+    VaultRoomsOfferAnswer,
+    VaultRoomsOffers,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
     VaultProjectsRouteTradeoff,
     VaultConversationsTurnContinue,
     VaultConversationsTurnRetry,
     VaultRoomsHost,
+    VaultRoomsHostPin,
+    VaultRoomsHostHand,
     VaultRoomsSharing,
     VaultCompanionsSharingGet,
     VaultCompanionsSharingSet,
@@ -126,6 +137,7 @@ pub enum AgentVerb {
     SelfBrowserObserve,
     SelfBrowserFind,
     SelfBrowserClick,
+    SelfBrowserClickAt,
     SelfBrowserType,
     SelfBrowserSelect,
     SelfBrowserWaitFor,
@@ -195,6 +207,7 @@ impl AgentVerb {
         Self::VaultKvNamespaces,
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
+        Self::VaultWeaveLinkWrong,
         Self::VaultPacksPut,
         Self::VaultPacksSetupPrepare,
         Self::VaultPacksSetupGet,
@@ -215,6 +228,11 @@ impl AgentVerb {
         Self::VaultMembersLeave,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
+        Self::VaultLegalHoldsPlace,
+        Self::VaultLegalHoldsWiden,
+        Self::VaultLegalHoldsList,
+        Self::VaultLegalHoldsLog,
+        Self::VaultLegalHoldsLiftAndErase,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
@@ -258,12 +276,17 @@ impl AgentVerb {
         Self::VaultProjectsGoalIntake,
         Self::VaultRoomsJoin,
         Self::VaultRoomsConsent,
+        Self::VaultRoomsOffer,
+        Self::VaultRoomsOfferAnswer,
+        Self::VaultRoomsOffers,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
         Self::VaultProjectsRouteTradeoff,
         Self::VaultConversationsTurnContinue,
         Self::VaultConversationsTurnRetry,
         Self::VaultRoomsHost,
+        Self::VaultRoomsHostPin,
+        Self::VaultRoomsHostHand,
         Self::VaultRoomsSharing,
         Self::VaultCompanionsSharingGet,
         Self::VaultCompanionsSharingSet,
@@ -287,6 +310,7 @@ impl AgentVerb {
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
         Self::SelfBrowserClick,
+        Self::SelfBrowserClickAt,
         Self::SelfBrowserType,
         Self::SelfBrowserSelect,
         Self::SelfBrowserWaitFor,
@@ -359,6 +383,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => "vault.kv.namespaces",
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
+            Self::VaultWeaveLinkWrong => "vault.weave.link.wrong",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
             Self::VaultPacksSetupGet => "vault.packs.setup.get",
@@ -381,6 +406,11 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
             }
+            Self::VaultLegalHoldsPlace => "vault.legal_holds.place",
+            Self::VaultLegalHoldsWiden => "vault.legal_holds.widen",
+            Self::VaultLegalHoldsList => "vault.legal_holds.list",
+            Self::VaultLegalHoldsLog => "vault.legal_holds.log",
+            Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
@@ -424,12 +454,17 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsConsent => "vault.rooms.consent",
+            Self::VaultRoomsOffer => "vault.rooms.offer",
+            Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
+            Self::VaultRoomsOffers => "vault.rooms.offers",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
             Self::VaultConversationsTurnRetry => "vault.conversations.turn.retry",
             Self::VaultRoomsHost => "vault.rooms.host",
+            Self::VaultRoomsHostPin => "vault.rooms.host.pin",
+            Self::VaultRoomsHostHand => "vault.rooms.host.hand",
             Self::VaultRoomsSharing => "vault.rooms.sharing",
             Self::VaultCompanionsSharingGet => "vault.companions.sharing.get",
             Self::VaultCompanionsSharingSet => "vault.companions.sharing.set",
@@ -453,6 +488,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
             Self::SelfBrowserClick => "self.browser.click",
+            Self::SelfBrowserClickAt => "self.browser.click_at",
             Self::SelfBrowserType => "self.browser.type",
             Self::SelfBrowserSelect => "self.browser.select",
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
@@ -521,6 +557,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -541,6 +578,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -584,12 +626,17 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultCompanionsSharingSet
@@ -642,6 +689,7 @@ impl AgentVerb {
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserWaitFor
@@ -689,6 +737,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -709,6 +758,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -752,12 +806,17 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultCompanionsSharingSet
@@ -828,6 +887,8 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultSharedOutcomes
                 | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -840,6 +901,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultProjectsProposals
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
@@ -894,6 +956,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -914,6 +977,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -957,12 +1025,17 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
                 | Self::VaultCompanionsSharingSet
@@ -986,6 +1059,7 @@ impl AgentVerb {
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserWaitFor
@@ -1033,6 +1107,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
@@ -1046,6 +1121,9 @@ impl AgentVerb {
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1068,10 +1146,14 @@ impl AgentVerb {
                 | Self::VaultProjectsConfirm
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -1084,6 +1166,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
@@ -1151,6 +1234,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
+            Self::VaultWeaveLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -1171,6 +1255,11 @@ impl AgentVerb {
             Self::VaultMembersLeave => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultLegalHoldsPlace => &["spec"],
+            Self::VaultLegalHoldsWiden => &["spec"],
+            Self::VaultLegalHoldsList => &[],
+            Self::VaultLegalHoldsLog => &[],
+            Self::VaultLegalHoldsLiftAndErase => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1214,12 +1303,17 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsOffer => &["spec", "room_ref"],
+            Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsHostPin => &["spec"],
+            Self::VaultRoomsHostHand => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
             Self::VaultCompanionsSharingSet => &["spec"],
@@ -1243,6 +1337,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
             Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
             Self::SelfBrowserType => &["spec"],
             Self::SelfBrowserSelect => &["spec"],
             Self::SelfBrowserWaitFor => &["spec"],
@@ -1313,6 +1408,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
+            Self::VaultWeaveLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -1333,6 +1429,11 @@ impl AgentVerb {
             Self::VaultMembersLeave => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultLegalHoldsPlace => &["spec"],
+            Self::VaultLegalHoldsWiden => &["spec"],
+            Self::VaultLegalHoldsList => &[],
+            Self::VaultLegalHoldsLog => &[],
+            Self::VaultLegalHoldsLiftAndErase => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1376,12 +1477,17 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsOffer => &["spec", "room_ref"],
+            Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsHostPin => &["spec"],
+            Self::VaultRoomsHostHand => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
             Self::VaultCompanionsSharingSet => &["spec"],
@@ -1405,6 +1511,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
             Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
             Self::SelfBrowserType => &["spec"],
             Self::SelfBrowserSelect => &["spec"],
             Self::SelfBrowserWaitFor => &["spec"],

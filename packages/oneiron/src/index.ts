@@ -207,6 +207,9 @@ export class Oneiron {
     weave: {
       report: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveReport(input) as unknown),
       digest: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveDigest(input) as unknown),
+      link: {
+        wrong: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveLinkWrong(input) as unknown),
+      },
     },
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
@@ -240,6 +243,13 @@ export class Oneiron {
       change: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersChange(input) as unknown),
       remove: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersRemove(input) as unknown),
       leave: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersLeave(input) as unknown),
+    },
+    legal_holds: {
+      place: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as unknown),
+      widen: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsWiden(input) as unknown),
+      list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsList(input) as unknown),
+      log: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsLog(input) as unknown),
+      lift_and_erase: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as unknown),
     },
     lenses: {
       propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),
@@ -299,7 +309,14 @@ export class Oneiron {
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
       join: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsJoin(input) as unknown),
       consent: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsConsent(input) as unknown),
-      host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
+      offer: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOffer(input) as unknown), {
+        answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOfferAnswer(input) as unknown),
+      }),
+      offers: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOffers(input) as unknown),
+      host: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown), {
+        pin: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHostPin(input) as unknown),
+        hand: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHostHand(input) as unknown),
+      }),
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
     },
     projects: {
