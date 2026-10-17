@@ -320,7 +320,12 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             .into_iter()
             .find(|rel| !rel.external && rel.kind.ends_with("/calcChain"))
     {
+        // The chain lists formula cells; the opening application rebuilds a
+        // missing one, so it leaves with its link rather than go stale.
         book.package.unrelate(&book.part, &chain.id)?;
+        if book.package.names().any(|name| name == chain.target) {
+            book.package.remove_part(&chain.target)?;
+        }
     }
     Ok(book.package.export()?)
 }
