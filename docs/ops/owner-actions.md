@@ -1297,6 +1297,10 @@ is refused. A refusal's MCP error kind is its code above.
 A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
 `POST /v1/owner/weave/lens` return, for your credential:
 - `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
+  A model round-trip action goes back to the agent that rendered the card, as that agent's next
+  turn: it answers `202 {"queued", "callbackId"}`, and the agent decides what to do with it. The
+  same credential, card and key answer the same callback. A card a person's view or a system job
+  rendered answers `409`.
 - `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
 
 ## Widen proposals

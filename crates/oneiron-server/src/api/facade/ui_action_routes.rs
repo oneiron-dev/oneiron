@@ -12,8 +12,11 @@
 //! deterministic tool then meets the verb scope and record admission an
 //! action call of its command meets, and runs through the app's one
 //! executor as the credential's action. A local patch moves the held
-//! `$state` and dispatches nothing. A model round trip is refused: it is not
-//! served yet.
+//! `$state` and dispatches nothing. A model round trip goes back to the
+//! agent that emitted the card, as its next turn
+//! ([`crate::ai_host::queue_lens_callback`]): it answers `202 {"queued",
+//! "callbackId"}`, and a card a person's view or a system job emitted
+//! answers `409`.
 //!
 //! `DELETE /v1/core/lens-frames/{card_id}` closes the card and frees its
 //! frame. A card this server does not hold (closed, evicted at the memory
@@ -40,6 +43,7 @@ use serde::Deserialize;
 use super::action_routes::{action_bound, execute_validated_ui, require_action_scope};
 use super::host_doors::internal;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
+use crate::ai_host::LensCallback;
 use crate::api::credential_memory;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
@@ -108,7 +112,7 @@ async fn event(
     headers: HeaderMap,
     extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, FacadeApiError> {
+) -> Result<(StatusCode, Json<serde_json::Value>), FacadeApiError> {
     // The card came from a read; what its actions write meets its own scope.
     auth.require(CoreScope::Read)?;
     let request: UiEventRequest = facade_input(facade_json(payload)?)?;
@@ -161,17 +165,47 @@ async fn event(
             )
             .await?
         }
-        GeneratedUiValidatedAction::ModelRoundTrip { .. } => {
-            return Err(FacadeApiError::new(
-                StatusCode::NOT_IMPLEMENTED,
-                MEMORY_CODE_INVALID_STATE,
-                "a model round-trip lens event is not served yet",
-                ["Only a card's local and deterministic-tool actions run here."],
-            ));
+        GeneratedUiValidatedAction::ModelRoundTrip { emitter, callback } => {
+            let server = Arc::clone(&server);
+            let credential = auth.idempotency_principal();
+            let key = request.idempotency_key;
+            let queued = tokio::task::spawn_blocking(move || {
+                crate::ai_host::queue_lens_callback(
+                    &server.vault,
+                    &credential,
+                    &emitter,
+                    &callback,
+                    &key,
+                )
+            })
+            .await
+            .map_err(|_| internal("a lens callback"))?
+            .map_err(engine)?;
+            return match queued {
+                LensCallback::Queued {
+                    callback_id,
+                    queued,
+                } => Ok((
+                    StatusCode::ACCEPTED,
+                    Json(serde_json::json!({ "queued": queued, "callbackId": callback_id })),
+                )),
+                LensCallback::NoAgent => Err(FacadeApiError::new(
+                    StatusCode::CONFLICT,
+                    MEMORY_CODE_INVALID_STATE,
+                    "no agent emitted this card, so its model round trip has no turn to go to",
+                    ["Only a card an agent rendered sends a model round trip back to it."],
+                )),
+                LensCallback::KeyReused => Err(FacadeApiError::new(
+                    StatusCode::CONFLICT,
+                    MEMORY_CODE_INVALID_STATE,
+                    "this idempotency key already sent another callback on this card",
+                    ["Send each new event under a new idempotency key."],
+                )),
+            };
         }
     };
     drop(state);
-    Ok(Json(answer))
+    Ok((StatusCode::OK, Json(answer)))
 }
 
 /// A validated deterministic tool: the verb scope and record admission an

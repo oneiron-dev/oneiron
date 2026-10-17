@@ -245,7 +245,7 @@ you want to act as instead.
 | `handle.inRoomTurn(roomRef)` | a new handle whose every verb runs as a turn in that room |
 | `handle.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `null` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
-| `handle.lensFrameEvent(cardId, request)` | sends one `{ event, idempotencyKey }` on a lens card the connected server rendered; answers `{ $state }` or `{ outcome, readReceipt }` |
+| `handle.lensFrameEvent(cardId, request)` | sends one `{ event, idempotencyKey }` on a lens card the connected server rendered; answers `{ $state }`, `{ outcome, readReceipt }`, or a model round trip's `{ queued, callbackId }` |
 | `handle.closeLensFrame(cardId)` | closes that card and frees its frame; answers `{ closed }` |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
