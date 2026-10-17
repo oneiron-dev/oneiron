@@ -19,6 +19,8 @@ mod preflight;
 mod source;
 mod streams;
 
+pub(crate) use streams::decode_stream;
+
 use evidence::{certificate, evidence};
 use fields::burn_fields;
 use source::{VisualCopy, check_content, page_content, pages, pdf_box, reject_signatures};
