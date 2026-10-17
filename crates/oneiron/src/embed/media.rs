@@ -14,9 +14,11 @@ use rmpv::Value;
 
 use super::EmbedderLocality;
 use super::space::{
-    InputKind, embedding_space_in_txn, has_media_vector_in_txn, kind_slot_bindings_in_txn,
-    media_text_hash_in_txn, put_media_vector_in_txn, text_hash,
+    EmbeddingSpace, InputKind, clear_media_refusal_in_txn, embedding_space_in_txn,
+    has_media_vector_in_txn, media_refused_in_txn, media_text_hash_in_txn,
+    put_media_refusal_in_txn, put_media_vector_in_txn, text_hash,
 };
+use super::space_move::space_fill_kinds_in_txn;
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -56,6 +58,16 @@ pub trait MediaEmbedder: Send + Sync {
     fn locality(&self) -> EmbedderLocality;
     /// One vector per input, in input order.
     fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> Result<Vec<Vec<f32>>>;
+    /// One outcome per input, in input order: its vector, or why the model refused that
+    /// document by its content (a format it cannot read, a content filter), so the backfill
+    /// skips it until its bytes change. An error refuses the whole call. The default refuses
+    /// no single document.
+    fn embed_each(
+        &self,
+        inputs: &[MediaEmbeddingInput<'_>],
+    ) -> Result<Vec<std::result::Result<Vec<f32>, String>>> {
+        Ok(self.embed_media(inputs)?.into_iter().map(Ok).collect())
+    }
 }
 
 /// What one media backfill pass did.
@@ -74,26 +86,37 @@ pub struct MediaEmbedReport {
     pub no_media: usize,
     /// Items deleted, or text documents whose text moved, before their vector landed.
     pub vanished: usize,
+    /// Documents the space's model refused by their content, this pass or before at the same
+    /// bytes; the backfill skips them until their bytes change.
+    pub refused: usize,
 }
 
-struct PendingMedia {
-    id: EntityId,
-    kind: InputKind,
-    media_type: String,
-    bytes: Vec<u8>,
+/// One stored document a scan read: an ASSET's media, or a record's text.
+pub(super) struct PendingMedia {
+    pub(super) id: EntityId,
+    pub(super) kind: InputKind,
+    pub(super) media_type: String,
+    pub(super) bytes: Vec<u8>,
     /// A text document's text hash, checked again before its vector lands.
-    text_hash: Option<[u8; 32]>,
+    pub(super) text_hash: Option<[u8; 32]>,
 }
 
 impl Vault {
     /// Fills `embedder`'s space with up to `max_items` vectors for stored image and audio
-    /// ASSETs whose kind slot binds to that space, and, when the text slot binds it (the
-    /// one-space preset), for the records the text index embeds, at their current text. A
-    /// text document whose text moved since its vector was stored is embedded again.
+    /// ASSETs whose kind the space fills ([`super::space_move::space_fill_kinds_in_txn`]: its
+    /// slot binds the space, or an open version move carries it there), and, when it fills text
+    /// (the one-space preset, or a text move), for the records the text index embeds, at their
+    /// current text. A text document whose text moved since its vector was stored is embedded
+    /// again.
+    ///
+    /// A document the model refuses by its content ([`MediaEmbedder::embed_each`]) is recorded
+    /// and skipped until its bytes change, once the model has shown it serves the space: the
+    /// space holds a vector already, or another document this pass embedded. A model that
+    /// refuses every document it is sent, and has embedded none, is an error instead.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] when the space is undeclared, bound to no kind, of another
+    /// [`Error::InvalidConfig`] when the space is undeclared, fills no kind, is of another
     /// width, or the embedder runs at a third party; storage and embedder errors otherwise.
     pub fn reconcile_media_embeddings(
         &self,
@@ -120,31 +143,167 @@ impl Vault {
                     got: embedder.dimensions(),
                 });
             }
-            let bindings = kind_slot_bindings_in_txn(&self.store, &rtxn)?;
-            let kinds: BTreeSet<InputKind> = InputKind::ALL
-                .into_iter()
-                .filter(|kind| {
-                    bindings.space_for(*kind) == Some(space_id) && space.accepts.contains(kind)
-                })
-                .collect();
+            let kinds = space_fill_kinds_in_txn(&self.store, &rtxn, &space)?;
             if kinds.is_empty() {
                 return Err(Error::InvalidConfig(format!(
-                    "no kind slot is bound to embedding space {space_id}"
+                    "no kind slot is bound or moving to embedding space {space_id}"
                 )));
             }
-            let mut pending = Vec::new();
+            let pending =
+                self.media_backlog_in_txn(&rtxn, &space, &kinds, max_items, &mut report)?;
+            (space, kinds, pending)
+        };
+        if pending.is_empty() {
+            return Ok(report);
+        }
+
+        let inputs: Vec<MediaEmbeddingInput<'_>> = pending
+            .iter()
+            .map(|item| MediaEmbeddingInput {
+                entity_id: item.id,
+                kind: item.kind,
+                media_type: &item.media_type,
+                bytes: &item.bytes,
+            })
+            .collect();
+        let outcomes = embedder.embed_each(&inputs)?;
+        if outcomes.len() != pending.len() {
+            return Err(Error::InvalidConfig(format!(
+                "media embedder returned {} outcomes for {} inputs",
+                outcomes.len(),
+                pending.len()
+            )));
+        }
+        for vector in outcomes.iter().flatten() {
+            if let Some(error) = Error::invalid_vector_component(vector) {
+                return Err(error);
+            }
+        }
+        // A model that has embedded nothing here may be refusing them all for a reason of its
+        // own; no document is blamed for that.
+        if report.already_embedded == 0
+            && outcomes.iter().all(std::result::Result::is_err)
+            && let Some(Err(reason)) = outcomes.first()
+        {
+            return Err(Error::InvalidConfig(format!(
+                "the media embedder for {space_id} refused every document it was sent: {reason}"
+            )));
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        // The bindings and moves may have changed while the model ran; land only what this
+        // space still fills.
+        let fills = space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
+        let at = self.store.clock.now_recorded_at();
+        for (item, outcome) in pending.iter().zip(outcomes) {
+            if !kinds.contains(&item.kind) || !fills.contains(&item.kind) {
+                report.unbound += 1;
+                continue;
+            }
+            if self.store.port_entity_record(&wtxn, &item.id)?.is_none() {
+                report.vanished += 1;
+                continue;
+            }
+            // A text that moved, or was erased, while the model ran lands no vector of the
+            // old words; the next pass embeds what it holds now.
+            if let Some(hash) = item.text_hash
+                && text_document_in_txn(self, &wtxn, &item.id)?
+                    .is_none_or(|text| text_hash(&text) != hash)
+            {
+                report.vanished += 1;
+                continue;
+            }
+            let vector = match outcome {
+                Ok(vector) => vector,
+                Err(reason) => {
+                    put_media_refusal_in_txn(
+                        &self.store,
+                        &mut wtxn,
+                        &space,
+                        &item.id,
+                        &item.bytes,
+                        reason,
+                        at,
+                    )?;
+                    report.refused += 1;
+                    continue;
+                }
+            };
+            put_media_vector_in_txn(
+                &self.store,
+                &mut wtxn,
+                &space,
+                &fills,
+                &item.id,
+                item.kind,
+                item.text_hash,
+                &vector,
+            )?;
+            clear_media_refusal_in_txn(&self.store, &mut wtxn, &space, &item.id)?;
+            report.embedded += 1;
+        }
+        wtxn.commit()?;
+        Ok(report)
+    }
+
+    /// Up to `max_items` documents of `kinds` that `space` lacks a vector for, a text document
+    /// one of its current text, in scan order; `report` counts what the scan read.
+    pub(super) fn media_backlog_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        space: &EmbeddingSpace,
+        kinds: &BTreeSet<InputKind>,
+        max_items: usize,
+        report: &mut MediaEmbedReport,
+    ) -> Result<Vec<PendingMedia>> {
+        let mut pending = Vec::new();
+        let mut held = 0;
+        let mut refused = 0;
+        self.scan_documents_in_txn(rtxn, kinds, report, |document| {
+            if pending.len() >= max_items {
+                return Ok(false);
+            }
+            let stored = match document.text_hash {
+                Some(hash) => {
+                    media_text_hash_in_txn(&self.store, rtxn, space, &document.id)? == Some(hash)
+                }
+                None => has_media_vector_in_txn(&self.store, rtxn, space, &document.id)?,
+            };
+            if stored {
+                held += 1;
+            } else if media_refused_in_txn(&self.store, rtxn, space, &document.id, &document.bytes)?
+            {
+                refused += 1;
+            } else {
+                pending.push(document);
+            }
+            Ok(pending.len() < max_items)
+        })?;
+        report.already_embedded += held;
+        report.refused += refused;
+        Ok(pending)
+    }
+
+    /// Visits every stored document of `kinds` in id order, image and audio ASSETs first, then
+    /// the records the text index embeds, until `visit` answers `false`. `report` counts the
+    /// documents read, the ASSETs of other kinds and those holding nothing to embed.
+    pub(super) fn scan_documents_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        kinds: &BTreeSet<InputKind>,
+        report: &mut MediaEmbedReport,
+        mut visit: impl FnMut(PendingMedia) -> Result<bool>,
+    ) -> Result<()> {
+        if kinds.contains(&InputKind::Image) || kinds.contains(&InputKind::Audio) {
             for id in self
                 .store
-                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_ASSET, None)?
+                .port_entity_ids_by_type(rtxn, ENTITY_TYPE_ASSET, None)?
             {
-                if pending.len() >= max_items {
-                    break;
-                }
                 let id = id?;
                 report.scanned += 1;
                 let Some(raw) = self
                     .store
-                    .port_entity_record(&rtxn, &id)?
+                    .port_entity_record(rtxn, &id)?
                     .map(|row| row.encode())
                 else {
                     continue;
@@ -163,112 +322,44 @@ impl Vault {
                     report.unbound += 1;
                     continue;
                 }
-                if has_media_vector_in_txn(&self.store, &rtxn, &space, &id)? {
-                    report.already_embedded += 1;
-                    continue;
-                }
-                pending.push(PendingMedia {
+                let document = PendingMedia {
                     id,
                     kind,
                     media_type,
                     bytes,
                     text_hash: None,
-                });
+                };
+                if !visit(document)? {
+                    return Ok(());
+                }
             }
-            if kinds.contains(&InputKind::Text) {
-                for entity_type in TEXT_DOCUMENT_TYPES {
-                    for id in self
-                        .store
-                        .port_entity_ids_by_type(&rtxn, entity_type, None)?
-                    {
-                        if pending.len() >= max_items {
-                            break;
-                        }
-                        let id = id?;
-                        report.scanned += 1;
-                        let Some(text) = text_document_in_txn(self, &rtxn, &id)? else {
-                            report.no_media += 1;
-                            continue;
-                        };
-                        let hash = text_hash(&text);
-                        if media_text_hash_in_txn(&self.store, &rtxn, &space, &id)? == Some(hash) {
-                            report.already_embedded += 1;
-                            continue;
-                        }
-                        pending.push(PendingMedia {
-                            id,
-                            kind: InputKind::Text,
-                            media_type: TEXT_MEDIA_TYPE.to_owned(),
-                            bytes: text.into_bytes(),
-                            text_hash: Some(hash),
-                        });
+        }
+        if kinds.contains(&InputKind::Text) {
+            for entity_type in TEXT_DOCUMENT_TYPES {
+                for id in self
+                    .store
+                    .port_entity_ids_by_type(rtxn, entity_type, None)?
+                {
+                    let id = id?;
+                    report.scanned += 1;
+                    let Some(text) = text_document_in_txn(self, rtxn, &id)? else {
+                        report.no_media += 1;
+                        continue;
+                    };
+                    let document = PendingMedia {
+                        id,
+                        kind: InputKind::Text,
+                        media_type: TEXT_MEDIA_TYPE.to_owned(),
+                        text_hash: Some(text_hash(&text)),
+                        bytes: text.into_bytes(),
+                    };
+                    if !visit(document)? {
+                        return Ok(());
                     }
                 }
             }
-            (space, kinds, pending)
-        };
-        if pending.is_empty() {
-            return Ok(report);
         }
-
-        let inputs: Vec<MediaEmbeddingInput<'_>> = pending
-            .iter()
-            .map(|item| MediaEmbeddingInput {
-                entity_id: item.id,
-                kind: item.kind,
-                media_type: &item.media_type,
-                bytes: &item.bytes,
-            })
-            .collect();
-        let vectors = embedder.embed_media(&inputs)?;
-        if vectors.len() != pending.len() {
-            return Err(Error::InvalidConfig(format!(
-                "media embedder returned {} vectors for {} inputs",
-                vectors.len(),
-                pending.len()
-            )));
-        }
-        for vector in &vectors {
-            if let Some(error) = Error::invalid_vector_component(vector) {
-                return Err(error);
-            }
-        }
-
-        let mut wtxn = self.store.env.write_txn()?;
-        // The bindings may have moved while the model ran; land only what still binds here.
-        let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
-        for (item, vector) in pending.iter().zip(&vectors) {
-            if !kinds.contains(&item.kind) || bindings.space_for(item.kind) != Some(space_id) {
-                report.unbound += 1;
-                continue;
-            }
-            if self.store.port_entity_record(&wtxn, &item.id)?.is_none() {
-                report.vanished += 1;
-                continue;
-            }
-            // A text that moved, or was erased, while the model ran lands no vector of the
-            // old words; the next pass embeds what it holds now.
-            if let Some(hash) = item.text_hash
-                && text_document_in_txn(self, &wtxn, &item.id)?
-                    .is_none_or(|text| text_hash(&text) != hash)
-            {
-                report.vanished += 1;
-                continue;
-            }
-            put_media_vector_in_txn(
-                &self.store,
-                &mut wtxn,
-                &space,
-                &bindings,
-                &item.id,
-                item.kind,
-                item.text_hash,
-                vector,
-            )?;
-            report.embedded += 1;
-        }
-        wtxn.commit()?;
-        Ok(report)
+        Ok(())
     }
 }
 

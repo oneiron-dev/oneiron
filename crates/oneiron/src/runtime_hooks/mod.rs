@@ -1,4 +1,5 @@
-//! Runtime hooks (ARCH-0080), slice 1: fact hooks that run after a write commits, on their own runner.
+//! Runtime hooks (ARCH-0080). Slice 1: fact hooks that run after a write
+//! commits, on their own runner. Slice 2 (`verb`): verb hooks inside a call.
 //!
 //! The runner follows the claim changelog and the settlement feed through
 //! typed per-binding cursors. Rust filters each fact, under the hook's own
@@ -13,26 +14,37 @@ mod body;
 mod dial;
 mod filter;
 mod grant;
+mod host;
 mod lineage;
 mod outcome;
 mod read;
+mod regen;
 mod replay;
 mod runner;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub mod sandbox;
+mod scope;
 mod source;
 mod store;
+pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime};
-pub use body::{HookBodyRun, HookBodyRuntime};
+pub use body::{HookBodyRun, HookBodyRuntime, HookVerdict, HookVerdictCall};
 pub use grant::HookGrant;
+pub use host::{BudgetHit, HOST_BUDGET_HIT};
 pub use lineage::{HookCheck, HookCheckReason, LineageLink};
 pub use outcome::{
     BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge,
     ProposedNote,
 };
+pub(crate) use regen::note_bound_hook_in_txn;
+pub use regen::{
+    HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure,
+    HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest, HookRegenerator,
+};
 pub use replay::{HookReplayEntry, HookReplayResult};
 pub use runner::{FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassReport};
+pub(crate) use scope::HookScope;
 #[allow(
     unused_imports,
     reason = "the gate's settlement doors call it once their seam lands"
@@ -43,3 +55,5 @@ pub use source::{
     SettledOutcome, SettlementKind, SettlementPosition,
 };
 pub(crate) use store::hook_receipts;
+pub use verb::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class};
+pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};

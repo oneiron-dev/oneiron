@@ -38,9 +38,12 @@ pub(crate) struct Hub {
     subscription_line: Admission<String>,
 }
 
+// GLOBAL STATE: one live-query hub per running server, keyed by the server's
+// address. A hub holds its server weakly and lives while that server does.
+static HUBS: OnceLock<Mutex<HashMap<usize, Weak<Hub>>>> = OnceLock::new();
+
 impl Hub {
     pub(crate) fn for_server(server: &Arc<SyncServer>) -> Arc<Self> {
-        static HUBS: OnceLock<Mutex<HashMap<usize, Weak<Hub>>>> = OnceLock::new();
         let mut hubs = HUBS
             .get_or_init(Default::default)
             .lock()
@@ -86,6 +89,23 @@ impl Hub {
             }
         });
         hub
+    }
+
+    /// The served handle of `server`, through the hub its sockets share: the
+    /// app tier's synchronous RPC door holds only `&SyncServer`, and the
+    /// facade dispatch it runs takes the handle its server and host doors
+    /// take. `None` for a server no socket has opened a hub for.
+    pub(crate) fn served(server: &SyncServer) -> Option<Arc<SyncServer>> {
+        let hubs = HUBS
+            .get()?
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let served = hubs
+            .get(&(std::ptr::from_ref(server) as usize))?
+            .upgrade()?
+            .server
+            .upgrade()?;
+        std::ptr::eq(Arc::as_ptr(&served), server).then_some(served)
     }
 
     fn refresh(&self) {
@@ -565,6 +585,7 @@ impl Connection {
     /// rows its producer listed, stays unsent. Its subscription is retired
     /// for a gap and sends nothing more before it, and a read result is
     /// refused. A body whose producer could not list its rows fails closed.
+    #[cfg(test)]
     pub(crate) fn release(
         &mut self,
         locality: oneiron::claim::CallerLocality,

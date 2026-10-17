@@ -43,6 +43,10 @@ side_tables! {
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw;
+    /// The latest owner-signed custody transition this vault signed of one portable credential
+    /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
+    /// hex32(entity id).
+    SECRET_CUSTODY_TRANSITION: VaultMeta b"secret_custody:transition:v1:" Raw;
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;
@@ -55,12 +59,22 @@ side_tables! {
     /// T2 local-file registration for a materialized secret, read wholesale for snapshot exclusion.
     /// Key: hex32(lease id).
     SECRET_LOCAL_REGISTRATION: VaultMeta b"secret_local:v1:" Raw;
+    /// Where a mask on write found the secret one custody record holds: the record, the field and
+    /// the key's kind (OF-560). Key: id16 (custody record id).
+    SECRET_MASK_ORIGIN: VaultMeta b"secret_mask:origin:v1:" Named;
+    /// A file stored with keys in it: each key's span in its bytes and the custody record that
+    /// holds it, and its band (OF-560, owner ruling G04 binary = C2). Key: hash32 (blake3 of the
+    /// stored bytes).
+    SECRET_MASK_SPANS: VaultMeta b"secret_mask:spans:v1:" Named;
     /// Durable attestation of one secret rotate-or-revoke op; carries no value bytes. Key:
     /// hex32(receipt id).
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
+    /// When a host detector graded one telemetry window under one wording. Key: bytes32
+    /// (blake3 of the tier, the detector policy and the window's run ids).
+    SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
     /// Owner-reviewed T3 finding by family string, colon and diagnostic id16.
     SELF_HEAL_DISTILL: VaultMeta b"self_heal:distill:" Named;
     /// Immutable attempt confession, audit draw and independently checked findings. Key: id16.
@@ -100,6 +114,12 @@ side_tables! {
     CUSTOMIZATION_EVENT_SEQUENCE: VaultMeta b"settings:customization:v1:event_sequence" Raw;
     /// Persisted four-layer (accent/type/mode/world) client customization profile. Key: ().
     CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named;
+    /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
+    /// auto). Value: the mode's ASCII name. Key: ().
+    DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw;
+    /// Owner-set action-mode policy: the state-index window and its mode bands (OF-335).
+    /// Key: ().
+    DREAMER_ACTION_MODE_POLICY: VaultMeta b"settings:dreamer:action_mode:v1" LegacyJson;
     /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
     DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson;
     /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
@@ -126,6 +146,10 @@ side_tables! {
     /// Owner-set inbox review dial (exceptions-only vs review-all), house per-feature dial pattern.
     /// Key: ().
     INBOX_REVIEW_DIAL: VaultMeta b"settings:inbox:v1:review_dial" Raw;
+    /// The owner's standing quota fallback for one model offer (OF-305): the engine model id its
+    /// calls go to while the offer is parked, set by a `use_fallback` answer. Owner policy, kept
+    /// apart from the deployment's runtime cooldowns. Key: hex64 (the offer's cooldown key).
+    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().
@@ -147,10 +171,22 @@ side_tables! {
     SHARE_BRIEF_ADMISSION: VaultMeta b"share:brief:admission:v1:" Raw;
     /// One-way deletion fence for a brief identity. Key: id16; value: the one-byte marker `1`.
     SHARE_BRIEF_DELETE_RESERVATION: VaultMeta b"share:brief:deleting:v1:" Raw;
+    /// The born-with text one brief share lets travel (OF-491), fixed in the transaction that
+    /// admits the share. Key: id16(share).
+    SHARE_BRIEF_TRAVEL: VaultMeta b"share:brief:travel:v1:" Named;
+    /// One artifact export's travel receipt (OF-491): the copy, its digest, who sent it and the
+    /// born-with fields that left with it; never the exported bytes. Key: u64be(sequence).
+    SHARE_EXPORT_TRAVEL: VaultMeta b"share:export:travel:v1:" Named;
     /// One-time record of the initial membership/policy defaults applied when a shared vault was
     /// created. Key: ().
+    /// One Member's request or Admin's proposal to erase a record of a shared vault. Key: hex32
+    /// (ask id).
+    SHARED_ACT_ERASE_ASK: VaultMeta b"shared-act:erase-ask:v1:" Raw;
     /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).
     SHARED_ACT_EVENT: VaultMeta b"shared-act:event:v1:" Raw;
+    /// One Owner's notice that a waiting shared act matured. Key: hex32 (owner id) ":" hex32 (act
+    /// id).
+    SHARED_ACT_MATURED: VaultMeta b"shared-act:matured:v1:" Raw;
     /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
     /// id) ":" hex32 (receipt id).
     SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
@@ -161,6 +197,9 @@ side_tables! {
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
+    /// One invitation of a person into the shared vault, pending until they accept, decline or an
+    /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
+    SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().
@@ -170,6 +209,19 @@ side_tables! {
     /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
     /// the exact content hash it scored). Key: id16 (skill entity).
     SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
+    /// One attempt an exploration trial routed to its proposal: the charge it reserved against the
+    /// goal claim's exploration slice and, once its spend scope settles, what it spent (MessagePack
+    /// named map). Key: id16 (attempt).
+    SKILL_EXPLORATION_ROUTE: VaultMeta b"skill:exploration_route:v1:" Named;
+    /// What skill trials charged one goal claim's exploration slice, and the overruns its owner
+    /// approved (MessagePack named map). Key: id16 (goal claim).
+    SKILL_EXPLORATION_SLICE: VaultMeta b"skill:exploration_slice:v1:" Named;
+    /// The proposal whose exploration trial an active skill serves (MessagePack string). Key: id16
+    /// (incumbent skill).
+    SKILL_EXPLORATION_TARGET: VaultMeta b"skill:exploration_target:v1:" Named;
+    /// One optimizer proposal's exploration trial: its basis, exposure bound, routed runs, overrun
+    /// ask and state (MessagePack named map). Key: id16 (proposal).
+    SKILL_EXPLORATION_TRIAL: VaultMeta b"skill:exploration_trial:v1:" Named;
     /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
     /// receipt length + receipt string + id16.
     SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;
@@ -296,8 +348,15 @@ side_tables! {
     SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v1\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
+    /// A proposal's offline preflight: its floor and cost axes and the honesty floor scored on the
+    /// held-out set before any live run, and whether every floor held, bound to both bodies, the
+    /// evidence and the goal revision (MessagePack named map). Key: id16 (proposal).
+    SKILL_OPTIMIZE_PREFLIGHT: VaultMeta b"skill_optimize/preflight/v1\0" Named;
     /// A skill goal's join to a project's goal record (MessagePack named map). Key: id16 (goal).
     SKILL_OPTIMIZE_PROJECT_GOAL: VaultMeta b"skill_optimize/project_goal/v1\0" Raw;
+    /// A vault owner's dismissal of one learned goal-revision proposal under the goal claim in
+    /// force (MessagePack named map). Key: id16 (project) + question digest (64 hex).
+    SKILL_OPTIMIZE_PROJECT_GOAL_DISMISSED: VaultMeta b"skill_optimize/project_goal_dismissed/v1\0" Raw;
     /// A learned preference proposed for a project's goal record (MessagePack named map). Key:
     /// id16 (project) + id16 (row).
     SKILL_OPTIMIZE_PROJECT_GOAL_PROPOSAL: VaultMeta b"skill_optimize/project_goal_proposal/v1\0" Raw;
@@ -419,6 +478,10 @@ side_tables! {
     TASK_CONSULT_PARTY_BACKFILLED: VaultMeta b"tasks.consult_party.backfilled.v1" Raw;
     /// Per-actor task-create rate window. Key: id16 + u64be.
     TASK_CREATE_RATE_WINDOW: VaultMeta b"tasks.create.rate.v1\0" Raw;
+    /// The creator attempt a create's agent TASK lands under (OF-532): parent attempt, its project
+    /// and run tag, witnessed beside a gated create's proposal or a wave planning attempt. Key: id16
+    /// (the proposal claim, or the id a wave planning attempt derives).
+    TASK_CREATE_ORIGIN: VaultMeta b"tasks.create_origin.v1/" Named;
     /// Presence marker: an authority fact of this task was refused at admission because its id
     /// was deleted here first, so the task's facts read as a refusal. Key: id16 (task).
     TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;
@@ -428,6 +491,15 @@ side_tables! {
     TASK_OWNER_FACT_REVERSE: VaultMeta b"tasks.owner_fact.v1/" Raw;
     /// Display handle for a peer actor. Key: id16.
     TASK_PEER_HANDLE: VaultMeta b"tasks.peer.handle.v1\0" Raw;
+    /// The skill tradeoff a project ask carries: proposal, question digest, project, task, question
+    /// turn and whether the gate settled it or it went void. Key: id16 (ask group).
+    TASK_PROJECT_TRADEOFF_ASK: VaultMeta b"tasks.project_tradeoff.ask.v1/" Named;
+    /// The home-room TURN one skill tradeoff question was witnessed as, ids reserved before the
+    /// speak. Key: id16 (proposal) + id16 (project) + question digest (64 hex).
+    TASK_PROJECT_TRADEOFF_TURN: VaultMeta b"tasks.project_tradeoff.turn.v1/" Named;
+    /// One try's journaled report: the request and the receipt it was first answered with.
+    /// Key: id16 (attempt) + u64 (attempt count) + bytes32 (reporter, TASK and report key).
+    TASK_REPORT_JOURNAL: VaultMeta b"tasks.report.journal.v1/" Named;
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
     /// Registered external ask wait. Key: id16 + bytes32.
@@ -482,6 +554,13 @@ side_tables! {
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;
+    /// What a standing answer rests on beyond its unit, as a source-to-root refresh watcher (an
+    /// edit to a neighbour queues the root's arrival). Key: id16(source) + id16(question) +
+    /// id16(unit).
+    TYPED_QUESTION_RESTS_ON: VaultMeta b"typed_question:rests_on:v1:" Raw;
+    /// The sources a unit's latest standing answer rests on, so the next answer replaces their
+    /// watchers. Key: id16(question) + id16(unit).
+    TYPED_QUESTION_ROOT_SOURCES: VaultMeta b"typed_question:root_sources:v1:" Named;
     /// Unit-to-question refresh watcher. Key: id16(unit) + id16(question).
     TYPED_QUESTION_UNIT_WATCH: VaultMeta b"typed_question:unit:v1:" Raw;
     TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;
@@ -529,6 +608,9 @@ side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw;
+    /// The blake3 of the escrow capsule each escrow wrap last handed to the host's outbound spool
+    /// (OF-570, CROSS-ARCH-0022 invariant 03). Key: string (wrap id).
+    VAULT_KEY_ESCROW_SPOOLED: VaultMeta b"vault_key:escrow_spooled:v1:" Named;
     /// The vault data key's commitment and birth (OF-570 E1). Never the key. Key: ().
     VAULT_KEY_STATE: VaultMeta b"vault_key:state:v1" Named;
     /// One way to unlock the vault data key: an E0 `VaultDek` envelope and its public
@@ -543,6 +625,9 @@ side_tables! {
     VOICE_REF_IDENTITY: VaultMeta b"voice:ref_identity:v1:" Named;
     /// Voice identity incarnation (16 random bytes), fresh at every birth. Key: string (voice id).
     VOICE_REF_INCARNATION: VaultMeta b"voice:ref_incarnation:v1:" Raw;
+    /// A banked voice's current render/provisioning consent decision, apart from recognition
+    /// consent. Key: string (voice id).
+    VOICE_REF_RENDER_CONSENT: VaultMeta b"voice:ref_render_consent:v1:" Named;
     /// Cached voice render-target pointer. Key: string (voice id) "\0" string (target).
     VOICE_REF_TARGET: VaultMeta b"voice:ref_target:v1:" Named;
     /// Voice consent decision event. Key: id16 + digest16.
@@ -588,6 +673,10 @@ side_tables! {
     /// When a shelved sealed packet was retired (u64be vault seconds); it is purged 30 days on.
     /// Key: hex64 (tag) ":" hex64 (packet digest).
     WORLD_KEY_SEALED_RETIRED: VaultMeta b"world_keys:sealed-retired:v1:" Raw;
+    /// The newest shelved sealed packet of one window (its shelf id, `tag:digest` hex), so a
+    /// relay node that may not read the world can answer a reader's request for that window.
+    /// Key: string (window label).
+    WORLD_KEY_SEALED_WINDOW: VaultMeta b"world_keys:sealed-window:v1:" Raw;
     /// One sealed packet of a private world's window, kept for a reader by a node that may not
     /// read the world (OF-570). Key: hex64 (tag) ":" hex64 (packet digest).
     WORLD_KEY_SEALED: VaultMeta b"world_keys:sealed:v1:" Raw;

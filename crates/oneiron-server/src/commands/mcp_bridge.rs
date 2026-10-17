@@ -14,7 +14,10 @@
 //! limit, so a stalled or oversized exchange costs the agent one typed error
 //! for that request, not the session.
 //!
-//! Every line goes to the server as the client wrote it. Who is calling is
+//! Every line goes to the server as the client wrote it, but for one
+//! addition: a `tools/call` whose `_meta` names no `oneiron/invocation` gains
+//! a fresh one there (ARCH-0080 §3), every other `_meta` key as the client
+//! sent it; a call that names one goes on byte for byte. Who is calling is
 //! the credential's to say, not the agent's: a tool call that names no actor
 //! runs as the credential's own, and one that names another is refused
 //! (ARCH-0028 #surface).
@@ -59,6 +62,40 @@ const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
 const SURFACE_PROBE: &str =
     r#"{"jsonrpc":"2.0","id":"oneiron-mcp-bridge","method":"initialize","params":{}}"#;
 const SURFACE_PROBE_ID: &str = "oneiron-mcp-bridge";
+
+/// The `_meta` key a `tools/call` names its invocation under, as the server's
+/// MCP gateway reads it: 32 lowercase hex digits naming one logical verb call.
+/// Its verb hooks fire once for it, and a retry of a call a hook stopped on an
+/// ask names the same one to find that ask.
+pub(crate) const INVOCATION_META: &str = "oneiron/invocation";
+
+/// A fresh invocation id for one tool call, from the OS CSPRNG.
+pub(crate) fn mint_invocation() -> String {
+    let mut id = [0; 16];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut id);
+    oneiron::runtime_hooks::InvocationId(id).to_hex()
+}
+
+/// The body for a `tools/call` whose `_meta` names no invocation: the same
+/// message with a fresh one added there. `None` sends the client's line as it
+/// wrote it: any other message, a call that names its own, and a malformed
+/// one, which is the server's to refuse.
+fn with_invocation(message: &mut Value) -> Option<Vec<u8>> {
+    if message.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    let meta = message
+        .get_mut("params")?
+        .as_object_mut()?
+        .entry("_meta")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+        .as_object_mut()?;
+    if meta.contains_key(INVOCATION_META) {
+        return None;
+    }
+    meta.insert(INVOCATION_META.to_owned(), Value::String(mint_invocation()));
+    serde_json::to_vec(message).ok()
+}
 
 /// Poll cadence and request bound for this small handoff, independent of
 /// the potentially much longer deadline of an agent's tool call.
@@ -320,7 +357,7 @@ impl Bridge {
     /// One stdin line in, at most one stdout line out. A notification (no
     /// `id`) is forwarded and never answered, as JSON-RPC 2.0 requires.
     fn answer(&self, line: &str) -> Option<String> {
-        let message: Value = match serde_json::from_str(line) {
+        let mut message: Value = match serde_json::from_str(line) {
             Ok(message) => message,
             Err(error) => {
                 return Some(rpc_error(
@@ -345,7 +382,8 @@ impl Bridge {
         }
         // One deadline for the whole request, the endpoint probe included.
         let until = Instant::now() + self.deadline;
-        let reply = self.post(line.as_bytes().to_vec(), until);
+        let body = with_invocation(&mut message).unwrap_or_else(|| line.as_bytes().to_vec());
+        let reply = self.post(body, until);
         let id = message.get("id").cloned()?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
             Ok(answer) => answer.to_string(),
@@ -600,18 +638,16 @@ impl Refusal {
             Self::Server(message, body) => {
                 rpc_error(id, -32000, "server_error", message, Some(body.clone()))
             }
-            Self::Unreachable(message) => {
-                rpc_error(
-                    id,
-                    -32000,
-                    "server_unreachable",
-                    &format!(
-                        "{message}; start the vault with `oneiron serve --config <vault-config>` \
+            Self::Unreachable(message) => rpc_error(
+                id,
+                -32000,
+                "server_unreachable",
+                &format!(
+                    "{message}; start the vault with `oneiron serve --config <vault-config>` \
                          and check --url matches its host and port; MCP does not start a vault"
-                    ),
-                    None,
-                )
-            }
+                ),
+                None,
+            ),
             Self::TooLarge => rpc_error(
                 id,
                 -32000,
@@ -659,14 +695,13 @@ fn credential_env(name: &str) -> anyhow::Result<String> {
 /// its owner may read it, by its mode and by any ACL: a file the agent's
 /// other users can read is a credential they hold too.
 fn read_credential_file(path: &Path) -> anyhow::Result<(String, String)> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "open {}: {error}; pass the file written by `oneiron token agent --name \
+    let mut file = std::fs::File::open(path).map_err(|error| {
+        anyhow::anyhow!(
+            "open {}: {error}; pass the file written by `oneiron token agent --name \
                  <name> --out <new-file> --config <vault-config>` (with the vault stopped)",
-                path.display()
-            )
-        })?;
+            path.display()
+        )
+    })?;
     super::credential_file::admit(path, &file)?;
     let mut text = String::new();
     file.read_to_string(&mut text)

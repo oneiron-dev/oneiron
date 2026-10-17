@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::ptr;
+use std::sync::Mutex;
+
+use zeroize::Zeroize;
 
 use crate::mdb::error::mdb_result;
 use crate::mdb::ffi;
@@ -28,6 +31,50 @@ use crate::{Env, Result};
 pub struct RoTxn<'e> {
     pub(crate) txn: *mut ffi::MDB_txn,
     env: Cow<'e, Env>,
+    /// ONEIRON FORK (OF-570): copies of what a sealed env returned.
+    stash: Option<Stash>,
+}
+
+/// ONEIRON FORK (OF-570): the bytes a sealed environment returned, copied out
+/// of mdb.master3's page cache. That cache may unmap a page while the
+/// transaction lives, so a sealed env's values are copied here and live until
+/// the transaction ends, as heed promises. Wiped when the transaction drops.
+#[derive(Default)]
+pub(crate) struct Stash(Mutex<Vec<Box<[u8]>>>);
+
+impl Stash {
+    fn for_env(env: &Env) -> Option<Stash> {
+        env.is_sealed().then(Stash::default)
+    }
+
+    /// A copy of `bytes` that lives as long as this stash.
+    ///
+    /// # Safety
+    ///
+    /// The caller bounds `'s` by the stash's own life, as heed bounds every
+    /// returned value by its transaction.
+    pub(crate) unsafe fn keep<'s>(&self, bytes: &[u8]) -> &'s [u8] {
+        let copy: Box<[u8]> = bytes.into();
+        let (data, len) = (copy.as_ptr(), copy.len());
+        // A boxed slice's buffer never moves; it frees only when the stash drops.
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(copy);
+        unsafe { std::slice::from_raw_parts(data, len) }
+    }
+}
+
+impl Drop for Stash {
+    fn drop(&mut self) {
+        let kept = self
+            .0
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for copy in kept.iter_mut() {
+            copy.zeroize();
+        }
+    }
 }
 
 impl<'e> RoTxn<'e> {
@@ -45,6 +92,7 @@ impl<'e> RoTxn<'e> {
 
         Ok(RoTxn {
             txn,
+            stash: Stash::for_env(env),
             env: Cow::Borrowed(env),
         })
     }
@@ -63,12 +111,30 @@ impl<'e> RoTxn<'e> {
 
         Ok(RoTxn {
             txn,
+            stash: Stash::for_env(&env),
             env: Cow::Owned(env),
         })
     }
 
     pub(crate) fn env_mut_ptr(&self) -> *mut ffi::MDB_env {
         self.env.env_mut_ptr()
+    }
+
+    /// ONEIRON FORK (OF-570): `bytes` LMDB returned in this transaction, made
+    /// to last as long as it: unchanged for a plain env, copied for a sealed one.
+    ///
+    /// # Safety
+    ///
+    /// `'s` must not outlive this transaction.
+    pub(crate) unsafe fn stable<'s>(&self, bytes: &'s [u8]) -> &'s [u8] {
+        match &self.stash {
+            None => bytes,
+            Some(stash) => unsafe { stash.keep(bytes) },
+        }
+    }
+
+    pub(crate) fn stash(&self) -> Option<&Stash> {
+        self.stash.as_ref()
     }
 
     /// Commit a read transaction.
@@ -142,6 +208,7 @@ impl<'p> RwTxn<'p> {
         Ok(RwTxn {
             txn: RoTxn {
                 txn,
+                stash: Stash::for_env(env),
                 env: Cow::Borrowed(env),
             },
         })
@@ -163,6 +230,7 @@ impl<'p> RwTxn<'p> {
         Ok(RwTxn {
             txn: RoTxn {
                 txn,
+                stash: Stash::for_env(env),
                 env: Cow::Borrowed(env),
             },
         })

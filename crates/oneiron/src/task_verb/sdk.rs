@@ -93,6 +93,34 @@ pub struct RoomClaimRequest {
     pub room_ref: String,
     pub turn_ref: String,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRefRequest {
+    pub project_ref: String,
+}
+/// `vault.projects.goal.dismiss`'s input: the proposal one tradeoff question
+/// made, under the goal claim the caller saw in force.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGoalDismissRequest {
+    pub project_ref: String,
+    pub expected_goal_ref: String,
+    pub question_digest: String,
+}
+/// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
+/// wrote nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectGoalDismissReceipt {
+    pub dismissed: bool,
+}
+/// `vault.projects.route_tradeoff`'s input: the project TASK to ask on and
+/// the skill proposal whose tradeoff question it carries.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectTradeoffRouteRequest {
+    pub task_ref: String,
+    pub proposal_ref: String,
+}
 /// `vault.rooms.host`: the room, and the live session whose participants
 /// count as present beside the caller.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -110,6 +138,53 @@ pub struct CompanionSharingRequest {
     pub companion_ref: String,
     pub contact_ref: String,
 }
+/// `vault.companions.sharing.set`: the owner's standing yes to one frozen
+/// clearance offer for the contact a companion's sharing is about.
+/// `expected_delta` is the offer's canonical bytes, as the owner was shown
+/// them, in lowercase hex.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionSharingSetRequest {
+    pub companion_ref: String,
+    pub contact_ref: String,
+    pub proposal_ref: String,
+    pub expected_delta: String,
+}
+impl CompanionSharingSetRequest {
+    /// The companion and contact this request names.
+    pub fn target(&self) -> MemoryResult<crate::workspace_roster::CompanionSharingTarget> {
+        let id = |reference: &str, field: &str| {
+            crate::EntityId::from_hex(reference)
+                .map_err(|_| MemoryError::bad_request(format!("invalid {field}")))
+        };
+        Ok(crate::workspace_roster::CompanionSharingTarget {
+            companion: id(&self.companion_ref, "companion_ref")?,
+            contact: id(&self.contact_ref, "contact_ref")?,
+        })
+    }
+
+    /// `expected_delta` decoded. Only lowercase hex decodes: the delta is
+    /// compared byte for byte, so it has one spelling.
+    pub fn delta(&self) -> MemoryResult<Vec<u8>> {
+        let pairs = self.expected_delta.as_bytes().chunks_exact(2);
+        if !pairs.remainder().is_empty() {
+            return Err(MemoryError::bad_request("invalid expected_delta"));
+        }
+        pairs
+            .map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .filter(|digits| {
+                        digits
+                            .bytes()
+                            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                    })
+                    .and_then(|digits| u8::from_str_radix(digits, 16).ok())
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| MemoryError::bad_request("invalid expected_delta"))
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRefRequest {
@@ -126,6 +201,36 @@ pub struct WorkCompanionSetRequest {
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
     pub task_ref: String,
+}
+/// `tasks.update`: the owner's acknowledgement of a TASK, or, from a code
+/// run's reader child, the finding its result name `resultRef` holds. Only a
+/// run resolves its result names, so a host door refuses `resultRef`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskUpdateRequest {
+    pub task_ref: String,
+    #[serde(default, rename = "resultRef", skip_serializing_if = "Option::is_none")]
+    pub result_ref: Option<String>,
+}
+/// `vault.projects.proposals`: the conversation whose project cards to read.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectConversationRequest {
+    pub conversation_ref: String,
+}
+/// `vault.projects.dismiss_card`: one host-held project card.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCardRequest {
+    pub card_id: String,
+}
+/// `vault.projects.dismiss_card`'s result: `false` when the card was
+/// dismissed already.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCardDismissal {
+    pub card_id: String,
+    pub dismissed: bool,
 }
 /// `describe`'s one input: the task to describe, a board card's key, or
 /// none for the whole TASKS section.
@@ -155,6 +260,30 @@ pub struct DescribeRequest {
 pub struct TaskCreateRequest {
     pub spec: serde_json::Value,
     pub label: Option<String>,
+    /// Who realizes the TASK; absent is the Dreamer lane. The engine routes
+    /// from this alone. A creator, project or spend is never request text:
+    /// an agent run's TASK runs under its creator only by its host's
+    /// binding (OF-532).
+    #[serde(default)]
+    pub assignee: Option<super::TaskAssignee>,
+}
+
+/// The create spec one `tasks.create` request names, owned by the
+/// surface's actor.
+pub fn task_create_spec(
+    memory: &Memory<'_>,
+    input: TaskCreateRequest,
+) -> MemoryResult<super::TaskCreateSpec> {
+    let spec = super::TaskCreateSpec::new(
+        crate::msgpack_value_from_json(&input.spec)?,
+        input.label,
+        Some(memory.actor()),
+        Some(memory.vault().now_recorded_at()),
+    );
+    Ok(match input.assignee {
+        Some(assignee) => spec.with_assignee(assignee),
+        None => spec,
+    })
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -209,16 +338,37 @@ pub struct RecallRequest {
     pub deadline_ms: Option<u64>,
 }
 
-pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
+pub use super::recall_door::{
+    RecallDoor, recall_at_door, recall_at_door_seeded, recall_with_vector,
+};
 pub use super::sdk_connector::*;
+pub use super::sdk_diary::*;
+pub use super::sdk_disclosure::*;
+pub use super::sdk_embedding_space::*;
+pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
+pub use super::sdk_legal_hold::*;
 pub use super::sdk_self::*;
+pub use super::sdk_share::*;
+pub use super::sdk_shared::*;
+pub use super::sdk_shared_members::*;
 
-/// `vault.receipts`'s one input.
+/// `vault.writes.pending`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
+}
+/// `vault.receipts`'s input: a page size, and the receipt kinds to list as
+/// `ReceiptKind` names them (`gate`, `hook`, `outbound`, ...). With no kinds
+/// it lists the gate decision ledger; an unknown kind is refused.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VaultReceiptsRequest {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<String>,
 }
 /// `inbox.list`'s one input (OF-221): the exclusive entity-ID cursor a
 /// previous page returned as `next_after`, and a page size
@@ -433,9 +583,7 @@ fn render_declarations(
 /// One declaration's type: a verb's call signature, the members it holds, or
 /// both at once.
 fn declaration_type(node: &DeclarationNode, depth: usize) -> String {
-    let call = node
-        .verb
-        .map(|verb| format!("(input: {}) => Promise<unknown>", verb_input_type(verb)));
+    let call = node.verb.map(verb_call_signature);
     if node.children.is_empty() {
         return call.unwrap_or_else(|| "{}".to_owned());
     }
@@ -447,6 +595,18 @@ fn declaration_type(node: &DeclarationNode, depth: usize) -> String {
         Some(call) => format!("({call}) & {members}"),
         None => members,
     }
+}
+
+/// A verb's call signature. `self.fold` is the one positional verb
+/// (ARCH-0067 #folds: `self.fold(span, {note?})`, Docs Q25); every other verb
+/// takes one input object.
+fn verb_call_signature(verb: &str) -> String {
+    if verb == "self.fold" {
+        return "(span: readonly [number, number], options?: { note?: string | null }) => \
+                Promise<unknown>"
+            .to_owned();
+    }
+    format!("(input: {}) => Promise<unknown>", verb_input_type(verb))
 }
 
 fn verb_input_type(verb: &str) -> String {

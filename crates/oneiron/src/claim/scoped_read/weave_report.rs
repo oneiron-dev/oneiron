@@ -4,6 +4,9 @@
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
+use crate::dreamer_runner::maintenance::agent_health::{
+    AgentHealthCard, AgentHealthOutcome, agent_health_cards_in_txn,
+};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -18,7 +21,9 @@ pub enum WeaveReader<'a> {
     Agent(EntityId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum WeaveSectionKind {
     Changes,
@@ -65,6 +70,19 @@ pub enum WeaveItem {
         source: EntityId,
         kind: EdgeKind,
         target: EntityId,
+    },
+    /// A resident's own dreaming, in its own Digest section only: when it
+    /// last dreamed and how many entries its dreaming has written. Never
+    /// an entry's id or text, and never in another reader's report.
+    DreamProgress {
+        resident: EntityId,
+        dreamed_at: u64,
+        entries: u64,
+    },
+    /// One of the Coach's open agent-health cards (OF-568), in a Digest
+    /// section read by one of its recipients or a live owner.
+    AgentHealth {
+        card: AgentHealthCard,
     },
 }
 
@@ -278,6 +296,37 @@ impl ScopedRead<'_> {
                     }
                 }
             }
+            // Each resident gets its own digest through its dreaming
+            // (ARCH-0063 §6): its progress leads its own Digest section.
+            if spec.kind == WeaveSectionKind::Digest
+                && let WeaveReader::Agent(resident) = reader
+            {
+                let progress = crate::dreamer_consolidation::resident_dream_progress_in_txn(
+                    self.vault, txn, resident,
+                )?;
+                if progress.entries > 0 {
+                    items.insert(
+                        0,
+                        WeaveItem::DreamProgress {
+                            resident,
+                            dreamed_at: progress.dreamed_at,
+                            entries: progress.entries,
+                        },
+                    );
+                }
+            }
+            // The Coach's open agent-health cards follow, concern first, for
+            // a reader the concern door would answer (OF-568).
+            if spec.kind == WeaveSectionKind::Digest && !filter.deny_all {
+                let id = reader.id(self.vault, txn)?;
+                for card in agent_health_cards_in_txn(self.vault, txn)? {
+                    if card.outcome == AgentHealthOutcome::Open
+                        && weave_card_admitted(self.vault, txn, &card, id)?
+                    {
+                        items.push(WeaveItem::AgentHealth { card });
+                    }
+                }
+            }
             if spec.kind == WeaveSectionKind::Links && !spec.edge_kinds.is_empty() {
                 items.extend(self.weave_links_in(
                     txn,
@@ -309,6 +358,22 @@ impl ScopedRead<'_> {
             receipt: self.receipt_for(None, &policy, &filter, 0),
         })
     }
+}
+
+/// Whether `reader` may see `card` in a weave: one of its recipients or a
+/// live owner, never the agent it is about. This is the concern door's own
+/// audience, so a row's one-tap "wrong" never shows a card its door refuses.
+pub(super) fn weave_card_admitted(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    card: &AgentHealthCard,
+    reader: EntityId,
+) -> Result<bool> {
+    if reader == card.subject {
+        return Ok(false);
+    }
+    Ok(card.recipients.contains(&reader)
+        || crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &reader)?)
 }
 
 impl ScopedRead<'_> {

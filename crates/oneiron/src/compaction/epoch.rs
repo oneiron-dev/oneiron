@@ -578,6 +578,31 @@ pub(super) fn mint_epoch_summary_with(
     product: &CompactionProduct,
     extra: impl FnOnce(&mut heed::RwTxn<'_>, &EpochMint) -> Result<()>,
 ) -> Result<(u64, EntityId)> {
+    mint_epoch_summary_guarded(
+        vault,
+        session_ref,
+        byline,
+        request,
+        product,
+        |_| Ok(()),
+        extra,
+    )
+}
+
+/// [`mint_epoch_summary_with`] whose `landing` runs FIRST in the mint's own
+/// transaction (Docs Q17): a session-bound run on a route that went on
+/// record lands its summary in base only while its participant, its saver
+/// and its route still stand, exactly as its other base writes do. A refused
+/// landing writes nothing.
+pub(super) fn mint_epoch_summary_guarded(
+    vault: &Vault,
+    session_ref: &EntityId,
+    byline: WriteActor,
+    request: &CompactionRequest,
+    product: &CompactionProduct,
+    landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    extra: impl FnOnce(&mut heed::RwTxn<'_>, &EpochMint) -> Result<()>,
+) -> Result<(u64, EntityId)> {
     let (turn_start, turn_end) = check_mint(session_ref, request, product)?;
 
     // `DerivedFrom` targets are the sealed request's sources: a conversation
@@ -592,6 +617,7 @@ pub(super) fn mint_epoch_summary_with(
     let summary_id = vault.store.clock.entity_id()?;
 
     let epoch = vault.with_write_txn_grouped(|wtxn| {
+        landing(wtxn)?;
         refuse_overlay_derived_mint(
             &vault.store,
             request

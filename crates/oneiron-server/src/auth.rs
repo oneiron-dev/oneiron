@@ -17,13 +17,16 @@ use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
+pub(crate) mod account_key;
 mod binding_admission;
 mod client_address;
+mod left_notices;
 mod locality;
 mod machine_proof;
 mod slips;
 pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use client_address::ClientAddress;
+pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality};
 pub(crate) use slips::{BindingProof, parse_signature, parse_slip_id};
 
@@ -74,6 +77,17 @@ pub(crate) trait RevokedTokenJtis {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         Err(())
     }
+    /// Keeps the instrument [`Self::verify_slip`] admitted, for work the
+    /// request queues. `Err` from a registry that keeps none: that request
+    /// then carries no slip into the work it queues.
+    fn bind_invocation_slip(
+        &self,
+        _slip: &oneiron::authority::CapabilitySlip,
+        _challenge: &[u8],
+        _signature: &[u8],
+    ) -> Result<oneiron::authority::InvocationSlipBinding, ()> {
+        Err(())
+    }
     /// The 401 for a request [`Self::verify_slip`] refused only because the
     /// vault's proof clock sits ahead of this host's clock, or `None` for any
     /// other refusal. It names what authentication would take on this host's
@@ -107,6 +121,15 @@ impl RevokedTokenJtis for oneiron::Vault {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         self.verify_logged_capability_slip_request(slip, timestamp, signature, nonce)
             .map_err(drop)
+    }
+
+    fn bind_invocation_slip(
+        &self,
+        slip: &oneiron::authority::CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<oneiron::authority::InvocationSlipBinding, ()> {
+        oneiron::Vault::bind_invocation_slip(self, slip, challenge, signature).map_err(drop)
     }
 
     fn proof_clock_refusal(
@@ -266,6 +289,10 @@ pub(crate) struct CoreAuth {
     actor_class: Option<String>,
     org_ref: Option<String>,
     verified_slip: Option<oneiron::authority::VerifiedSlip>,
+    /// The signed instrument this request's slip was admitted on, kept for
+    /// the work the request queues: a queued turn action carries it, and its
+    /// standing is judged again when that work runs.
+    invocation_slip: Option<oneiron::authority::InvocationSlipBinding>,
     /// Exact authenticated instrument, independent of the verifier's remaining TTL.
     instrument: Option<[u8; 32]>,
     /// Where the connection this caller reached the server on sits. Off this
@@ -294,6 +321,50 @@ impl CoreAuth {
         // A token alone cannot bind a session: possession of the connection
         // private key is mandatory, even for an otherwise valid v2 MAC.
         Err(ApiError::unauthorized())
+    }
+
+    /// The caller a verified account API key establishes (OF-448 node
+    /// path): exactly the scopes the control plane's verdict granted the
+    /// key, never owner-grade, with the presented key's node-local
+    /// fingerprint as its instrument identity.
+    fn from_verified_account_key(verified: account_key::VerifiedAccountKey) -> Self {
+        Self {
+            principal: format!("account-key:{}", verified.key_id),
+            principal_ref: verified.principal_ref,
+            scopes: verified.scopes,
+            implicit_all_scopes: false,
+            jti: None,
+            actor_class: None,
+            org_ref: None,
+            verified_slip: None,
+            invocation_slip: None,
+            instrument: Some(verified.instrument),
+            locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
+        }
+    }
+
+    /// [`Self::for_server`] plus the account-key door, for callers that can
+    /// await. When a host installed a verifier, any Bearer [REDACTED] that is
+    /// not a v2 slip or token is presented to it, and its refusal is final
+    /// (the failure floor is paid inside `verify`). Managed-issuer servers
+    /// keep their supervisor-terminated posture and never reach that path.
+    pub(crate) async fn for_server_async(
+        headers: &HeaderMap,
+        server: &SyncServer,
+    ) -> Result<Self, ApiError> {
+        if server.managed_issuer.is_none()
+            && let Some(keys) = &server.account_keys
+            && let Ok(Some(token)) = bearer_token(headers)
+            && !token.starts_with(CORE_TOKEN_V2_PREFIX)
+        {
+            return keys
+                .verify(token.as_bytes(), oneiron_vault_contract::now_ts())
+                .await
+                .map(Self::from_verified_account_key)
+                .map_err(|_| ApiError::unauthorized());
+        }
+        Self::for_server(headers, server)
     }
 
     pub(crate) fn for_server(headers: &HeaderMap, server: &SyncServer) -> Result<Self, ApiError> {
@@ -339,6 +410,7 @@ impl CoreAuth {
             actor_class: None,
             org_ref: None,
             verified_slip: None,
+            invocation_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
@@ -356,6 +428,7 @@ impl CoreAuth {
             actor_class: None,
             org_ref: None,
             verified_slip: None,
+            invocation_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
@@ -386,6 +459,12 @@ impl CoreAuth {
 
     pub(crate) fn verified_slip(&self) -> Option<&oneiron::authority::VerifiedSlip> {
         self.verified_slip.as_ref()
+    }
+
+    /// The instrument this request's slip was admitted on, for the work it
+    /// queues.
+    pub(crate) fn invocation_slip(&self) -> Option<&oneiron::authority::InvocationSlipBinding> {
+        self.invocation_slip.as_ref()
     }
 
     /// Where this caller's connection sits; every read it makes reads there.
@@ -510,7 +589,8 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        Self::for_server(&parts.headers, server)
+        Self::for_server_async(&parts.headers, server)
+            .await
             .map(|auth| auth.at(caller_locality(&parts.headers, &parts.extensions)))
             .map_err(Into::into)
     }
@@ -646,6 +726,7 @@ fn core_auth_for_live_claims(
         actor_class: claims.actor_class,
         org_ref: claims.org_ref,
         verified_slip: None,
+        invocation_slip: None,
         instrument: None,
         locality: CallerLocality::OffDevice,
         facets_owner_exempt: false,

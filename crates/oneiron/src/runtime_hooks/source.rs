@@ -6,21 +6,20 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ports::{ChangeLogRecord, ChangeLogStore, ChangeOp, EntityStoreRead};
+use crate::ports::{ChangeLogStore, ChangeLogStoreRead, ChangeOp, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
-/// The claim changelog: the mutation-audit rows, keyed by their record id.
-///
-/// The id is drawn from `StoreClock::ulid` inside the writer transaction that
-/// commits the row, and LMDB runs one writer at a time, so a later commit
-/// always holds a larger id. The id floor (`ports:id_floor:v1`) is persisted
-/// with every mutation and observed when the vault opens, so ids keep rising
-/// across restarts. Key order is therefore commit order: a reader that resumes
-/// after its last id never misses a row that commits later.
-const CHANGES: SideTable<[u8; 16], ChangeLogRecord, Named> =
-    SideTable::new(&side_table::PORTS_CHANGE);
+// The claim changelog, read through `ChangeLogStoreRead`: the mutation-audit
+// rows, keyed by their record id.
+//
+// The id is drawn from `StoreClock::ulid` inside the writer transaction that
+// commits the row, and LMDB runs one writer at a time, so a later commit
+// always holds a larger id. The id floor (`ports:id_floor:v1`) is persisted
+// with every mutation and observed when the vault opens, so ids keep rising
+// across restarts. Key order is therefore commit order: a reader that resumes
+// after its last id never misses a row that commits later.
 /// The settlement feed: one row per settled proposal, keyed by its sequence.
 const SETTLED: SideTable<u64, SettledRow, Named> = SideTable::new(&side_table::HOOKS_SETTLED);
 /// The last settlement sequence handed out.
@@ -259,10 +258,6 @@ impl SettledRow {
 
 /// Appends one settlement to the feed, in the settling door's transaction.
 /// The sequence is allocated there, so feed order is commit order.
-#[allow(
-    dead_code,
-    reason = "the gate's settlement doors call this once their seam lands"
-)]
 pub(crate) fn record_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -305,7 +300,9 @@ pub(super) fn read_after(
         (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
             settlements_after(vault, Some(position), max_entries)
         }
-        _ => Err(Error::InvariantViolation("hook cursor names another source")),
+        _ => Err(Error::InvariantViolation(
+            "hook cursor names another source",
+        )),
     }
 }
 
@@ -317,13 +314,11 @@ fn claim_changes_after(
     max_entries: usize,
 ) -> Result<SourceBatch> {
     let rtxn = vault.store.env.read_txn()?;
-    let start = after
-        .as_ref()
-        .map_or(Bound::Unbounded, |position| Bound::Excluded(&position.0));
     let budget = max_entries.saturating_mul(SCAN_PER_ENTRY).max(1);
     let mut batch = SourceBatch::default();
-    for (scanned, row) in CHANGES
-        .iter_range(&vault.store, &rtxn, start, Bound::Unbounded)?
+    for (scanned, row) in vault
+        .store
+        .port_changelog_after(&rtxn, after.map(|position| position.0))?
         .enumerate()
     {
         if scanned >= budget || batch.entries.len() >= max_entries {
@@ -404,10 +399,9 @@ fn settlements_after(
 pub(super) fn head(vault: &Vault, source: FactSource) -> Result<Option<FactPosition>> {
     let rtxn = vault.store.env.read_txn()?;
     let head = match source {
-        FactSource::ClaimChangelog => CHANGES
-            .iter_rev_from(&vault.store, &rtxn, &[])?
-            .next()
-            .transpose()?
+        FactSource::ClaimChangelog => vault
+            .store
+            .port_changelog_head(&rtxn)?
             .map(|(id, _)| FactPosition::ClaimChangelog(ClaimChangelogPosition(id))),
         FactSource::Settlement => SETTLED
             .iter_rev_from(&vault.store, &rtxn, &[])?
@@ -420,7 +414,10 @@ pub(super) fn head(vault: &Vault, source: FactSource) -> Result<Option<FactPosit
 
 /// The changelog position of a binding claim's latest write: where a new or
 /// re-enabled binding starts following the claim changelog.
-pub(super) fn binding_written_at(vault: &Vault, binding: &EntityId) -> Result<Option<FactPosition>> {
+pub(super) fn binding_written_at(
+    vault: &Vault,
+    binding: &EntityId,
+) -> Result<Option<FactPosition>> {
     let rtxn = vault.store.env.read_txn()?;
     let changes = vault
         .store

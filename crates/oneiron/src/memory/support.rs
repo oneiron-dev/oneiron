@@ -394,6 +394,7 @@ pub(super) fn subject_ref_string(subject: &ClaimSubject) -> String {
 /// A facade by pattern, and the module still describes it that way — but the
 /// pattern is an implementation note and the surface is what a caller reaches
 /// for, so the type is named for the thing rather than for the shape.
+#[derive(Clone)]
 pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
@@ -420,7 +421,41 @@ pub struct Memory<'v> {
     /// The vault owner's authentication, when a host bound the owner's own
     /// direct request (`with_owner_authorship`).
     pub(super) owner_authorship: Option<crate::consent::AuthenticatedOwner>,
+    /// The logical verb's id a host carried in (`with_invocation`): verb
+    /// hooks run once per id, across wrappers (ARCH-0080 §3).
+    pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
+    /// The signed instrument the caller's request was admitted on, when a
+    /// host bound one (`with_invocation_slip`): work this surface queues
+    /// carries it, and it is verified again when that work runs.
+    pub(super) invocation_slip: Option<crate::authority::InvocationSlipBinding>,
+    /// A transport's caller reaches this surface, slip or none
+    /// (`with_transport_invocation`). Only the host sets it, and nothing
+    /// clears it: a surface without it is the in-process host's own.
+    pub(super) transport_invocation: bool,
+    /// The conversation whose request this surface's work answers, when a
+    /// host bound one (`with_origin_conversation`, OF-221): context, not
+    /// authority.
+    pub(super) origin_conversation: Option<EntityId>,
+    /// The running agent attempt a host bound as this surface's TASK creator
+    /// (`with_task_host`, OF-532).
+    pub(super) task_host: Option<crate::task_verb::HostBinding>,
+    /// The off-record session the host's request named
+    /// (`in_off_record_session`): context, not authority.
+    pub(super) off_record_session: Option<String>,
+    /// A host bound this surface for a caller its credential admitted
+    /// (`for_credential`); only that host verifies the credential again.
+    pub(super) credential: bool,
+    /// The door's own admission of a hook's rewritten args
+    /// (`with_rewrite_admit`).
+    pub(super) rewrite_admit: Option<RewriteAdmit>,
 }
+
+/// A door's admission of a verb hook's rewritten args, run on the verb's name
+/// and the new args after the row's own input check, as if the caller sent
+/// them (ARCH-0080 §3). The reason refuses the rewrite.
+pub type RewriteAdmit = std::sync::Arc<
+    dyn Fn(&str, &serde_json::Value) -> std::result::Result<(), String> + Send + Sync,
+>;
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
 /// surface's claim doors stamp in place of the caller's declared source.
@@ -431,11 +466,29 @@ pub struct Memory<'v> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostWriteOrigin {
     envelope: crate::WriteEnvelope,
+    /// The running agent attempt the dispatcher bound as the call's TASK
+    /// creator (OF-532), read from its live lease, never from the guest.
+    task_host: Option<crate::task_verb::HostBinding>,
 }
 
 impl HostWriteOrigin {
     pub(crate) const fn new(envelope: crate::WriteEnvelope) -> Self {
-        Self { envelope }
+        Self {
+            envelope,
+            task_host: None,
+        }
+    }
+
+    /// This origin with the run's TASK creator binding, if it has one.
+    pub(crate) fn with_task_host(mut self, binding: Option<crate::task_verb::HostBinding>) -> Self {
+        self.task_host = binding;
+        self
+    }
+
+    /// The TASK creator the dispatcher bound, if any.
+    #[must_use]
+    pub const fn task_host(&self) -> Option<&crate::task_verb::HostBinding> {
+        self.task_host.as_ref()
     }
 
     /// The source every claim written under this origin carries.
@@ -471,6 +524,14 @@ impl Vault {
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
+            invocation: None,
+            invocation_slip: None,
+            transport_invocation: false,
+            origin_conversation: None,
+            task_host: None,
+            off_record_session: None,
+            credential: false,
+            rewrite_admit: None,
         }
     }
 
@@ -503,6 +564,14 @@ impl Vault {
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
+            invocation: None,
+            invocation_slip: None,
+            transport_invocation: false,
+            origin_conversation: None,
+            task_host: None,
+            off_record_session: None,
+            credential: false,
+            rewrite_admit: None,
         }
     }
 }
@@ -543,6 +612,15 @@ impl<'v> Memory<'v> {
                 // A room turn writes into the room's talk, not as the owner
                 // in person.
                 owner_authorship: None,
+                // The same logical verb, run inside the turn.
+                invocation: self.invocation,
+                invocation_slip: self.invocation_slip.clone(),
+                transport_invocation: self.transport_invocation,
+                origin_conversation: self.origin_conversation,
+                task_host: self.task_host.clone(),
+                off_record_session: self.off_record_session.clone(),
+                credential: self.credential,
+                rewrite_admit: self.rewrite_admit.clone(),
             },
         })
     }
@@ -588,6 +666,131 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds the logical verb's id a transport carried in, so a verb hook
+    /// fires once for it however many wrappers it crosses.
+    #[must_use]
+    pub fn with_invocation(mut self, invocation: crate::runtime_hooks::InvocationId) -> Self {
+        self.invocation = Some(invocation);
+        self
+    }
+
+    /// Binds the signed instrument the caller's request was admitted on.
+    /// Work this surface queues carries it, and that work's standing is the
+    /// slip's own when it runs: verified again then, a revoked slip stops it.
+    #[must_use]
+    pub fn with_invocation_slip(
+        mut self,
+        binding: &crate::authority::InvocationSlipBinding,
+    ) -> Self {
+        self.invocation_slip = Some(binding.clone());
+        self
+    }
+
+    /// The signed instrument a host bound, if any.
+    pub(crate) fn invocation_slip(&self) -> Option<&crate::authority::InvocationSlipBinding> {
+        self.invocation_slip.as_ref()
+    }
+
+    /// Marks this surface as a transport caller's, with a slip or without
+    /// one, on loopback as off the device. It only narrows: no call clears it.
+    #[must_use]
+    pub fn with_transport_invocation(mut self) -> Self {
+        self.transport_invocation = true;
+        self
+    }
+
+    /// Whether the in-process host itself holds this surface: no transport
+    /// reached it and no credential is bound to it.
+    pub(crate) fn native_invocation(&self) -> bool {
+        !self.transport_invocation && self.invocation_slip.is_none() && self.read_proof.is_none()
+    }
+
+    /// Binds the conversation whose request started this surface's work
+    /// (OF-221). A host binds it only from the authenticated request that
+    /// actually started the work, never from caller text, a selected room or
+    /// a transcript. A root TASK this surface creates keeps it, through
+    /// approval and wave planning, and the agent that realizes it carries it
+    /// as its dispatch origin; a child always takes its parent's instead. It
+    /// grants nothing.
+    #[must_use]
+    pub fn with_origin_conversation(mut self, id: EntityId) -> Self {
+        self.origin_conversation = Some(id);
+        self
+    }
+
+    /// Binds the off-record session the host's request names (its
+    /// `x-oneiron-session`): context, not authority. Inside one the live
+    /// registry holds anonymous, a reference refusal or an unlinked prose
+    /// link is refused or unlinked as anywhere else but writes no receipt
+    /// (OF-063, Engine ruling 10-17, matching OF-538's call receipts).
+    #[must_use]
+    pub fn in_off_record_session(mut self, session_ref: &str) -> Self {
+        self.off_record_session = Some(session_ref.trim().to_owned());
+        self
+    }
+
+    /// Whether this surface's call sits in an anonymous off-record session,
+    /// which keeps no record: the one signal OF-538's call receipts read
+    /// ([`Vault::off_record_session_is_anonymous`]).
+    pub(crate) fn keeps_no_record(&self) -> bool {
+        self.off_record_session
+            .as_deref()
+            .is_some_and(|session| self.vault.off_record_session_is_anonymous(session))
+    }
+
+    /// The logical verb's id a host bound, if any.
+    #[must_use]
+    pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
+        self.invocation
+    }
+
+    /// The origin conversation a host bound, if any.
+    #[must_use]
+    pub fn origin_conversation(&self) -> Option<EntityId> {
+        self.origin_conversation
+    }
+
+    /// Marks this surface as a caller's whose credential this host admitted.
+    /// It grants and narrows nothing: a verb hook's ask on its call saves no
+    /// way to run the call without the caller, so only the caller's retry,
+    /// which the host verifies again, resumes it (ARCH-0080 §3 Ask).
+    #[must_use]
+    pub fn for_credential(mut self) -> Self {
+        self.credential = true;
+        self
+    }
+
+    /// Binds the door's admission of a hook's rewritten args: a rewrite the
+    /// door would refuse from the caller is refused from a hook too. A room
+    /// turn opened on this surface keeps it.
+    #[must_use]
+    pub fn with_rewrite_admit(mut self, admit: RewriteAdmit) -> Self {
+        self.rewrite_admit = Some(admit);
+        self
+    }
+
+    /// The door's admission of rewritten args a host bound, if any.
+    pub(crate) fn rewrite_admit(&self) -> Option<&RewriteAdmit> {
+        self.rewrite_admit.as_ref()
+    }
+
+    /// Binds the running agent attempt whose TASK creates this surface makes
+    /// (OF-532): a TASK it creates for an agent then runs inside that
+    /// attempt's lease tree and project. A host builds the binding from the
+    /// leased row it holds, never from caller text. It grants nothing: each
+    /// create re-proves the lease, the actor and the spend scope in its own
+    /// transaction, and a stale one refuses.
+    #[must_use]
+    pub fn with_task_host(mut self, binding: crate::task_verb::HostBinding) -> Self {
+        self.task_host = Some(binding);
+        self
+    }
+
+    /// The TASK creator a host bound, if any.
+    pub(crate) fn task_host(&self) -> Option<&crate::task_verb::HostBinding> {
+        self.task_host.as_ref()
+    }
+
     /// The owner authorship of a claim write in `txn`, revalidated there.
     ///
     /// A surface bound to a host origin or a machine signer writes for
@@ -630,6 +833,9 @@ impl Memory<'_> {
     /// source and the gate decides.
     #[must_use]
     pub fn with_host_origin(mut self, origin: HostWriteOrigin) -> Self {
+        if let Some(binding) = &origin.task_host {
+            self.task_host = Some(binding.clone());
+        }
         self.host_origin = Some(origin);
         self
     }
@@ -689,6 +895,43 @@ impl Memory<'_> {
     /// The room turn this handle is bound to, if any.
     pub(crate) fn room_turn(&self) -> Option<&crate::claim::RoomTurnCeiling> {
         self.room_turn.as_ref()
+    }
+
+    /// The sitting and the room turn's room a host bound, when nothing else
+    /// on this surface is something a resumed call could not rebuild: no
+    /// credential or read proof, on this device, a room's own turn rather
+    /// than a thread's, and no owner authorship, host origin, machine signer,
+    /// producer list, birth position, TASK host, off-record session or door
+    /// rewrite admission. A verb hook's ask saves
+    /// them, so settlement runs the call again as this caller (ARCH-0080 §3
+    /// Ask); `None` resumes only on the caller's retry.
+    pub(crate) fn resume_bounds(
+        &self,
+    ) -> Option<(
+        Option<crate::session_lifecycle::SessionKey>,
+        Option<EntityId>,
+    )> {
+        let plain = !self.credential
+            && self.read_proof.is_none()
+            && self.locality == crate::claim::CallerLocality::OnDevice
+            && self
+                .room_turn
+                .as_ref()
+                .is_none_or(|turn| turn.branch.is_none())
+            && self.owner_authorship.is_none()
+            && self.host_origin.is_none()
+            && self.machine_signer.is_none()
+            && self.producers.is_none()
+            && self.birth_position == crate::federation::record_scope::BirthPosition::default()
+            && self.task_host.is_none()
+            && self.off_record_session.is_none()
+            && self.rewrite_admit.is_none();
+        plain.then(|| {
+            (
+                self.session_key,
+                self.room_turn.as_ref().map(|turn| turn.room),
+            )
+        })
     }
 
     /// The bound actor entity id.
@@ -803,13 +1046,12 @@ impl Memory<'_> {
     }
 
     /// PRE-TRANSACTION variant of the hard-delete refusal, used ONLY where
-    /// the engine owns the write transaction internally (companion create,
+    /// the engine owns the write transaction internally (imported-claim
     /// ingest admission) and the marker check cannot ride it. Residual for
-    /// those two verbs: a hard delete landing between this check and the
-    /// engine's commit recreates at the purged id; closing it needs in-txn
-    /// engine seams (`create_companion_record_in_txn`, ingest). Every other
-    /// id-accepting verb checks the marker INSIDE its own write
-    /// transaction (A1).
+    /// that verb: a hard delete landing between this check and the engine's
+    /// commit recreates at the purged id; closing it needs an in-txn ingest
+    /// seam. Every other id-accepting verb checks the marker INSIDE its own
+    /// write transaction (A1).
     pub(super) fn refuse_hard_deleted_id(&self, id: &EntityId) -> MemoryResult<()> {
         let rtxn = self
             .vault

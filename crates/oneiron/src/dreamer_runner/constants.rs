@@ -69,6 +69,25 @@ pub const DREAMER_VAULT_CLEANUP_ATTEMPT_KIND: &str = "dreamer.vault_cleanup";
 /// Doubles as the payload `job_type`, so the kind gate and the payload
 /// discriminator cannot drift apart.
 pub const DREAMER_NOTE_REVIEW_ATTEMPT_KIND: &str = "dreamer.note_review";
+/// A resident's own dreaming (OF-490): one Nightly child per resident whose
+/// definition is on and whose dreaming is not off. It runs under the
+/// resident's own stamp, not the Dreamer's, and writes the resident's diary.
+/// Admitted on the Timer wake (Macro scope) after the NOTE review.
+///
+/// Doubles as the payload `job_type`.
+pub const DREAMER_RESIDENT_DREAM_ATTEMPT_KIND: &str = "dreamer.resident_dream";
+/// A Dreamer-lane TASK's realization: the one row `tasks.create` queues for
+/// a TASK routed to the Dreamer, carrying the TASK's bare spec rather than
+/// the runner envelope. Admitted on any wake after the wake recipes; its one
+/// model step writes the research NOTE the TASK's result names.
+pub const DREAMER_TASK_REALIZE_ATTEMPT_KIND: &str =
+    crate::task_verb::highway_runner::REALIZE_ATTEMPT_KIND;
+/// The weave lens's generate step (OF-499): one saved digest period
+/// rendered through the shipped `weave-report` skill on a lent model, queued
+/// in the period's publication. Its render lands on the period's row.
+///
+/// Doubles as the payload `job_type`.
+pub const DREAMER_WEAVE_LENS_ATTEMPT_KIND: &str = "dreamer.weave_lens";
 /// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
 /// failure-ladder case the escalation hands to the Coach. Host-run, like agent
 /// dispatch: the wake driver never admits it; a host Coach leases it with
@@ -104,11 +123,13 @@ pub(super) const KEY_ELECTED_AT: &str = "elected_at";
 pub(super) const KEY_REASON: &str = "reason";
 pub(super) const KEY_PARK_OWNER: &str = "park_owner";
 pub(super) const KEY_PARKED_AT: &str = "parked_at";
+pub(super) const KEY_CAUSE: &str = "cause";
 
 pub(super) const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 1;
 pub(super) const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 1;
 pub(super) const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 // v2 adds the mandatory `park_owner` token; v1 rows (no owner) fail closed.
+// The typed `cause` key is mandatory too: a row without one fails closed.
 pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 2;
 pub(super) const DREAMER_BUDGET_KEYS: [&str; 6] = [
     KEY_SCHEMA_VERSION,
@@ -132,10 +153,11 @@ pub(super) const DREAMER_RUN_TREE_KEYS: [&str; 4] = [
     KEY_PARENT_ATTEMPT,
     KEY_CREATED_AT,
 ];
-pub(super) const DREAMER_PARKED_KEYS: [&str; 5] = [
+pub(super) const DREAMER_PARKED_KEYS: [&str; 6] = [
     KEY_SCHEMA_VERSION,
     KEY_ATTEMPT_ID,
     KEY_REASON,
+    KEY_CAUSE,
     KEY_PARK_OWNER,
     KEY_PARKED_AT,
 ];

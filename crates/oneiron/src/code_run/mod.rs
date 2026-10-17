@@ -17,7 +17,10 @@ mod codec;
 mod coordination_codec;
 mod dispatcher;
 mod payload;
+mod reader;
 mod replay;
+mod result_read;
+pub(crate) mod run_verb_call;
 mod run_verbs;
 mod storage;
 mod support;
@@ -35,25 +38,48 @@ pub use self::codec::{
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
 pub(crate) use self::dispatcher::{ExecutorCallSite, check_write_gate_against_vault};
-pub use self::dispatcher::{GatedActorWrite, HostSelfDispatcher, SELF_MEMORY_SEARCH_MAX_RESULTS};
+pub use self::dispatcher::{
+    GatedActorWrite, HostPlannerBinding, HostSelfDispatcher, SELF_MEMORY_SEARCH_MAX_RESULTS,
+};
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
     CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    code_run_replay_abi_layout_checks,
+    ResultOccurrence, code_run_replay_abi_layout_checks,
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
+pub use self::result_read::ResultFacet;
+pub(crate) use self::result_read::{
+    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,
+    refusal as result_refusal, resolve as resolve_result, unknown_handle,
+};
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
     executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
 };
-pub use self::storage::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
-pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row};
+pub use self::storage::{
+    CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
+    bind_wait_trap,
+};
+pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
+pub use self::reader::{
+    ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DelegatedSource, ReaderActor, ReaderFindingRef,
+    ReaderJob, ReaderJobRunner, ReaderJobState, ReaderJobWake, ReaderParent, ReaderReportReceipt,
+    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, RunDeadline, SelfReaderReportCall,
+    SelfReaderSpawnCall, SpawnHostSeat, SpawnParentBinding, TaskWaitFailure, TaskWaitFinding,
+    TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult, reader_task_brief,
+};
+pub(crate) use self::reader::{
+    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,
+    valid_reader_key, vault_ref,
+};
+pub use self::storage::ReaderJobs;
+pub(crate) use self::storage::SpendBook;
 #[cfg(test)]
 use self::storage::canonical_speech_conversation_id;
 #[cfg(test)]
@@ -64,15 +90,17 @@ pub use self::types::{
     SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
-    SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult,
+    SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult, SelfSkillCall,
-    SelfSkillCallResult, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
+    SelfSkillCallResult, SelfSpawnAsk, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
     SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
-    JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange, SkillCallInput, TaskRefuseDomain, TaskRefuseInput,
+    AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, MemoryClaimInput,
+    MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange, ReaderSpawnInput,
+    SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern, TaskRefuseDomain, TaskRefuseInput,
+    TaskWaitSetRequest,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,

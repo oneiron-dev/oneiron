@@ -13,12 +13,17 @@ pub(super) const MEMBERSHIP_ROWS: SideTable<(EntityId, u64), MembershipRow, Name
 pub(super) const MEMBERSHIP_SEQ: SideTable<EntityId, u64, Raw> =
     SideTable::new(&side_table::CONVERSATION_MEMBERSHIP_SEQ);
 
+/// How much of a room's past a joining member sees.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryChoice {
+    /// The room's own rule ([`ConversationBody::shares_history`]): from the
+    /// join when the room sets none (ILDF2 P5, "the default is from now").
     #[default]
     Inherit,
+    /// The whole past.
     Share,
+    /// From the join on.
     None,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,6 +303,50 @@ impl Vault {
             Some(from),
         )
     }
+    /// [`Self::set_history_visibility`] inside the caller's write
+    /// transaction, for an owner decision that commits with its receipt.
+    pub(super) fn set_history_visibility_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+        actor: WriteActor,
+        at: u64,
+        from: u64,
+    ) -> Result<()> {
+        self.change_membership_in_txn(
+            txn,
+            conversation,
+            person,
+            actor,
+            at,
+            MembershipAction::History,
+            None,
+            Some(from),
+        )
+    }
+    /// [`Self::join_member`] in the caller's write transaction: a room join
+    /// (OF-531) seats the person in the same commit as its receipt.
+    pub(crate) fn join_member_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+        actor: WriteActor,
+        at: u64,
+        history: HistoryChoice,
+    ) -> Result<()> {
+        self.change_membership_in_txn(
+            txn,
+            conversation,
+            person,
+            actor,
+            at,
+            MembershipAction::Join,
+            Some(history),
+            None,
+        )
+    }
     #[expect(
         clippy::too_many_arguments,
         reason = "atomic membership operation with audit and visibility axes"
@@ -313,79 +362,105 @@ impl Vault {
         from: Option<u64>,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            authorize(self, txn, actor)?;
-            require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;
-            let mut body = body::body_in(self, txn, conversation)?;
-            let rows = rows_in(&self.store, txn, conversation)?;
-            let mut members = members_at_rows(&rows, u64::MAX);
-            let visible_from = match action {
-                MembershipAction::Join => {
-                    if !members.insert(person) {
-                        return Err(state("member already joined"));
-                    }
-                    Some(match history.unwrap_or_default() {
-                        HistoryChoice::Share => 0,
-                        HistoryChoice::None => at,
-                        HistoryChoice::Inherit => {
-                            if body.shares_history() {
-                                0
-                            } else {
-                                at
-                            }
-                        }
-                    })
-                }
-                MembershipAction::Leave => {
-                    if !members.remove(&person) {
-                        return Err(state("not a member"));
-                    }
-                    None
-                }
-                MembershipAction::History => {
-                    let windows = windows_rows(&rows, person)?;
-                    let window = windows
-                        .last()
-                        .filter(|w| w.to.is_none())
-                        .ok_or(state("not a current member"))?;
-                    if from != Some(0) && from != Some(window.joined_at) {
-                        return Err(state("history edge must be origin or join time"));
-                    }
-                    from
-                }
-            };
-            append_row(
-                self,
+            self.change_membership_in_txn(
                 txn,
                 conversation,
-                &MembershipRow {
-                    v: 1,
-                    person,
-                    action,
-                    at,
-                    actor: actor.entity_ref(),
-                    visible_from,
-                },
-            )?;
-            body.member_ids = members.into_iter().collect();
-            if matches!(action, MembershipAction::Leave) {
-                body.roles.remove(&person.to_hex());
-                roles::ROLE_GRANTS.delete(&self.store, txn, &(conversation, person))?;
-            }
-            let raw = require_kind(self, txn, conversation, ENTITY_TYPE_CONVERSATION)?;
-            let h = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("conversation header"))?;
-            self.batch_in()
-                .put(
-                    &conversation,
-                    ENTITY_TYPE_CONVERSATION,
-                    crate::TimeRange {
-                        start: h.occurred_start,
-                        end: h.occurred_end,
-                    },
-                    h.learned_at,
-                    &body.to_bytes()?,
-                )
-                .apply(txn)
+                person,
+                actor,
+                at,
+                action,
+                history,
+                from,
+            )
         })
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "atomic membership operation with audit and visibility axes"
+    )]
+    fn change_membership_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+        actor: WriteActor,
+        at: u64,
+        action: MembershipAction,
+        history: Option<HistoryChoice>,
+        from: Option<u64>,
+    ) -> Result<()> {
+        authorize(self, txn, actor)?;
+        require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;
+        let mut body = body::body_in(self, txn, conversation)?;
+        let rows = rows_in(&self.store, txn, conversation)?;
+        let mut members = members_at_rows(&rows, u64::MAX);
+        let visible_from = match action {
+            MembershipAction::Join => {
+                if !members.insert(person) {
+                    return Err(state("member already joined"));
+                }
+                Some(match history.unwrap_or_default() {
+                    HistoryChoice::Share => 0,
+                    HistoryChoice::None => at,
+                    HistoryChoice::Inherit => {
+                        if body.shares_history() {
+                            0
+                        } else {
+                            at
+                        }
+                    }
+                })
+            }
+            MembershipAction::Leave => {
+                if !members.remove(&person) {
+                    return Err(state("not a member"));
+                }
+                None
+            }
+            MembershipAction::History => {
+                let windows = windows_rows(&rows, person)?;
+                let window = windows
+                    .last()
+                    .filter(|w| w.to.is_none())
+                    .ok_or(state("not a current member"))?;
+                if from != Some(0) && from != Some(window.joined_at) {
+                    return Err(state("history edge must be origin or join time"));
+                }
+                from
+            }
+        };
+        append_row(
+            self,
+            txn,
+            conversation,
+            &MembershipRow {
+                v: 1,
+                person,
+                action,
+                at,
+                actor: actor.entity_ref(),
+                visible_from,
+            },
+        )?;
+        body.member_ids = members.into_iter().collect();
+        if matches!(action, MembershipAction::Leave) {
+            body.roles.remove(&person.to_hex());
+            roles::ROLE_GRANTS.delete(&self.store, txn, &(conversation, person))?;
+        }
+        let raw = require_kind(self, txn, conversation, ENTITY_TYPE_CONVERSATION)?;
+        let h = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("conversation header"))?;
+        self.batch_in()
+            .put(
+                &conversation,
+                ENTITY_TYPE_CONVERSATION,
+                crate::TimeRange {
+                    start: h.occurred_start,
+                    end: h.occurred_end,
+                },
+                h.learned_at,
+                &body.to_bytes()?,
+            )
+            .apply(txn)
     }
 }

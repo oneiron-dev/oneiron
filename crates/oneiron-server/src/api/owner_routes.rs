@@ -37,16 +37,30 @@ use crate::owner::{
     pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod commitment_routes;
+mod concern_routes;
 mod conflict_routes;
 mod cooperative_deletion_routes;
 mod decision_ask_routes;
+mod diary_routes;
+mod disclosure_routes;
+mod embedding_space_routes;
+mod guest_routes;
 mod handoff_alarm_routes;
 mod history_routes;
 mod inbox_routes;
+mod learning_setting_routes;
+mod legal_hold_routes;
 mod pack_routes;
+mod pad_routes;
 mod peer_confidence_routes;
 mod proactivity_routes;
+mod recovery_kit_routes;
+mod skill_judge_routes;
 mod space_posting_routes;
+mod vault_key_routes;
+mod weave_routes;
+mod wire_health_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -59,6 +73,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secret-scan", get(secret_scan).post(set_secret_scan))
         .route("/secrets/register", post(register_secret))
         .route("/secrets/rotate", post(rotate_secret))
+        .route("/secrets/revoke", post(revoke_secret))
         .route("/healer/oversight", get(healer_oversight))
         .route("/healer/failures", get(healer_failures))
         .route("/healer/failures/drill", get(drill_failure))
@@ -82,16 +97,30 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/pack-drift", get(pack_drift_repairs))
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
+        .merge(commitment_routes::routes())
         .merge(conflict_routes::routes())
+        .merge(diary_routes::routes())
+        .merge(disclosure_routes::routes())
+        .merge(embedding_space_routes::routes())
         .merge(history_routes::routes())
         .merge(inbox_routes::routes())
+        .merge(concern_routes::routes())
+        .merge(learning_setting_routes::routes())
+        .merge(pad_routes::routes())
+        .merge(legal_hold_routes::routes())
+        .merge(guest_routes::routes())
         .merge(proactivity_routes::routes())
+        .merge(weave_routes::routes())
         .merge(pack_routes::routes())
         .merge(cooperative_deletion_routes::routes())
         .merge(decision_ask_routes::routes())
         .merge(peer_confidence_routes::routes())
+        .merge(skill_judge_routes::routes())
+        .merge(wire_health_routes::routes())
         .merge(handoff_alarm_routes::routes())
         .merge(space_posting_routes::routes())
+        .merge(vault_key_routes::routes())
+        .merge(recovery_kit_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }
@@ -114,7 +143,7 @@ pub(super) fn off_record_routes() -> Router<Arc<SyncServer>> {
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
 /// about which check failed. The proof it returns carries the verified slip.
-pub(super) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, ApiError> {
+pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, ApiError> {
     let refused = || ApiError::forbidden_scope("owner");
     if server.managed_issuer.is_some() || !auth.is_owner_grade() {
         return Err(refused());
@@ -397,6 +426,24 @@ async fn rotate_secret(
         .map_err(owner_error)?;
     let rotated = blocking(move || secrets::rotate(server.vault(), &owner, &request)).await?;
     Ok(Json(rotated))
+}
+
+/// `POST /v1/owner/secrets/revoke` with `{"name"}`: the record goes terminal
+/// and every lease over it is revoked (OF-422). The body is read by
+/// `secrets::read_revoke`, after the owner door, as rotation's is.
+async fn revoke_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    body: Body,
+) -> OwnerReply<secrets::Rotated> {
+    let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let name = secrets::read_revoke(body).await.map_err(owner_error)?;
+    let revoked = blocking(move || secrets::revoke(server.vault(), &owner, &name)).await?;
+    Ok(Json(revoked))
 }
 
 async fn healer_oversight(

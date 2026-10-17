@@ -90,7 +90,9 @@ impl PackOrgan {
         unique_list(&facet.verbs, 128, is_name)?;
         unique_list(&facet.kinds, 256, is_name)?;
         unique_list(&facet.media_types, 255, is_media_type)?;
-        if facet.threads.is_some_and(|threads| threads == 0 || threads > 256)
+        if facet
+            .threads
+            .is_some_and(|threads| threads == 0 || threads > 256)
             || facet
                 .memory_bytes
                 .is_some_and(|bytes| bytes == 0 || bytes > MAX_ORGAN_MEMORY_BYTES)
@@ -131,8 +133,16 @@ impl PackOrgan {
     pub(super) fn capability_tokens(&self) -> Vec<String> {
         let name = &self.name;
         let mut tokens = Vec::new();
-        tokens.extend(self.verbs.iter().map(|verb| format!("organ:{name}:verb:{verb}")));
-        tokens.extend(self.kinds.iter().map(|kind| format!("organ:{name}:kind:{kind}")));
+        tokens.extend(
+            self.verbs
+                .iter()
+                .map(|verb| format!("organ:{name}:verb:{verb}")),
+        );
+        tokens.extend(
+            self.kinds
+                .iter()
+                .map(|kind| format!("organ:{name}:kind:{kind}")),
+        );
         tokens.extend(
             self.media_types
                 .iter()
@@ -208,9 +218,9 @@ fn is_platform(value: &str) -> bool {
         && (2..=4).contains(&value.split('-').count())
         && value.split('-').all(|part| {
             !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'.'))
+                && part.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'.')
+                })
         })
 }
 
@@ -368,7 +378,11 @@ impl PackOrganBinary {
             .is_some_and(|bytes| self.build.verify(&bytes).is_ok());
         if !held {
             std::fs::create_dir_all(dir)?;
-            let temp = dir.join(format!(".{}.{}.part", self.build.blake3, std::process::id()));
+            let temp = dir.join(format!(
+                ".{}.{}.part",
+                self.build.blake3,
+                std::process::id()
+            ));
             std::fs::write(&temp, &self.bytes)?;
             std::fs::File::open(&temp)?.sync_all()?;
             std::fs::rename(&temp, &path)?;
@@ -393,7 +407,9 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         for bytes in &tree.builds {
-            crate::ports::BlobStore::port_blob_put(self, txn, source_id, bytes, occurred, learned_at)?;
+            crate::ports::BlobStore::port_blob_put(
+                self, txn, source_id, bytes, occurred, learned_at,
+            )?;
         }
         Ok(())
     }
@@ -450,8 +466,7 @@ impl Vault {
             for organ in source.organs() {
                 let mut held_platforms = Vec::new();
                 for build in &organ.builds {
-                    if crate::ports::BlobStore::port_blob_get(self, &txn, &build.hash()?)?
-                        .is_some()
+                    if crate::ports::BlobStore::port_blob_get(self, &txn, &build.hash()?)?.is_some()
                     {
                         held_platforms.push(build.platform.clone());
                     }

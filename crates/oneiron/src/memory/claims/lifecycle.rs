@@ -148,10 +148,17 @@ impl Memory<'_> {
                 .latest_decision_ref_for(&id)?
                 .unwrap_or_else(|| format!("retract:{}", id.to_hex())),
         };
+        let short = self.short_ref_of(&id)?;
         Ok(CommitReceipt {
-            claim_short_id: self.short_ref_or_hex(&id)?,
+            claim: Some(crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_CLAIM,
+                &id,
+                short.as_deref(),
+            )),
+            claim_short_id: short.unwrap_or_else(|| id.to_hex()),
             approval,
             superseded_short_id: None,
+            superseded: None,
             receipt_ref,
         })
     }

@@ -6,15 +6,17 @@ use serde::{Deserialize, Serialize};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
 use crate::authority::VerifiedSlip;
-use crate::batch::export::VAULT_ARCHIVE_FORMAT;
 use crate::claim::CallerLocality;
 use crate::edge::EdgeActorClass;
 use crate::memory::verify_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
+use crate::write_envelope::WriteActor;
 
 /// The export target. `archive` (the default) is the whole vault: one ZIP of
 /// one JSONL file per record kind, each attached file once by BLAKE3, and a
-/// manifest. It re-imports into a fresh vault.
+/// manifest. It re-imports into a fresh vault. `okf` is "Export to OKF": a
+/// ZIP of markdown concepts with YAML frontmatter (Open Knowledge Format
+/// v0.1) for other tools, lossy and labelled as not a full copy.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExportOptions {
     #[serde(default)]
@@ -29,6 +31,8 @@ pub struct ExportOptions {
 
 /// The `format` that names the whole-vault archive.
 pub const EXPORT_TARGET_ARCHIVE: &str = "archive";
+/// The `format` that names the lossy OKF bundle.
+pub const EXPORT_TARGET_OKF: &str = "okf";
 
 /// One whole-vault export, written by the call that renders it, so every
 /// owner can see that the vault left and in what shape. Never the bytes. A
@@ -51,7 +55,8 @@ pub struct ExportReceipt {
 const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
     SideTable::new(&side_table::EXPORT_RECEIPT);
 
-/// One whole-vault export. On the wire the archive is standard base64.
+/// One export: the archive, or the OKF bundle. On the wire the ZIP is
+/// standard base64.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryExport {
     /// The archive manifest's `format`.
@@ -70,7 +75,9 @@ mod archive_base64 {
         serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes))
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<u8>, D::Error> {
         let text = String::deserialize(deserializer)?;
         base64::engine::general_purpose::STANDARD
             .decode(text)
@@ -107,59 +114,75 @@ impl Memory<'_> {
             opts,
             &self.actor.to_hex(),
             self.locality,
-            |txn| {
-                verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
-                if self.actor_class != EdgeActorClass::Human {
-                    return Err(export_forbidden());
-                }
-                if let Some(proof) = proof {
-                    validate_verified_owner(self.vault, txn, proof)?;
-                    // A holder proof authorizes its own bound actor, not another
-                    // PERSON selected through `Vault::memory` or an HTTP field.
-                    if proof.claims().actor_class.as_deref() != Some("human")
-                        || proof.claims().holder_ref != self.actor.to_hex()
-                    {
-                        return Err(export_forbidden());
-                    }
-                    // A live slip outlives its holder's Owner role: whole-vault
-                    // export asks for the role now, in the export's snapshot.
-                    if !crate::policy_model::is_live_vault_owner_in_txn(
-                        self.vault,
-                        txn,
-                        &self.actor,
-                    )? {
-                        return Err(export_forbidden());
-                    }
-                } else {
-                    // `memory(actor)` is public. Only a process holding the vault
-                    // writer lease and bound to its constructor's seeded owner
-                    // can use the local door; an arbitrary PERSON cannot.
-                    let owner = crate::vault::embedded_owner_actor_id()?;
-                    if self.actor != owner
-                        || !self
-                            .vault
-                            .writer_lease()
-                            .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
-                        || !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &owner)?
-                            .is_live()
-                    {
-                        return Err(export_forbidden());
-                    }
-                    if self
-                        .vault
-                        .authority_fold_readonly_in_txn(txn)?
-                        .vault_root_is_conflicted()
-                    {
-                        return Err(MemoryError::new(
-                            MEMORY_CODE_INVALID_STATE,
-                            "conflicting vault roots suspend full-vault export",
-                            &["Resolve the authority fork before exporting."],
-                        ));
-                    }
-                }
-                Ok(())
-            },
+            WriteActor::new(self.actor, EdgeActorClass::Human),
+            |txn| self.export_admitted_in_txn(txn, proof),
         )
+    }
+
+    /// Whether [`Self::export`], or [`Self::export_with_verified_owner`]
+    /// with `proof`, admits this caller now, in a read snapshot of its own.
+    /// A door asks first, so the verb's hooks never run on an export it
+    /// refuses; the export asks again in its own snapshot.
+    pub fn admit_export(&self, proof: Option<&VerifiedSlip>) -> MemoryResult<()> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        self.export_admitted_in_txn(&txn, proof)
+    }
+
+    fn export_admitted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proof: Option<&VerifiedSlip>,
+    ) -> MemoryResult<()> {
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        if self.actor_class != EdgeActorClass::Human {
+            return Err(export_forbidden());
+        }
+        if let Some(proof) = proof {
+            validate_verified_owner(self.vault, txn, proof)?;
+            // A holder proof authorizes its own bound actor, not another
+            // PERSON selected through `Vault::memory` or an HTTP field.
+            if proof.claims().actor_class.as_deref() != Some("human")
+                || proof.claims().holder_ref != self.actor.to_hex()
+            {
+                return Err(export_forbidden());
+            }
+            // A live slip outlives its holder's Owner role: whole-vault
+            // export asks for the role now, in the export's snapshot.
+            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &self.actor)? {
+                return Err(export_forbidden());
+            }
+        } else {
+            // `memory(actor)` is public. Only a process holding the vault
+            // writer lease and bound to its constructor's seeded owner
+            // can use the local door; an arbitrary PERSON cannot.
+            let owner = crate::vault::embedded_owner_actor_id()?;
+            if self.actor != owner
+                || !self
+                    .vault
+                    .writer_lease()
+                    .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
+                || !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &owner)?.is_live()
+            {
+                return Err(export_forbidden());
+            }
+            if self
+                .vault
+                .authority_fold_readonly_in_txn(txn)?
+                .vault_root_is_conflicted()
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    "conflicting vault roots suspend full-vault export",
+                    &["Resolve the authority fork before exporting."],
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -174,13 +197,21 @@ impl Vault {
         proof: &VerifiedSlip,
         locality: CallerLocality,
     ) -> MemoryResult<MemoryExport> {
-        render_export(self, opts, "host", locality, |txn| {
-            validate_verified_owner(self, txn, proof)?;
-            if proof.claims().holder_ref != "host" {
-                return Err(export_forbidden());
-            }
-            Ok(())
+        // A host-root export reads diaries as the vault's owner (OF-490).
+        let reader = WriteActor::new(
+            crate::vault::embedded_owner_actor_id()?,
+            EdgeActorClass::Human,
+        );
+        render_export(self, opts, "host", locality, reader, |txn| {
+            host_owner_export_admitted(self, txn, proof)
         })
+    }
+
+    /// Whether [`Self::export_with_verified_host_owner`] admits `proof` now,
+    /// in a read snapshot of its own; the export asks again in its own.
+    pub fn admit_host_owner_export(&self, proof: &VerifiedSlip) -> MemoryResult<()> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        host_owner_export_admitted(self, &txn, proof)
     }
 
     /// Every whole-vault export receipt, oldest first.
@@ -192,6 +223,18 @@ impl Vault {
             .map(|(_, receipt)| receipt)
             .collect())
     }
+}
+
+fn host_owner_export_admitted(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proof: &VerifiedSlip,
+) -> MemoryResult<()> {
+    validate_verified_owner(vault, txn, proof)?;
+    if proof.claims().holder_ref != "host" {
+        return Err(export_forbidden());
+    }
+    Ok(())
 }
 
 fn validate_verified_owner(
@@ -210,17 +253,24 @@ fn render_export(
     opts: &ExportOptions,
     by: &str,
     locality: CallerLocality,
+    reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<MemoryExport> {
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
-    if name != EXPORT_TARGET_ARCHIVE {
-        return Err(MemoryError::bad_request_with(
-            format!("unknown export format {name:?}"),
-            &["Use: archive."],
-        ));
-    }
     let include_secrets = opts.include_secrets.unwrap_or(true);
-    let export = vault.export_whole_vault_with_admission(locality, include_secrets, admit)?;
+    let export = match name {
+        EXPORT_TARGET_ARCHIVE => {
+            vault.export_whole_vault_with_admission(locality, include_secrets, reader, admit)?
+        }
+        EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, reader, admit)?,
+        _ => {
+            return Err(MemoryError::bad_request_with(
+                format!("unknown export format {name:?}"),
+                &["Use one of: archive, okf."],
+            ));
+        }
+    };
+    let format = export.manifest.format.clone();
     let digest = blake3::hash(&export.bytes).to_hex().to_string();
     let receipt = ExportReceipt {
         at: vault.store.clock.now_recorded_at(),
@@ -248,7 +298,7 @@ fn render_export(
         tracing::warn!(%error, "whole-vault export served without its receipt");
     }
     Ok(MemoryExport {
-        format: VAULT_ARCHIVE_FORMAT.to_owned(),
+        format,
         archive: export.bytes,
         digest,
     })

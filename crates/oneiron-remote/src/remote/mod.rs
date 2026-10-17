@@ -51,6 +51,10 @@ const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
 const RECEIPT_REF_HEADER: &str = "x-oneiron-receipt-ref";
 /// The prefix of a receipt ref the server recorded.
 const RECEIPT_REF_PREFIX: &str = "call:";
+/// Names the logical verb call a request is (ARCH-0080 §3), as 32 lowercase
+/// hex digits: its verb hooks fire once for it, and a retry of a call a hook
+/// stopped on an ask names the same one to find that ask.
+const INVOCATION_HEADER: &str = "x-oneiron-invocation";
 
 /// Connect timeout: finite, so a black-holed address fails instead of hanging.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -208,11 +212,23 @@ impl RemoteClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = receipt_ref;
     }
 
-    /// POSTs one facade verb and decodes its typed response.
+    /// POSTs one facade verb as a new logical call, under a fresh invocation
+    /// id, and decodes its typed response.
     pub(crate) fn call<Q: Serialize, R: DeserializeOwned>(
         &self,
         verb: &str,
         request: &Q,
+    ) -> Result<R, MemoryError> {
+        self.call_as(verb, request, crate::invocation::mint())
+    }
+
+    /// [`Self::call`] under `invocation`: the id a retry of a pending call
+    /// names, so the server finds the ask that call stopped on.
+    pub(crate) fn call_as<Q: Serialize, R: DeserializeOwned>(
+        &self,
+        verb: &str,
+        request: &Q,
+        invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<R, MemoryError> {
         self.note_receipt_ref(None);
         let url = self.verb_url(verb)?;
@@ -225,7 +241,12 @@ impl RemoteClient {
                     .map_err(|_| transport_error("could not name the room turn"))?,
             );
         }
-        let response = (if verb == "vault.export" {
+        credential.insert(
+            INVOCATION_HEADER,
+            HeaderValue::from_str(&invocation.to_hex())
+                .map_err(|_| transport_error("could not name the invocation"))?,
+        );
+        let response = (if long_running(verb) {
             &self.export_agent
         } else {
             &self.agent
@@ -249,7 +270,10 @@ impl RemoteClient {
         );
 
         let status = response.status();
-        if !status.is_success() {
+        // A 202 is a verb hook's pending ask: the verb did not run, and the
+        // body is the refusal naming the ask and this call's invocation
+        // (ARCH-0080 §3), which `OneironClient::retry` resends it under.
+        if !status.is_success() || status == reqwest::StatusCode::ACCEPTED {
             return Err(read_error_envelope(response, status));
         }
         // The ordinary facade has a strict success-body ceiling. Export alone
@@ -353,6 +377,14 @@ impl RemoteClient {
             .join(&format!("{FACADE_PREFIX}/{verb}"))
             .map_err(|error| transport_error(format!("could not build the {verb} URL: {error}")))
     }
+}
+
+/// Verbs whose one answer can take minutes, so they ride the export client's
+/// total timeout: the whole-vault export, and an embedding-space move's check,
+/// which runs the vault's probes through both spaces with no server deadline
+/// (OF-370).
+fn long_running(verb: &str) -> bool {
+    matches!(verb, "vault.export" | "vault.embedding_spaces.move_check")
 }
 
 /// The blocking client every facade verb and `pair` share.

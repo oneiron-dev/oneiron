@@ -7,8 +7,9 @@ use super::keys::{
     FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES, FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION,
     FIELD_BRIEF_REF, FIELD_CONTENT_HASH, FIELD_DECK_HANDOFF, FIELD_DECK_MADE_BY, FIELD_DECK_PARTS,
     FIELD_DECK_RENDERS, FIELD_DECK_THREAD, FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF,
-    FIELD_PROPOSAL_REF, FIELD_QUESTION_VERSION, FIELD_REASON, FIELD_RUN_REF,
-    FIELD_SHEET_ANSWER_COUNT, FIELD_SLIDE_JUDGMENTS, FIELD_VERSION,
+    FIELD_PARAGRAPH_JUDGMENTS, FIELD_PROPOSAL_REF, FIELD_QUESTION_VERSION, FIELD_REASON,
+    FIELD_RUN_REF, FIELD_SHEET_ANSWER_COUNT, FIELD_SHEET_ANSWERS, FIELD_SLIDE_JUDGMENTS,
+    FIELD_VERSION,
 };
 use super::records::{SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::Vault;
@@ -33,6 +34,7 @@ pub(crate) fn settle_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec
         }
         let ((artifact_id, _), record) = entry?;
         let receipt = settlement_receipt_record(artifact_id, &record)?;
+        let receipt = vault.with_withdrawn_units_in_txn(&rtxn, artifact_id, &record, receipt)?;
         if query.matches(&receipt) {
             out.push(receipt);
         }
@@ -62,11 +64,30 @@ pub(super) fn settlement_receipt_record(
     if let Some(bundle) = &record.sheet_answers {
         fields.insert(
             FIELD_QUESTION_VERSION.to_owned(),
-            bundle.question_version.clone(),
+            bundle.question.version.to_string(),
         );
         fields.insert(
             FIELD_SHEET_ANSWER_COUNT.to_owned(),
             bundle.answers.len().to_string(),
+        );
+        fields.insert(
+            FIELD_SHEET_ANSWERS.to_owned(),
+            serde_json::to_string(&bundle.answers).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "sheet answer receipt cannot encode",
+                ))
+            })?,
+        );
+    }
+
+    if !record.docx_judgments.is_empty() {
+        fields.insert(
+            FIELD_PARAGRAPH_JUDGMENTS.to_owned(),
+            serde_json::to_string(&record.docx_judgments).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "paragraph judgment receipt cannot encode",
+                ))
+            })?,
         );
     }
 

@@ -14,8 +14,11 @@ use crate::config::models::ProviderConfig;
 pub(super) enum KeyStyle {
     /// `Authorization: Bearer <key>` (OpenAI-compatible servers).
     Bearer,
-    /// `x-api-key: <key>` (Anthropic-compatible servers).
+    /// `x-api-key: <key>` (Anthropic-compatible servers, Cartesia).
     ApiKeyHeader,
+    /// The key under a header of the provider's own name (ElevenLabs'
+    /// `xi-api-key`).
+    Named(&'static str),
 }
 
 /// Why an HTTP exchange failed before any provider status arrived.
@@ -67,6 +70,8 @@ pub(super) enum MediaSend {
     Delete,
     Json(JsonValue),
     Multipart(reqwest::multipart::Form),
+    /// A framed binary body (`application/octet-stream`).
+    Octets(Vec<u8>),
 }
 
 /// A finished, non-streamed exchange.
@@ -80,6 +85,9 @@ pub(super) struct JsonReply {
 #[derive(Clone)]
 pub(super) struct ProviderHttp {
     client: reqwest::Client,
+    /// The same client with no provider header and no key: what a file the
+    /// provider redirects to elsewhere is fetched with.
+    bare: reqwest::Client,
     base_url: String,
 }
 
@@ -87,6 +95,16 @@ impl ProviderHttp {
     /// Builds the client. A configured `key_env` that is unset or empty is a
     /// refusal here, so a seat never runs half-authenticated.
     pub(super) fn new(provider: &ProviderConfig, style: KeyStyle) -> anyhow::Result<Self> {
+        Self::build(provider, style, false)
+    }
+
+    /// Builds a client that never goes through an environment proxy: a
+    /// loopback URL is only a loopback destination when no proxy applies.
+    pub(super) fn direct(provider: &ProviderConfig, style: KeyStyle) -> anyhow::Result<Self> {
+        Self::build(provider, style, true)
+    }
+
+    fn build(provider: &ProviderConfig, style: KeyStyle, direct: bool) -> anyhow::Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         for (name, value) in &provider.headers {
             headers.insert(
@@ -104,6 +122,7 @@ impl ProviderHttp {
                 KeyStyle::ApiKeyHeader => {
                     (reqwest::header::HeaderName::from_static("x-api-key"), key)
                 }
+                KeyStyle::Named(name) => (reqwest::header::HeaderName::from_static(name), key),
             };
             let mut value = reqwest::header::HeaderValue::from_str(&value)?;
             value.set_sensitive(true);
@@ -112,15 +131,19 @@ impl ProviderHttp {
         // One request per call (`SingleSend`): a redirect is answered, never
         // followed, and nothing is sent twice. reqwest's default policy would
         // resend a request an HTTP/2 server refused at the protocol level.
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .connect_timeout(Duration::from_secs(provider.timeout_secs.min(30)))
-            .timeout(Duration::from_secs(provider.timeout_secs))
-            .build()?;
+        let builder = || {
+            let builder = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .retry(reqwest::retry::never())
+                .connect_timeout(Duration::from_secs(provider.timeout_secs.min(30)))
+                .timeout(Duration::from_secs(provider.timeout_secs));
+            if direct { builder.no_proxy() } else { builder }
+        };
+        let client = builder().default_headers(headers).build()?;
+        let bare = builder().build()?;
         Ok(Self {
             client,
+            bare,
             base_url: provider.base_url.clone(),
         })
     }
@@ -139,6 +162,7 @@ impl ProviderHttp {
     pub(super) fn native(&self) -> Self {
         Self {
             client: self.client.clone(),
+            bare: self.bare.clone(),
             base_url: self
                 .base_url
                 .strip_suffix("/v1")
@@ -211,8 +235,52 @@ impl ProviderHttp {
             MediaSend::Delete => self.client.delete(url),
             MediaSend::Json(body) => self.client.post(url).json(&body),
             MediaSend::Multipart(form) => self.client.post(url).multipart(form),
+            MediaSend::Octets(body) => self
+                .client
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                .body(body),
         };
         let response = request.send().await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let body = bounded_body(response, MAX_MEDIA_REPLY_BYTES).await?;
+        Ok(BytesReply {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    /// A file the provider named by its full URI, read whole up to
+    /// [`MAX_MEDIA_REPLY_BYTES`]. The key goes only to the provider's own
+    /// origin; one redirect from there is followed, without the key or any
+    /// provider header when it leaves that origin (a clip served from
+    /// storage).
+    pub(super) async fn fetch_media(&self, uri: &str) -> Result<BytesReply, HttpFailure> {
+        let origin = reqwest::Url::parse(&self.base_url)
+            .map_err(|_| HttpFailure::Connection)?
+            .origin();
+        let target = reqwest::Url::parse(uri).map_err(|_| HttpFailure::Malformed)?;
+        if target.origin() != origin {
+            return Err(HttpFailure::Malformed);
+        }
+        let mut response = self.client.get(target.clone()).send().await?;
+        if response.status().is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|location| location.to_str().ok())
+                .and_then(|location| target.join(location).ok())
+                .filter(|location| location.scheme() == "https")
+                .ok_or(HttpFailure::Malformed)?;
+            let client = if location.origin() == origin {
+                &self.client
+            } else {
+                &self.bare
+            };
+            response = client.get(location).send().await?;
+        }
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
         let body = bounded_body(response, MAX_MEDIA_REPLY_BYTES).await?;

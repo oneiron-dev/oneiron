@@ -70,6 +70,9 @@ const RETIRED: SideTable<String, u64, Raw> = SideTable::new(&side_table::WORLD_K
 /// continue. Key: hex32 (world) ":" window label.
 pub(super) const MIRROR: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::WORLD_KEY_SEALED_MIRROR);
+/// The newest shelved packet of one window, by shelf id hex. Key: window label.
+const WINDOW_INDEX: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::WORLD_KEY_SEALED_WINDOW);
 
 /// What a packet's Loro bytes are.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -541,6 +544,12 @@ pub(super) fn purge_sealed_world_content_in_txn(
     for key in MIRROR.scan_keys(store, wtxn, prefix.as_bytes())? {
         MIRROR.delete(store, wtxn, &key)?;
     }
+    let suffix = format!("@{}", world.to_hex());
+    for key in WINDOW_INDEX.scan_keys(store, wtxn, &[])? {
+        if key.ends_with(suffix.as_str()) {
+            WINDOW_INDEX.delete(store, wtxn, &key)?;
+        }
+    }
     Ok(purged)
 }
 
@@ -642,6 +651,67 @@ impl Vault {
                 Destination::Machine(machine) if fold.trusted_machine(machine).is_some()
             ),
             SealedCopies::CloudAndMyMachines => true,
+        })
+    }
+
+    /// [`Self::sealed_copy_may_rest_on_in`] in its own read snapshot: the
+    /// destination question a relay door asks before it forwards a packet.
+    pub fn sealed_copy_may_rest_on(
+        &self,
+        world: EntityId,
+        destination: Destination,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.sealed_copy_may_rest_on_in(&txn, world, destination)
+    }
+
+    /// This install as a destination: its enrolled machine, or unknown
+    /// before it has one. Never another machine.
+    pub(crate) fn local_destination_in(&self, txn: &heed::RoTxn<'_>) -> Result<Destination> {
+        Ok(match crate::identity::read_machine_id_in_txn(self, txn)? {
+            Some(machine) => Destination::Machine(machine),
+            None => Destination::Unknown,
+        })
+    }
+
+    /// The newest shelved packet of `window`, the one a relay answer for
+    /// that window forwards. Empty when none is shelved under it.
+    pub fn sealed_window_packets(&self, window: &str) -> Result<Vec<SealedResidenceContent>> {
+        let Some(id) = self.sealed_window_packet_id(window)? else {
+            return Ok(Vec::new());
+        };
+        Ok(self.sealed_world_content(&id)?.into_iter().collect())
+    }
+
+    fn sealed_window_packet_id(&self, window: &str) -> Result<Option<SealedContentId>> {
+        let txn = self.store.env.read_txn()?;
+        WINDOW_INDEX
+            .get(&self.store, &txn, &window.to_owned())?
+            .map(|bytes| SealedContentId::from_hex(&String::from_utf8_lossy(&bytes)))
+            .transpose()
+    }
+
+    /// Records `id` as `window`'s newest shelved packet, retiring the one it
+    /// replaces. The retired packet stays on the shelf for its retention, so
+    /// a reader behind it can still be served by id; window answers forward
+    /// only the newest.
+    pub(crate) fn note_sealed_window_packet(
+        &self,
+        window: &str,
+        id: &SealedContentId,
+    ) -> Result<()> {
+        if let Some(previous) = self.sealed_window_packet_id(window)?
+            && previous != *id
+        {
+            self.retire_sealed_world_content(&previous)?;
+        }
+        self.with_write_txn_grouped(|wtxn| {
+            WINDOW_INDEX.put(
+                &self.store,
+                wtxn,
+                &window.to_owned(),
+                &id.to_hex().into_bytes(),
+            )
         })
     }
 

@@ -11,7 +11,7 @@ use super::codec::{
 use super::session::{Admit, OverlaySink};
 use super::validation::{
     validate_existing_witness_message, validate_existing_witness_message_orders,
-    validate_existing_witness_turn, validate_witness_occurrence,
+    validate_existing_witness_quote, validate_existing_witness_turn, validate_witness_occurrence,
 };
 use super::{distinct_message_orders, witness_message_envelope};
 
@@ -353,6 +353,29 @@ impl Memory<'_> {
             }
         };
 
+        // A quote rides a project room's thread reply, which lands at base
+        // and is no import (OF-460); the room guard proves it there.
+        if turn.quote.is_some() && !matches!(landing, Landing::Base { imported: None, .. }) {
+            return Err(MemoryError::bad_request(
+                "a quote lands only on a project room's thread reply at base",
+            ));
+        }
+        // OF-063 prose links (Engine ruling 10-17): every AI-written message
+        // this program lands, whatever door it came through, is read for
+        // links its writer cannot resolve, receipt-only and before the writer
+        // opens. An overlay landing is a non-anonymous off-record session (an
+        // anonymous one was refused above), so its room speech keeps its
+        // receipt; only an anonymous session keeps none. An imported turn is
+        // a source's words, not this writer's.
+        if !matches!(
+            landing,
+            Landing::Base {
+                imported: Some(_),
+                ..
+            }
+        ) {
+            crate::gate::record_references::admit_witness_prose(self, turn);
+        }
         let plan = self.plan_witness(turn, &landing, door, admit)?;
         let held = match &landing {
             Landing::Base { held, .. } => *held,
@@ -371,6 +394,7 @@ impl Memory<'_> {
         let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
             let mut mint_conversation = false;
             let mut leader_project = None;
+            let mut quoted: Option<crate::conversation_dag::QuotedReply> = None;
             let admission = match &sink {
                 WitnessSink::Base(_) => {
                     let person_author = match self.base_guards_in_txn(&plan, wtxn, prepare)? {
@@ -379,14 +403,22 @@ impl Memory<'_> {
                             mint_conversation: absent,
                             person_author,
                             leader_project: project,
+                            quoted: proven,
                         } => {
                             mint_conversation = absent;
                             leader_project = project;
+                            quoted = proven;
                             // The importer is not the author of the source's words.
                             person_author.filter(|_| plan.imported.is_none())
                         }
                     };
-                    self.admit_witness_in_txn(&plan, &self.vault.store, wtxn, person_author)?
+                    self.admit_witness_in_txn(
+                        &plan,
+                        &self.vault.store,
+                        wtxn,
+                        person_author,
+                        quoted.as_ref(),
+                    )?
                 }
                 // Host-derived ids are create-or-verify in the COMPOSED
                 // overlay/base snapshot. The view is dropped before the
@@ -396,12 +428,25 @@ impl Memory<'_> {
                     let rostered = room_speech.is_some();
                     let person_author =
                         self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
-                    self.admit_witness_in_txn(&plan, &overlay.read_view()?, wtxn, person_author)?
+                    self.admit_witness_in_txn(
+                        &plan,
+                        &overlay.read_view()?,
+                        wtxn,
+                        person_author,
+                        None,
+                    )?
                 }
             };
             let landed = match &sink {
                 WitnessSink::Base(base) => {
-                    self.stage_in_base(&plan, &admission, base, mint_conversation, wtxn)?;
+                    self.stage_in_base(
+                        &plan,
+                        &admission,
+                        base,
+                        mint_conversation,
+                        quoted.as_ref(),
+                        wtxn,
+                    )?;
                     // The outbox rule (write-path hub; ARCH-0036): a turn that
                     // gained text owes the vault's tagger a pass, and its
                     // embedder a vector of the new text (ARCH-0004), committed
@@ -412,6 +457,25 @@ impl Memory<'_> {
                     {
                         crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
                         crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                        crate::workspace_roster::stage_project_detection_in_txn(
+                            self.vault,
+                            wtxn,
+                            plan.conversation_id,
+                            plan.turn_id,
+                            plan.messages
+                                .iter()
+                                .rev()
+                                .find(|planned| {
+                                    planned.message.author == WitnessAuthor::User
+                                        && planned.message.is_visible
+                                        && !planned.message.content.is_empty()
+                                })
+                                .map(|planned| planned.id),
+                            (self.actor_class == crate::edge::EdgeActorClass::Human
+                                && plan.imported.is_none())
+                            .then_some(self.actor),
+                            plan.learned_at,
+                        )?;
                     }
                     // Held tags settle the marker just committed, in this
                     // write, so no worker ever claims it. Their spans index
@@ -606,13 +670,15 @@ impl Memory<'_> {
     /// The in-transaction half both landings share: the ONE-1686 door on every
     /// envelope, then the create-or-verify checks against `dbs` (base for a
     /// base landing, the composed room view for an overlay one). A minted TURN
-    /// carries `person_author` as its immutable byline.
+    /// carries `person_author` as its immutable byline and `quoted`, a room
+    /// thread reply's proven quote, in its first body (OF-460).
     fn admit_witness_in_txn<'p>(
         &self,
         plan: &'p WitnessPlan<'_>,
         dbs: &impl ManifestDbs,
         wtxn: &heed::RoTxn<'_>,
         person_author: Option<EntityId>,
+        quoted: Option<&crate::conversation_dag::QuotedReply>,
     ) -> MemoryResult<WitnessAdmission<'p>> {
         // ONE-1686 (RT-04): the approval-ceiling door, before ANY row stages.
         // The policy manifest is resolved from THIS transaction's snapshot, so
@@ -679,6 +745,7 @@ impl Memory<'_> {
         }
         let turn = match existing_turn {
             Some(record) => {
+                validate_existing_witness_quote(self.vault, wtxn, &record.body, quoted)?;
                 let existing_message_ids = plan
                     .messages
                     .iter()
@@ -706,7 +773,7 @@ impl Memory<'_> {
                 Some(speaker) => AdmittedTurn::Mint {
                     body: match &plan.imported {
                         Some(stamp) => encode_imported_turn_body(speaker, stamp.source)?,
-                        None => encode_witness_turn_body(speaker, person_author)?,
+                        None => encode_witness_turn_body(speaker, person_author, quoted)?,
                     },
                 },
                 None => {
@@ -795,5 +862,9 @@ fn overlay_receipt(
         turn_short_id,
         message_short_ids,
         receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),
+        // Off-record rows are no vault records until promoted: no ref names
+        // them.
+        turn: None,
+        messages: Vec::new(),
     })
 }

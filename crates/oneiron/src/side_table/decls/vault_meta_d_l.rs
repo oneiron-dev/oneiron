@@ -18,6 +18,15 @@ side_tables! {
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;
+    /// OF-490: one read of an agent's diary: reader, stated reason, entries and Grants (the agent
+    /// sees it). Key: id16 (agent) + id16 (read).
+    DIARY_READ_LOG: VaultMeta b"diary:read_log:v1:" Named;
+    /// OF-490: a reader's reason waiting on, or answered by, the agent's Y/N review. Key: id16
+    /// (agent) + id16 (request).
+    DIARY_READ_REQUEST: VaultMeta b"diary:read_request:v1:" Named;
+    /// OF-490: an agent reviews each read of its diary before it is read (on for Eiri; absent
+    /// means off). Value: one byte, 1 on, 0 off. Key: id16 (agent).
+    DIARY_READ_REVIEW: VaultMeta b"diary:read_review:v1:" Raw;
     /// Enforcement-truth per-counterparty-contact disclosure scope row (rmpv-encoded), dual-written
     /// with an owner-visible claim. Key: id16.
     DISCLOSURE_SCOPE: VaultMeta b"disclosure.scope.v1:" Raw;
@@ -90,6 +99,14 @@ side_tables! {
     DREAMER_HARNESS_EVAL_BASELINE: VaultMeta b"dreamer:harness:eval-baseline:v1:" LegacyJson;
     /// Elected MACRO-scope home-node designation (node_id, class, elected_at). Key: ().
     DREAMER_HOME_NODE: VaultMeta b"dreamer:home_node_macro:v1" Raw;
+    /// One open identity ask: a saved mention the Dreamer could not settle, or one an agent must
+    /// act on now (OF-123). Key: hash32(turn, message, span).
+    DREAMER_IDENTITY_ASK: VaultMeta b"dreamer:identity:v1:ask:" Named;
+    /// The identity re-check's page cursor: the last TURN a nightly pass read. Key: ().
+    DREAMER_IDENTITY_CURSOR: VaultMeta b"dreamer:identity:v1:cursor" Named;
+    /// A settled identity's context hint: a name, the words around it and the entity it named.
+    /// Key: u8(kind) + hash32(name) + id16(entity).
+    DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
     /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
     /// lists the same ones. Ids only, never their text. Key: id16.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
@@ -145,6 +162,18 @@ side_tables! {
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
     /// id16.
     DREAMER_REPRESENTATION_PROPOSAL: VaultMeta b"dreamer:representation:v1:proposal:" LegacyJson;
+    /// OF-490: the resident one dreaming attempt runs as, its own stamp, and the Gate receipt that
+    /// admitted it. Key: id16 (attempt).
+    DREAMER_RESIDENT_ATTEMPT: VaultMeta b"dreamer:resident:attempt:v1:" Named;
+    /// OF-490: the diary entry one resident dreaming attempt landed, so a replay writes none.
+    /// Key: id16 (attempt).
+    DREAMER_RESIDENT_LANDED: VaultMeta b"dreamer:resident:landed:v1:" Named;
+    /// OF-490: a sealed scratchpad a resident's dreaming already read. Value: one byte. Key:
+    /// id16 (resident) + id16 (pad).
+    DREAMER_RESIDENT_PADS: VaultMeta b"dreamer:resident:pads:v1:" Raw;
+    /// OF-490: what a resident's dreaming has read so far: newest receipt and INBOX times, last
+    /// dreaming, entries written. Key: id16 (resident).
+    DREAMER_RESIDENT_PROGRESS: VaultMeta b"dreamer:resident:progress:v1:" Named;
     /// Parent/child attempt-tree edge row (parent_attempt, created_at) keyed by attempt id. Key:
     /// id16.
     DREAMER_RUN_TREE: VaultMeta b"dreamer:run_tree:" Raw;
@@ -265,6 +294,9 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_RUNG: VaultMeta b"edit_distance/routing_rung/v1\0" Raw;
     /// Model-version stamp new routing folds are recorded against. Key: ().
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
+    /// An organ call held until one of the owner's nodes can run it (OF-575 MESH): the call's
+    /// bytes, why it waits, and its tries. Key: id16 + hash32 (blake3 of the run ref).
+    EDIT_SETTLE_ORGAN_WAIT: VaultMeta b"edit_settle:organ_wait:v1:" Named;
     /// A proposal retained beside its artifact until Keep or Discard: an edit proposal or a native
     /// organ output. Key: id16 + hash32 (blake3 of the proposal ref).
     EDIT_SETTLE_PENDING_PROPOSAL: VaultMeta b"edit_settle:pending:v1:" Named;
@@ -272,15 +304,27 @@ side_tables! {
     EDIT_SETTLE_STRANDED_PROPOSAL: VaultMeta b"edit_settle:stranded:v1:" Named;
     /// The once-only undo of one kept proposal: the version it restored. Key: id16 + hash32.
     EDIT_SETTLE_UNDO: VaultMeta b"edit_settle:undo:v1:" Named;
+    /// The answers of one held answer proposal whose units changed under it (ARCH-0075 §4): each
+    /// with the revision it was judged against, and its proposer's wake. Key: id16 + hash32.
+    EDIT_SETTLE_UNIT_WITHDRAWAL: VaultMeta b"edit_settle:withdrawal:v1:" Named;
     /// The device family and runtime that computed the current embedding vector, outside the space
     /// identity (ARCH-0036). Key: id16.
     EMBEDDING_DEVICE: VaultMeta b"embedding/device/" Named;
     /// Where the current reconciled embedding vector was filled (on-device/owner-server/third-party).
     /// Key: id16.
     EMBEDDING_LOCALITY: VaultMeta b"embedding/locality/" Raw;
+    /// A document a declared space's model refused by its content, with the BLAKE3 of the bytes
+    /// it refused; the media backfill skips it until they change (OF-370). Key: space key16 +
+    /// id16.
+    EMBEDDING_MEDIA_REFUSED: VaultMeta b"embedding/media_refused/" Named;
     /// One media vector per declared space and entity: its input-kind byte, then the v1 vector
     /// row (OF-370). Key: space key16 + id16.
     EMBEDDING_MEDIA_VECTOR: VaultMeta b"embedding/media_vector/" Raw;
+    /// A kind slot version move, open or concluded, with its last paired probe check (OF-370).
+    /// Key: candidate space id string.
+    EMBEDDING_MOVE: VaultMeta b"embedding/move/" Named;
+    /// A retrieval probe a space version move runs on both spaces (OF-370). Key: probe id16.
+    EMBEDDING_PROBE: VaultMeta b"embedding/probe/" Named;
     /// Media kind slot to declared space id (OF-370). Key: one input-kind byte.
     EMBEDDING_SLOT: VaultMeta b"embedding/slot/" Named;
     /// Declared embedding space: id, width, accepted inputs, query towers (OF-370). Key: string.
@@ -311,6 +355,8 @@ side_tables! {
     ESIGN_CAPABILITY_TOKEN: VaultMeta b"esign.capability.v1/" LegacyJson;
     /// Esign outbound dispatch marker. Key: bytes32.
     ESIGN_DISPATCH_MARKER: VaultMeta b"esign.dispatch.v1/" Raw;
+    /// Held automated sign act, one per recipient. Key: hex32/string.
+    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named;
     /// Signature image byte budget. Key: id16.
     ESIGN_IMAGE_BYTES_BUDGET: VaultMeta b"esign.image_bytes.v1/" Raw;
     /// Signing principal set owner stamp. Key: ().
@@ -340,8 +386,18 @@ side_tables! {
     /// One sealed FIX6 code-fix export (an invented example or a candidate fix's result) waiting
     /// for the host to drain it, with the worlds it touched; never real chat text. Key: id16.
     FAILURE_SIGNALS_CODE_FIX: VaultMeta b"failure_signals:code_fix:v1:" Named;
+    /// The Coach's code-fix work on one failure case and its local verdicts: the invented
+    /// example's and the candidate fix's, kept after the export queue drains. Never real chat
+    /// text. Key: id16(case key).
+    FAILURE_SIGNALS_CODE_FIX_WORK: VaultMeta b"failure_signals:code_fix_work:v1:" Named;
+    /// A diagnostic already counted into the tier-1 failure aggregate, and when it observed; a
+    /// later capture of the same diagnostic counts nothing (OF-380). Key: id16 (diagnostic id).
+    FAILURE_SIGNALS_TIER1_COUNTED: VaultMeta b"failure_signals:tier1_counted:v1:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
+    /// a repeat revoke reports the first (OF-232). Key: id16 (grant).
+    FEDERATION_GUEST_REVOKE: VaultMeta b"federation:guest_revoke:v1:" Named;
     /// The owner's confidence scale for claims one federation peer sends, this device's local
     /// truth (OF-149). Key: id16(peer principal).
     FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;
@@ -360,6 +416,14 @@ side_tables! {
     FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
     /// Host-stamped subject provenance or owner routing policy. Key: subject reference.
     FEEDBACK_REPORT_ROUTE: VaultMeta b"feedback:report-route:v1:" Named;
+    /// A folder the owner attached as a standing source of notes (OF-554): the folder, its
+    /// include patterns, default kind, source and trust tier, and its last rescan. Key: hex16
+    /// (hash of the folder).
+    FOLDER_SOURCE: VaultMeta b"folder-source:attached:v1:" Named;
+    /// What an attached folder's rescans know of one file: its note, the hash of its text and of
+    /// what the vault took from it, and whether it landed, waits as a fork or was retracted.
+    /// Key: string (`folder hash:path`, a long path by its hash).
+    FOLDER_SOURCE_FILE: VaultMeta b"folder-source:file:v1:" Named;
     /// Per-actor foreign-introduction ceiling and widen state for an owner-bound agent introduction.
     /// Key: id16.
     GATE_FOREIGN_AGENT_INTRODUCTION: VaultMeta b"gate.foreign-agent.v1:" Named;
@@ -385,9 +449,6 @@ side_tables! {
     /// the single byte 1. No hold defers that retirement or lands while it stands. Key: id16
     /// (claim).
     GATE_DECISION_PARTITION_ERASE_PENDING: VaultMeta b"gate_decision:partition_erase_pending:v1:" Raw;
-    /// Legal hold on one exterior-key partition of the gate decision ledger; the value is the
-    /// single byte 1. Key: 0 (claim-free partition) or 1 + id16 (claim).
-    GATE_DECISION_PARTITION_HOLD: VaultMeta b"gate_decision:partition_hold:v1:" Raw;
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
@@ -516,10 +577,16 @@ side_tables! {
     HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named;
     /// A hook run's Hook receipt. Key: hash32 (run key).
     HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named;
+    /// A hook's regen record: the contract its last good body passed under, its intent, and a
+    /// regen decision waiting to be enacted. Key: id16 (binding).
+    HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named;
     /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
     HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
+    /// A call a verb hook's ask stopped: the call, its re-validated args, the hook's place in the
+    /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
+    HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;
@@ -585,8 +652,44 @@ side_tables! {
     /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
     /// (setting key).
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
+    /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
+    /// deletion receipt completes (OF-470 C4). Key: id16 (record).
+    LEGAL_HOLD_ERASE_LINK: VaultMeta b"legal_hold:erase_link:v1:" Named;
+    /// The owner-visible legal-hold log: ids, times and reason codes only (OF-470 C3). Key: id16
+    /// (hold) + u64be (sequence).
+    LEGAL_HOLD_EVENT: VaultMeta b"legal_hold:event:v1:" Named;
+    /// The host orders an owner's confirmed erase met (OF-470 C4). Host-only and runtime-tier:
+    /// no checkpoint image carries it. Key: id16 (record).
+    LEGAL_HOLD_HOST_ERASE_LINK: VaultMeta b"legal_hold:host:erase_link:v1:" Named;
+    /// The host-only legal-hold log (OF-470 C2). Runtime-tier: no checkpoint image carries it.
+    /// Key: id16 (hold) + u64be (sequence).
+    LEGAL_HOLD_HOST_EVENT: VaultMeta b"legal_hold:host:event:v1:" Named;
+    /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
+    /// checkpoint image carries it. Key: id16 (hold).
+    LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;
+    /// What a standing host-order hold holds; the value is empty. Key: held key (1 + id16, or 17
+    /// zero bytes for the claim-free gate partition) + id16 (hold).
+    LEGAL_HOLD_HOST_TARGET: VaultMeta b"legal_hold:host:target:v1:" Raw;
+    /// An owner-confirmed erase a host order keeps waiting; it names no hold. Key: id16 (record).
+    LEGAL_HOLD_PENDING_ERASE: VaultMeta b"legal_hold:pending_erase:v1:" Named;
+    /// A customer legal hold naming records or gate-decision partitions (OF-470). Key: id16
+    /// (hold).
+    LEGAL_HOLD_ROW: VaultMeta b"legal_hold:row:v1:" Named;
+    /// What a standing customer hold holds; the value is empty. Key: held key (1 + id16, or 17
+    /// zero bytes for the claim-free gate partition) + id16 (hold).
+    LEGAL_HOLD_TARGET: VaultMeta b"legal_hold:target:v1:" Raw;
+    /// A record kept after a refused privacy erasure, serving only that legal reason (OF-470 C6).
+    /// Key: id16 (record).
+    LEGAL_HOLD_USE_LIMIT: VaultMeta b"legal_hold:use_limit:v1:" Named;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
+    /// One proposed pack lens: its frozen compiled tree, the pack/skill slot and pack content
+    /// hash it is bound to, and who proposed it. It mounts only once the owner selects it. Key:
+    /// id16 (lens).
+    LENS_PROPOSAL: VaultMeta b"lens/proposal/v1\0" Named;
+    /// The owner's consented selection of one proposed lens revision for a pack/skill slot.
+    /// Key: string (pack name "\0" skill id hex).
+    LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().

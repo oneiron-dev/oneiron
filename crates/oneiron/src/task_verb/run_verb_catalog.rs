@@ -13,7 +13,14 @@ pub enum RunVerb {
     SelfUnfold,
     SelfFolds,
     TasksRefuse,
+    SelfAgentsSpawn,
+    SelfLeaderAdvice,
+    SelfLeaderPattern,
     SelfSkillsCall,
+    SelfTeamStart,
+    SelfTeamRecord,
+    SelfSpawn,
+    TasksWait,
 }
 impl RunVerb {
     pub const ALL: &[Self] = &[
@@ -26,7 +33,14 @@ impl RunVerb {
         Self::SelfUnfold,
         Self::SelfFolds,
         Self::TasksRefuse,
+        Self::SelfAgentsSpawn,
+        Self::SelfLeaderAdvice,
+        Self::SelfLeaderPattern,
         Self::SelfSkillsCall,
+        Self::SelfTeamStart,
+        Self::SelfTeamRecord,
+        Self::SelfSpawn,
+        Self::TasksWait,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -42,7 +56,14 @@ impl RunVerb {
             Self::SelfUnfold => "self.unfold",
             Self::SelfFolds => "self.folds",
             Self::TasksRefuse => "tasks.refuse",
+            Self::SelfAgentsSpawn => "self.agents.spawn",
+            Self::SelfLeaderAdvice => "self.leader.advice",
+            Self::SelfLeaderPattern => "self.leader.pattern",
             Self::SelfSkillsCall => "self.skills.call",
+            Self::SelfTeamStart => "self.team.start",
+            Self::SelfTeamRecord => "self.team.record",
+            Self::SelfSpawn => "self.spawn",
+            Self::TasksWait => "tasks.wait",
         }
     }
     pub const fn writes(self) -> bool {
@@ -55,7 +76,11 @@ impl RunVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::TasksRefuse
+                | Self::SelfAgentsSpawn
                 | Self::SelfSkillsCall
+                | Self::SelfTeamStart
+                | Self::SelfTeamRecord
+                | Self::SelfSpawn
         )
     }
     pub const fn effect(self) -> crate::code_run::SelfEffect {
@@ -69,7 +94,14 @@ impl RunVerb {
             Self::SelfUnfold => crate::code_run::SelfEffect::Fold,
             Self::SelfFolds => crate::code_run::SelfEffect::Fold,
             Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
+            Self::SelfAgentsSpawn => crate::code_run::SelfEffect::AgentsSpawn,
+            Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
+            Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,
             Self::SelfSkillsCall => crate::code_run::SelfEffect::SkillsCall,
+            Self::SelfTeamStart => crate::code_run::SelfEffect::Team,
+            Self::SelfTeamRecord => crate::code_run::SelfEffect::Team,
+            Self::SelfSpawn => crate::code_run::SelfEffect::ReaderSpawn,
+            Self::TasksWait => crate::code_run::SelfEffect::TasksWaitSet,
         }
     }
 }

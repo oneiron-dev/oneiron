@@ -13,7 +13,7 @@
 //! a search reads exactly one space and two spaces' vectors are never compared. Each space's
 //! search is its own ranked list; fusion z-scores every list on its own scale.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -154,7 +154,7 @@ impl EmbeddingSpace {
 
     /// Refuses a `kind` slot binding this space cannot serve: it must accept that input, and
     /// the text slot also needs a text query tower, since text queries enter where text binds.
-    fn admit_binding(&self, kind: InputKind) -> Result<()> {
+    pub(super) fn admit_binding(&self, kind: InputKind) -> Result<()> {
         if !self.accepts.contains(&kind) {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {} does not accept {kind:?} input",
@@ -227,6 +227,74 @@ const EMBEDDING_SLOT: SideTable<[u8; 1], String, Named> =
 /// One media vector per (space, entity). Key: space key16 + id16.
 const MEDIA_VECTOR: SideTable<([u8; 16], EntityId), MediaVectorRow, Raw> =
     SideTable::new(&side_table::EMBEDDING_MEDIA_VECTOR);
+/// Documents a space's model refused by their content. Key: space key16 + id16.
+const MEDIA_REFUSED: SideTable<([u8; 16], EntityId), MediaRefusal, Named> =
+    SideTable::new(&side_table::EMBEDDING_MEDIA_REFUSED);
+
+/// Why a space's model refused one document, and which bytes it refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MediaRefusal {
+    /// BLAKE3 of the refused bytes: other bytes are tried again.
+    fingerprint: [u8; 32],
+    reason: String,
+    /// Vault seconds.
+    at: u64,
+}
+
+/// Whether `space`'s model refused `id` at exactly these `bytes`.
+pub(super) fn media_refused_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    space: &EmbeddingSpace,
+    id: &EntityId,
+    bytes: &[u8],
+) -> Result<bool> {
+    Ok(MEDIA_REFUSED
+        .get(store, txn, &(space.key(), *id))?
+        .is_some_and(|row| row.fingerprint == *blake3::hash(bytes).as_bytes()))
+}
+
+/// Records that `space`'s model refused `id` at these `bytes`, for `reason`.
+pub(super) fn put_media_refusal_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space: &EmbeddingSpace,
+    id: &EntityId,
+    bytes: &[u8],
+    reason: String,
+    at: u64,
+) -> Result<()> {
+    MEDIA_REFUSED.put(
+        store,
+        txn,
+        &(space.key(), *id),
+        &MediaRefusal {
+            fingerprint: *blake3::hash(bytes).as_bytes(),
+            reason,
+            at,
+        },
+    )
+}
+
+/// One document a space's model refused, as the owner sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MediaRefused {
+    pub id: EntityId,
+    pub reason: String,
+    /// Vault seconds.
+    pub at: u64,
+}
+
+/// Forgets a refusal of `id` in `space`, once a vector of it lands there.
+pub(super) fn clear_media_refusal_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space: &EmbeddingSpace,
+    id: &EntityId,
+) -> Result<()> {
+    MEDIA_REFUSED.delete(store, txn, &(space.key(), *id))?;
+    Ok(())
+}
 
 /// Width of a text row's text hash.
 const TEXT_HASH_LEN: usize = 32;
@@ -308,6 +376,21 @@ pub(crate) fn embedding_space_in_txn(
     EMBEDDING_SPACE.get(store, txn, &id.to_owned())
 }
 
+/// Refuses a hand binding of a slot an open move carries: the move swaps it in, or is
+/// abandoned first.
+fn refuse_moving_slot_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    kind: InputKind,
+) -> Result<()> {
+    if let Some(candidate) = super::space_move::moving_kind_in_txn(store, txn, kind)? {
+        return Err(Error::InvalidConfig(format!(
+            "the {kind:?} slot is moving to {candidate}; approve or abandon that move first"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn kind_slot_bindings_in_txn(
     store: &impl SideTableDbs,
     txn: &RoTxn<'_>,
@@ -342,25 +425,26 @@ pub(crate) fn media_text_hash_in_txn(
         .map(|row| row.text_hash))
 }
 
-/// Stages one media vector into `space`: its kind must be one the space accepts and bound to
-/// it, its width the space's own. A text row carries the hash of the text it embeds.
+/// Stages one media vector into `space`: its kind must be one the space accepts and fills
+/// ([`super::space_move::space_fill_kinds_in_txn`]: bound to it, or moving to it), its width
+/// the space's own. A text row carries the hash of the text it embeds.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a staged row names its space, the bindings it is checked against, its entity, kind, text hash and vector"
+    reason = "a staged row names its space, the kinds it fills, its entity, kind, text hash and vector"
 )]
 pub(crate) fn put_media_vector_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     space: &EmbeddingSpace,
-    bindings: &KindSlotBindings,
+    fills: &BTreeSet<InputKind>,
     id: &EntityId,
     kind: InputKind,
     text_hash: Option<[u8; TEXT_HASH_LEN]>,
     vector: &[f32],
 ) -> Result<()> {
-    if bindings.space_for(kind) != Some(space.id.as_str()) {
+    if !fills.contains(&kind) {
         return Err(Error::InvalidConfig(format!(
-            "the {kind:?} slot is not bound to embedding space {}",
+            "the {kind:?} slot neither binds nor moves to embedding space {}",
             space.id
         )));
     }
@@ -394,9 +478,56 @@ pub(crate) fn put_media_vector_in_txn(
     MEDIA_VECTOR.put(store, txn, &(space.key(), *id), &row)
 }
 
+/// Binds `kind`'s slot to `space_id`, or returns it to its default when `None`: the vault's
+/// own index for text, nothing for a media kind. The caller has admitted the binding.
+pub(super) fn set_kind_slot_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    kind: InputKind,
+    space_id: Option<&str>,
+) -> Result<()> {
+    match space_id {
+        Some(space_id) => EMBEDDING_SLOT.put(store, txn, &[kind.byte()], &space_id.to_owned()),
+        None => EMBEDDING_SLOT
+            .delete(store, txn, &[kind.byte()])
+            .map(|_| ()),
+    }
+}
+
+/// Drops `space_id`'s rows of `kinds`, and its declaration too once no slot binds it.
+pub(super) fn drop_space_rows_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space_id: &str,
+    kinds: &BTreeSet<InputKind>,
+) -> Result<()> {
+    let key = space_key(space_id);
+    let mut drop = Vec::new();
+    for row in MEDIA_VECTOR.iter_from(store, txn, &key)? {
+        let ((_, id), row) = row?;
+        if kinds.contains(&row.kind) {
+            drop.push(id);
+        }
+    }
+    for id in drop {
+        MEDIA_VECTOR.delete(store, txn, &(key, id))?;
+    }
+    let bindings = kind_slot_bindings_in_txn(store, txn)?;
+    if !InputKind::ALL
+        .iter()
+        .any(|kind| bindings.space_for(*kind) == Some(space_id))
+    {
+        MEDIA_VECTOR.delete_from(store, txn, &key)?;
+        MEDIA_REFUSED.delete_from(store, txn, &key)?;
+        EMBEDDING_SPACE.delete(store, txn, &space_id.to_owned())?;
+    }
+    Ok(())
+}
+
 /// Removes `id`'s text rows from every declared space, as its text-index vector is dropped: a
 /// vector of words the record no longer holds stops matching at once, and the backfill embeds
-/// what is left. Its image and audio rows stay.
+/// what is left. Its image and audio rows stay; a refusal of it is forgotten, so the backfill
+/// tries it again.
 pub(crate) fn delete_text_media_vectors_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -414,6 +545,7 @@ pub(crate) fn delete_text_media_vectors_in_txn(
         {
             MEDIA_VECTOR.delete(store, txn, &(key, *id))?;
         }
+        MEDIA_REFUSED.delete(store, txn, &(key, *id))?;
     }
     Ok(())
 }
@@ -432,6 +564,7 @@ pub(crate) fn delete_media_vectors_in_txn(
         .collect();
     for key in spaces {
         MEDIA_VECTOR.delete(store, txn, &(key, *id))?;
+        MEDIA_REFUSED.delete(store, txn, &(key, *id))?;
     }
     Ok(())
 }
@@ -528,6 +661,7 @@ impl Vault {
     /// Binds a kind slot to a declared space that accepts that input. Binding text moves text
     /// documents and text queries off the vault's own index onto that space, so the space also
     /// needs a text query tower ([`Self::bind_one_space_for_all`] binds every slot at once).
+    /// A slot an open move carries is refused until the move ends.
     pub fn bind_kind_slot(&self, kind: InputKind, space_id: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
@@ -536,6 +670,7 @@ impl Vault {
             )));
         };
         space.admit_binding(kind)?;
+        refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
         EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
         wtxn.commit()?;
         Ok(())
@@ -551,7 +686,7 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] when the space is undeclared, does not accept text, or has no
-    /// text query tower.
+    /// text query tower, or an open move carries a slot it would bind.
     pub fn bind_one_space_for_all(&self, space_id: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
@@ -560,6 +695,9 @@ impl Vault {
             )));
         };
         space.admit_binding(InputKind::Text)?;
+        for kind in &space.accepts {
+            refuse_moving_slot_in_txn(&self.store, &wtxn, *kind)?;
+        }
         for kind in InputKind::ALL {
             if space.accepts.contains(&kind) {
                 EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
@@ -570,9 +708,10 @@ impl Vault {
     }
 
     /// Clears a kind slot's binding; its space keeps its rows. An unbound text slot is the
-    /// vault's own index again.
+    /// vault's own index again. A slot an open move carries is refused until the move ends.
     pub fn unbind_kind_slot(&self, kind: InputKind) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
         EMBEDDING_SLOT.delete(&self.store, &mut wtxn, &[kind.byte()])?;
         wtxn.commit()?;
         Ok(())
@@ -610,12 +749,12 @@ impl Vault {
             }
             InputKind::Image | InputKind::Audio => None,
         };
-        let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
+        let fills = super::space_move::space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
         put_media_vector_in_txn(
             &self.store,
             &mut wtxn,
             &space,
-            &bindings,
+            &fills,
             id,
             kind,
             text_hash,
@@ -625,7 +764,8 @@ impl Vault {
         Ok(())
     }
 
-    /// Retires a declared space no slot binds: its rows and its declaration go.
+    /// Retires a declared space no slot binds and no open version move names: its rows and its
+    /// declaration go.
     pub fn retire_embedding_space(&self, space_id: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
@@ -637,9 +777,55 @@ impl Vault {
                 "embedding space {space_id} is still bound to a kind slot"
             )));
         }
+        if super::space_move::open_move_names_in_txn(&self.store, &wtxn, space_id)? {
+            return Err(Error::InvalidConfig(format!(
+                "an open embedding space move names {space_id}; conclude or abandon it first"
+            )));
+        }
         MEDIA_VECTOR.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
+        MEDIA_REFUSED.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
         EMBEDDING_SPACE.delete(&self.store, &mut wtxn, &space_id.to_owned())?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// How many documents each declared space's model refused, by space id; a space with none
+    /// is absent.
+    pub fn media_refusal_counts(&self) -> Result<BTreeMap<String, usize>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut counts = BTreeMap::new();
+        for (id, space) in EMBEDDING_SPACE.scan(&self.store, &rtxn)? {
+            let refused = MEDIA_REFUSED
+                .scan_keys(&self.store, &rtxn, &space.key())?
+                .len();
+            if refused > 0 {
+                counts.insert(id, refused);
+            }
+        }
+        Ok(counts)
+    }
+
+    /// Every document `space_id`'s model refused, in id order.
+    pub fn media_refusals(&self, space_id: &str) -> Result<Vec<MediaRefused>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(MEDIA_REFUSED
+            .scan_from(&self.store, &rtxn, &space_key(space_id))?
+            .into_iter()
+            .map(|((_, id), row)| MediaRefused {
+                id,
+                reason: row.reason,
+                at: row.at,
+            })
+            .collect())
+    }
+
+    /// Forgets `space_id`'s refusal of `id` by the owner's hand, so the backfill tries the
+    /// same bytes again (a provider whose policy moved, a model swapped behind the rung).
+    /// Returns whether a refusal was there.
+    pub fn clear_media_refusal(&self, space_id: &str, id: &EntityId) -> Result<bool> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let cleared = MEDIA_REFUSED.delete(&self.store, &mut wtxn, &(space_key(space_id), *id))?;
+        wtxn.commit()?;
+        Ok(cleared)
     }
 }

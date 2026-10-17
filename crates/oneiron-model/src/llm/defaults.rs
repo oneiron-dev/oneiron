@@ -1,10 +1,7 @@
 //! Inference defaults as data: the shipped purpose-default table, its validation and the
 //! routing rules it implies. The shipped rows are data, not model bindings. `oneiron` stores
 //! a vault's edited table and re-exports everything here at `oneiron::llm`.
-use super::{
-    BudgetThreshold, CallEnvelope, CallPurpose, ModelId, ModelLocality, ModelTierRef,
-    TierPrecedence,
-};
+use super::{CallEnvelope, CallPurpose, ModelId, ModelLocality, ModelTierRef, TierPrecedence};
 use oneiron_contracts::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -81,16 +78,7 @@ pub struct PurposeDefaultTable {
     /// Owner-authored widest extraction destination. A nonlocal route also
     /// needs a separate host predicate for the actual request before dispatch.
     pub extraction_max_locality: ModelLocality,
-    /// The budget rung at which a purpose's asset reads switch from image
-    /// bytes to the precomputed ASSET_TEXT (OF-329). A purpose without a row
-    /// switches at [`DEFAULT_ASSET_TEXT_AT`].
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub asset_text_at: BTreeMap<CallPurpose, BudgetThreshold>,
 }
-
-/// Where budget pressure starts for an asset read with no purpose row: the
-/// ladder's plan rung, where a run is told to start landing its work.
-pub const DEFAULT_ASSET_TEXT_AT: BudgetThreshold = BudgetThreshold::Plan80;
 
 /// Checked copy of the editable wire rows. Callers cannot index incomplete maps.
 #[derive(Debug, Clone)]
@@ -153,10 +141,6 @@ impl PurposeDefaultTable {
                 .any(|row| row.tier.as_str().trim().is_empty())
             || locality_rank(self.purposes[&CallPurpose::Extraction].locality)
                 > locality_rank(self.extraction_max_locality)
-            || self
-                .asset_text_at
-                .keys()
-                .any(|purpose| !builtin.contains(purpose))
         {
             return Err(Error::InvalidConfig(
                 "invalid inference default rows".into(),
@@ -167,15 +151,6 @@ impl PurposeDefaultTable {
 
     pub fn purpose(&self, purpose: &CallPurpose) -> Option<&PurposeDefault> {
         self.purposes.get(purpose)
-    }
-
-    /// The rung at which `purpose` reads assets as text rather than images.
-    #[must_use]
-    pub fn asset_text_at(&self, purpose: &CallPurpose) -> BudgetThreshold {
-        self.asset_text_at
-            .get(purpose)
-            .copied()
-            .unwrap_or(DEFAULT_ASSET_TEXT_AT)
     }
 
     pub fn voice(&self, lane: VoiceLane) -> &PurposeDefault {

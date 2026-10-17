@@ -35,6 +35,8 @@ use super::consts::{
     TASK_GATE_RECEIPT_SCAN_LIMIT,
 };
 use super::consult_result::CancelTargetState;
+use super::create_origin::{put_proposal_origin_in_txn, task_create_origin_in_txn};
+use super::highway_types::HostBinding;
 use super::presence_scan::{
     cancel_target_state, is_cancelable_attempt_state, is_running_attempt_state,
     superseded_attempt_ids, task_owned_by, task_owned_in, task_presence_at,
@@ -87,9 +89,13 @@ impl Memory<'_> {
         if intent.is_acked_failure() {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
-        Ok(TaskDescription::Card {
-            lines: expand_task(&intent),
-        })
+        let mut lines = expand_task(&intent);
+        // OF-389: a wrapper stays one checkbox; its card names the subproject
+        // it holds.
+        if let Some(subproject) = self.vault().task_subproject(task_ref)? {
+            lines.push(format!("  subproject={}", subproject.to_hex()));
+        }
+        Ok(TaskDescription::Card { lines })
     }
 
     /// The rows `describe` renders its TASKS section from, before the render
@@ -169,6 +175,19 @@ impl Memory<'_> {
             task_ref,
             acked: task_is_acked(self.vault(), task_ref)?,
         })
+    }
+
+    /// `tasks.update` at a host door: the owner's acknowledgement, as
+    /// [`Self::tasks_update`]. A `resultRef` names a code run's result, which
+    /// only that run resolves, so a host door refuses it.
+    pub fn tasks_update_request(
+        &self,
+        input: &super::sdk::TaskUpdateRequest,
+    ) -> MemoryResult<TaskUpdateReceipt> {
+        if input.result_ref.is_some() {
+            return Err(MemoryError::bad_request("task_update_result_needs_run"));
+        }
+        self.tasks_update(EntityId::from_hex(&input.task_ref)?)
     }
 
     /// The free render-tier acknowledgement bit of a failed task, as the
@@ -701,6 +720,42 @@ impl Memory<'_> {
         now: u64,
         provenance: Value,
     ) -> MemoryResult<(EntityId, Option<String>)> {
+        self.persist_proposal_claim(predicate, value, subject, now, provenance, |_, _| Ok(()))
+    }
+
+    /// [`Self::persist_task_proposal`] for a create (OF-532): a creator a
+    /// host bound is re-proved and witnessed under the proposal id in the
+    /// proposal's own transaction, before the claim lands, so no settlement
+    /// can see the proposal without its origin. A root create keeps a
+    /// witness only for the conversation the host stamped (OF-221).
+    pub(super) fn persist_task_proposal_with_origin(
+        &self,
+        predicate: &str,
+        value: Value,
+        subject: EntityId,
+        now: u64,
+        provenance: Value,
+        creator: Option<&HostBinding>,
+    ) -> MemoryResult<(EntityId, Option<String>)> {
+        self.persist_proposal_claim(predicate, value, subject, now, provenance, |wtxn, id| {
+            if let Some(origin) = task_create_origin_in_txn(self, &*wtxn, creator)? {
+                put_proposal_origin_in_txn(self.vault(), wtxn, id, &origin)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// One Proposed task CLAIM, and whatever `witness` writes beside it under
+    /// its id in the same transaction, before the claim lands.
+    fn persist_proposal_claim(
+        &self,
+        predicate: &str,
+        value: Value,
+        subject: EntityId,
+        now: u64,
+        provenance: Value,
+        witness: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+    ) -> MemoryResult<(EntityId, Option<String>)> {
         let proposal_ref = self.vault().store.clock.entity_id()?;
         let mut candidate = ClaimCandidate::new(
             predicate.to_owned(),
@@ -730,6 +785,7 @@ impl Memory<'_> {
             end: now,
         };
         self.with_verified_actor_write_txn(|wtxn| {
+            witness(wtxn, proposal_ref)?;
             apply_ops_with_gate_mode(
                 &self.vault().store,
                 &self.vault().config,

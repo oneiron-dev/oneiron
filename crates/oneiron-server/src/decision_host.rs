@@ -6,30 +6,45 @@
 //! start there. The house model's decision read fills the escalation rung when
 //! `[models.decision_read]` binds it and its recipe names the paired question;
 //! the recipe's person question is the ladder's own. The System One seat fills
-//! its rung when `[models.decisions.system_one]` binds it. The local head and
-//! the big model have no typed provider on this host yet, so their slots stay
-//! empty and the ladder steps past them. The last rung is the vault owner's
+//! its rung when `[models.decisions.system_one]` binds it, and the big model
+//! fills the Big rung when `[models.decisions.big]` names its seat
+//! ([`crate::big_rung`]). The local head has no typed provider on this host
+//! yet, so its slot stays empty and the ladder steps past it. The last rung is the vault owner's
 //! ask queue ([`DecisionAsks`]): durable, answered at `/v1/owner/decisions`.
 //!
 //! Every model rung blocks on the server's runtime: run a ladder call on a
 //! blocking thread.
 use std::sync::Arc;
 
-use oneiron::llm::decision::catalogue::{ASK_UP, THINK_MORE};
+use oneiron::booking::constraint::BookingDecisions;
+use oneiron::fanout_auto::FanoutDecisions;
+use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadProvider,
-    DecisionRung, HeldLadder, ProviderCapability, ProviderDecision, ProviderPin,
-    RemoteDecisionSeat, RuleDecisionProvider, SeatPhase, SeatRequest,
+    DecisionRung, HeldLadder, ModelDecisionProvider, ProviderCapability, ProviderDecision,
+    ProviderPin, RemoteDecisionSeat, RuleDecisionProvider, SeatPhase, SeatRequest,
 };
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
     ModelId, ReasoningEffort,
 };
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, HostingPrivacyPosture, Vault};
+use oneiron::memory::ImagePick;
+use oneiron::policy_model::PolicyDecisions;
+use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::saved_query::MembershipDecisions;
+use oneiron::skill_hub::{ClaimReplayDecisions, UsefulUpstreamDecisions};
+use oneiron::task_type::PlacementDecisions;
+use oneiron::task_verb::TaskDecisions;
+use oneiron::{
+    BudgetExhaustionPolicy, BudgetGuard, ConsolidationDecisions, EntityId, HostingPrivacyPosture,
+    Vault,
+};
 
-use crate::config::models::{ModelsConfig, SeatPickSettings, SystemOneSettings};
+use crate::config::models::{
+    BigSettings, ImagePickSettings, ModelsConfig, SeatPickSettings, SystemOneSettings,
+};
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
 
@@ -37,6 +52,20 @@ use crate::server::SyncServer;
 const RULE_TABLE: &str = "host-rules";
 /// The owner ask queue's identity, the ladder's human pin.
 const OWNER_ASKS: &str = "owner-asks";
+/// The task surface's questions: this host's wording.
+const TASK_TAKE_WORDING: &str = "Should this agent take the proposed task? Yes only when the \
+task fits what the agent's definition says it does and what it may touch.";
+const TASK_DONE_MET_WORDING: &str = "Does this result meet the task's brief? Yes only when the \
+result meets every yes_if_all criterion and no no_if_any criterion holds.";
+const TASK_ASK_UP_WORDING: &str = "Should this task ask its owner now? Yes when the listed \
+escalation trigger needs a person's answer before the work goes on.";
+/// How long one task surface question may take.
+const TASK_DECISION_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+/// The placement question (OF-541): this host's wording.
+const PLACEMENT_WORDING: &str = "Which node of the task-type tree is this task? Answer the most \
+specific live node whose kind fits the task's subgoal and site, or the root when none fits.";
+/// How long one placement may take before the rule rung's reading stands.
+pub(crate) const PLACEMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -48,6 +77,7 @@ pub struct DecisionHost {
     asks: Arc<DecisionAsks>,
     bands: DecisionBandPolicy,
     auto_checker: Option<BoundedAutoChecker>,
+    image_pick: Option<ImagePickSettings>,
 }
 
 impl DecisionHost {
@@ -67,19 +97,25 @@ impl DecisionHost {
                 human: asks.clone(),
                 human_pin: pin(DecisionRung::Human, OWNER_ASKS, ONE),
                 person: None,
+                presence: None,
             },
             asks,
             bands: DecisionBandPolicy::default(),
             auto_checker: None,
+            image_pick: None,
         }
     }
 
     /// The house model's decision read on the escalation rung, read on
     /// `meter`, and its recipe's person question as the ladder's. Without a
     /// paired question in the recipe the rung stays empty.
-    pub(crate) fn with_house_read(mut self, read: Option<&(DecisionReadDoor, BudgetGuard)>) -> Self {
+    pub(crate) fn with_house_read(
+        mut self,
+        read: Option<&(DecisionReadDoor, BudgetGuard)>,
+    ) -> Self {
         self.ladder.escalation = None;
         self.ladder.person = None;
+        self.ladder.presence = None;
         self.bands = DecisionBandPolicy::default();
         let Some((door, meter)) = read else {
             return self;
@@ -90,17 +126,14 @@ impl DecisionHost {
             );
             return self;
         };
-        match HouseRead::new(door.reader(), meter.clone(), &probe.paired) {
-            Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
-            Err(error) => {
-                tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
-            }
-        }
         if let Some(wording) = &probe.person {
             match ASK_UP.question(&[], wording.clone(), AnswerContract::Noul) {
                 Ok(person) => {
                     let mut bands = DecisionBandPolicy::default();
-                    match bands.set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
+                    // Q3's threshold home: an accepted Coach row replaces this
+                    // start value with a higher version, here.
+                    match bands
+                        .set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
                     {
                         Ok(()) => {
                             self.ladder.person = Some(person);
@@ -110,6 +143,25 @@ impl DecisionHost {
                     }
                 }
                 Err(error) => tracing::warn!(%error, "the recipe's person question is invalid"),
+            }
+        }
+        // A Box or Point call asks the recipe's presence question first.
+        if let Some(wording) = &probe.presence {
+            match IMAGE_PRESENCE.question(&[], wording.clone(), AnswerContract::Noul) {
+                Ok(presence) => self.ladder.presence = Some(presence),
+                Err(error) => tracing::warn!(%error, "the recipe's presence question is invalid"),
+            }
+        }
+        // The read takes the ladder's person question, which it reads apart.
+        match HouseRead::new(
+            door.reader(),
+            meter.clone(),
+            &probe.paired,
+            self.ladder.person.clone(),
+        ) {
+            Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
+            Err(error) => {
+                tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
             }
         }
         self
@@ -134,6 +186,38 @@ impl DecisionHost {
         self
     }
 
+    /// The big model on its rung (OF-495), through the seat
+    /// `[models.decisions.big]` names; its calls block on `runtime`.
+    fn with_big(
+        mut self,
+        settings: Option<&BigSettings>,
+        models: &Arc<crate::models::ModelRuntime>,
+        vault: &Arc<Vault>,
+        default_units: u64,
+        runtime: tokio::runtime::Handle,
+    ) -> Self {
+        self.ladder.big = None;
+        let Some(settings) = settings else {
+            return self;
+        };
+        let bound = crate::big_rung::BigModel::bind(
+            settings,
+            Arc::clone(models),
+            Arc::clone(vault),
+            default_units,
+            runtime,
+        )
+        .and_then(|model| {
+            let pin = model.pin();
+            ModelDecisionProvider::new(pin, Arc::new(model)).map_err(anyhow::Error::from)
+        });
+        match bound {
+            Ok(rung) => self.ladder.big = Some(Arc::new(rung)),
+            Err(error) => tracing::warn!(%error, "the big model cannot fill its rung"),
+        }
+        self
+    }
+
     /// The write gate's auto check through this ladder, worded `wording`,
     /// for `principal`.
     fn with_auto_check(mut self, wording: Option<&str>, principal: Option<EntityId>) -> Self {
@@ -148,6 +232,12 @@ impl DecisionHost {
                 calibrated: None,
             })
         });
+        self
+    }
+
+    /// The per-image pick's wording and budget (OF-329).
+    fn with_image_pick(mut self, settings: Option<&ImagePickSettings>) -> Self {
+        self.image_pick = settings.cloned();
         self
     }
 
@@ -198,6 +288,196 @@ impl DecisionHost {
     #[must_use]
     pub fn auto_checker(&self) -> Option<&BoundedAutoChecker> {
         self.auto_checker.as_ref()
+    }
+
+    /// The task highway's three surface questions through this ladder, up
+    /// to the Big rung: a question no model answers asks up on the TASK.
+    pub(crate) fn task_decisions(&self) -> oneiron::Result<TaskDecisions<'_>> {
+        let question = |which: &[u8], wording: &str| {
+            TASK_SURFACE.question(&[which], wording.to_owned(), AnswerContract::Noul)
+        };
+        Ok(TaskDecisions {
+            ladder: self.ladder.ladder(),
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            take: question(b"take".as_slice(), TASK_TAKE_WORDING)?,
+            done: question(b"done_met".as_slice(), TASK_DONE_MET_WORDING)?,
+            ask_up: question(b"ask_up".as_slice(), TASK_ASK_UP_WORDING)?,
+            budget: TASK_DECISION_BUDGET,
+        })
+    }
+
+    /// The placement question through this ladder for `principal`, up to the
+    /// Big rung (a placement never asks a person), within `deadline`.
+    pub(crate) fn placement_decisions<'a>(
+        &'a self,
+        principal: EntityId,
+        deadline: &'a RetrievalDeadline,
+    ) -> PlacementDecisions<'a> {
+        PlacementDecisions {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            wording: PLACEMENT_WORDING.to_owned(),
+            deadline,
+        }
+    }
+
+    /// The Dreamer's consolidation questions through this ladder, in the
+    /// shipped wording: the verdict role's generated read sits at the Local
+    /// slot, and an answer still in the band steps up the host's stronger
+    /// rungs to the Big rung, under the host's bands.
+    pub(crate) fn consolidation_decisions(&self) -> oneiron::Result<ConsolidationDecisions> {
+        Ok(ConsolidationDecisions {
+            ladder: self.ladder.clone(),
+            dial: DecisionDial {
+                first: DecisionRung::Local,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: self.bands.clone(),
+            ..ConsolidationDecisions::shipped()?
+        })
+    }
+
+    /// The fast per-image pick (OF-329) for `principal`'s `task`, when
+    /// `[models.decisions.image_pick]` words it. It asks the quick rungs
+    /// only, up to System One, under the host's bands; a pick no rung
+    /// answers in band serves the image in full.
+    #[must_use]
+    pub fn image_pick(&self, principal: EntityId, task: String) -> Option<ImagePick<'_>> {
+        let settings = self.image_pick.as_ref()?;
+        Some(ImagePick {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::SystemOne),
+            bands: self.bands.clone(),
+            wording: settings.wording.clone(),
+            task,
+            budget: settings.budget,
+        })
+    }
+
+    /// The saved-query membership judge through this ladder, in the shipped
+    /// wording and budget: the judge's generated read sits at the Local slot,
+    /// and an answer still in the band steps up the host's stronger rungs to
+    /// the Big rung, under the host's bands.
+    pub fn membership_decisions(&self) -> oneiron::Result<MembershipDecisions> {
+        Ok(MembershipDecisions {
+            ladder: self.ladder.clone(),
+            dial: DecisionDial {
+                first: DecisionRung::Local,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: self.bands.clone(),
+            ..MembershipDecisions::shipped()?
+        })
+    }
+
+    /// A booking's free-text parse through this ladder for `principal`, on
+    /// the shipped budget: the parse tier's read sits at System One, and an
+    /// answer still in the band steps up to the Big rung.
+    #[must_use]
+    pub fn booking_decisions(&self, principal: EntityId) -> BookingDecisions {
+        BookingDecisions {
+            ladder: self.ladder.clone(),
+            dial: DecisionDial {
+                first: DecisionRung::SystemOne,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: self.bands.clone(),
+            ..BookingDecisions::shipped(principal)
+        }
+    }
+
+    /// The fan-out AUTO ruling through this ladder for `principal`, worded
+    /// `wording`, up to the Big rung: the fan-out's own approval asks the
+    /// person, so this dial never does.
+    #[must_use]
+    pub fn fanout_decisions<'a>(
+        &'a self,
+        principal: EntityId,
+        wording: String,
+        deadline: &'a RetrievalDeadline,
+    ) -> FanoutDecisions<'a> {
+        FanoutDecisions {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            wording,
+            deadline,
+        }
+    }
+
+    /// The merge doors' useful-upstream question through this ladder, on
+    /// `deadline`. The doors require a System One or escalation seat to
+    /// answer first, so the dial starts at the first of those this host
+    /// fills; with neither, the question cannot be asked here.
+    pub fn useful_upstream<'a>(
+        &'a self,
+        deadline: &'a RetrievalDeadline,
+    ) -> oneiron::Result<UsefulUpstreamDecisions<'a>> {
+        let first = if self.ladder.system_one.is_some() {
+            DecisionRung::SystemOne
+        } else if self.ladder.escalation.is_some() {
+            DecisionRung::Escalation
+        } else {
+            return Err(oneiron::Error::InvalidConfig(
+                "useful-upstream needs a System One seat or the house read on this host".into(),
+            ));
+        };
+        Ok(UsefulUpstreamDecisions {
+            ladder: self.ladder.ladder(),
+            dial: DecisionDial {
+                first,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: self.bands.clone(),
+            deadline,
+        })
+    }
+
+    /// A claim refinement's held-out replay score through this ladder,
+    /// worded `wording`, on `deadline`, up to the Big rung.
+    #[must_use]
+    pub fn claim_replay<'a>(
+        &'a self,
+        wording: String,
+        deadline: &'a RetrievalDeadline,
+    ) -> ClaimReplayDecisions<'a> {
+        ClaimReplayDecisions {
+            ladder: self.ladder.ladder(),
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            wording,
+            deadline,
+        }
+    }
+
+    /// The policy safeguard's typed read through this ladder for `principal`,
+    /// worded `wording` at `revision`, up to the Big rung, each read on
+    /// `budget`: one per enabled plane, held by the plane's policy config.
+    pub fn policy_decisions(
+        &self,
+        principal: EntityId,
+        revision: String,
+        wording: String,
+        budget: std::time::Duration,
+    ) -> oneiron::Result<PolicyDecisions> {
+        PolicyDecisions::new(
+            Arc::new(self.ladder.clone()),
+            principal,
+            self.dial(DecisionRung::Big),
+            self.bands.clone(),
+            revision,
+            wording,
+            budget,
+        )
     }
 
     /// The code-mode seat pick through this ladder, for `principal`.
@@ -258,7 +538,15 @@ impl SyncServer {
                 posture,
                 tokio::runtime::Handle::current(),
             )
-            .with_auto_check(models.decisions.auto_check.as_deref(), principal);
+            .with_big(
+                models.decisions.big.as_ref(),
+                self.ai.models(),
+                &self.vault,
+                models.raw_budget_units,
+                tokio::runtime::Handle::current(),
+            )
+            .with_auto_check(models.decisions.auto_check.as_deref(), principal)
+            .with_image_pick(models.decisions.image_pick.as_ref());
         self
     }
 
@@ -295,6 +583,7 @@ struct HouseRead {
     reader: Arc<dyn LabelReadModel>,
     guard: BudgetGuard,
     paired: DecisionQuestion,
+    person: Option<DecisionQuestion>,
 }
 
 impl HouseRead {
@@ -302,10 +591,12 @@ impl HouseRead {
         reader: Arc<dyn LabelReadModel>,
         guard: BudgetGuard,
         paired: &str,
+        person: Option<DecisionQuestion>,
     ) -> oneiron::Result<Self> {
         let read = Self {
             pin: pin(DecisionRung::Escalation, reader.model(), reader.revision()),
             paired: THINK_MORE.question(&[], paired.to_owned(), AnswerContract::Noul)?,
+            person,
             reader,
             guard,
         };
@@ -319,6 +610,7 @@ impl HouseRead {
             self.reader.as_ref(),
             &self.guard,
             &self.paired,
+            self.person.as_ref(),
         )
     }
 }
@@ -329,10 +621,8 @@ impl DecisionProvider for HouseRead {
     }
 
     fn capability(&self) -> ProviderCapability {
-        ProviderCapability {
-            max_options: self.reader.max_labels(),
-            score: false,
-        }
+        self.provider()
+            .map_or_else(|_| ProviderCapability::default(), |read| read.capability())
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
@@ -399,12 +689,24 @@ impl DecisionProvider for SystemOneRung {
         }
     }
 
+    /// The seat sends a call's images as named wire assets, when the posture
+    /// lets a call leave the host at all.
+    fn reads_images(&self) -> bool {
+        (self.posture == HostingPrivacyPosture::Hosted || self.remote_opt_in)
+            && self.posture != HostingPrivacyPosture::Relay
+    }
+
+    fn image_edge(&self) -> Option<u32> {
+        self.seat.image_edge()
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
         let request = SeatRequest {
             question: call.question.clone(),
             state: call.state.clone(),
             images: call.images.to_vec(),
+            audio: call.audio.to_vec(),
             score_levels: Vec::new(),
             posture: self.posture,
             remote_opt_in: self.remote_opt_in,

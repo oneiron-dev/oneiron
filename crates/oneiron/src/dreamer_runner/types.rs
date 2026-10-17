@@ -644,6 +644,79 @@ pub struct DreamerRunTreeRecord {
     pub created_at: u64,
 }
 
+/// Why a Dreamer attempt parked. The reason text is for people; this is
+/// what code reads. Only a [`Self::ProviderUnavailable`] park resumes when a
+/// model offer recovers (OF-305).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DreamerParkCause {
+    /// Its model call failed because the provider is down: a server error,
+    /// a timeout, a cut stream or an empty answer.
+    ProviderUnavailable,
+    /// Its executor returned an error or panicked.
+    ExecutorError,
+    /// The wake pass hit its deadline and the attempt kept its progress.
+    Checkpoint,
+    /// The pass was cancelled.
+    Cancelled,
+    /// It waits on a signal: a budget approval, a seat login, a peer.
+    Signal,
+    /// Anything else: a missing route, a refused config, a failed step.
+    Other,
+}
+
+impl DreamerParkCause {
+    /// Stable string stored in the private parked row.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProviderUnavailable => "provider_unavailable",
+            Self::ExecutorError => "executor_error",
+            Self::Checkpoint => "checkpoint",
+            Self::Cancelled => "cancelled",
+            Self::Signal => "signal",
+            Self::Other => "other",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "provider_unavailable" => Some(Self::ProviderUnavailable),
+            "executor_error" => Some(Self::ExecutorError),
+            "checkpoint" => Some(Self::Checkpoint),
+            "cancelled" => Some(Self::Cancelled),
+            "signal" => Some(Self::Signal),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+
+    /// The cause of a park a failed model call made.
+    #[must_use]
+    pub fn of_llm(error: &crate::llm::LlmError) -> Self {
+        if error.is_provider_unavailable() {
+            Self::ProviderUnavailable
+        } else {
+            Self::Other
+        }
+    }
+
+    /// The cause of a park a failed durable step made: its model failure's
+    /// cause, a checkpoint at the wake-pass deadline, or other.
+    #[must_use]
+    pub fn of_step(error: &crate::llm::DurableStepError) -> Self {
+        use crate::llm::DurableStepError;
+        match error {
+            DurableStepError::Llm(source)
+            | DurableStepError::ClassifiedLlm { source, .. }
+            | DurableStepError::SpentLlm { source, .. } => Self::of_llm(source),
+            DurableStepError::DeadlineHardCut
+            | DurableStepError::FinalizeRefused
+            | DurableStepError::SpentFinalizeRefused { .. } => Self::Checkpoint,
+            _ => Self::Other,
+        }
+    }
+}
+
 /// Input for parking a Dreamer attempt in local runner state.
 ///
 /// `park_owner` is the parker's ownership token: only the owner recorded on
@@ -652,6 +725,7 @@ pub struct DreamerRunTreeRecord {
 pub struct ParkDreamerAttempt {
     pub attempt_id: AttemptId,
     pub reason: String,
+    pub cause: DreamerParkCause,
     pub park_owner: String,
     pub now: u64,
 }
@@ -661,6 +735,7 @@ pub struct ParkDreamerAttempt {
 pub struct DreamerParkedAttemptRecord {
     pub attempt_id: AttemptId,
     pub reason: String,
+    pub cause: DreamerParkCause,
     pub park_owner: String,
     pub parked_at: u64,
 }

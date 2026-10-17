@@ -16,7 +16,7 @@
 //! that exact: after the scrubs run, an operation may ship only if it carries nothing the live
 //! state no longer holds for a reason that keeps it off the wire.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use loro::json::{JsonOpContent, MapOp};
 use loro::{
@@ -86,6 +86,9 @@ pub(crate) struct HistoryCheck {
     /// The worlds whose keys this replica destroyed, among those the window's
     /// pads name: such a pad's bytes never ship, live or in history.
     late_pad_worlds: BTreeSet<EntityId>,
+    /// The newest withdrawn generation of each artifact that has one: a body of it or older
+    /// that is not its keyframe never ships, live or in history.
+    withdrawn: BTreeMap<EntityId, u64>,
 }
 
 impl HistoryCheck {
@@ -108,8 +111,16 @@ impl HistoryCheck {
         });
         let mut erased = BTreeSet::new();
         for id in soft {
-            let raw = vault.store.entities.get(&rtxn, id.as_bytes())?;
-            if crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, raw.as_deref())? {
+            let marked = match crate::ports::EntityStoreRead::port_entity_with_raw(
+                &vault.store,
+                &rtxn,
+                &id,
+                |raw| crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, Some(raw)),
+            )? {
+                Some(marked) => marked,
+                None => crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, None)?,
+            };
+            if marked {
                 erased.insert(id);
             }
         }
@@ -134,6 +145,21 @@ impl HistoryCheck {
                 && let Some(Ok(world)) = crate::world_keys::pad_body_world(blob)
             {
                 pad_worlds.insert(world);
+            }
+        }
+        // A shallow doc's own root holds state no retained operation carries:
+        // a pad only there still names its world (Docs Q27).
+        let shallow_root = doc.shallow_since_frontiers();
+        if !shallow_root.is_empty() {
+            let at_root = doc.fork();
+            if at_root.checkout(&shallow_root).is_ok() {
+                map_for_each_value_bytes(&at_root.get_map("entities"), |_, blob| {
+                    if let Some(Ok(world)) = blob.and_then(crate::world_keys::pad_body_world) {
+                        pad_worlds.insert(world);
+                    }
+                });
+            } else {
+                tracing::warn!(window = %key, "history check: shallow root unreadable");
             }
         }
         let mut late_pad_worlds = BTreeSet::new();
@@ -170,11 +196,13 @@ impl HistoryCheck {
                 }
             }
         }
+        let withdrawn = crate::deletion::withdrawn_generation_cutoffs_in_txn(&vault.store, &rtxn)?;
         Ok(Self {
             redacted,
             erased,
             retained_shells,
             late_pad_worlds,
+            withdrawn,
         })
     }
 
@@ -290,6 +318,8 @@ impl HistoryCheck {
             || crate::world_keys::pad_body_world(blob).is_some_and(|world| {
                 world.is_err() || world.is_ok_and(|world| self.late_pad_worlds.contains(&world))
             })
+            || EntityId::from_hex(key)
+                .is_ok_and(|id| super::withdrawn::withdrawn_body(&self.withdrawn, &id, blob))
     }
 }
 
@@ -579,6 +609,8 @@ fn scrub_for_export(
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    let generations_scrubbed =
+        super::withdrawn::scrub_withdrawn_generation_carriers(vault, key, doc)?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -588,6 +620,7 @@ fn scrub_for_export(
         || claims_scrubbed
         || authors_scrubbed
         || withdrawn_scrubbed
+        || generations_scrubbed
         || history_free_window_required(vault, key)?
     {
         Some(HistoryCheck::read(vault, key, doc)?)

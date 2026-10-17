@@ -23,6 +23,8 @@ const MAX_ARCHIVE_UNPACKED_BYTES: u64 = crate::memory::caps::MAX_REMOTE_EXPORT_B
 pub(crate) struct VaultArchive {
     pub(crate) document: WholeVaultDocument,
     pub(crate) secrets: Vec<ArchiveSecretCustody>,
+    /// Result bodies by BLAKE3, text or binary, staged from these bytes.
+    pub(crate) result_files: BTreeMap<String, Vec<u8>>,
 }
 
 pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
@@ -42,9 +44,7 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
         if bytes.len() as u64 != file.bytes || blake3_hex(&bytes) != file.blake3 {
             return Err(invalid("archive file does not match its digest"));
         }
-        let text =
-            String::from_utf8(bytes).map_err(|_| invalid("archive file is not UTF-8 text"))?;
-        if files.insert(file.blake3.clone(), text).is_some() {
+        if files.insert(file.blake3.clone(), bytes).is_some() {
             return Err(invalid("archive file listed twice"));
         }
     }
@@ -107,7 +107,9 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
             serde_json::from_value(row).map_err(|_| invalid("invalid archive custody record"))
         })
         .collect::<Result<Vec<ArchiveSecretCustody>>>()?;
-    let mut entities = sections.remove(&ArchiveRecordKind::Entity).unwrap_or_default();
+    let mut entities = sections
+        .remove(&ArchiveRecordKind::Entity)
+        .unwrap_or_default();
     let mut take = |kind| Value::Array(sections.remove(&kind).unwrap_or_default());
     // Store order: entity ids ascend, as the snapshot enumerated them.
     entities.sort_by(|a, b| {
@@ -132,14 +134,18 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
         },
     });
     let mut cited = BTreeSet::new();
-    attach_result_bodies(&mut document, &files, &mut cited)?;
+    let result_files = result_body_files(&document, &files, &mut cited)?;
     attach_trees(&mut document, &files, &mut cited)?;
     if cited.len() != files.len() {
         return Err(invalid("archive file no record names"));
     }
     let document = serde_json::from_value(document)
         .map_err(|_| invalid("invalid whole-vault archive rows"))?;
-    Ok(VaultArchive { document, secrets })
+    Ok(VaultArchive {
+        document,
+        secrets,
+        result_files,
+    })
 }
 
 /// Every member, by name, read whole under the unpacked ceiling.
@@ -187,26 +193,31 @@ fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(members)
 }
 
-/// A result body the export did not withhold comes back from its file.
-fn attach_result_bodies(
-    document: &mut Value,
-    files: &BTreeMap<String, String>,
+/// Each result body the export did not withhold, text or binary, by its
+/// file's BLAKE3; the import stages these bytes before any row names them.
+fn result_body_files(
+    document: &Value,
+    files: &BTreeMap<String, Vec<u8>>,
     cited: &mut BTreeSet<String>,
-) -> Result<()> {
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let mut out = BTreeMap::new();
     let Some(bodies) = document
-        .pointer_mut("/run_results/bodies")
-        .and_then(Value::as_array_mut)
+        .pointer("/run_results/bodies")
+        .and_then(Value::as_array)
     else {
-        return Ok(());
+        return Ok(out);
     };
     for body in bodies {
         let fields = body
-            .as_object_mut()
+            .as_object()
             .ok_or_else(|| invalid("invalid archive result body"))?;
         if !fields.get("content").is_none_or(Value::is_null) {
             return Err(invalid("archive result body carries inline content"));
         }
-        if fields.get("withheld").is_some_and(|reason| !reason.is_null()) {
+        if fields
+            .get("withheld")
+            .is_some_and(|reason| !reason.is_null())
+        {
             continue;
         }
         let blake3 = fields
@@ -214,19 +225,19 @@ fn attach_result_bodies(
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("archive result body without a digest"))?
             .to_owned();
-        let text = files
+        let bytes = files
             .get(&blake3)
             .ok_or_else(|| invalid("archive result body file is absent"))?;
-        fields.insert("content".to_owned(), Value::from(text.clone()));
+        out.insert(blake3.clone(), bytes.clone());
         cited.insert(blake3);
     }
-    Ok(())
+    Ok(out)
 }
 
 /// A source-tree file's `file` comes back as its text.
 fn attach_trees(
     document: &mut Value,
-    files: &BTreeMap<String, String>,
+    files: &BTreeMap<String, Vec<u8>>,
     cited: &mut BTreeSet<String>,
 ) -> Result<()> {
     let Some(sections) = document.as_object_mut() else {
@@ -266,7 +277,9 @@ fn attach_trees(
                 let text = files
                     .get(blake3)
                     .ok_or_else(|| invalid("archive tree file is absent"))?;
-                fields.insert("content".to_owned(), Value::from(text.clone()));
+                let text = std::str::from_utf8(text)
+                    .map_err(|_| invalid("archive tree file is not UTF-8 text"))?;
+                fields.insert("content".to_owned(), Value::from(text));
                 cited.insert(blake3.to_owned());
             }
         }

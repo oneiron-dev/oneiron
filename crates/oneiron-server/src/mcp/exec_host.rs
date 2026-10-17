@@ -4,13 +4,14 @@ use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
-use oneiron::code_run::GatedActorWrite;
+use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
 };
 use oneiron::llm::seat::{SeatDecisions, SeatKind, SeatTask};
-use oneiron::{BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
+use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
 use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
@@ -169,6 +170,12 @@ pub trait McpCodeExecutionHost: Send + Sync {
     ) -> Pin<
         Box<dyn Future<Output = Result<EngineExecutorOutcome, McpCodeExecutionError>> + Send + 'a>,
     >;
+
+    /// The engine-native host behind this seam, for a host worker that runs
+    /// on the same provider and run permits; `None` for any other host.
+    fn engine_native(&self) -> Option<&McpEngineNativeCodeHost> {
+        None
+    }
 }
 
 /// The engine-native pieces one durable run needs, bound by the HOST.
@@ -189,6 +196,18 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn lease(&self) -> &BudgetLease;
     /// A FRESH sandbox/REPL runtime for one run.
     fn runtime(&self) -> Box<dyn JsCodeModeRuntime + Send>;
+    /// A fresh sandbox runtime for one reader child, never a sibling of its
+    /// parent's. A provider that can share compiled code across children
+    /// overrides it.
+    fn reader_runtime(&self) -> Box<dyn JsCodeModeRuntime + Send> {
+        self.runtime()
+    }
+    /// The backend one reader child's model calls go through, each spent on
+    /// `meter`, its own child scope's guard. `None`: the provider has no
+    /// metered backend to give, and the child does not run.
+    fn reader_backend(&self, _meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// The executor configuration for this run, in the vault it lives in.
     fn executor_config(
         &self,
@@ -221,6 +240,10 @@ pub trait McpCodeModeProvider: Send + Sync {
 /// credential its passes queue under (its registered fingerprint's stream
 /// connection).
 pub type RunCompactionSeat = Arc<dyn Fn(WriteActor, &str) -> RunCompaction + Send + Sync>;
+
+/// Builds one reader child's backend over the host's model, its calls spent
+/// on the guard it is given.
+pub type ReaderMeter = Arc<dyn Fn(BudgetGuard) -> Arc<dyn LlmBackend> + Send + Sync>;
 
 /// How many `execute_code` runs one server works on at once.
 ///
@@ -271,6 +294,9 @@ pub struct McpEngineNativeCodeHost {
     /// Keyed by the credential's stream connection, its registered
     /// fingerprint.
     runs: Admission<String>,
+    /// Where each run's seat to spawn reader children comes from; none
+    /// binds no seat, and `self.spawn` answers `reader_spawn_unbound`.
+    reader_seats: Option<Arc<crate::server::ReaderSeats>>,
 }
 
 impl fmt::Debug for McpEngineNativeCodeHost {
@@ -293,13 +319,37 @@ impl McpEngineNativeCodeHost {
             active: Arc::new(Mutex::new(HashSet::new())),
             seats: Arc::default(),
             runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
+            reader_seats: None,
         }
+    }
+
+    /// Lends each run a seat to spawn reader children under, from `seats`,
+    /// which notes where the run's caller sits for its children's reads.
+    #[must_use]
+    pub(crate) fn with_reader_seats(mut self, seats: Arc<crate::server::ReaderSeats>) -> Self {
+        self.reader_seats = Some(seats);
+        self
+    }
+
+    /// The provider every run of this host executes on.
+    pub(crate) fn provider(&self) -> &Arc<dyn McpCodeModeProvider> {
+        &self.provider
+    }
+
+    /// The permits every run of this host waits its turn for, an
+    /// `execute_code` run's and a host worker's alike.
+    pub(crate) fn runs(&self) -> &Admission<String> {
+        &self.runs
     }
 }
 
 impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     fn production_runtime_available(&self) -> bool {
         self.provider.production_runtime_available()
+    }
+
+    fn engine_native(&self) -> Option<&McpEngineNativeCodeHost> {
+        Some(self)
     }
 
     fn execute<'a>(
@@ -318,6 +368,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
+        let reader_seats = self.reader_seats.clone();
         let runs = &self.runs;
         Box::pin(async move {
             let changed =
@@ -326,6 +377,12 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 return Err(changed());
             }
             let guard = ActiveRun::acquire(active, request.run_id)?;
+            // The run's children spend under its launch's root scope, on a
+            // clock one window from its first spawn.
+            let reader_seat = reader_seats.as_ref().and_then(|lent| {
+                crate::server::run_launch_scope(request.run_id)
+                    .map(|spend| lent.seat(request.run_id, spend, request.actor.locality()))
+            });
             // Past the bound the run waits its credential's turn. The permit
             // moves into the worker below, so a caller who hangs up frees
             // nothing its run still holds.
@@ -367,6 +424,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &run_ref,
                         &config,
                         verbs,
+                        reader_seat,
                         seat.as_mut(),
                     );
                     if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
@@ -402,7 +460,12 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
 /// This is the whole of what `execute_code` means now: bind the gated write at
 /// the host boundary, hand the engine its own runtime, and let
 /// `EngineNativeExecutor` own every step, replay row, and terminal marker. The
-/// server evaluates nothing and opens no second vault-write path.
+/// server evaluates nothing and opens no second vault-write path. A run with
+/// a seat may spawn reader children under it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the run's host binding"
+)]
 fn run_engine_native_code_mode(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
@@ -410,37 +473,135 @@ fn run_engine_native_code_mode(
     run_ref: &str,
     config: &EngineExecutorConfig,
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
-    let gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
+    let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs);
-    let mut runtime = provider.runtime();
-    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
+    if let Some(seat) = reader_seat {
+        gated_write = gated_write.with_reader_spawn(seat);
+    }
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;
-    let has_seat = vault
-        .model_manifest()
-        .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
-        .is_some()
+    enter_engine_native_run(
+        vault,
+        provider,
+        &gated_write,
+        config,
+        format!("mcp-execute-code:{}", config.run_id.to_hex()),
+        compaction,
+        &reactor,
+        None,
+    )
+    .map_err(|error| match error {
+        EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
+        EngineRunError::Run(error) => McpCodeExecutionError::Run(error),
+    })
+}
+
+/// Why one entry of an engine-native run did not end: its seat could not be
+/// bound, or the executor failed.
+#[derive(Debug)]
+pub(crate) enum EngineRunError {
+    Binding(String),
+    Run(String),
+}
+
+impl fmt::Display for EngineRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Binding(error) | Self::Run(error) => f.write_str(error),
+        }
+    }
+}
+
+/// One entry of an engine-native run through `bound`, the write door its
+/// host bound: `execute_code`'s credential-gated door, or a leased attempt's
+/// own dispatcher. A manifest-backed run is born on its model seat first,
+/// warm under `warm_scope`.
+///
+/// A run that spends under a scope (`spend`: a pumped agent run's, OF-533)
+/// makes its model calls on a meter that scope bounds, and what they used is
+/// booked on the scope once the entry ends, whatever it answered. With none,
+/// the calls run on the provider's own meter.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn enter_engine_native_run(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    bound: &GatedActorWrite<'_>,
+    config: &EngineExecutorConfig,
+    warm_scope: String,
+    compaction: Option<&mut RunCompaction>,
+    reactor: &tokio::runtime::Runtime,
+    spend: Option<&SpendScopeId>,
+) -> Result<EngineExecutorOutcome, EngineRunError> {
+    let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
+    let Some(scope) = spend else {
+        return enter_on(
+            vault,
+            provider,
+            provider.backend(),
+            bound,
+            config,
+            warm_scope,
+            compaction,
+            reactor,
+        );
+    };
+    let dispatcher = AgentDispatcher::new(vault);
+    let guard = dispatcher.guard_for_scope(scope).map_err(binding)?;
+    // The backend a reader child's calls take, on this scope's guard.
+    let backend = provider.reader_backend(guard.clone()).ok_or_else(|| {
+        EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
+    })?;
+    let entered = enter_on(
+        vault,
+        provider,
+        backend.as_ref(),
+        bound,
+        config,
+        warm_scope,
+        compaction,
+        reactor,
+    );
+    dispatcher
+        .record_guard_spend(scope, guard.read().used_units)
+        .map_err(binding)?;
+    entered
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enter_on(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    backend: &dyn LlmBackend,
+    bound: &GatedActorWrite<'_>,
+    config: &EngineExecutorConfig,
+    warm_scope: String,
+    compaction: Option<&mut RunCompaction>,
+    reactor: &tokio::runtime::Runtime,
+) -> Result<EngineExecutorOutcome, EngineRunError> {
+    let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
+    let mut runtime = provider.runtime();
+    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
+    let has_seat = vault.model_manifest().map_err(binding)?.is_some()
         || vault
             .model_seat_receipt(config.run_id)
-            .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
+            .map_err(binding)?
             .is_some();
     let seat = if has_seat {
         let decisions = provider.seat_decisions().ok_or_else(|| {
-            McpCodeExecutionError::RunBinding("manifest-backed run requires seat decisions".into())
+            EngineRunError::Binding("manifest-backed run requires seat decisions".into())
         })?;
         let facet = provider.seat_facet().ok_or_else(|| {
-            McpCodeExecutionError::RunBinding(
-                "manifest-backed run requires a capability profile".into(),
-            )
+            EngineRunError::Binding("manifest-backed run requires a capability profile".into())
         })?;
         let task = SeatTask {
             kind: SeatKind::Attempt,
-            warm_scope: format!("mcp-execute-code:{}", config.run_id.to_hex()),
+            warm_scope,
             task: config.task.clone(),
             purpose: oneiron::CallPurpose::Other {
                 name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
@@ -455,19 +616,13 @@ fn run_engine_native_code_mode(
         Some(
             vault
                 .birth_model_seat(config.run_id, &task, decisions)
-                .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?,
+                .map_err(binding)?,
         )
     } else {
         None
     };
     let mut routed_config = config.clone();
-    let mut executor = EngineNativeExecutor::new(
-        vault,
-        provider.backend(),
-        provider.lease(),
-        runtime,
-        &gated_write,
-    );
+    let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound);
     if let Some(seat) = &seat {
         routed_config.model = seat.model().clone();
         routed_config.model_locality = seat.locality();
@@ -482,7 +637,7 @@ fn run_engine_native_code_mode(
     }
     reactor
         .block_on(executor.run(&routed_config))
-        .map_err(|error| McpCodeExecutionError::Run(error.to_string()))
+        .map_err(|error| EngineRunError::Run(error.to_string()))
 }
 
 /// A disconnected caller cannot release single-flight while its worker writes.

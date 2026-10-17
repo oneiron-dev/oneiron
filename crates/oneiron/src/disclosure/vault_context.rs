@@ -6,6 +6,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use sha2::Sha256;
+use std::collections::BTreeMap;
 
 use crate::Vault;
 use crate::affect::Vad;
@@ -20,8 +21,7 @@ use crate::error::{Error, Result};
 use crate::federation::{Scope, record_scope::scope_for_blob};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
@@ -56,6 +56,24 @@ pub(super) fn disclosure_tier_a_marked_in(
     DISCLOSURE_TIER_A_MARKS.contains(store, rtxn, id)
 }
 
+/// A contact's clearance row on the caller's transaction, for the owner's
+/// clearance doors (`consent::contact_clearance`).
+pub(crate) fn contact_clearance_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<Option<DisclosureScope>> {
+    DISCLOSURE_SCOPES.get(store, rtxn, contact_id)
+}
+
+/// Every contact clearance row, Active and Revoked, for the consent registry.
+pub(crate) fn contact_clearances_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<Vec<(EntityId, DisclosureScope)>> {
+    DISCLOSURE_SCOPES.scan(store, rtxn)
+}
+
 /// Deterministic claim-mirror id for a subject's disclosure claim: the CID-7
 /// overwrite pattern — re-sets rewrite the SAME claim entity, so exactly one
 /// owner-visible claim per (family, subject) exists and a rewrite supersedes
@@ -79,29 +97,38 @@ pub(super) fn disclosure_tier_claim_id(id: &EntityId) -> Result<EntityId> {
 }
 
 impl Vault {
-    /// Sets (or replaces — dial-not-wall) the disclosure scope for a CID-7
-    /// contact record: dual-writes the `vault_meta` enforcement row and the
-    /// owner-visible `disclosure.scope` claim in one wtxn. Widening is one
-    /// owner call, but only through this owner-session write path (I6 — no
-    /// HTTP exposure in this chain).
+    /// Test fixture: writes a contact clearance with no owner proof. Product
+    /// clearance lands only through the owner's doors
+    /// ([`Vault::confirm_contact_disclosure`], its narrow and its revoke).
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_counterparty_disclosure_scope(
         &self,
         contact_id: &EntityId,
         scope: &DisclosureScope,
     ) -> Result<()> {
-        scope.validate()?;
         let mut wtxn = self.store.env.write_txn()?;
-        let raw = self
-            .store
-            .port_entity_record(&wtxn, contact_id)?
-            .map(|row| row.encode())
+        self.set_counterparty_disclosure_scope_in_txn(&mut wtxn, contact_id, scope)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Sets (or replaces — dial-not-wall) the disclosure scope for a CID-7
+    /// contact record: dual-writes the `vault_meta` enforcement row and the
+    /// owner-visible `disclosure.scope` claim in the caller's wtxn. Only an
+    /// owner-proved door calls this (I6 — no HTTP exposure in this chain);
+    /// it revalidates the owner, the contact and the prior state first.
+    pub(crate) fn set_counterparty_disclosure_scope_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        contact_id: &EntityId,
+        scope: &DisclosureScope,
+    ) -> Result<()> {
+        scope.validate()?;
+        // The contact is read from its claims (OF-272): a row of another
+        // kind is refused, a dropped contact row is not.
+        self.get_counterparty_contact_in_txn(&*wtxn, contact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
-        DISCLOSURE_SCOPES.put(&self.store, &mut wtxn, contact_id, scope)?;
+        DISCLOSURE_SCOPES.put(&self.store, wtxn, contact_id, scope)?;
         let claim_id = disclosure_scope_claim_id(contact_id)?;
         let claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_SCOPE,
@@ -111,9 +138,7 @@ impl Vault {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
-        self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, scope.updated_at)?;
-        wtxn.commit()?;
-        Ok(())
+        self.put_disclosure_claim_in_txn(wtxn, &claim_id, &claim, scope.updated_at)
     }
 
     /// Reads the enforcement-truth scope row for a contact. Missing row ->
@@ -302,9 +327,23 @@ impl DisclosureContext {
     }
 
     fn resolve_with(vault: &Vault, set: InterlocutorSet, reader: bool) -> Result<Self> {
+        Self::resolve_with_once(vault, set, reader, &BTreeMap::new())
+    }
+
+    /// [`Self::resolve_room`] (with no `reader`, [`Self::resolve`]) under the
+    /// `once` answers this assembly already spent
+    /// ([`Vault::spend_once_contact_disclosures`]): each contact in `once` is
+    /// held to that answer's Scope in place of its clearance. The mode still
+    /// follows the set.
+    pub fn resolve_with_once(
+        vault: &Vault,
+        set: InterlocutorSet,
+        reader: bool,
+        once: &BTreeMap<EntityId, Scope>,
+    ) -> Result<Self> {
         Ok(Self {
             mode: DisclosureMode::from_set(&set),
-            disclosable: DisclosableSet::resolve(vault, &set, reader)?,
+            disclosable: DisclosableSet::resolve_with_once(vault, &set, reader, once)?,
             interlocutors: set,
         })
     }

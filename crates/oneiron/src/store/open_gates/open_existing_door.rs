@@ -178,6 +178,7 @@ impl Store {
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
             limit_watch: crate::limit_ask::LimitWatch::new(config.limits.clone()),
+            reader_job_runner: std::sync::RwLock::new(None),
             result_memory: std::sync::RwLock::new(std::sync::Arc::new(
                 crate::result_memory::ResultMemoryPool::new(
                     config
@@ -186,6 +187,7 @@ impl Store {
                 ),
             )),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
+            legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
             clock,
             group_commit: crate::store::GroupCommit::default(),
             diagnostics: Diagnostics::default(),
@@ -409,9 +411,8 @@ impl Store {
         // it first.  Collect before writing to avoid mutating a DB while its
         // iterator is live.
         let mut attempts = Vec::new();
-        for row in self.attempt_records.iter(&wtxn)? {
-            let (key, raw) = row?;
-            let id = crate::attempt_queue::AttemptId::from_bytes(&key)?;
+        for row in crate::ports::JobQueueRead::port_job_rows(self, &wtxn, None)? {
+            let (id, raw) = row?;
             attempts.push(crate::attempt_queue::decode_record(&raw, id)?);
         }
         for attempt in &attempts {

@@ -19,9 +19,9 @@ use super::listener::bind_unix_socket;
 use super::vault_gates::read_managed_credentials;
 use super::vm_schedule::VmWakeSchedule;
 use oneiron_vault_contract::vm::{
-    MAX_VM_FRAME, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT, VM_LEDGER_PORT,
-    VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame, guest_initiated_socket,
-    host_connect_line,
+    MAX_VM_FRAME, VM_ARTIFACT_PORT, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT,
+    VM_LEDGER_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame,
+    guest_initiated_socket, host_connect_line,
 };
 use oneiron_vault_contract::{
     CREDENTIALS_LEN, Credentials, CtlRequest, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
@@ -70,6 +70,13 @@ pub struct VaultVmConfig {
     /// External web client origins, passed to the guest's managed HTTP app.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// Whether the guest serves an artifact origin, reached on
+    /// [`VM_ARTIFACT_PORT`] (OF-356).
+    #[serde(default)]
+    pub artifact_origin: bool,
+    /// The domains that origin answers under (`<vault>.<domain>`).
+    #[serde(default)]
+    pub artifact_domains: Vec<String>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -242,6 +249,27 @@ impl VaultVm {
             boot_args.push_str(" oneiron.allowed_origins=");
             boot_args.push_str(&origins.join(","));
         }
+        if config.artifact_origin {
+            boot_args.push_str(" oneiron.artifact_origin=1");
+            let domains: Vec<String> = config
+                .artifact_domains
+                .iter()
+                .map(|domain| {
+                    oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain)
+                })
+                .filter(|domain| !domain.is_empty())
+                .collect();
+            anyhow::ensure!(
+                domains.iter().all(|domain| domain
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')),
+                "an artifact domain is letters, digits, '-' and '.'"
+            );
+            if !domains.is_empty() {
+                boot_args.push_str(" oneiron.artifact_domains=");
+                boot_args.push_str(&domains.join(","));
+            }
+        }
         self.api(
             "PUT",
             "/boot-source",
@@ -358,6 +386,11 @@ impl VaultVm {
     /// The vault's HTTP surface.
     pub async fn http(&self) -> anyhow::Result<UnixStream> {
         self.connect(VM_HTTP_PORT).await
+    }
+
+    /// The vault's artifact origin, when its profile serves one.
+    pub async fn artifacts(&self) -> anyhow::Result<UnixStream> {
+        self.connect(VM_ARTIFACT_PORT).await
     }
 
     /// One ctl verb, exactly as a node's supervisor sends it.

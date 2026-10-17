@@ -6,7 +6,7 @@ use rmpv::Value;
 
 use super::admission::validate_detector_id;
 use super::event::{
-    DIAGNOSTIC_ACTOR_CLASSES, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION,
+    AgentHealthSignal, DIAGNOSTIC_ACTOR_CLASSES, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION,
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, MAX_EVIDENCE_REFS, MAX_REF_LEN, MAX_TOKEN_LEN, invalid_diagnostic,
 };
@@ -27,6 +27,7 @@ pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> 
     validate_detector_id(&event.detector_id)?;
     validate_actor_class(&event.actor_class)?;
     validate_validity(event.valid_from, event.valid_to)?;
+    validate_signal(event.event_class, event.signal)?;
     let run_ref = canonical_optional_ref(event.replay.run_ref.as_deref())?;
     let checkpoint_ref = canonical_optional_ref(event.replay.checkpoint_ref.as_deref())?;
 
@@ -42,6 +43,9 @@ pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> 
         Value::from(DIAGNOSTIC_SCHEMA_VERSION),
         Value::from(event.detector_id.as_str()),
         Value::from(event.event_class.as_str()),
+        event
+            .signal
+            .map_or(Value::Nil, |signal| Value::from(signal.as_str())),
         Value::from(event.actor_class.as_str()),
         event
             .actor_ref
@@ -122,6 +126,14 @@ fn decode_body(bytes: &[u8]) -> Result<DecodedBody> {
     validate_detector_id(detector_id)?;
     let event_class = DiagnosticEventClass::from_wire(required_str(entries, "event_class")?)
         .ok_or_else(|| invalid_diagnostic("unknown event class"))?;
+    let signal = match required(entries, "signal")? {
+        Value::Nil => None,
+        stored => Some(
+            AgentHealthSignal::from_wire(decode_str(stored, "signal must be a string")?)
+                .ok_or_else(|| invalid_diagnostic("unknown agent-health signal"))?,
+        ),
+    };
+    validate_signal(event_class, signal)?;
     let source = DiagnosticSourceKind::from_wire(required_str(entries, "source")?)
         .ok_or_else(|| invalid_diagnostic("unknown source kind"))?;
     let criticality = DiagnosticCriticality::from_wire(required_str(entries, "criticality")?)
@@ -158,6 +170,7 @@ fn decode_body(bytes: &[u8]) -> Result<DecodedBody> {
         event: DiagnosticEvent {
             detector_id: detector_id.to_owned(),
             event_class,
+            signal,
             actor_class,
             actor_ref: decode_optional_entity_ref(required(entries, "actor_ref")?)?,
             source,
@@ -239,6 +252,17 @@ fn validate_validity(valid_from: u64, valid_to: Option<u64>) -> Result<()> {
     Ok(())
 }
 
+/// An agent-health body names exactly one signal; every other body none.
+fn validate_signal(class: DiagnosticEventClass, signal: Option<AgentHealthSignal>) -> Result<()> {
+    if (class == DiagnosticEventClass::AgentHealth) == signal.is_some() {
+        Ok(())
+    } else {
+        Err(invalid_diagnostic(
+            "a signal rides exactly the agent-health class",
+        ))
+    }
+}
+
 fn validate_keys(entries: &[(Value, Value)]) -> Result<()> {
     let mut seen = [false; DIAGNOSTIC_BODY_KEYS.len()];
     for (position, (key, _)) in entries.iter().enumerate() {
@@ -250,7 +274,7 @@ fn validate_keys(entries: &[(Value, Value)]) -> Result<()> {
             return Err(invalid_diagnostic("duplicate body key"));
         }
         // Key ORDER is part of the body, not a rendering of it: the pinned
-        // array IS the encode order, so a map carrying the same 17 pairs in
+        // array IS the encode order, so a map carrying the same 18 pairs in
         // any other order is a DIFFERENT byte string and must not decode as
         // this event. Checked here rather than repaired, for the same reason
         // invariant values are checked rather than normalized.

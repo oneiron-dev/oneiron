@@ -72,7 +72,19 @@ pub struct SyncConnection {
     /// The residence mode this machine runs now. A change closes the live
     /// socket; the next connect negotiates the new hello.
     mode: tokio::sync::watch::Sender<SyncResidenceMode>,
+    /// Whether this env's member left the shared vault it holds (OF-158): the
+    /// lane ends for good and never reconnects.
+    left: tokio::sync::watch::Sender<bool>,
+    /// Whether the run loop is going; a leave waits for it to stop.
+    running: tokio::sync::watch::Sender<bool>,
 }
+
+/// How long a confirmed leave waits for the run loop to stop and queue what
+/// it buffered before it discards the queue.
+const LEAVE_QUIESCE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The path a removed member asks its own leave notices on (OF-158).
+const LEFT_NOTICES_PATH: &str = "/v1/shared/left-notices";
 
 /// What switching this machine's residence mode did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,11 +116,14 @@ impl SyncConnection {
                 config.client_config.residence_mode,
             )?
         };
+        let left = crate::sync::shared_leave::has_left(manager.vault())?;
         Ok(Self {
             manager,
             queue,
             config,
             mode: tokio::sync::watch::channel(mode).0,
+            left: tokio::sync::watch::channel(left).0,
+            running: tokio::sync::watch::channel(false).0,
         })
     }
 
@@ -123,6 +138,101 @@ impl SyncConnection {
         crate::sync::SyncClient::new(Arc::clone(&self.manager), self.client_config())
             .map(|(client, _events)| client)
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
+    }
+
+    /// Leaves the shared vault this lane's env holds once `notice` confirms
+    /// that `member` left it or was removed (OF-158). The lane ends for good;
+    /// once its loop has stopped and queued what it buffered, every queued
+    /// edit is discarded and the counts recorded
+    /// ([`crate::sync::shared_leave::confirm_shared_leave`]). Only a notice
+    /// confirms a leave: a refused reconnect never does.
+    pub async fn confirm_shared_leave(
+        &self,
+        vault_id: u64,
+        member: &str,
+        notice: &crate::federation::SharedActOutcome,
+    ) -> Result<crate::sync::shared_leave::SharedLeaveReceipt, crate::sync::TransportError> {
+        if crate::sync::shared_leave::left_change(notice, vault_id, member).is_none() {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "the notice is not this member's leave of this shared vault",
+            ));
+        }
+        self.left.send_replace(true);
+        let mut running = self.running.subscribe();
+        // A loop that does not stop in time may queue its last buffer after
+        // the discard.
+        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        crate::sync::shared_leave::confirm_shared_leave(
+            self.manager.vault(),
+            vault_id,
+            member,
+            notice,
+        )
+        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
+    }
+
+    /// Asks the sync server for this member's own leave notices with the
+    /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
+    /// confirms the first that ends `member`'s membership in `vault_id`
+    /// ([`Self::confirm_shared_leave`]). `None` while no notice says so. A
+    /// refused or failed request is an error, never a leave.
+    pub async fn check_shared_leave(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
+    {
+        use crate::sync::TransportError;
+
+        #[derive(serde::Deserialize)]
+        struct LeftNotices {
+            notices: Vec<crate::federation::SharedActOutcome>,
+        }
+
+        let Some(credential) = self.config.client_config.transport_credential.as_ref() else {
+            return Err(TransportError::InvalidPayload(
+                "a leave check needs the lane's slip",
+            ));
+        };
+        let base = self.config.client_config.server_url.as_str();
+        let http = if let Some(rest) = base.strip_prefix("wss://") {
+            format!("https://{rest}")
+        } else if let Some(rest) = base.strip_prefix("ws://") {
+            format!("http://{rest}")
+        } else {
+            base.to_owned()
+        };
+        let mut url = reqwest::Url::parse(&http)
+            .map_err(|_| TransportError::InvalidPayload("the sync server URL does not parse"))?;
+        url.set_path(LEFT_NOTICES_PATH);
+        url.set_query(None);
+        let headers = credential
+            .left_notice_headers(crate::unix_seconds_now())
+            .map_err(TransportError::InvalidPayload)?;
+        let mut request = reqwest::Client::new().post(url);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| TransportError::Storage(format!("leave notice request failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(TransportError::InvalidPayload(
+                "the home refused the leave notice request",
+            ));
+        }
+        let answer: LeftNotices = response.json().await.map_err(|_| {
+            TransportError::InvalidPayload("the leave notice answer does not decode")
+        })?;
+        let Some(notice) = answer.notices.iter().find(|notice| {
+            crate::sync::shared_leave::left_change(notice, vault_id, member).is_some()
+        }) else {
+            return Ok(None);
+        };
+        self.confirm_shared_leave(vault_id, member, notice)
+            .await
+            .map(Some)
     }
 
     /// The residence mode this machine runs now.
@@ -241,10 +351,32 @@ impl SyncConnection {
 
     /// Drop read caches of opened items last touched before `before`
     /// (recorded-clock seconds). Promoted and sync-all windows are not
-    /// pruned here: demoting a canonical window is not available yet.
+    /// pruned here: [`Self::demote_window`] demotes a promoted one.
     pub fn prune_opened_items(&self, before: u64) -> Result<usize, crate::sync::TransportError> {
         crate::sync::residence::prune_thin_items(self.manager.vault(), before)
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
+    }
+
+    /// Demote a promoted window back to thin once the home holds every op of
+    /// it (OF-534). See [`crate::sync::SyncClient::demote_window`]. When it
+    /// completes, the live socket reconnects without the window.
+    pub async fn demote_window(
+        &self,
+        window: &crate::sync::WindowKey,
+    ) -> Result<crate::sync::residence::WindowDemotion, crate::sync::TransportError> {
+        if self.config.client_config.federation_peer.is_some() {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "a federation lane has no residence mode",
+            ));
+        }
+        let demotion = self.client()?.demote_window(window).await?;
+        if demotion.complete {
+            // The steady socket still follows the window: a fresh hello
+            // drops it.
+            let mode = *self.mode.borrow();
+            self.mode.send_replace(mode);
+        }
+        Ok(demotion)
     }
 
     /// Fetch one grant-selected item into this device's observed CRDT window.
@@ -355,36 +487,50 @@ impl SyncConnection {
         client.search_resident(query, limit).await
     }
 
-    /// Clear only the contiguous queued updates whose bytes the home has
-    /// durably acknowledged. A different digest or a missing earlier ACK
-    /// retains the whole unconfirmed suffix, including delete markers. A row
-    /// a device-only world keeps here is never sent, so never acknowledged:
-    /// it clears with its neighbours, and its operations stay in the window's
-    /// durable doc for the promoted vector exchange once the flag clears. A
-    /// row that cannot be judged is retained like an unacknowledged one.
+    /// Clear the queued updates whose bytes the home has durably
+    /// acknowledged, window by window. In each window only the contiguous
+    /// acknowledged rows clear: a different digest fails the clear, and a
+    /// missing earlier ACK retains the rest of that window's rows, delete
+    /// markers included. Windows are separate documents, so a row the home
+    /// never acknowledged (a window it refused to grant again, say) holds
+    /// back only its own window. A row a device-only world keeps here is
+    /// never sent, so never acknowledged: it clears, and its operations stay
+    /// in the window's durable doc for the promoted vector exchange once the
+    /// flag clears. A row that cannot be judged is retained like an
+    /// unacknowledged one.
     fn clear_residence_acks(&self, client: &mut crate::sync::SyncClient) -> Result<(), String> {
-        let mut through = None;
+        let mut held_back = std::collections::HashSet::new();
+        let mut confirmed = Vec::new();
+        let mut retained = std::collections::HashSet::new();
         for queued in self.queue.drain_updates().map_err(|e| e.to_string())? {
+            if held_back.contains(&queued.window_key) {
+                retained.insert(queued.seq);
+                continue;
+            }
             let Some(ack) = client.residence_acks.get(&queued.seq) else {
                 if client.update_verdict(&queued.window_key, &queued.encoded)
                     == crate::sync::window::UpdateVerdict::Withheld
                 {
-                    through = Some(queued.seq);
+                    confirmed.push(queued.seq);
                     continue;
                 }
-                break;
+                retained.insert(queued.seq);
+                held_back.insert(queued.window_key);
+                continue;
             };
             if *ack != *blake3::hash(&queued.encoded).as_bytes() {
                 return Err("home residence acknowledgment digest mismatch".into());
             }
-            through = Some(queued.seq);
+            confirmed.push(queued.seq);
         }
-        if let Some(seq) = through {
+        if !confirmed.is_empty() {
             self.queue
-                .clear_through_confirmed(seq)
+                .retire_confirmed(&confirmed)
                 .map_err(|e| e.to_string())?;
-            client.residence_acks.retain(|key, _| *key > seq);
         }
+        client
+            .residence_acks
+            .retain(|seq, _| retained.contains(seq));
         Ok(())
     }
 

@@ -124,7 +124,7 @@ impl LiveQuerySource for BoundSource {
         let filter: ViewFilter =
             serde_json::from_value(view.filter.clone().unwrap_or_else(|| json!({})))
                 .map_err(|_| AppError::bad_request("invalid scoped view filter", Some("filter")))?;
-        let limit = reads::facade_limit(filter.limit, 100)?;
+        let limit = facade_limit(filter.limit, 100)?;
         if channel != Channel::View
             && (view.facet.is_some()
                 || view.query.is_some()

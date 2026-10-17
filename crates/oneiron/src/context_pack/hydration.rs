@@ -9,7 +9,6 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, claim_surfaceable};
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -41,8 +40,7 @@ pub(crate) fn context_entity_matches_read_snapshot(
                 true,
             )?)
         } else {
-            decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..], header.entity_type)
-                .unwrap_or_default()
+            decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..]).unwrap_or_default()
         };
         for (key, value) in fields {
             if key == super::WORLD_STALE_FIELD {
@@ -256,7 +254,14 @@ pub(super) fn hydrate_entity(
     // The clamp's sweeps judge a claim on the body the gate read or on its
     // live row, and a pin may serve another: the body served is judged too.
     if let (Some(clamp), Some(body)) = (options.clamp, gated_claim_body)
-        && !clamp.admits(store.base(), rtxn, &id, ENTITY_TYPE_CLAIM, Some(body))?
+        && !super::retained_copies::clamp_admits(
+            clamp,
+            store.base(),
+            rtxn,
+            &id,
+            ENTITY_TYPE_CLAIM,
+            Some(body),
+        )?
     {
         return Ok(None);
     }
@@ -291,7 +296,7 @@ pub(super) fn hydrate_entity(
                 if crate::batch::export::write_door_refuses_body(body) {
                     HashMap::new()
                 } else {
-                    decode_entity_fields(body, header.entity_type).unwrap_or_default()
+                    decode_entity_fields(body).unwrap_or_default()
                 }
             }
             None => {
@@ -316,8 +321,7 @@ pub(super) fn hydrate_entity(
                 if refused {
                     HashMap::new()
                 } else {
-                    let mut fields =
-                        decode_entity_fields(&body, header.entity_type).unwrap_or_default();
+                    let mut fields = decode_entity_fields(&body).unwrap_or_default();
                     if let Some(markdown) = markdown {
                         fields.insert("markdown".to_owned(), serde_json::Value::String(markdown));
                     }
@@ -501,19 +505,8 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     out
 }
 
-fn decode_entity_fields(
-    payload: &[u8],
-    entity_type: u8,
-) -> Option<HashMap<String, serde_json::Value>> {
+fn decode_entity_fields(payload: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
     if payload.is_empty() {
-        return Some(HashMap::new());
-    }
-
-    if entity_type == ENTITY_TYPE_COMPANION_REGISTER
-        || (entity_type == crate::registry::ENTITY_TYPE_FACET
-            && crate::companion::is_identity_facet_body(payload))
-    {
-        // Retired companion identity rows are not persona read surfaces.
         return Some(HashMap::new());
     }
 

@@ -2,9 +2,9 @@
 
 use super::ladder::millis;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt,
-    DecisionRung, DecisionTime, HumanAskReason, ProviderPin, Reasoning, ReasoningCause,
-    Reversibility, StopCause, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
+    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, ProviderPin, Reasoning,
+    ReasoningCause, Reversibility, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{
@@ -31,6 +31,9 @@ pub struct SeatRequest {
     /// Images the question reads, each filling the state field of its name. The
     /// receipt keeps their evidence refs, never the pixels.
     pub images: Vec<DecisionImage>,
+    /// Audio clips the question reads, each filling the state field of its name. The
+    /// receipt keeps their evidence refs, never the samples.
+    pub audio: Vec<DecisionAudio>,
     /// Caller-authored labels for score levels in ascending order (2 to 10).
     pub score_levels: Vec<String>,
     pub posture: HostingPrivacyPosture,
@@ -54,11 +57,8 @@ impl SeatRequest {
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        DecisionImage::check_call(
-            &self.images,
-            &self.state,
-            matches!(self.question.contract, AnswerContract::Box),
-        )?;
+        DecisionImage::check_call(&self.images, &self.state, self.question.contract.locates())?;
+        DecisionAudio::check_call(&self.audio, &self.images, &self.state)?;
         match &self.question.contract {
             AnswerContract::Score { .. } if !(2..=10).contains(&self.score_levels.len()) => {
                 return Err(FatalLlmError::InvalidRequest.into());
@@ -96,6 +96,10 @@ pub type SeatFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<SeatAnswer>> + S
 /// and its client waits no longer.
 pub trait DecisionSeat: Send + Sync {
     fn pin(&self) -> ProviderPin;
+    /// See [`super::DecisionProvider::image_edge`].
+    fn image_edge(&self) -> Option<u32> {
+        None
+    }
     fn ask<'a>(
         &'a self,
         request: SeatRequest,
@@ -255,11 +259,12 @@ pub async fn decide_at_remote_seat(
     }
     let in_band = probability.is_some_and(|p| match request.question.contract {
         AnswerContract::Noul => dial.band.contains(p),
-        // Choice/score/box report the selected answer's confidence, not P(yes).
+        // Choice/score/box/point report the selected answer's confidence, not P(yes).
         // None has a 'confident no' below the lower bound.
-        AnswerContract::Choice { .. } | AnswerContract::Score { .. } | AnswerContract::Box => {
-            p < dial.band.high
-        }
+        AnswerContract::Choice { .. }
+        | AnswerContract::Score { .. }
+        | AnswerContract::Box
+        | AnswerContract::Point => p < dial.band.high,
     });
     if in_band {
         answer = DecisionAnswer::Abstain;
@@ -270,7 +275,17 @@ pub async fn decide_at_remote_seat(
         .images
         .iter()
         .map(|image| image.evidence.clone())
+        .chain(request.audio.iter().map(|clip| clip.evidence.clone()))
         .collect();
+    // Each image the seat was sent, pinned once: a second measurement is sent the same.
+    let images = match providers.first() {
+        Some(pin) => request
+            .images
+            .iter()
+            .map(|image| image.pin(pin.clone(), seat.image_edge()))
+            .collect::<LlmResult<Vec<_>>>()?,
+        None => Vec::new(),
+    };
     Ok(TypedDecision {
         answer,
         probability,
@@ -294,6 +309,7 @@ pub async fn decide_at_remote_seat(
                 answered,
                 reasoning,
             }),
+            images,
         },
         human_ask,
     })

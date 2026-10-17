@@ -148,14 +148,6 @@ pub(super) fn trap_binding_put_in_txn(
     TRAP_BINDING.put(&vault.store, wtxn, anchor, row)
 }
 
-pub(super) fn trap_binding_read(
-    vault: &Vault,
-    anchor: &EntityId,
-) -> Result<Option<TrapBindingRow>> {
-    let rtxn = vault.store.env.read_txn()?;
-    trap_binding_read_in_txn(vault, &rtxn, anchor)
-}
-
 pub(super) fn trap_binding_read_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -168,6 +160,49 @@ pub(super) fn trap_binding_read_in_txn(
 pub(super) fn trap_bindings(vault: &Vault) -> Result<Vec<(EntityId, TrapBindingRow)>> {
     let rtxn = vault.store.env.read_txn()?;
     TRAP_BINDING.scan(&vault.store, &rtxn)
+}
+
+/// One open `dreamer.trap` wait: created, waiting or sent, not yet consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OpenTrapWait {
+    pub(crate) attempt: AttemptId,
+    pub(crate) anchor: EntityId,
+    pub(crate) kind: super::types::DreamerTrapKind,
+    pub(crate) state: super::types::DreamerTrapState,
+    /// When the wait opened (the anchor record's time), in host milliseconds.
+    pub(crate) opened_at_ms: u64,
+}
+
+/// Every open trap wait bound to an attempt, read in one snapshot: what an
+/// agent-health review (OF-568) counts as an open wait. A binding whose head
+/// names another attempt or step is skipped, as consume would refuse it.
+pub(crate) fn open_trap_waits(vault: &Vault) -> Result<Vec<OpenTrapWait>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for (anchor, row) in TRAP_BINDING.scan(&vault.store, &rtxn)? {
+        let Ok((_, head)) = super::trap::trap_head_in_txn(vault, &rtxn, &anchor) else {
+            continue;
+        };
+        if head.attempt_id != row.attempt_id
+            || head.step_hash != row.step_hash
+            || head.state == super::types::DreamerTrapState::Consumed
+        {
+            continue;
+        }
+        let opened_at_ms = match vault.get_claim_in_txn(&rtxn, &anchor)? {
+            Some(body) => super::trap::decode_trap_claim_value(&body.value)
+                .map_or(head.at, |created| created.at),
+            None => head.at,
+        };
+        out.push(OpenTrapWait {
+            attempt: row.attempt_id,
+            anchor,
+            kind: head.kind,
+            state: head.state,
+            opened_at_ms,
+        });
+    }
+    Ok(out)
 }
 
 pub(super) fn trap_binding_delete_in_txn(

@@ -2,7 +2,7 @@
 use super::*;
 use crate::store::Store;
 
-const PAGE_LIMIT: usize = 256;
+pub(in crate::workspace_roster) const PAGE_LIMIT: usize = 256;
 
 /// One HISTORY row: its `(room, at, turn)` key and the turn id.
 type HistoryRow = Result<((EntityId, u64, EntityId), EntityId)>;
@@ -46,7 +46,9 @@ pub(in crate::workspace_roster) fn thread_turns_in(
 
 /// Deletes every auxiliary row a room owns, paged in [`PAGE_LIMIT`]-sized
 /// chunks so no single collect-then-delete pass has to hold an unbounded
-/// number of keys for a room with a long history.
+/// number of keys for a room with a long history: its history, host pin and
+/// participation facts, every join receipt and offer card filed for it, and
+/// their room-keyed indexes.
 pub(in crate::workspace_roster) fn delete_room_metadata(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -100,6 +102,59 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
             HANDLES.delete(store, txn, key)?;
         }
     }
+    super::hosting::delete_room_host_pin(store, txn, room)?;
+    super::participation::delete_room_facts(store, txn, room)?;
+    crate::workspace_roster::join_receipt::delete_room_joins(store, txn, room)?;
+    super::offers::delete_room_offers(store, txn, room)?;
+    Ok(())
+}
+
+/// Deletes the rows one thread of `room` owns once its root `thread` is
+/// erased (OF-529): its participation facts, every join receipt filed for it
+/// and its Ready rows, and its offer cards and current-card pointers. The
+/// room's own rows and every other thread's stay; the history and DAG pins
+/// stay as the topology the thread's surviving replies hang off.
+pub(in crate::workspace_roster) fn delete_thread_metadata(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+) -> Result<()> {
+    super::participation::delete_thread_facts(store, txn, room, thread)?;
+    crate::workspace_roster::join_receipt::delete_thread_joins(store, txn, room, thread)?;
+    super::offers::delete_thread_offers(store, txn, room, thread)?;
+    Ok(())
+}
+
+/// [`delete_room_metadata`] for a CONVERSATION whose record leaves, run by
+/// the shared erase doors (`deletion/derived_rows.rs`) before its body goes;
+/// [`delete_thread_metadata`] for a TURN that roots a thread, a project
+/// room's by its stored turn and an ordinary room's by its DAG topology; a
+/// no-op for any other entity. A project's home room reaches it from
+/// `deindex_project_room` as well; the sweep is idempotent.
+pub(crate) fn erase_room_side_rows(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(());
+    };
+    match crate::batch::EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) {
+        Some(crate::registry::ENTITY_TYPE_CONVERSATION) => delete_room_metadata(store, txn, *id)?,
+        Some(crate::registry::ENTITY_TYPE_TURN) => {
+            let room = match TURNS.get(store, txn, id)? {
+                Some(turn) => super::liveness::is_thread_root(&turn)
+                    .then(|| EntityId::from_hex(&turn.room_id))
+                    .transpose()?,
+                None => crate::conversation_dag::erased_thread_room_in_txn(store, txn, id)?,
+            };
+            if let Some(room) = room {
+                delete_thread_metadata(store, txn, room, *id)?;
+            }
+        }
+        _ => {}
+    }
     Ok(())
 }
 impl Memory<'_> {
@@ -109,7 +164,21 @@ impl Memory<'_> {
     /// turn is kept only when its TURN record and the turns it answers are
     /// admitted, and it names only the messages, tasks and project the lane
     /// admits as well.
-    pub(super) fn admitted_turns(&self, mut turns: Vec<RoomTurn>) -> MemoryResult<Vec<RoomTurn>> {
+    pub(super) fn admitted_turns(&self, turns: Vec<RoomTurn>) -> MemoryResult<Vec<RoomTurn>> {
+        self.admitted_turns_at(turns, None)
+    }
+
+    /// [`Self::admitted_turns`] for the room's reader, or, with `thread`,
+    /// for a reader of that one thread (OF-529): its own gate and a lane
+    /// bound to that thread, never the room's. A trunk turn's quote (OF-460)
+    /// is kept only when the lane admits its target TURN and MESSAGE, or the
+    /// one it does not is no longer live: an erased target reads as redacted,
+    /// never as a hidden live row.
+    fn admitted_turns_at(
+        &self,
+        mut turns: Vec<RoomTurn>,
+        thread: Option<EntityId>,
+    ) -> MemoryResult<Vec<RoomTurn>> {
         if turns.is_empty() {
             return Ok(turns);
         }
@@ -119,7 +188,12 @@ impl Memory<'_> {
         }
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            require_member(self.vault(), &txn, room, self.actor())?;
+            match thread {
+                None => require_reader(self.vault(), &txn, room, self.actor())?,
+                Some(thread) => {
+                    require_thread_reader(self.vault(), &txn, room, thread, self.actor())?
+                }
+            };
             for turn in &mut turns {
                 if super::liveness::is_thread_root(turn) {
                     turn.converted_project = self
@@ -141,9 +215,18 @@ impl Memory<'_> {
                     .chain(&turn.converted_project)
             })
             .filter_map(|id| EntityId::from_hex(id).ok())
+            .chain(
+                turns
+                    .iter()
+                    .filter_map(|turn| turn.quote.as_ref())
+                    .flat_map(|quote| [quote.target_turn, quote.anchor.message()]),
+            )
             .collect();
         let ids: Vec<_> = ids.into_iter().collect();
-        let projection = self.for_room_projection(room)?;
+        let projection = match thread {
+            None => self.for_room_projection(room)?,
+            Some(thread) => self.for_thread_projection(room, thread)?,
+        };
         let lane = projection
             .memory()
             .read_lane(crate::claim::ClaimReadStatus::Recorded)?;
@@ -162,6 +245,20 @@ impl Memory<'_> {
                     .filter_map(|(id, row)| row.map(|_| *id)),
             );
         }
+        let mut withheld = BTreeSet::new();
+        {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            for quote in turns.iter().filter_map(|turn| turn.quote.as_ref()) {
+                for id in [quote.target_turn, quote.anchor.message()] {
+                    if !admitted.contains(&id)
+                        && crate::vault::live_entity_row_in_txn(&self.vault().store, &txn, &id)?
+                            .is_live()
+                    {
+                        withheld.insert(id);
+                    }
+                }
+            }
+        }
         let readable = |id: &String| EntityId::from_hex(id).is_ok_and(|id| admitted.contains(&id));
         Ok(turns
             .into_iter()
@@ -174,6 +271,10 @@ impl Memory<'_> {
                 turn.message_ids.retain(readable);
                 turn.task_ids.retain(readable);
                 turn.converted_project = turn.converted_project.filter(readable);
+                turn.quote = turn.quote.filter(|quote| {
+                    !withheld.contains(&quote.target_turn)
+                        && !withheld.contains(&quote.anchor.message())
+                });
                 turn
             })
             .collect())
@@ -185,7 +286,7 @@ impl Memory<'_> {
         let worlds = self.room_read_worlds(room)?;
         let project_room = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            require_member(self.vault(), &txn, room, self.actor())?
+            require_reader(self.vault(), &txn, room, self.actor())?
         };
         if !turns_readable(&worlds) {
             return Ok(Vec::new());
@@ -253,7 +354,7 @@ impl Memory<'_> {
         let scope = self.room_read_scope(room)?;
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Ok(RoomPage {
                 rows: Vec::new(),
@@ -348,7 +449,7 @@ impl Memory<'_> {
         row: impl Fn(&heed::RoTxn<'_>, (u64, EntityId), EntityId) -> MemoryResult<T>,
     ) -> MemoryResult<Vec<T>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         let store = &self.vault().store;
         // Seek straight past `start`; never walk the room from its first row.
         let after = start.map(|(at, id)| (room, at, id));
@@ -405,7 +506,7 @@ impl Memory<'_> {
                 }
                 let body = {
                     let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-                    require_member(self.vault(), &txn, room, self.actor())?;
+                    require_reader(self.vault(), &txn, room, self.actor())?;
                     TURNS.get(&self.vault().store, &txn, turn_id)
                 };
                 match body {
@@ -430,7 +531,7 @@ impl Memory<'_> {
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Ok(None);
         }
@@ -454,7 +555,7 @@ impl Memory<'_> {
     pub(super) fn room_turn_snapshot(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Ok(Vec::new());
         }
@@ -475,6 +576,83 @@ impl Memory<'_> {
         drop(txn);
         count.finish(self.vault());
         Ok(answer_closed(self.admitted_turns(turns)?))
+    }
+
+    /// [`Self::room_turn_snapshot`] for a reader of one thread (OF-529): the
+    /// root `handle` and every reply in it, with the trunk turn it hangs from
+    /// and the turns that turn answers, which the fold needs to place the
+    /// thread and never returns. No sibling thread or other trunk turn is
+    /// read. Empty when the thread's Scope reads no turns or `handle` is no
+    /// thread root of this room.
+    pub(super) fn thread_turn_snapshot(
+        &self,
+        room: EntityId,
+        handle: EntityId,
+    ) -> MemoryResult<Vec<RoomTurn>> {
+        let worlds = self.thread_read_worlds(room, handle)?;
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        require_thread_reader(self.vault(), &txn, room, handle, self.actor())?;
+        if !turns_readable(&worlds) {
+            return Ok(Vec::new());
+        }
+        // The thread is found by walking the room's history, every row of it
+        // (rule 5); past the threshold row the owner's check is raised for
+        // the room.
+        let mut count = crate::scan_check::ScanCount::start(
+            &self.vault().store,
+            &txn,
+            crate::scan_check::EngineScan::RoomHistoryRows,
+            room.as_bytes(),
+        )?;
+        let mut turns = Vec::new();
+        for row in HISTORY.iter_from(&self.vault().store, &txn, room.as_bytes())? {
+            count.row();
+            let (_, turn_id) = row?;
+            turns.push(turn_in(self.vault(), &txn, turn_id)?);
+        }
+        drop(txn);
+        count.finish(self.vault());
+        let roots = super::liveness::thread_root_map(&turns)?;
+        if roots.get(&handle) != Some(&handle) {
+            return Ok(Vec::new());
+        }
+        // The thread, then each turn it answers, followed to its end: the
+        // trunk anchor and that anchor's own answer chain.
+        let kept = {
+            let by_id: std::collections::BTreeMap<&str, &RoomTurn> = turns
+                .iter()
+                .map(|turn| (turn.turn_id.as_str(), turn))
+                .collect();
+            let mut pending: Vec<&str> = turns
+                .iter()
+                .filter(|turn| {
+                    EntityId::from_hex(&turn.turn_id)
+                        .is_ok_and(|id| roots.get(&id) == Some(&handle))
+                })
+                .map(|turn| turn.turn_id.as_str())
+                .collect();
+            let mut kept = BTreeSet::new();
+            while let Some(id) = pending.pop() {
+                if kept.insert(id.to_owned())
+                    && let Some(turn) = by_id.get(id)
+                {
+                    pending.extend(
+                        turn.reply_to
+                            .iter()
+                            .chain(&turn.thread_of)
+                            .map(String::as_str),
+                    );
+                }
+            }
+            kept
+        };
+        let selected = turns
+            .into_iter()
+            .filter(|turn| kept.contains(&turn.turn_id))
+            .collect();
+        Ok(answer_closed(
+            self.admitted_turns_at(selected, Some(handle))?,
+        ))
     }
 
     /// Recomputes thread liveness from the current room history and TASK
@@ -533,7 +711,7 @@ impl Memory<'_> {
     pub fn rooms_trunk(&self, room: EntityId, trunk: EntityId) -> MemoryResult<super::RoomTrunk> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
+        require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
             return Err(outside_scope());
         }
@@ -609,12 +787,22 @@ impl Memory<'_> {
     }
 
     /// Scoped get handle; reaches a thread even when every list omits it.
+    /// An agent with no standing in the room itself reads the thread on that
+    /// thread's own Ready receipt (OF-529), through a snapshot and a lane
+    /// bound to that thread alone; every other reader reads the room.
     pub fn rooms_get_thread(
         &self,
         room: EntityId,
         handle: EntityId,
     ) -> MemoryResult<Option<super::RoomThread>> {
-        let turns = self.room_turn_snapshot(room)?;
+        let thread = {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?.then_some(handle)
+        };
+        let turns = match thread {
+            None => self.room_turn_snapshot(room)?,
+            Some(thread) => self.thread_turn_snapshot(room, thread)?,
+        };
         let roots = super::liveness::thread_root_map(&turns)?;
         if !roots.contains_key(&handle) || roots.get(&handle) != Some(&handle) {
             return Ok(None);
@@ -632,8 +820,12 @@ impl Memory<'_> {
             .filter(|(_, root)| *root == handle)
             .collect();
         let bindings = super::liveness::thread_task_bindings(&turns, &selected)?;
+        let projection = match thread {
+            None => self.for_room_projection(room)?,
+            Some(thread) => self.for_thread_projection(room, thread)?,
+        };
         let tasks = crate::task_verb::room_thread_tasks(
-            self.for_room_projection(room)?.memory(),
+            projection.memory(),
             &selected,
             &bindings,
             &members,

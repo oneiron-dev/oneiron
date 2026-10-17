@@ -204,6 +204,54 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     next = Some(due);
                 }
             }
+            // Each reader's weave digest schedule (OF-499) arms the same
+            // home-only cadence, and is as independent of the rest.
+            let weave = match self.vault.next_weave_digest_at() {
+                Ok(weave) => weave,
+                Err(error) if next.is_some() || commitment.is_some() => {
+                    tracing::warn!(
+                        ?error,
+                        "weave digest deadline unavailable; keeping independent deadline"
+                    );
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(at) = weave {
+                let due = CommitmentDeadline {
+                    due_at_ms: at.saturating_mul(1_000),
+                    scope: DreamerConsolidationScope::Micro,
+                };
+                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                    next = Some(due);
+                }
+            }
+            // Each standing question's refresh (OF-506) and each held
+            // artifact answer's wake (ARCH-0075 §4) arm the same home-only
+            // cadence; the Deadline pass runs the host's pump for both.
+            let question = match self.vault.next_question_refresh_at().and_then(|question| {
+                let wake = self.vault.next_answer_wake_at()?;
+                Ok(question.into_iter().chain(wake).min())
+            }) {
+                Ok(question) => question,
+                Err(error) if next.is_some() || commitment.is_some() => {
+                    tracing::warn!(
+                        ?error,
+                        "question refresh deadline unavailable; keeping independent deadline"
+                    );
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(at) = question {
+                let due = CommitmentDeadline {
+                    due_at_ms: at.saturating_mul(1_000),
+                    scope: DreamerConsolidationScope::Micro,
+                };
+                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                    next = Some(due);
+                }
+            }
         }
         // An unreadable home designation refuses Macro and digest, but
         // independent Micro/Meso/maintenance or commitment work continues.
@@ -343,14 +391,20 @@ fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
     if kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
         || kind == oneiron::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::connector_event::CONNECTOR_EVENT_QUEUE_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
     {
-        // Maintenance and the wake policy's recipe receipts are vault-local
-        // and do not need Macro home election.
+        // Maintenance, the wake policy's recipe receipts, connector wakes
+        // (OF-218), a Dreamer-lane TASK's realization and a weave lens
+        // render are vault-local and do not need Macro home election.
         Some(DreamerConsolidationScope::Micro)
     } else if kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Meso)
     } else if kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
     {
         // Cleanup admits only on a Timer pass at Macro scope, so its
         // deadline arms one, on the elected home alone.

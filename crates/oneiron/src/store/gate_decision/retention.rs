@@ -9,10 +9,11 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 
 use crate::Vault;
+use crate::deletion::LegalHoldTarget;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable};
-use crate::store::Store;
+use crate::store::{Store, legal_hold};
 
 use super::orcb;
 use super::types::GateDecisionRecord;
@@ -41,9 +42,6 @@ impl SideKey for Partition {
     }
 }
 
-/// A legal hold; the value is the single byte 1.
-const HOLD: SideTable<Partition, [u8; 1], Raw> =
-    SideTable::new(&side_table::GATE_DECISION_PARTITION_HOLD);
 /// The latest retain-until stamp of a held partition.
 const RETAIN_UNTIL: SideTable<Partition, u64, Raw> =
     SideTable::new(&side_table::GATE_DECISION_PARTITION_RETAIN_UNTIL);
@@ -56,16 +54,14 @@ pub(super) const ERASE_PENDING: SideTable<[u8; 16], [u8; 1], Raw> =
     SideTable::new(&side_table::GATE_DECISION_PARTITION_ERASE_PENDING);
 
 impl Store {
+    /// Whether a legal hold stands on the partition: the one hold store's
+    /// answer (OF-470), never a second marker.
     pub(crate) fn gate_partition_held_in_txn(
         &self,
         txn: &RoTxn<'_>,
         claim: Option<&[u8; 16]>,
     ) -> Result<bool> {
-        match HOLD.get(self, txn, &Partition(claim.copied()))? {
-            None => Ok(false),
-            Some([1]) => Ok(true),
-            Some(_) => Err(Error::CorruptedIndex("gate decision partition hold")),
-        }
+        legal_hold::partition_held_in_txn(self, txn, claim)
     }
 
     pub(in crate::store) fn gate_partition_retire_pending_in_txn(
@@ -106,14 +102,23 @@ impl Store {
             .collect()
     }
 
-    pub(crate) fn reject_held_gate_partition_in_txn(
+    /// A claim whose erase committed takes no hold until its key is
+    /// destroyed: a hold cannot bring back what an erase decided.
+    pub(crate) fn refuse_hold_on_erased_partition_in_txn(
         &self,
         txn: &RoTxn<'_>,
         claim: &[u8; 16],
     ) -> Result<()> {
-        if self.gate_partition_held_in_txn(txn, Some(claim))? {
+        if self.gate_partition_erase_pending_in_txn(txn, claim)? {
             return Err(Error::InvalidConfig(
-                "gate decision partition is under legal hold".into(),
+                "gate decision partition was erased".into(),
+            ));
+        }
+        if let Some(generation) = self.gate_partition_retire_pending_in_txn(txn, claim)?
+            && orcb::generation_retired(&self.core.gate_custody_root, claim, generation)?
+        {
+            return Err(Error::InvalidConfig(
+                "gate decision partition key already retired".into(),
             ));
         }
         Ok(())
@@ -121,11 +126,13 @@ impl Store {
 }
 
 /// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
-pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 4] {
+    let [holds, host_holds] = legal_hold::target_prefixes();
     [
         RETIRE_PENDING.decl().prefix,
         ERASE_PENDING.decl().prefix,
-        HOLD.decl().prefix,
+        holds,
+        host_holds,
     ]
 }
 
@@ -154,11 +161,7 @@ pub(super) fn checkpoint_retirements(
             Some([1]) => true,
             Some(_) => return Err(Error::CorruptedIndex("gate decision partition erase")),
         };
-        let held = match row(HOLD.key_bytes(&Partition(Some(claim)))) {
-            None => false,
-            Some([1]) => true,
-            Some(_) => return Err(Error::CorruptedIndex("gate decision partition hold")),
-        };
+        let held = legal_hold::rows_hold_claim(rows, &claim);
         let through = RETIRE_PENDING.decode_value(value)?;
         retirements.push((claim, through, erase || !held));
     }
@@ -218,10 +221,7 @@ impl Vault {
         // Read the effective trusted row in the SAME transaction that writes
         // the owner replacement; no policy override gets lost between reads.
         let (current, id) = crate::gate::retention_edit_target(&self.store, &txn)?;
-        let raw = self
-            .store
-            .entities
-            .get(&txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
             .ok_or(Error::CorruptedIndex("default policy manifest"))?;
         let manifest_body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
@@ -303,41 +303,24 @@ impl Vault {
     /// Hold the entire exterior-key partition, not an individual decision.
     /// `None` names the plaintext, claim-free partition. A hold must be
     /// released explicitly; the age sweep never clears it. A claim whose
-    /// erase committed refuses a hold until its key is destroyed.
+    /// erase committed refuses a hold until its key is destroyed. A
+    /// host-facing door: the partition's own row in the one legal-hold store
+    /// (OF-470), logged; releasing it lifts that hold alone, never another
+    /// hold naming the same claim.
     pub fn set_gate_decision_partition_hold(
         &self,
         claim_partition: Option<[u8; 16]>,
         held: bool,
     ) -> Result<()> {
-        let partition = Partition(claim_partition);
+        let claim = claim_partition.map(EntityId::from_bytes).transpose()?;
         self.with_write_txn_grouped(|txn| {
-            if held {
-                if let Some(claim) = claim_partition.as_ref()
-                    && self.store.gate_partition_erase_pending_in_txn(txn, claim)?
-                {
-                    return Err(Error::InvalidConfig(
-                        "gate decision partition was erased".into(),
-                    ));
-                }
-                if let Some(claim) = claim_partition.as_ref()
-                    && let Some(generation) = self
-                        .store
-                        .gate_partition_retire_pending_in_txn(txn, claim)?
-                    && orcb::generation_retired(
-                        &self.store.core.gate_custody_root,
-                        claim,
-                        generation,
-                    )?
-                {
-                    return Err(Error::InvalidConfig(
-                        "gate decision partition key already retired".into(),
-                    ));
-                }
-                HOLD.put(&self.store, txn, &partition, &[1])?;
-            } else {
-                HOLD.delete(&self.store, txn, &partition)?;
+            if held && let Some(claim) = claim_partition.as_ref() {
+                self.store
+                    .refuse_hold_on_erased_partition_in_txn(txn, claim)?;
             }
-            Ok(())
+            let now = self.store.clock.now_recorded_at();
+            let target = LegalHoldTarget::GatePartition(claim);
+            legal_hold::set_partition_hold_in_txn(&self.store, txn, target, held, now)
         })
     }
 
@@ -526,12 +509,20 @@ impl Vault {
         let mut live_claims = BTreeSet::new();
         let mut removed_claims = BTreeSet::new();
         let mut held_partitions = BTreeSet::new();
+        // Held partitions with rows past the horizon: the sweep's refusal.
+        let mut refused_partitions = BTreeSet::new();
         self.store.for_each_gate_decision_in_txn(&txn, |record| {
             let claim = record.claim_id;
             if self
                 .store
                 .gate_partition_held_in_txn(&txn, claim.as_ref())?
             {
+                if policy
+                    .horizon_for(self.store.gate_retention_context_in_txn(&txn, &record)?)
+                    .is_some_and(|horizon| record.created_at < now.saturating_sub(horizon))
+                {
+                    refused_partitions.insert(claim);
+                }
                 held_partitions.insert(claim);
                 if let Some(claim) = claim {
                     live_claims.insert(claim);
@@ -574,6 +565,11 @@ impl Vault {
             }
             Ok(())
         })?;
+        for claim in refused_partitions {
+            let claim = claim.map(EntityId::from_bytes).transpose()?;
+            let target = LegalHoldTarget::GatePartition(claim);
+            legal_hold::log_timer_refusal_in_txn(&self.store, &mut txn, target, now)?;
+        }
         for claim in held_partitions {
             let partition = Partition(claim);
             let previous = RETAIN_UNTIL

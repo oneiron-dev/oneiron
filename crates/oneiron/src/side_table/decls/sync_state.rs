@@ -181,6 +181,9 @@ side_tables! {
     /// Crash-safe monotonic counter allocating the next u:w: sequence number for one window. Key:
     /// yyyy-mm.
     SYNC_M_U_SEQ_W: SyncState b"m:u_seq:w:" Raw;
+    /// Host config row: the node account-key verdict lease in seconds (u64 big-endian). Absent
+    /// means the 60-second default. Key: ().
+    MANAGED_ACCOUNT_KEY_LEASE: SyncState b"managed:account-key-lease:v1" Raw;
     /// Marker row admitting a vault as a synthetic canary, the only substitute managed-mode accepts
     /// for the real-tenant isolation preconditions. Key: ().
     MANAGED_CANARY_MARKER: SyncState b"managed:canary:v1" Raw;
@@ -288,6 +291,13 @@ side_tables! {
     DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw;
     /// Endpoint index for a deferred SpawnedBy anchor. Key: hex32 ":" full sa:w: key.
     DEFERRED_SPAWNED_BY_ENDPOINT: SyncState b"se:" Raw;
+    /// The serve skill judge (OF-495): its typed-decision journal, and person-time on receipts.
+    /// Key: "decision:" hex32 (row id) | "minutes:" string (receipt id) "|" hex32 (row id).
+    SKILL_JUDGE: SyncState b"skill:judge:v1:" Named;
+    /// This device's record that it left the shared vault its env holds (OF-158): the notice it
+    /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
+    /// notice's receipt id).
+    SYNC_SHARED_LEAVE_RECEIPT: SyncState b"sl:" Named;
     /// An entity document's shallow-since version vector (document family). Key: hex32 (NOTE head
     /// id).
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
@@ -345,6 +355,15 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// The newest withdrawn generation (u64be `learned_at`) of a derived artifact whose
+    /// historical sweep finished: sync ingest refuses a body of that generation or older that is
+    /// not its content-free keyframe, and every sweep keeps rewriting such a carrier. Outlives
+    /// the `hw:` row it replaces. Key: hex32 (entity id).
+    DELETION_WITHDRAWN_GENERATION_FENCE: SyncState b"wg:" Raw;
+    /// The serve health check past a threshold (OF-520): one check per crossing subject, and
+    /// how far the check has read each kind of kept crossing. Key: "check:" string (the
+    /// subject) | "cursor:" string (the crossing kind, and a limits row's key).
+    WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named;
     /// A crossed `[limits]` row's question (OF-520) for one minute: the row's bound, the most it
     /// saw, and how many times it was crossed. Key: string (the row's key) ":" u64 (decimal,
     /// zero-padded to 20 digits; window start).

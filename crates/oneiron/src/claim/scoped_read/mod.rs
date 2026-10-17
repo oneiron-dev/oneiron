@@ -35,16 +35,32 @@ mod versions;
 mod weave_digest;
 pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
-    StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule,
+    StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveDigestReader,
+    WeaveDigestSchedule,
 };
 mod weave_correction;
+mod weave_lens;
+pub use weave_lens::{
+    WEAVE_LENS_CORRECTIONS_AXIS, WEAVE_LENS_READ_RATE_AXIS, WEAVE_REPORT_SKILL_NAME, WeaveLensPlan,
+    WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender, WeaveLiveLens, weave_report_skill_id,
+};
+pub(crate) use weave_lens::{
+    weave_lens_attempt_input, weave_lens_attempt_period, weave_lens_model_input,
+    weave_lens_plan_schema,
+};
 mod weave_report;
+mod weave_serve;
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 pub use weave_correction::WeaveLinkCorrection;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
+};
+pub use weave_serve::{
+    WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveLinkCorrectionView, WeaveReaderKind,
+    WeaveReaderRef, WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveSectionInput,
+    WeaveSectionView, WeaveWrongLinkRequest,
 };
 
 mod access_gate;

@@ -37,6 +37,8 @@ mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;
 pub use self::host_re_root::host_re_root;
+mod host_recover_owner;
+pub use self::host_recover_owner::host_recover_shared_owner;
 
 pub use self::api::api;
 mod mcp_bridge;
@@ -96,17 +98,25 @@ use self::serve::serve_with_config;
 pub(crate) use self::serve::stop_requested;
 mod dreamer;
 pub use self::dreamer::dreamer_grant;
+mod oneironer;
+pub use self::oneironer::{OneironerCommand, oneironer};
 mod embedder_serve;
 pub use self::embedder_serve::embedder_serve;
 mod maintain;
 pub use maintain::maintain;
 mod owner;
+pub use owner::embedding_spaces;
+pub use owner::learning_settings;
+pub use owner::legal_holds;
 pub use owner::{
-    backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, restore, runs,
-    secret_scan, secrets, whoami,
+    backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
+    restore, runs, secret_scan, secrets, vault_key, whoami,
 };
+pub use owner::{guests, revoke_secret};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
+mod seat;
+pub use self::seat::{seat_login_plan, seat_routes};
 
 pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     let vault_args = VaultArgs {

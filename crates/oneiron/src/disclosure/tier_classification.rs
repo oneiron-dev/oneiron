@@ -21,14 +21,25 @@ use super::disclosure_tier_a_marked_in;
 use super::scope_codec::{MAX_DISCLOSURE_SCOPE_TOPIC_BYTES, decode_disclosure_scope_value};
 
 /// Pinned `disclosure.*` claim predicates.
-pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 3] =
-    ["disclosure.scope", "disclosure.tier", "disclosure.topic"];
+pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 5] = [
+    "disclosure.scope",
+    "disclosure.tier",
+    "disclosure.topic",
+    "disclosure.attendee_ask",
+    "disclosure.attendee_identity",
+];
 
 pub const PREDICATE_DISCLOSURE_SCOPE: &str = "disclosure.scope";
 
 pub const PREDICATE_DISCLOSURE_TIER: &str = "disclosure.tier";
 
 pub const PREDICATE_DISCLOSURE_TOPIC: &str = "disclosure.topic";
+
+/// The frozen question of one unknown-attendee ask (OF-365, ILDF2 P4).
+pub const PREDICATE_DISCLOSURE_ATTENDEE_ASK: &str = "disclosure.attendee_ask";
+
+/// The owner's answer to one unknown-attendee ask.
+pub const PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY: &str = "disclosure.attendee_identity";
 
 pub(super) const DISCLOSURE_TIER_VALUE_TIER_A: &str = "tier_a";
 
@@ -102,10 +113,15 @@ pub enum DisclosureTier {
 }
 
 /// Classifies one entity against the five Tier-A rules IN ORDER (design §7):
-/// live off-record overlay membership, governance type byte, sensitivity band (band 2+ or an
-/// ambiguous band fails closed), Tier-A predicate prefix, owner mark row. A
+/// live off-record overlay membership, governance type byte, an ambiguous or
+/// out-of-range sensitivity band, Tier-A predicate prefix, owner mark row. A
 /// type-0 record whose body is missing or undecodable is ambiguous and fails
 /// closed to Tier A.
+///
+/// Tier A is the structural and explicit withhold only. A decoded band is
+/// ordinary content sensitivity, which the record's Scope carries and the
+/// audience's clearance judges (OF-365: the ILDF2 ladder, not a blanket
+/// band-2 veto).
 pub(crate) fn disclosure_tier(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -134,14 +150,16 @@ pub(crate) fn disclosure_tier(
         let Some(body) = body else {
             return Ok(DisclosureTier::TierA);
         };
-        // Rule 3 — sensitivity band: ambiguous (duplicate key) or >= 2
-        // ("sensitive"/"restricted") fails closed to Tier A. A missing stamp
-        // reads band 2 (the ONE-1645 unstamped floor), so a claim with no
-        // recorded provenance is never disclosed to a non-owner party; only a
-        // positive `"sensitivity": public|0` stamp reaches Tier B here.
+        // Rule 3 — an ambiguous (duplicate key) or out-of-range sensitivity
+        // band fails closed to Tier A. A decoded private, sensitive or
+        // restricted band is NOT a withhold: `ClaimBody::record_scope` carries
+        // it as the record's sensitivity, so only a clearance at or above it
+        // admits the claim. A missing stamp reads band 2 (the ONE-1645
+        // unstamped floor): a claim with no recorded provenance is never
+        // public and reaches only a party cleared for sensitive content.
         match claim_sensitivity_band(body) {
             None => return Ok(DisclosureTier::TierA),
-            Some(band) if band >= 2 => return Ok(DisclosureTier::TierA),
+            Some(band) if band > 3 => return Ok(DisclosureTier::TierA),
             Some(_) => {}
         }
         // Rule 4 — Tier-A predicate prefixes.
@@ -213,6 +231,12 @@ pub(crate) fn validate_disclosure_claim_structure(body: &ClaimBody) -> Result<()
                 ));
             }
             Ok(())
+        }
+        PREDICATE_DISCLOSURE_ATTENDEE_ASK => {
+            super::attendee_ask::decode_attendee_ask_value(&body.value).map(|_| ())
+        }
+        PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY => {
+            super::attendee_ask::decode_attendee_identity_value(&body.value).map(|_| ())
         }
         _ => Err(Error::InvalidClaimBody(
             "unknown disclosure claim predicate",

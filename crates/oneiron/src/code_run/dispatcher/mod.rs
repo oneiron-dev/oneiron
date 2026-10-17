@@ -6,9 +6,12 @@ mod fold_verbs;
 mod human_speech;
 mod leader;
 mod memory_verbs;
+mod reader_spawn;
+mod team_verbs;
+mod verb_hooks;
 mod wake_policy;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
@@ -25,13 +28,14 @@ use crate::off_record::OffRecordSession;
 use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
-pub(crate) use self::coordination::CallableSkillLease;
 pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
 use self::human_speech::HumanWaitDispatchTarget;
+pub use self::leader::HostPlannerBinding;
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
+pub(crate) use self::reader_spawn::ReaderChildBinding;
 
 /// Host-bound dispatcher for one first-party code run.
 ///
@@ -69,6 +73,22 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) external_effect_seen: Cell<bool>,
     /// The host's door onto the SDK verb table, if it binds one.
     pub(super) agent_verbs: Option<std::sync::Arc<dyn crate::code_run::AgentVerbDoor>>,
+    /// The guest's view of the last call's result when a verb hook changed
+    /// it (ARCH-0080 §3): a Redact, or a blocking hook that hid it. The
+    /// executor's host takes it for its reply; the run records the result.
+    pub(super) hook_view: RefCell<Option<serde_json::Value>>,
+    /// The calls a verb hook's ask parked, as the run's history shows them,
+    /// with the invocation each ask waits under.
+    pub(super) parked_hooks:
+        RefCell<Vec<(verb_hooks::ParkedCall, crate::runtime_hooks::InvocationId)>>,
+    /// The seat the host lent the run to spawn reader children under, if
+    /// any (ARCH-0079 #reader-forks).
+    pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,
+    /// The reader child's job this run is, when it is one.
+    pub(super) reader_child: Option<ReaderChildBinding>,
+    /// The host's planner (OF-541, OF-389): what a planned spawn and the
+    /// leader's calls read. Host configuration; no guest call reaches it.
+    pub(super) planner: Option<HostPlannerBinding<'a>>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -182,6 +202,11 @@ impl<'a> HostSelfDispatcher<'a> {
             owner_proof: None,
             external_effect_seen: Cell::new(false),
             agent_verbs: None,
+            hook_view: RefCell::new(None),
+            parked_hooks: RefCell::new(Vec::new()),
+            reader_spawn: None,
+            reader_child: None,
+            planner: None,
         })
     }
 
@@ -256,10 +281,14 @@ impl<'a> HostSelfDispatcher<'a> {
     /// write. It accepts a bridge-call history, never a lineage: the mapping
     /// from history to lineage is [`lineage_for_run`], owned here, so no
     /// caller can assert a narrower history than the one it recorded.
+    ///
+    /// The same history names the calls a verb hook's ask parked, so the
+    /// same call made again resumes its ask.
     pub(crate) fn observe_bridge_history(&self, bridge_calls: &[CodeRunBridgeCall]) {
         if lineage_for_run(bridge_calls).contains(ClaimSource::ToolOutput) {
             self.external_effect_seen.set(true);
         }
+        self.observe_parked_hooks(bridge_calls);
     }
 
     /// The bound session ref, or `None` for a canonical run.
@@ -333,6 +362,8 @@ impl<'a> HostSelfDispatcher<'a> {
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
+        // A hook's view of an earlier call is never this call's.
+        *self.hook_view.borrow_mut() = None;
         // The descriptor bridge answers before the policy probe: that probe is
         // itself a vault read, and `self.context` must perform none.
         if matches!(call, SelfCall::Context(_)) {
@@ -342,6 +373,11 @@ impl<'a> HostSelfDispatcher<'a> {
         // participant left the room hears `NotInRoom`, never their verdict.
         self.storage.answered(|| {
             self.enforce_off_record_effect_policy(call.effect())?;
+            // A reader child reads its source and reports; it makes no other
+            // call.
+            if let Some(refused) = self.reader_child_refusal(call.effect()) {
+                return Ok(refused);
+            }
             // A step that can no longer close commits nothing more.
             if let Some(site) = site
                 && let Some(refused) = self.refusal_past_an_unmet_write(site, Some(&call))?
@@ -369,7 +405,7 @@ impl<'a> HostSelfDispatcher<'a> {
                     }
                 }
             };
-            self.dispatch_effect(call, site, read_as)
+            self.dispatch_hooked(call, site, read_as)
         })
     }
 
@@ -428,6 +464,11 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
             SelfCall::Fold(call) => self.dispatch_fold(&call, site),
+            SelfCall::ReaderSpawn(call) => self.dispatch_reader_spawn(*call, site),
+            SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),
+            SelfCall::TasksWaitSet(call) => self.dispatch_task_wait_set(call, site),
+            SelfCall::Leader(call) => self.dispatch_leader(call),
+            SelfCall::Team(call) => self.dispatch_team(call),
         }
     }
 }

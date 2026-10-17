@@ -6,6 +6,7 @@ use crate::claim::{
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
+use crate::llm::run_admission::LeaseUnit;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
@@ -14,12 +15,14 @@ use std::collections::BTreeSet;
 
 pub(crate) const PREDICATE: &str = "project.goal_intake";
 mod admission;
+mod context;
 mod interview;
 mod limits;
 pub(crate) use admission::{
     admitted_claim_of_project, guard_claim_put, guard_goal_delete, guard_pointer_put,
     precheck_delete as precheck_goal_delete, retire_for_delete as retire_goal_for_delete,
 };
+pub use context::ProjectGoalInterviewContext;
 pub use interview::GoalInterviewTurns;
 pub(crate) use limits::GoalLimits;
 
@@ -61,11 +64,14 @@ pub struct GoalPreference {
 }
 
 /// A goal's soft exploration share, not a grant or a vault budget lease.
+/// Spend and the slice are counted in `unit`; a skill trial is charged
+/// against the slice only when its run's launch estimate is in that unit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GoalExplorationBudget {
     pub max_spend: u64,
     pub exploration_slice: u64,
+    pub unit: LeaseUnit,
     pub human_minutes: u64,
 }
 
@@ -91,6 +97,7 @@ impl GoalRecord {
             || self.floor_axes.is_empty()
             || self.cost_axes.is_empty()
             || self.exploration_budget.exploration_slice > self.exploration_budget.max_spend
+            || LeaseUnit::new(self.exploration_budget.unit.as_str()).is_err()
         {
             return Err(invalid());
         }

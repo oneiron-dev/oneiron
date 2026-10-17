@@ -19,9 +19,11 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 /// The anchor a quote reply's pointer records. Neither variant copies the
-/// quoted text into the reply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum QuoteAnchor {
+/// quoted text into the reply. Engine-issued only: a caller names a
+/// [`QuoteSpan`], never an anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "anchor", rename_all = "snake_case", deny_unknown_fields)]
+pub enum QuoteAnchor {
     /// A MESSAGE that owns a document: its citation pin, keyed by the message
     /// and the citing reply, holds the frontier, cursors, quote and hash.
     Document {
@@ -32,11 +34,27 @@ pub(crate) enum QuoteAnchor {
     /// BLAKE3 hash of the canonical text it was taken from.
     Body {
         message: EntityId,
+        #[serde(with = "hex32")]
         body_hash: [u8; 32],
         start: u32,
         end: u32,
+        #[serde(with = "hex32")]
         quote_hash: [u8; 32],
     },
+}
+
+/// A trunk turn's quote, kept in its room row (OF-460): a room's trunk
+/// turns are opaque and unchained in the DAG, so the quote never becomes a
+/// `Parent`, a typed trunk record or another DAG root. It holds references
+/// and hashes only, never a copied excerpt. A thread reply's quote stays in
+/// its TURN's own reply pointer, never here as well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomQuote {
+    /// The TURN holding the quoted MESSAGE.
+    pub target_turn: EntityId,
+    /// The engine-issued anchor of the quoted span.
+    pub anchor: QuoteAnchor,
 }
 
 impl QuoteAnchor {
@@ -157,14 +175,36 @@ pub(super) struct ProvenQuote {
     span: (usize, usize),
 }
 
-/// Proves a quote for `input` without writing: the MESSAGE is live, visible
-/// and in the same room, its owning TURN is readable from the writer's
-/// branch, a PERSON writer is in its audience, and the span is nonempty,
-/// ordered and inside its current text. `citation` is the reply's own id.
+/// [`prove_quote_in_txn`] for an append: its conversation, parent and writer.
 pub(super) fn prove_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     input: &AppendRecord,
+    quote: QuoteSpan,
+    citation: EntityId,
+) -> Result<ProvenQuote> {
+    prove_quote_in_txn(
+        vault,
+        txn,
+        input.conversation,
+        input.parent,
+        input.actor,
+        quote,
+        citation,
+    )
+}
+
+/// Proves a quote without writing: the MESSAGE is live, visible and in
+/// `conversation`, its owning TURN is readable from the branch through
+/// `parent`, a PERSON `actor` is in its audience, and the span is nonempty,
+/// ordered and inside its current text. `citation` is the reply's own id.
+/// Both reply doors call it: the append and a room witness (OF-460).
+pub(super) fn prove_quote_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    conversation: EntityId,
+    parent: Option<EntityId>,
+    actor: WriteActor,
     quote: QuoteSpan,
     citation: EntityId,
 ) -> Result<ProvenQuote> {
@@ -183,22 +223,21 @@ pub(super) fn prove_in_txn(
     if vault.archive_tombstone_in_txn(txn, &message)?.is_some() {
         return Err(Error::EntityNotFound);
     }
-    if crate::conversation::room_message_owner_in(&vault.store, txn, message)?
-        != Some(input.conversation)
+    if crate::conversation::room_message_owner_in(&vault.store, txn, message)? != Some(conversation)
     {
         return Err(invalid("quoted message belongs to another room"));
     }
     let turn = owning_turn_in(&vault.store, txn, &message)?;
-    require_member(&vault.store, txn, &input.conversation, &turn)?;
-    if !branch_reads_in(&vault.store, txn, input, turn)? {
+    require_member(&vault.store, txn, &conversation, &turn)?;
+    if !branch_reads_in(&vault.store, txn, conversation, parent, turn)? {
         return Err(invalid("quoted message is outside the writer's branch"));
     }
-    if writer_is_person(&vault.store, txn, input.actor)?
+    if writer_is_person(&vault.store, txn, actor)?
         && !crate::conversation::AudienceCache::default().readable(
             vault,
             txn,
             message,
-            &[input.actor.entity_ref()],
+            &[actor.entity_ref()],
         )?
     {
         return Err(invalid("quoted message is outside the writer's audience"));
@@ -266,9 +305,9 @@ pub(super) fn reply_target(
     quote: Option<&ProvenQuote>,
 ) -> Result<Option<EntityId>> {
     match (asked, quote) {
-        (Some(asked), Some(quote)) if asked != quote.turn => Err(invalid(
-            "a quote answers the turn that holds its message",
-        )),
+        (Some(asked), Some(quote)) if asked != quote.turn => {
+            Err(invalid("a quote answers the turn that holds its message"))
+        }
         (asked, quote) => Ok(asked.or(quote.map(|quote| quote.turn))),
     }
 }
@@ -287,6 +326,202 @@ pub(super) fn reply_pointer(
         pointer.push((Value::from("quote"), quote.anchor.to_value()));
     }
     Value::Map(pointer)
+}
+
+/// A quoted room thread reply, proven in the room witness's transaction
+/// before its TURN is minted (OF-460). The witness consumes the selection
+/// here and mints the TURN once, with this anchor, reply pointer, `Parent`
+/// and `RepliesTo` in its first body and write; nothing patches it later.
+/// The thread chain continues `parent`, the reply's own, while the reply
+/// answers the TURN holding the quoted MESSAGE.
+pub(crate) struct QuotedReply {
+    parent: EntityId,
+    actor: WriteActor,
+    revision: String,
+    proven: ProvenQuote,
+}
+
+impl QuotedReply {
+    /// Proves `quote` for the reply `citation` that `actor` writes in
+    /// `conversation` continuing the thread chain at `parent`: the common
+    /// quote proof, and the quoted TURN's revision captured in this
+    /// transaction, as an append captures its reply target's.
+    pub(crate) fn prove_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        conversation: EntityId,
+        parent: EntityId,
+        actor: WriteActor,
+        quote: QuoteSpan,
+        citation: EntityId,
+    ) -> Result<Self> {
+        require_member(&vault.store, txn, &conversation, &parent)?;
+        require_type(&vault.store, txn, &parent, ENTITY_TYPE_TURN)?;
+        let proven = prove_quote_in_txn(
+            vault,
+            txn,
+            conversation,
+            Some(parent),
+            actor,
+            quote,
+            citation,
+        )?;
+        let target = require_type(&vault.store, txn, &proven.turn, ENTITY_TYPE_TURN)?;
+        Ok(Self {
+            parent,
+            actor,
+            revision: blake3::hash(&target).to_hex().to_string(),
+            proven,
+        })
+    }
+
+    /// The door-owned fields the reply's first TURN body carries: a thread
+    /// record answering the quoted TURN, its pointer holding the anchor.
+    pub(crate) fn body_fields(&self) -> [(Value, Value); 3] {
+        [
+            (
+                Value::from("dag_kind"),
+                Value::from(super::topology::RecordKind::Thread.as_str()),
+            ),
+            (Value::from("addr"), Value::from("reply")),
+            (
+                Value::from("reply_to"),
+                reply_pointer(self.proven.turn, self.revision.clone(), Some(&self.proven)),
+            ),
+        ]
+    }
+
+    /// Stages the minted reply's `Parent` and `RepliesTo` edges.
+    pub(crate) fn edges<'v>(
+        &self,
+        batch: crate::BatchBuilder<'v>,
+        record: &EntityId,
+        learned_at: u64,
+    ) -> crate::BatchBuilder<'v> {
+        let value = super::writes::value;
+        batch
+            .edge_with_value_fields(record, EdgeKind::Parent, &self.parent, value(learned_at))
+            .edge_with_value_fields(
+                record,
+                EdgeKind::RepliesTo,
+                &self.proven.turn,
+                value(learned_at),
+            )
+    }
+
+    /// Writes a document anchor's citation pin in the minting transaction.
+    pub(crate) fn pin_in_txn(&self, vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+        pin_in_txn(vault, txn, &self.proven, self.actor)
+    }
+
+    /// Refuses unless the stored TURN `body` already carries exactly this
+    /// quote: the same target and anchor and, for a document anchor, a pinned
+    /// quote that is the text the span selects now. A retry never changes a
+    /// stored turn's quote, and never re-pins it.
+    pub(crate) fn require_stored_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        body: &[u8],
+    ) -> Result<()> {
+        require_stored_quote_in_txn(vault, txn, &self.proven, read_pointer(body)?)
+    }
+}
+
+/// A trunk turn's quote, proven in the room witness's transaction (OF-460).
+/// Its anchor is kept in the turn's room row ([`RoomQuote`]); the TURN is
+/// minted opaque, with no DAG `Parent` or kind, so the room keeps exactly
+/// one trunk root.
+pub(crate) struct ProvenRoomQuote {
+    proven: ProvenQuote,
+    actor: WriteActor,
+}
+
+impl ProvenRoomQuote {
+    /// Proves `quote` for the turn `citation` that `actor` speaks in `room`,
+    /// read from `branch`: `None` is the trunk, which reads no thread or
+    /// private branch merely because the target sits in the same room.
+    pub(crate) fn prove_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        room: EntityId,
+        branch: Option<EntityId>,
+        actor: WriteActor,
+        quote: QuoteSpan,
+        citation: EntityId,
+    ) -> Result<Self> {
+        let proven = prove_quote_in_txn(vault, txn, room, branch, actor, quote, citation)?;
+        Ok(Self { proven, actor })
+    }
+
+    /// The room row's quote: target and anchor, no excerpt.
+    pub(crate) fn metadata(&self) -> RoomQuote {
+        RoomQuote {
+            target_turn: self.proven.turn,
+            anchor: self.proven.anchor,
+        }
+    }
+
+    /// Writes a document anchor's citation pin, on the quote's first
+    /// attachment only.
+    pub(crate) fn pin_in_txn(&self, vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+        pin_in_txn(vault, txn, &self.proven, self.actor)
+    }
+
+    /// Refuses unless `stored`, the turn's kept quote, is exactly this one,
+    /// as [`QuotedReply::require_stored_in_txn`] refuses; a retry or append
+    /// never re-pins it.
+    pub(crate) fn require_stored_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        stored: &RoomQuote,
+    ) -> Result<()> {
+        require_stored_quote_in_txn(
+            vault,
+            txn,
+            &self.proven,
+            Some((stored.target_turn, stored.anchor)),
+        )
+    }
+}
+
+/// Refuses unless `stored` is exactly `proven`'s quote: the same target and
+/// anchor and, for a document anchor, a pinned quote that is the text the
+/// span selects now.
+fn require_stored_quote_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    proven: &ProvenQuote,
+    stored: Option<(EntityId, QuoteAnchor)>,
+) -> Result<()> {
+    let changed = || invalid("a stored turn's quote is immutable");
+    let Some((target, anchor)) = stored else {
+        return Err(changed());
+    };
+    if target != proven.turn || anchor != proven.anchor {
+        return Err(changed());
+    }
+    if let QuoteAnchor::Document { message, citation } = anchor {
+        let pin = vault
+            .message_quote_pin_in_txn(txn, &message, &citation)?
+            .ok_or_else(changed)?;
+        let row = require_type(&vault.store, txn, &message, ENTITY_TYPE_MESSAGE)?;
+        let row = crate::entity_doc::resolve_record_body(&vault.store, txn, &message, &row)?;
+        let fields = message_fields(&row)?;
+        let text = field(&fields, "content")
+            .and_then(Value::as_str)
+            .ok_or(Error::CorruptedIndex("message canonical content"))?;
+        if scalar_slice(text, proven.span.0, proven.span.1).as_deref() != Some(pin.anchor.quote()) {
+            return Err(changed());
+        }
+    }
+    Ok(())
+}
+
+/// Whether a stored TURN body's reply pointer carries a quote.
+pub(crate) fn carries_quote(body: &[u8]) -> Result<bool> {
+    Ok(read_pointer(body)?.is_some())
 }
 
 /// The reply target and quote anchor a TURN body's reply pointer records;
@@ -336,7 +571,8 @@ pub(super) fn owning_turn_in(
 fn branch_reads_in(
     store: &Store,
     txn: &RoTxn<'_>,
-    input: &AppendRecord,
+    conversation: EntityId,
+    parent: Option<EntityId>,
     turn: EntityId,
 ) -> Result<bool> {
     if !graph::is_thread_record(store, txn, &turn)?
@@ -344,8 +580,8 @@ fn branch_reads_in(
     {
         return Ok(true);
     }
-    Ok(match input.parent {
-        Some(parent) => graph::chain(store, txn, &input.conversation, parent)?.contains(&turn),
+    Ok(match parent {
+        Some(parent) => graph::chain(store, txn, &conversation, parent)?.contains(&turn),
         None => false,
     })
 }
@@ -383,6 +619,27 @@ pub(super) fn scalar_slice(text: &str, start: usize, end: usize) -> Option<Strin
     }
     let quoted: String = text.chars().skip(start).take(end - start).collect();
     (quoted.chars().count() == end - start).then_some(quoted)
+}
+
+/// A BLAKE3 hash as its 64 lowercase hex digits on the wire.
+mod hex32 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        bytes: &[u8; 32],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(blake3::Hash::from_bytes(*bytes).to_hex().as_str())
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<[u8; 32], D::Error> {
+        let value = String::deserialize(deserializer)?;
+        blake3::Hash::from_hex(value)
+            .map(|hash| *hash.as_bytes())
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 fn hex(bytes: &[u8; 32]) -> String {

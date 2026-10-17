@@ -5,8 +5,8 @@ use super::codec::deserialize_optional_u32;
 use super::codec::deserialize_optional_u64;
 use super::codec::{McpToolArguments, schema_normalized_arguments};
 use super::surface::{
-    MCP_BOARD_BUDGET_TOK, MCP_EXECUTE_CODE_TOOL, MCP_SETUP_TOOL, McpEndpointTool,
-    McpGeneratedVerbTool,
+    MCP_BOARD_BUDGET_TOK, MCP_EXECUTE_CODE_TOOL, MCP_READ_RESULT_TOOL, MCP_SETUP_TOOL,
+    McpEndpointTool, McpGeneratedVerbTool,
 };
 use super::tool_catalog::{McpToolValidationError, McpValidatedToolArgs};
 use super::validators::{
@@ -164,6 +164,62 @@ impl McpExecuteCodeToolArgs {
     }
 }
 
+/// `read_result` arguments: one read of a result of the durable run
+/// `run_ref` names under this credential, as `execute_code` derives it.
+/// `ref` is a name the run bound, a handle or a range ref; `input` is the
+/// facet's input less the ref. With no `facet` it reads the card.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpReadResultToolArgs {
+    pub schema_version: String,
+    pub actor: McpActorMetadata,
+    pub consent: McpConsentMetadata,
+    pub run_ref: String,
+    #[serde(rename = "ref")]
+    pub reference: String,
+    #[serde(default)]
+    pub facet: Option<McpResultFacet>,
+    #[serde(default)]
+    pub input: Option<serde_json::Map<String, Value>>,
+}
+
+impl McpReadResultToolArgs {
+    fn validate(&self) -> Result<(), McpToolValidationError> {
+        validate_schema_version(MCP_READ_RESULT_TOOL, &self.schema_version)?;
+        self.actor.validate(MCP_READ_RESULT_TOOL)?;
+        self.consent.validate(MCP_READ_RESULT_TOOL)?;
+        validate_nonblank(MCP_READ_RESULT_TOOL, "run_ref", &self.run_ref)?;
+        validate_nonblank(MCP_READ_RESULT_TOOL, "ref", &self.reference)?;
+        Ok(())
+    }
+}
+
+/// The read `read_result` makes: a result's card, or one of its facets.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpResultFacet {
+    Describe,
+    Slice,
+    Search,
+    Query,
+    Chunks,
+}
+
+impl McpResultFacet {
+    /// The facet it reads; `None` for the card.
+    #[must_use]
+    pub const fn facet(self) -> Option<oneiron::code_run::ResultFacet> {
+        use oneiron::code_run::ResultFacet;
+        match self {
+            Self::Describe => None,
+            Self::Slice => Some(ResultFacet::Slice),
+            Self::Search => Some(ResultFacet::Search),
+            Self::Query => Some(ResultFacet::Query),
+            Self::Chunks => Some(ResultFacet::Chunks),
+        }
+    }
+}
+
 /// The closed argument envelope every generated verb tool shares.
 ///
 /// One struct, per-binding admission: a field that belongs to another verb is
@@ -196,10 +252,13 @@ pub struct McpVerbArguments {
     pub request: Option<Value>,
     #[serde(default)]
     pub label: Option<String>,
+    /// `tasks.create`'s typed assignee (OF-532), decoded with the input.
+    #[serde(default)]
+    pub assignee: Option<Value>,
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 11] {
+    fn present_fields(&self) -> [(&'static str, bool); 12] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -212,6 +271,7 @@ impl McpVerbArguments {
             ("spec", self.spec.is_some()),
             ("request", self.request.is_some()),
             ("label", self.label.is_some()),
+            ("assignee", self.assignee.is_some()),
         ]
     }
 
@@ -336,6 +396,16 @@ fn validate_endpoint_tool_args(
             )?;
             parsed.validate()?;
             Ok(McpValidatedToolArgs::ExecuteCode(Box::new(parsed)))
+        }
+        McpEndpointTool::ReadResult => {
+            let parsed = decode_endpoint_args::<McpReadResultToolArgs>(
+                MCP_READ_RESULT_TOOL,
+                &schema,
+                args,
+                actor,
+            )?;
+            parsed.validate()?;
+            Ok(McpValidatedToolArgs::ReadResult(Box::new(parsed)))
         }
         McpEndpointTool::Verb(tool) => {
             let payload =

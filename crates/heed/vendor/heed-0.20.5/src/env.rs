@@ -24,12 +24,14 @@ use std::{fmt, io, mem, ptr};
 use heed_traits::{Comparator, LexicographicComparator};
 use once_cell::sync::Lazy;
 use synchronoise::event::SignalEvent;
+use zeroize::Zeroizing;
 
 use crate::cursor::MoveOperation;
 use crate::database::DatabaseOpenOptions;
 use crate::mdb::error::mdb_result;
 use crate::mdb::ffi;
 use crate::mdb::lmdb_flags::AllDatabaseFlags;
+use crate::page_seal;
 use crate::{Database, EnvFlags, Error, Result, RoCursor, RoTxn, RwTxn, Unspecified};
 
 /// The list of opened environments, the value is an optional environment, it is None
@@ -108,6 +110,31 @@ pub struct EnvOpenOptions {
     max_readers: Option<u32>,
     max_dbs: Option<u32>,
     flags: EnvFlags,
+    /// ONEIRON FORK (OF-570): the page key of a sealed environment.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    page_key: Option<PageKey>,
+}
+
+/// ONEIRON FORK (OF-570): a sealed environment's page key. It never prints or
+/// serializes, and the bytes are wiped when the last copy drops.
+#[derive(Clone)]
+struct PageKey(Arc<Zeroizing<[u8; page_seal::KEY]>>);
+
+impl fmt::Debug for PageKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("PageKey(..)")
+    }
+}
+
+impl PartialEq for PageKey {
+    fn eq(&self, other: &Self) -> bool {
+        let diff = self
+            .0
+            .iter()
+            .zip(other.0.iter())
+            .fold(0, |acc, (a, b)| acc | (a ^ b));
+        diff == 0
+    }
 }
 
 impl Default for EnvOpenOptions {
@@ -124,7 +151,21 @@ impl EnvOpenOptions {
             max_readers: None,
             max_dbs: None,
             flags: EnvFlags::empty(),
+            page_key: None,
         }
+    }
+
+    /// ONEIRON FORK (OF-570): seal every page of the environment under `key`
+    /// (see `page_seal`). A sealed file opens only with its key, and a plain
+    /// file refuses one. `WRITE_MAP` and `FIXEDMAP` are refused with a key:
+    /// sealed pages are decrypted into a cache, never mapped.
+    ///
+    /// Values a sealed environment returns are copied out of that cache and
+    /// live until their transaction ends, so the slower tier keeps heed's
+    /// borrowing contract.
+    pub fn page_key(&mut self, key: &[u8; 32]) -> &mut Self {
+        self.page_key = Some(PageKey(Arc::new(Zeroizing::new(*key))));
+        self
     }
 
     /// Set the size of the memory map to use for this environment.
@@ -361,9 +402,39 @@ impl EnvOpenOptions {
                 // allowed to reach the C call below.
                 let path_str = CString::new(open_path.as_os_str().as_bytes()).unwrap();
 
+                if self.page_key.is_some()
+                    && self
+                        .flags
+                        .intersects(EnvFlags::WRITE_MAP | EnvFlags::FIXEDMAP)
+                {
+                    return Err(Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "a sealed environment cannot use WRITE_MAP or FIXEDMAP",
+                    )));
+                }
+
                 unsafe {
                     let mut env: *mut ffi::MDB_env = ptr::null_mut();
                     mdb_result(ffi::mdb_env_create(&mut env))?;
+
+                    // ONEIRON FORK (OF-570): the page cipher goes in before any
+                    // other option; mdb.master3 copies the key.
+                    if let Some(PageKey(key)) = &self.page_key {
+                        let key = ffi::MDB_val {
+                            mv_size: page_seal::KEY,
+                            mv_data: key.as_ptr() as *mut c_void,
+                        };
+                        let set = mdb_result(ffi::mdb_env_set_encrypt(
+                            env,
+                            Some(page_seal::seal_page),
+                            &key,
+                            page_seal::AUTH,
+                        ));
+                        if let Err(e) = set {
+                            ffi::mdb_env_close(env);
+                            return Err(e.into());
+                        }
+                    }
 
                     if let Some(size) = self.map_size {
                         if size % page_size::get() != 0 {
@@ -410,6 +481,12 @@ impl EnvOpenOptions {
                         0o600,
                     ));
                     after_open();
+                    // ONEIRON FORK (OF-570): meta pages are clear, so a wrong
+                    // key opens. Read a sealed page before publishing the env.
+                    let result = match result {
+                        Ok(()) if self.page_key.is_some() => check_page_key(env),
+                        other => other,
+                    };
 
                     match result {
                         Ok(()) => {
@@ -420,6 +497,7 @@ impl EnvOpenOptions {
                             let inner = EnvInner {
                                 env,
                                 path: entry.key().clone(),
+                                sealed: self.page_key.is_some(),
                             };
                             let env = Env(Arc::new(inner));
                             let cache_entry = EnvEntry {
@@ -441,6 +519,50 @@ impl EnvOpenOptions {
     }
 }
 
+/// ONEIRON FORK (OF-570): opens the main database's first page of a freshly
+/// opened sealed env. A wrong key fails here (`MDB_CRYPTO_FAIL`); an empty env
+/// has no sealed page yet and passes.
+unsafe fn check_page_key(
+    env: *mut ffi::MDB_env,
+) -> std::result::Result<(), crate::mdb::lmdb_error::Error> {
+    let mut txn: *mut ffi::MDB_txn = ptr::null_mut();
+    unsafe {
+        mdb_result(ffi::mdb_txn_begin(
+            env,
+            ptr::null_mut(),
+            ffi::MDB_RDONLY,
+            &mut txn,
+        ))?;
+        let mut dbi = 0;
+        let mut cursor: *mut ffi::MDB_cursor = ptr::null_mut();
+        let mut key = ffi::MDB_val {
+            mv_size: 0,
+            mv_data: ptr::null_mut(),
+        };
+        let mut data = ffi::MDB_val {
+            mv_size: 0,
+            mv_data: ptr::null_mut(),
+        };
+        let read = mdb_result(ffi::mdb_dbi_open(txn, ptr::null(), 0, &mut dbi))
+            .and_then(|()| mdb_result(ffi::mdb_cursor_open(txn, dbi, &mut cursor)))
+            .and_then(|()| {
+                let first = mdb_result(ffi::mdb_cursor_get(
+                    cursor,
+                    &mut key,
+                    &mut data,
+                    ffi::cursor_op::MDB_FIRST,
+                ));
+                ffi::mdb_cursor_close(cursor);
+                match first {
+                    Err(e) if e.not_found() => Ok(()),
+                    other => other,
+                }
+            });
+        ffi::mdb_txn_abort(txn);
+        read
+    }
+}
+
 /// Returns a struct that allows to wait for the effective closing of an environment.
 pub fn env_closing_event<P: AsRef<Path>>(path: P) -> Option<EnvClosingEvent> {
     let lock = OPENED_ENV.read().unwrap();
@@ -454,9 +576,14 @@ pub struct Env(Arc<EnvInner>);
 
 impl fmt::Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let EnvInner { env: _, path } = self.0.as_ref();
+        let EnvInner {
+            env: _,
+            path,
+            sealed,
+        } = self.0.as_ref();
         f.debug_struct("Env")
             .field("path", &path.display())
+            .field("sealed", sealed)
             .finish_non_exhaustive()
     }
 }
@@ -464,6 +591,8 @@ impl fmt::Debug for Env {
 struct EnvInner {
     env: *mut ffi::MDB_env,
     path: PathBuf,
+    /// ONEIRON FORK (OF-570): opened with a page key.
+    sealed: bool,
 }
 
 unsafe impl Send for EnvInner {}
@@ -600,6 +729,12 @@ impl Env {
         self.0.env
     }
 
+    /// ONEIRON FORK (OF-570): whether this environment's pages are sealed
+    /// (opened with [`EnvOpenOptions::page_key`]).
+    pub fn is_sealed(&self) -> bool {
+        self.0.sealed
+    }
+
     /// The size of the data file on disk.
     ///
     /// # Example
@@ -628,7 +763,11 @@ impl Env {
     ///
     /// Returns `None` if the environment flags are different from the [`EnvFlags`] set.
     pub fn flags(&self) -> Result<Option<EnvFlags>> {
-        self.get_flags().map(EnvFlags::from_bits)
+        // ONEIRON FORK (OF-570): a sealed env also carries mdb.master3's
+        // encryption and chunk-remap bits, which no `EnvFlags` names.
+        let internal = ffi::MDB_ENCRYPT | ffi::MDB_REMAP_CHUNKS;
+        self.get_flags()
+            .map(|flags| EnvFlags::from_bits(flags & !internal))
     }
 
     /// Enable or disable the environment's currently active [`EnvFlags`].
@@ -732,6 +871,9 @@ impl Env {
         let mut cursor = RoCursor::new(&rtxn, dbi)?;
 
         while let Some((key, _value)) = cursor.move_on_next(MoveOperation::NoDup)? {
+            // ONEIRON FORK (OF-570): mdb.master3 keys a database by its name
+            // and the terminating NUL.
+            let key = key.strip_suffix(&[0]).unwrap_or(key);
             if key.contains(&0) {
                 continue;
             }
@@ -940,6 +1082,7 @@ impl Env {
     /// This function may be used to make a backup of an existing environment.
     /// No lockfile is created, since it gets recreated at need.
     pub fn copy_to_file<P: AsRef<Path>>(&self, path: P, option: CompactionOption) -> Result<File> {
+        self.refuse_sealed_copy()?;
         let file = File::options().create_new(true).write(true).open(&path)?;
         let fd = get_file_fd(&file);
 
@@ -965,12 +1108,26 @@ impl Env {
         fd: ffi::mdb_filehandle_t,
         option: CompactionOption,
     ) -> Result<()> {
+        self.refuse_sealed_copy()?;
         let flags = if let CompactionOption::Enabled = option {
             ffi::MDB_CP_COMPACT
         } else {
             0
         };
         mdb_result(ffi::mdb_env_copyfd2(self.0.env, fd, flags))?;
+        Ok(())
+    }
+
+    /// ONEIRON FORK (OF-570): mdb.master3 cannot copy a sealed env. Its
+    /// compacting copy writes the decrypted pages unsealed, and its plain copy
+    /// reads past the meta-only map. Both are refused before any output exists.
+    fn refuse_sealed_copy(&self) -> Result<()> {
+        if self.is_sealed() {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "a sealed environment cannot be copied by LMDB",
+            )));
+        }
         Ok(())
     }
 

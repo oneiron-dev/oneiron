@@ -55,6 +55,7 @@ impl SyncConnection {
         if *mode_rx.borrow_and_update() != client.config.residence_mode {
             return LoopExit::Disconnected("residence mode changed".into());
         }
+        let mut left_rx = self.left.subscribe();
 
         loop {
             // Compute sleep future for debounce timer
@@ -263,8 +264,13 @@ impl SyncConnection {
                         sealed_task = Some(tokio::spawn(async move {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
-                            // (OF-469).
-                            if config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                            // (OF-469). Any machine whose rows name history it
+                            // lacks takes it too.
+                            if (config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                                || !manager
+                                    .vault()
+                                    .authority_missing_history()
+                                    .is_ok_and(|missing| missing.is_complete()))
                                 && let Err(error) =
                                     crate::sync::client::catch_up_authority(manager.vault(), &config)
                                         .await
@@ -273,6 +279,22 @@ impl SyncConnection {
                                 let _ = events.send(SyncEvent::Error(format!(
                                     "Authority catch-up failed: {error}"
                                 )));
+                            }
+                            // A machine those rows made mine gets each portable
+                            // credential's value sealed to it again (OF-422).
+                            let vault = std::sync::Arc::clone(manager.vault());
+                            match tokio::task::spawn_blocking(move || vault.reseal_custody_for_roster()).await {
+                                Ok(Ok(_)) => {}
+                                Ok(Err(error)) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Custody re-seal failed: {error}"
+                                    )));
+                                }
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Custody re-seal stopped: {error}"
+                                    )));
+                                }
                             }
                             match crate::sync::client::relay_sealed_windows(&manager, &config).await {
                                 Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
@@ -317,6 +339,14 @@ impl SyncConnection {
                         let _ = write.send(Message::Close(None)).await;
                         return LoopExit::Disconnected("residence mode changed".into());
                     }
+                }
+
+                // A confirmed leave ends the lane for good (OF-158): what it
+                // buffered is queued, to be counted and discarded.
+                _ = left_rx.wait_for(|left| *left) => {
+                    flush_to_queue(&self.queue, &mut debounce_buffer);
+                    let _ = write.send(Message::Close(None)).await;
+                    return LoopExit::Shutdown;
                 }
 
                 // Shutdown signal

@@ -35,6 +35,9 @@ fn invalid() -> Error {
 pub(crate) struct CallableSkillLease {
     pub(crate) vault: Arc<Vault>,
     pub(crate) leased: AttemptRecord,
+    /// The key the run's door admitted the call with, which the call's verb
+    /// hooks read under; `None` when its host binds no door.
+    pub(crate) read_as: Option<crate::claim::ScopedReadActorKey>,
 }
 
 impl<'a> HostSelfDispatcher<'a> {
@@ -86,6 +89,34 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         dispatcher.agent_lease = Some(binding);
         Ok(dispatcher)
+    }
+
+    /// The sealed binding a host lends this run's TASK creates (OF-532,
+    /// `Memory::with_task_host`): the running agent attempt, its lease owner
+    /// and generation, read live. `None` only for a canonical run bound to no
+    /// agent attempt. A run bound to one whose lease no longer holds, or that
+    /// never held it, is refused, never unbound; an off-record run is refused.
+    pub fn task_host_binding(&self) -> Result<Option<crate::task_verb::HostBinding>> {
+        let vault = self.coordination_vault()?;
+        let (parent, lease) = match (self.agent_parent, &self.agent_lease) {
+            (None, None) => return Ok(None),
+            (Some(parent), Some(lease)) if lease.attempt == parent => (parent, lease),
+            _ => return Err(invalid()),
+        };
+        let live = DreamerRunnerStore::new(vault)
+            .status(parent)?
+            .ok_or_else(invalid)?;
+        let input = decode_agent_dispatch_input(&live.payload.input)?;
+        if live.attempt.state != AttemptState::Leased
+            || live.attempt.lease_owner.as_deref() != Some(lease.owner.as_str())
+            || live.attempt.attempt_count != lease.generation
+            || agent_dispatch_actor(&input)? != self.actor
+        {
+            return Err(invalid());
+        }
+        crate::task_verb::HostBinding::from_leased(&live.attempt, None)
+            .map(Some)
+            .map_err(|_| invalid())
     }
 
     /// Lends the run's own vault, as the host holds it, to the callable
@@ -174,9 +205,32 @@ impl<'a> HostSelfDispatcher<'a> {
         if call.intent_key.trim().is_empty() || call.intent_key.len() > 256 {
             return Err(invalid());
         }
+        let now = crate::unix_seconds_now();
+        // OF-541: with the host's planner and the agent's lease, an ask is
+        // placed and planned; otherwise the named target runs, under the
+        // carve the ask's budget narrows.
+        let planned = self.planner_bound() && self.agent_lease.is_some();
+        let (target, context) = match (call.ask, call.target) {
+            (Some(ask), _) if planned => self.planned_spawn(call.context, ask, now)?,
+            (ask, Some(target)) => {
+                let mut context = call.context;
+                super::leader::narrow_budget(
+                    &mut context,
+                    ask.as_ref().and_then(|ask| ask.budget_cap_units.as_ref()),
+                );
+                (target, context)
+            }
+            (Some(_), None) if self.planner_bound() => {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "a planned spawn requires the agent's acquired lease",
+                )));
+            }
+            (Some(_), None) => return Ok(Self::planner_unbound(SelfEffect::AgentsSpawn)),
+            (None, None) => return Err(invalid()),
+        };
         let result = AgentDispatcher::new(vault).dispatch_with_context(
             DispatchAgent {
-                target: call.target,
+                target,
                 parent_attempt: Some(parent),
                 dedupe_key: Some(format!(
                     "code:{}:{}",
@@ -184,9 +238,9 @@ impl<'a> HostSelfDispatcher<'a> {
                     call.intent_key
                 )),
                 run_id: live.attempt.run_id,
-                now: crate::unix_seconds_now(),
+                now,
             },
-            call.context,
+            context,
         )?;
         Ok(SelfDispatchOutcome::AgentSpawn(match result {
             AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status) => {
@@ -285,20 +339,28 @@ impl<'a> HostSelfDispatcher<'a> {
         let effect = call.effect();
         self.storage.answered(|| {
             self.enforce_off_record_effect_policy(effect)?;
+            if let Some(refused) = self.reader_child_refusal(effect) {
+                return Ok(Err(refused));
+            }
             if let Some(refused) = self.refusal_past_an_unmet_write(site, Some(call))? {
                 return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
                     effect,
                     ..refused
                 })));
             }
-            if let Err(refusal) = self.admit_run_call(RunCall::Bridge(effect))? {
-                return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                    effect,
-                    outcome: refusal.code,
-                    reason_codes: Vec::new(),
-                })));
-            }
-            self.callable_skill_lease()
+            let read_as = match self.admit_run_call(RunCall::Bridge(effect))? {
+                Ok(read_as) => read_as,
+                Err(refusal) => {
+                    return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        effect,
+                        outcome: refusal.code,
+                        reason_codes: Vec::new(),
+                    })));
+                }
+            };
+            Ok(self
+                .callable_skill_lease()?
+                .map(|lease| CallableSkillLease { read_as, ..lease }))
         })
     }
 
@@ -334,6 +396,7 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(Ok(CallableSkillLease {
             vault: Arc::clone(vault),
             leased,
+            read_as: None,
         }))
     }
 

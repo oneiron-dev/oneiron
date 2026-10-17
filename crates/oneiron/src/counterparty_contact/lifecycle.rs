@@ -2,23 +2,27 @@
 
 use super::codec::{
     counterparty_contact_body_key, decode_counterparty_contact_value,
-    encode_counterparty_contact_body,
+    encode_counterparty_contact_body, is_counterparty_contact_claim_predicate,
 };
 use super::storage::{
-    CONTACT_INDEX, counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
-    counterparty_contact_matches_channel_class, counterparty_contacts_by_party_full_scan,
-    read_counterparty_contact_in_txn, remove_counterparty_contact_from_every_party_channel,
+    CONTACT_INDEX, contact_deleted_in_txn, contact_ids_with_live_head_in_txn,
+    counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
+    counterparty_contact_matches_channel_class, read_counterparty_contact_in_txn,
+    remove_counterparty_contact_from_every_party_channel,
 };
 use super::types::{
     COUNTERPARTY_CONTACT_CLAIM_PREDICATES, COUNTERPARTY_CONTACT_SCHEMA_VERSION,
     CounterpartyContactRecord, CounterpartyOptOut, CounterpartyOptOutReason, KEY_SCHEMA_VERSION,
+    PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
 };
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
-use crate::claim::ClaimLifecycleStatus;
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
+use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use rmpv::Value;
 
@@ -101,6 +105,180 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
     crate::claim::supersession_diff::store_in_txn(vault, wtxn, *old_id, *new_id, revisions)
 }
 
+/// The write handles a family head close needs. A `Vault` holds them, and so
+/// does the batch pipeline, which has no `Vault`.
+#[derive(Clone, Copy)]
+pub(crate) struct ClaimHeadWriter<'a> {
+    pub(crate) store: &'a Store,
+    pub(crate) config: &'a crate::config::VaultConfig,
+    pub(crate) analyzer: &'a crate::analyzer::MultilingualAnalyzer,
+    pub(crate) text_index_trusted: bool,
+}
+
+impl ClaimHeadWriter<'_> {
+    /// Retracts every ACTIVE head of one family that `subject` carries, in
+    /// the caller's write transaction, on the engine-owned setting the family
+    /// writer closes old heads with: each is closed `retracted` with
+    /// `valid_to = now` and its envelope end refreshed, no successor. Heads
+    /// are found by their `claim_of` edges, so a delete calls this BEFORE it
+    /// tears them. Returns how many heads closed.
+    pub(crate) fn retract_subject_heads_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        subject: &EntityId,
+        in_family: fn(&str) -> bool,
+        now: u64,
+    ) -> Result<usize> {
+        let mut ops = Vec::new();
+        for entry in crate::ports::EdgeStoreRead::port_edges(
+            self.store,
+            &*wtxn,
+            subject,
+            crate::ports::EdgeDirection::In,
+            Some(crate::edge::EdgeKind::ClaimOf),
+            None,
+        )? {
+            let claim_id = entry?.target;
+            let Some(raw) = self.store.port_entity_record(&*wtxn, &claim_id)? else {
+                continue;
+            };
+            if raw.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let mut body = crate::claim::decode_claim_body(&raw.body, true)?;
+            if !in_family(&body.predicate)
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || !matches!(&body.subject, ClaimSubject::Entity(of) if of == subject)
+            {
+                continue;
+            }
+            body.lifecycle = ClaimLifecycleStatus::Retracted;
+            body.valid_to = Some(now);
+            ops.push(BatchOp::Put {
+                id: claim_id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: raw.occurred.start,
+                    end: now.max(raw.occurred.start),
+                },
+                learned_at: raw.learned_at,
+                data: crate::claim::encode_claim_body(&body)?,
+                allow_maintenance: false,
+                allow_reserved_predicate: true,
+                hub_sync_imported: false,
+            });
+        }
+        let closed = ops.len();
+        if closed > 0 {
+            apply_ops(
+                self.store,
+                self.config,
+                self.analyzer,
+                wtxn,
+                ops,
+                self.text_index_trusted,
+                false,
+                true,
+            )?;
+        }
+        Ok(closed)
+    }
+}
+
+/// Closes the own claim heads of the ChannelIdentity or contact a delete of
+/// `id` removes, in the delete's write transaction and BEFORE it tears the
+/// `claim_of` edges (OF-272): a ChannelIdentity's `channel_identity.*` heads,
+/// a contact's `counterparty_contact.*` heads. An id with no row is asked for
+/// contact heads, since a cache drop removes a contact's row and leaves its
+/// claims. Any other kind is left alone. Returns how many contact heads
+/// closed.
+pub(crate) fn close_family_claims_for_delete_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    now: u64,
+    text_index_trusted: bool,
+) -> Result<usize> {
+    let writer = ClaimHeadWriter {
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+    };
+    match store
+        .port_entity_record(&*wtxn, id)?
+        .map(|row| row.entity_type)
+    {
+        Some(ENTITY_TYPE_CHANNEL_IDENTITY) => {
+            crate::channel_identity::close_claim_heads_for_delete_in_txn(
+                &writer,
+                wtxn,
+                id,
+                ENTITY_TYPE_CHANNEL_IDENTITY,
+                now,
+            )?;
+            Ok(0)
+        }
+        Some(ENTITY_TYPE_COUNTERPARTY_CONTACT) | None => writer.retract_subject_heads_in_txn(
+            wtxn,
+            id,
+            is_counterparty_contact_claim_predicate,
+            now,
+        ),
+        Some(_) => Ok(0),
+    }
+}
+
+/// The batch `BatchOp::Delete` hook for the channel-actor families (OF-272),
+/// run in the batch's write transaction before the delete tears any edge.
+///
+/// It closes the deleted id's own family heads
+/// ([`close_family_claims_for_delete_in_txn`]) and, for a contact, stages the
+/// hard-erasure marker the physical delete otherwise leaves out: the
+/// permanent `dt:` marker readers and sync ingest consult, and the `pt:`
+/// propagation intent in the row's window (its `learned_at`, or `now` for a
+/// contact whose cache row was already dropped).
+pub(crate) fn retire_family_claims_for_batch_delete_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    now: u64,
+    text_index_trusted: bool,
+) -> Result<()> {
+    let row = store
+        .port_entity_record(&*wtxn, id)?
+        .map(|row| (row.entity_type, row.learned_at));
+    let contact_heads_closed = close_family_claims_for_delete_in_txn(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        id,
+        now,
+        text_index_trusted,
+    )?;
+    let window = match row {
+        Some((ENTITY_TYPE_COUNTERPARTY_CONTACT, learned_at)) => learned_at,
+        None if contact_heads_closed > 0 => now,
+        _ => return Ok(()),
+    };
+    crate::deletion::stage_engine_row_hard_erasure_in_txn(
+        store,
+        wtxn,
+        id,
+        window,
+        &crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: now,
+            request_id: *id.as_bytes(),
+        },
+    )
+}
+
 /// Re-derives the type-132 cache row for `contact_id` from claims, inside the
 /// caller's write transaction (ONE-1752).
 ///
@@ -150,9 +328,10 @@ pub(crate) fn rematerialize_contact_cache_in_txn(
 /// re-deriving the one contact it was handed: a party-wide head that left a
 /// sibling contact's row not-opted-out would leave the gate reading a stale
 /// "no" for a party that said stop (fail-open). The enumeration is the same
-/// mandatory full scan the send-time aggregate uses — the party-channel index
-/// cannot prove its own completeness at HEAD, and a bounded lookup that missed
-/// one row would reintroduce exactly that hole. Which heads then apply to each
+/// full walk of `counterparty_contact.counterparty` postings the send-time
+/// aggregate uses — the party-channel index cannot prove its own completeness
+/// at HEAD, and a bounded lookup that missed one contact would reintroduce
+/// exactly that hole. Which heads then apply to each
 /// row stays the fold's decision, so re-deriving a row is never a suppression
 /// source of its own.
 pub(crate) fn rematerialize_party_contact_cache_in_txn(
@@ -162,10 +341,21 @@ pub(crate) fn rematerialize_party_contact_cache_in_txn(
     channel_class: Option<&str>,
     now: u64,
 ) -> Result<()> {
+    // The targets are the party's contacts by their claims (OF-272), so a
+    // contact whose row a cache drop removed is re-derived too: its row comes
+    // back carrying the party's head instead of staying absent while the
+    // claims say it is a contact.
     let mut targets = Vec::new();
-    for (contact_id, record) in
-        counterparty_contacts_by_party_full_scan(&vault.store, &*wtxn, party_ref)?
-    {
+    for contact_id in contact_ids_with_live_head_in_txn(
+        &vault.store,
+        &*wtxn,
+        PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+        party_ref.trim(),
+    )? {
+        let Some(record) = live_counterparty_contact_heads_in_txn(vault, &*wtxn, &contact_id)?
+        else {
+            continue;
+        };
         if let Some(channel_class) = channel_class
             && !counterparty_contact_matches_channel_class(
                 &vault.store,
@@ -196,22 +386,81 @@ pub(super) fn counterparty_contact_record_from_claims_in_txn(
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
 ) -> Result<CounterpartyContactRecord> {
+    counterparty_contact_record_from_heads(contact_claim_bodies_in_txn(vault, rtxn, contact_id)?)
+}
+
+fn contact_claim_bodies_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<Vec<crate::claim::ClaimBody>> {
     let mut bodies = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
         if let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? {
             bodies.push(body);
         }
     }
-    counterparty_contact_record_from_heads(bodies)
+    Ok(bodies)
 }
 
-/// [`counterparty_contact_record_from_claims_in_txn`] for a reader that holds
-/// a `Store` and no `Vault`: the external-effect gate door (OF-272).
+/// The record `contact_id`'s own `counterparty_contact.*` heads describe, or
+/// `None` when it has none or was deleted: the contact family's existence
+/// question, answered from claims (OF-272). The type-132 row plays no part, so
+/// a supported cache drop changes nothing here, and a deleted contact is told
+/// apart by its deletion state (a hard delete or soft erase) or its torn
+/// `claim_of` edges (a batch delete), never by a missing row. A family with
+/// SOME heads still fails closed on a missing or doubled one.
+///
+/// Party-scoped STOP is NOT folded in: a writer moving the family's heads
+/// needs exactly what the family asserted, and a reader asking reachability
+/// wants [`counterparty_contact_in_claims_in_txn`].
+pub(super) fn live_counterparty_contact_heads_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<Option<CounterpartyContactRecord>> {
+    if contact_deleted_in_txn(&vault.store, rtxn, contact_id)? {
+        return Ok(None);
+    }
+    let bodies = contact_claim_bodies_in_txn(vault, rtxn, contact_id)?;
+    if !bodies.iter().any(is_live_contact_head) {
+        return Ok(None);
+    }
+    counterparty_contact_record_from_heads(bodies).map(Some)
+}
+
+/// The contact as every reader sees it: its own heads, with the party's
+/// standing `comm.opt_out` heads OR-folded in by the same fold the cache row's
+/// rebuild runs, so the answer equals the row whether or not the row is there
+/// (OF-272). This is the read door; `None` is "no such contact".
+pub(super) fn counterparty_contact_in_claims_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<Option<CounterpartyContactRecord>> {
+    let Some(mut record) = live_counterparty_contact_heads_in_txn(vault, rtxn, contact_id)? else {
+        return Ok(None);
+    };
+    fold_party_opt_out_heads_in_txn(vault, rtxn, &mut record)?;
+    Ok(Some(record))
+}
+
+fn is_live_contact_head(body: &crate::claim::ClaimBody) -> bool {
+    is_counterparty_contact_claim_predicate(&body.predicate)
+        && body.lifecycle == ClaimLifecycleStatus::Active
+        && !body.stale
+}
+
+/// [`live_counterparty_contact_heads_in_txn`] for a reader that holds a
+/// `Store` and no `Vault`: the external-effect gate door (OF-272). `None` when
+/// no live head is attached: a batch delete tears the contact's `claim_of`
+/// edges and leaves its claims' postings behind, and that contact is gone, not
+/// a corrupted family that holds every send to its party.
 pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
     store: &crate::store::Store,
     rtxn: &heed::RoTxn<'_>,
     contact_id: &EntityId,
-) -> Result<CounterpartyContactRecord> {
+) -> Result<Option<CounterpartyContactRecord>> {
     let mut bodies = Vec::new();
     for entry in crate::ports::EdgeStoreRead::port_edges(
         store,
@@ -228,7 +477,10 @@ pub(super) fn counterparty_contact_record_from_store_claims_in_txn(
             bodies.push(crate::claim::decode_claim_body(&raw.body, true)?);
         }
     }
-    counterparty_contact_record_from_heads(bodies)
+    if !bodies.iter().any(is_live_contact_head) {
+        return Ok(None);
+    }
+    counterparty_contact_record_from_heads(bodies).map(Some)
 }
 
 fn counterparty_contact_record_from_heads(

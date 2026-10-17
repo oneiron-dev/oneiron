@@ -243,10 +243,21 @@ you want to act as instead.
 | `Oneiron.pair(link)` | `{ memory, credential }`: a remote handle and the credential to store |
 | `handle.asActor(actorKey)` | a new handle bound to another actor |
 | `handle.inRoomTurn(roomRef)` | a new handle whose every verb runs as a turn in that room |
+| `handle.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `null` when embedded or before any call |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
 | `handle.vault.receipts(limit?)` | `FacadeReceipt[]` |
+
+Every other verb in the SDK verb table sits at its SDK path on the handle
+(`handle.vault.people.list(input)`, `handle.self.memory.diary(input)`, ...).
+Its input and result are typed by `Facade`, the wire declarations
+`scripts/sdk/generate.py` reads from the Rust types each row names, and its
+JSDoc is the row's own description. The keys are the engine's wire spelling
+(snake_case). Of the table's 170 facade rows, 148 inputs and 144 results are
+fully typed; the rest are typed down to a leaf that is opaque JSON by design (a
+claim's `value`, an entity `body`), and none is left untyped. The same
+declarations ship in `@oneiron/client` and, as TypedDicts, in the Python stubs.
 
 `vault.recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{ worldRef?, facet?, kinds? }`), `limit` (default

@@ -104,10 +104,8 @@ fn invalid() -> Error {
     crate::error::RecordError::InvalidProjectBody("goal intake admission missing or invalid").into()
 }
 fn current_claim(store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Result<(ClaimBody, Vec<u8>)> {
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
-        .ok_or_else(invalid)?;
+    let raw =
+        crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.ok_or_else(invalid)?;
     if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_CLAIM) {
         return Err(invalid());
     }
@@ -152,7 +150,8 @@ pub(crate) fn guard_claim_put(
             };
             if project_bytes != *project.as_bytes()
                 || payload_hash != *blake3::hash(payload).as_bytes()
-                || store.entities.get(txn, id.as_bytes())?.is_some()
+                || crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |_| Ok(()))?
+                    .is_some()
                 || body.lifecycle != ClaimLifecycleStatus::Active
             {
                 return Err(invalid());
@@ -191,10 +190,8 @@ pub(crate) fn admitted_claim_of_project(
     let Some(marker) = CLAIM_MARKERS.get(store, txn, &claim)? else {
         return Ok(false);
     };
-    let raw = store
-        .entities()
-        .get(txn, claim.as_bytes())?
-        .ok_or_else(invalid)?;
+    let raw =
+        crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)?.ok_or_else(invalid)?;
     if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_CLAIM) {
         return Err(invalid());
     }
@@ -387,9 +384,10 @@ pub(crate) fn precheck_delete(
         }
     }
     if let Some(kind) = super::super::project_type(store)
-        && store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-            EntityMetadataHeader::parse(&raw).is_some_and(|header| header.entity_type == kind)
-        })
+        && crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |raw| {
+            Ok(EntityMetadataHeader::parse(raw).is_some_and(|header| header.entity_type == kind))
+        })?
+        .unwrap_or(false)
         && let Some(project) =
             super::super::record::<super::super::ProjectRecord>(store, txn, id, kind)?
         && project.goal.is_some()
@@ -462,9 +460,10 @@ pub(crate) fn guard_goal_delete(store: &Store, txn: &RoTxn<'_>, id: EntityId) ->
         return Err(invalid());
     }
     if let Some(kind) = super::super::project_type(store)
-        && store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
-            EntityMetadataHeader::parse(&raw).is_some_and(|header| header.entity_type == kind)
-        })
+        && crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |raw| {
+            Ok(EntityMetadataHeader::parse(raw).is_some_and(|header| header.entity_type == kind))
+        })?
+        .unwrap_or(false)
         && let Some(project) =
             super::super::record::<super::super::ProjectRecord>(store, txn, id, kind)?
         && project.goal.is_some()

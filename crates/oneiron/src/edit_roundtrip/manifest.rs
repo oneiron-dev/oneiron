@@ -69,6 +69,13 @@ pub struct EditManifest {
     /// Typed slide judgments bound to exported modern comments, when present.
     #[serde(default)]
     pub slide_judgments: Vec<super::slides_review::SlideJudgment>,
+    /// Typed paragraph judgments bound to native Word comments, when present.
+    #[serde(default)]
+    pub paragraph_judgments: Vec<super::paragraph_review::ParagraphJudgment>,
+    /// The question those paragraph judgments answer, which a changed
+    /// paragraph is asked again (ARCH-0075 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paragraph_question: Option<crate::llm::decision::DecisionQuestion>,
 }
 
 impl EditManifest {

@@ -13,12 +13,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `examples/emit_revision.rs` | src | s | — | — | Produce one deterministic tracked-change sample for the external Word oracle |
 | `examples/resolve_docx.rs` | src | s | — | — | Resolve a DOCX revision in the pinned fork for an application oracle case |
+| `src/contract/mod.rs` | src | L | 35 struct · 7 enum · 1 trait · 11 fn · 6 const | AssetMedia, AssetOrigin, Call, ContractError, CreatedSlide, DeckAsset, DeckCreateArgs, DeckCreated +35 | The document engine's contract (ARCH-0075 section 2, "an organ crate with a hosted API"): one versioned… |
+| `src/contract/run.rs` | src | m | 1 crate-vis | — | The handlers behind [`super::execute`]: each op maps its args onto one native door and the door's refusals… |
 | `src/deck/animation.rs` | src | s | 3 struct · 2 enum · 2 fn · 1 crate-vis | AnimationIndex, AnimationTarget, Connection, TargetRole, TextRange | The animation and connector index |
 | `src/deck/colour.rs` | src | s | 3 struct · 1 enum · 1 crate-vis | Colour, ColourSpec, ColourTransform, Rgba | Colours stay symbolic: a scheme slot and its ordered transforms are kept as written, and the computed colour… |
 | `src/deck/fingerprint.rs` | src | s | 2 crate-vis | — | Content and render fingerprints |
 | `src/deck/fixture.rs` | src | s | 8 crate-vis | — | A synthetic ECMA-376 deck builder shared by the deck, design-plan and emission tests: the package plumbing… |
 | `src/deck/graph.rs` | src | s | 14 crate-vis | — | The deck's part graph: relationship targets resolved to part names, and the presentation, slide, layout… |
-| `src/deck/mod.rs` | src | m | 15 struct · 7 enum · 4 fn · 1 const · 3 re-export · 2 crate-vis | Affine, Ambiguity, Autofit, BodyView, Bullet, DeckError, DeckView, Dependency +14 | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
+| `src/deck/mod.rs` | src | m | 15 struct · 7 enum · 5 fn · 1 const · 3 re-export · 2 crate-vis | Affine, Ambiguity, Autofit, BodyView, Bullet, DeckError, DeckView, Dependency +14 | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
 | `src/deck/resolve.rs` | src | m | 15 crate-vis | — | The four property-specific resolvers (geometry, text body, paragraph, run) |
 | `src/deck/shapes.rs` | src | s | 3 crate-vis | — | The shape walk: every shape in document order with its identity evidence, placeholder, resolved geometry and… |
 | `src/deck/template.rs` | src | s | 4 struct · 1 enum · 1 fn | LayoutView, MasterView, Spacing, TemplateView, TextStyle | The template reader: masters and their layouts, each placeholder with its resolved geometry and the… |
@@ -32,16 +34,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/docx_body.rs` | src | s | 4 struct · 4 enum · 2 fn | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxParagraph, DocxRevision | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
 | `src/edit/check.rs` | src | m | 15 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/media.rs` | src | s | 5 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
-| `src/edit/mod.rs` | src | s | 5 struct · 3 enum · 1 fn · 1 mod · 2 re-export · 1 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, Target, ValueEdit, Xfrm | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
+| `src/edit/mod.rs` | src | m | 6 struct · 3 enum · 1 fn · 1 mod · 2 re-export · 1 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, RunProps, Target, ValueEdit +1 | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
+| `src/edit/structure/arrange.rs` | src | m | 4 crate-vis | — | The live-deck projector's shape verbs: a sibling reorder (z-order), an empty group framed over slide space… |
 | `src/edit/structure/check.rs` | src | m | 4 crate-vis | — | The independent check for structural edits |
-| `src/edit/structure/mod.rs` | src | m | 2 struct · 2 enum · 2 fn · 2 crate-vis | NewShape, Preset, StructureEdit, StructureReport | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
+| `src/edit/structure/mod.rs` | src | m | 3 struct · 2 enum · 2 fn · 2 crate-vis | NewGroup, NewShape, Preset, StructureEdit, StructureReport | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
 | `src/edit/structure/slides/check.rs` | src | m | 2 crate-vis | — | The independent check for slide-level edits |
-| `src/edit/structure/slides/mod.rs` | src | m | 5 crate-vis | — | Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and… |
+| `src/edit/structure/slides/lifecycle.rs` | src | s | 2 crate-vis | — | A blank slide over a layout, and a slide's removal from the list: the live-deck projector's slide verbs |
+| `src/edit/structure/slides/mod.rs` | src | m | 6 crate-vis | — | Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and… |
 | `src/edit/structure/slides/tests.rs` | test | m | — | — | Slide-level acceptance: a copy repairs its notes backlink, leaves the comments behind, keeps every… |
 | `src/edit/structure/tests.rs` | test | m | 1 crate-vis | — | ONE-2529 acceptance, first half (add, delete, reparent): high-water id allocation, the supported delete… |
 | `src/edit/structure/timing.rs` | src | s | 6 crate-vis | — | The delete cascade over a small, tested timing subset (ARCH-0077, "Animation dependencies") |
 | `src/edit/tests.rs` | test | L | 7 crate-vis | — | ONE-2528 acceptance: per verb, the edit changes only the declared fields and parts (exact part sets), keeps… |
-| `src/edit/text.rs` | src | m | 8 crate-vis | — | `set_text` and `replace_run_text` |
+| `src/edit/text.rs` | src | m | 9 crate-vis | — | `set_text`, `replace_run_text` and `set_run_props` |
 | `src/edit/transaction.rs` | src | L | 10 struct · 8 enum · 1 trait · 15 fn · 2 const | AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets +11 | Deck transactions (ARCH-0077, "Transactions and allowed part changes"): the unit the engine proposes and… |
 | `src/edit/xfrm.rs` | src | s | 6 crate-vis | — | `set_xfrm` and `move_in_slide_space`: a shape's own transform, attribute by attribute |
 | `src/edit/xml.rs` | src | s | 18 crate-vis | — | Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it… |
@@ -57,10 +61,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
-| `src/lib.rs` | src | s | 1 enum · 8 fn · 13 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
-| `src/live/deck_export.rs` | src | m | 6 struct · 1 enum · 5 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
+| `src/lib.rs` | src | s | 1 enum · 8 fn · 14 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
+| `src/live/deck_export.rs` | src | L | 6 struct · 1 enum · 8 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
 | `src/live/mod.rs` | src | s | 1 enum · 2 mod · 2 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
-| `src/live/pptx.rs` | src | L | 16 struct · 6 enum · 20 fn | ApproveScope, AttributionIndex, ChangeKind, Conflict, DeckDiff, DeckFork, DeckNode, DeckOp +14 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
+| `src/live/pptx.rs` | src | L | 20 struct · 6 enum · 24 fn · 3 crate-vis | ApproveScope, AttributionIndex, ChangeKind, Conflict, DeckDiff, DeckFork, DeckNode, DeckOp +18 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 2 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a… |
@@ -69,7 +73,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ooxml.rs` | src | m | 3 struct · 9 fn · 4 const | Node, XmlError, XmlTree | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 1 type · 2 re-export | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | L | 2 struct · 1 enum · 8 fn · 1 re-export | Editability, Limits, Package | ZIP central-directory reader and copy-through writer |
-| `src/retained_opc/package/parts.rs` | src | m | 1 struct · 8 fn · 5 crate-vis | Relationship | The add-part door |
+| `src/retained_opc/package/parts.rs` | src | m | 1 struct · 9 fn · 5 crate-vis | Relationship | The add-part door |
 | `src/retained_opc/xml/ffi.rs` | src | s | 17 crate-vis | — | Minimal Expat C ABI |
 | `src/retained_opc/xml/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Bounded source-indexed XML part, with checked semantic patches |
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |

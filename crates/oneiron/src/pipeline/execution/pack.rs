@@ -17,7 +17,7 @@ use crate::query_expansion::{
 use crate::retrieval_quality::{RetrievalDiagnostics, classify_retrieval_quality};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
 use crate::temporal::{TemporalHintReport, temporal_hints_from_query};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Instant;
 
 impl PipelineBuilder<'_> {
@@ -239,10 +239,7 @@ impl PipelineBuilder<'_> {
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
-                vector_completed: attempt
-                    .diagnostics
-                    .succeeded
-                    .contains(&RetrievalSignal::Vector),
+                vector_completed: dense_completed(&attempt.diagnostics),
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
@@ -555,7 +552,7 @@ impl PipelineBuilder<'_> {
         };
 
         Ok(PipelineOutput {
-            vector_completed: diagnostics.succeeded.contains(&RetrievalSignal::Vector),
+            vector_completed: dense_completed(&diagnostics),
             revisions,
             words_bound,
             retrieval_quality,
@@ -713,7 +710,7 @@ impl PipelineBuilder<'_> {
         &self,
         scores: &[ScoredEntity],
         signal_components: &HashMap<EntityId, Vec<crate::store::RetrievalScoreComponent>>,
-        media_evidence: &HashSet<EntityId>,
+        media_evidence: &super::super::budget::MediaEvidence,
         hyde_expanded: bool,
     ) -> Result<bool> {
         let floors = self.no_match_floors();
@@ -760,4 +757,13 @@ fn validate_access_factor_overrides(overrides: Option<&HashMap<EntityId, f32>>) 
     }
 
     Ok(())
+}
+
+/// Whether a dense list answered: the text index's, or a declared space's (the
+/// one-space preset's text slot reads only the latter), so the pack is not sparse.
+fn dense_completed(diagnostics: &RetrievalDiagnostics) -> bool {
+    diagnostics.succeeded.contains(&RetrievalSignal::Vector)
+        || diagnostics
+            .succeeded
+            .contains(&RetrievalSignal::MediaVector)
 }

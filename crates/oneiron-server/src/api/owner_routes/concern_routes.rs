@@ -1,0 +1,136 @@
+//! `/v1/owner/inbox/concern`: the owner reads one of the Coach's agent-health
+//! cards (OF-568) with its run-tree diagram, and settles it: confirmed,
+//! dismissed or unresolved. A settled card leaves "Waiting on you" until its
+//! evidence grows. The outcome never moves `learning.reliability`. The owner
+//! may also take the card's `ask_coach` move: the Coach's proposal lands on
+//! the card.
+
+use std::sync::Arc;
+
+use axum::Router;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Query, State};
+use axum::response::Json;
+use axum::routing::{get, post};
+use oneiron::dreamer_runner::maintenance::agent_health::{
+    AgentHealthCardView, AgentHealthMove, AgentHealthOutcome, ConcernCardSummary, ConcernMove,
+    ConcernMoveOutcome,
+};
+use serde::Deserialize;
+
+use super::{OwnerReply, blocking, owner};
+use crate::api::{json_payload, query_params};
+use crate::auth::CoreAuth;
+use crate::owner::{OwnerError, OwnerResult};
+use crate::server::SyncServer;
+
+pub(super) fn routes() -> Router<Arc<SyncServer>> {
+    Router::new()
+        .route("/inbox/concern", get(card))
+        .route("/inbox/concern/outcome", post(set_outcome))
+        .route("/inbox/concern/move", post(take_move))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConcernCard {
+    /// The card's `health:` handle, the row's `payload_ref`.
+    card: String,
+}
+
+/// `GET /v1/owner/inbox/concern?card=<health:…>`: one card, with the run its
+/// attempt is in and that attempt's node marked.
+async fn card(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<ConcernCard>, QueryRejection>,
+) -> OwnerReply<AgentHealthCardView> {
+    owner(&auth, &server)?;
+    let request = query_params(query)?;
+    let view = blocking(move || -> OwnerResult<AgentHealthCardView> {
+        server
+            .vault()
+            .agent_health_card_view(&request.card)?
+            .ok_or(OwnerError::NotFound("concern_card", request.card))
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConcernOutcome {
+    /// The card's `health:` handle, the row's `payload_ref`.
+    card: String,
+    /// `confirmed`, `dismissed` or `unresolved`.
+    outcome: String,
+}
+
+/// `POST /v1/owner/inbox/concern/outcome`: sets one card's outcome.
+async fn set_outcome(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ConcernOutcome>, JsonRejection>,
+) -> OwnerReply<ConcernCardSummary> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let card = blocking(move || -> OwnerResult<ConcernCardSummary> {
+        let outcome = AgentHealthOutcome::from_wire(&request.outcome).ok_or_else(|| {
+            OwnerError::Invalid("outcome is confirmed, dismissed or unresolved".to_owned())
+        })?;
+        match server
+            .vault()
+            .set_agent_health_outcome(&owner, &request.card, outcome)
+        {
+            Ok(card) => Ok(ConcernCardSummary::of(&card)),
+            Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => {
+                Err(OwnerError::NotFound("concern_card", request.card))
+            }
+            Err(error) => Err(error.into()),
+        }
+    })
+    .await?;
+    Ok(Json(card))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConcernMoveBody {
+    /// The card's `health:` handle, the row's `payload_ref`.
+    card: String,
+    /// `ask_coach`.
+    r#move: ConcernMove,
+}
+
+/// `POST /v1/owner/inbox/concern/move`: takes one of the card's moves. Only
+/// `ask_coach` runs here; asking again on the same evidence returns the
+/// standing ask.
+async fn take_move(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ConcernMoveBody>, JsonRejection>,
+) -> OwnerReply<ConcernMoveOutcome> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let outcome = blocking(move || -> OwnerResult<ConcernMoveOutcome> {
+        let ConcernMove::AskCoach = request.r#move;
+        let vault = server.vault();
+        let Some(card) = vault.agent_health_card(&request.card)? else {
+            return Err(OwnerError::NotFound("concern_card", request.card));
+        };
+        if !card.moves.contains(&AgentHealthMove::AskCoach) {
+            return Err(OwnerError::Invalid(
+                "this concern card proposes no ask_coach move".to_owned(),
+            ));
+        }
+        match vault.ask_coach_on_agent_health_card(&owner, &request.card) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => {
+                Err(OwnerError::NotFound("concern_card", request.card))
+            }
+            Err(error) => Err(error.into()),
+        }
+    })
+    .await?;
+    Ok(Json(outcome))
+}

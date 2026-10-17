@@ -91,32 +91,47 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
         now: (*now_secs)(),
         host_scope: None,
     };
+    let now = input.now;
+    let pass = driver.run_wake_pass_concurrent(input, &mut executors, cancel);
+    let report = match attachment {
+        None => pass.await.map_err(PassRunError::Failed),
+        Some(attachment) => {
+            let (result, served) = attachment.serve(Box::pin(pass)).await;
+            result.map_err(PassRunError::Failed).and_then(|report| {
+                served.map_err(|error| {
+                    PassRunError::Failed(oneiron::Error::InvalidConfig(format!(
+                        "pass attachment failed: {error}"
+                    )))
+                })?;
+                Ok(report)
+            })
+        }
+    };
     // The scheduled display projection runs on its own cadence even when
     // there is no consolidation attempt to admit. Only timer deadlines on
     // the designated home produce it; ordinary pushes cannot force a send.
+    // It runs once the pass is done, whatever the pass made of its work, so
+    // what that pass committed (a night's cleanup, its consolidations) is in
+    // this digest rather than the next.
     if matches!(tick, Tick::Deadline(_)) {
         // Digest rendering is a display projection, not admission authority
         // for an independently due attempt. Leave its work pending on error
         // and keep the failure observable without redriving this tick forever.
-        if let Err(error) = vault.emit_due_proactivity_digest(input.now, config.local_node_id) {
-            tracing::error!(
-                ?error,
-                "scheduled digest projection failed; attempt pass continues"
-            );
+        if let Err(error) = vault.emit_due_proactivity_digest(now, config.local_node_id) {
+            tracing::error!(?error, "scheduled digest projection failed");
+        }
+        // Each reader's due weave digest, on the same home-only timer.
+        if let Err(error) = vault.serve_due_weave_digests(now, config.local_node_id) {
+            tracing::error!(?error, "scheduled weave digests failed");
+        }
+        // The host's standing questions due on the home node (OF-506). Their
+        // text can quote the vault, so a failure logs by kind only.
+        drop(executors);
+        if let Err(error) = factory.run_home_timer(vault, now, config.local_node_id) {
+            tracing::error!(kind = ?error.kind(), "standing questions failed");
         }
     }
-    let pass = driver.run_wake_pass_concurrent(input, &mut executors, cancel);
-    let Some(attachment) = attachment else {
-        return pass.await.map_err(PassRunError::Failed);
-    };
-    let (result, served) = attachment.serve(Box::pin(pass)).await;
-    let report = result.map_err(PassRunError::Failed)?;
-    served.map_err(|error| {
-        PassRunError::Failed(oneiron::Error::InvalidConfig(format!(
-            "pass attachment failed: {error}"
-        )))
-    })?;
-    Ok(report)
+    report
 }
 
 /// The units ORDINARY pass execution may spend: the dialed total minus the

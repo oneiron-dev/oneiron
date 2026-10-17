@@ -74,7 +74,35 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        self.ensure_selectable(artifact_id, proposal, actor)?;
+        self.settle_select_carried(
+            artifact_id,
+            proposal,
+            made_by,
+            consent,
+            actor,
+            occurred,
+            learned_at,
+            None,
+        )
+    }
+
+    /// [`Vault::settle_select_edit_proposal_made_by`] for a held answer
+    /// proposal the engine carried onto the head at Keep (`carry` is
+    /// `Some`): its answers may name an older revision than its base, and
+    /// the answers it withdrew, if any, are recorded with the select.
+    #[expect(clippy::too_many_arguments)]
+    pub(super) fn settle_select_carried(
+        &self,
+        artifact_id: &EntityId,
+        proposal: &EditProposal,
+        made_by: Option<&MadeBy>,
+        consent: &SettleConsent,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        carry: Option<Option<&super::carry::UnitWithdrawal>>,
+    ) -> Result<SettleSelectOutcome> {
+        self.ensure_selectable(artifact_id, proposal, actor, carry.is_some())?;
         self.authorize_settle(consent, actor)?;
         // A deck proposal answering a thread settles under that thread's brief
         // when it rides a standing grant; the owner's own consent needs none.
@@ -241,6 +269,7 @@ impl Vault {
                         pptx_slide_creation_id_mints: Vec::new(),
                         pptx_review_identities: pptx_review_identities(proposal),
                         pptx_judgments: proposal.manifest.slide_judgments.clone(),
+                        docx_judgments: proposal.manifest.paragraph_judgments.clone(),
                         anchors: Vec::new(),
                         reason: Some("stale_base".to_owned()),
                         sheet_answers: proposal.sheet_answers.clone(),
@@ -376,16 +405,21 @@ impl Vault {
                         .collect(),
                     pptx_review_identities: pptx_review_identities(proposal),
                     pptx_judgments: proposal.manifest.slide_judgments.clone(),
+                    docx_judgments: proposal.manifest.paragraph_judgments.clone(),
                     anchors: settled_anchors_from_summary(&reanchor),
                     reason: None,
                     sheet_answers: proposal.sheet_answers.clone(),
                     deck: checked_deck.map(|checked| Box::new(checked.evidence)),
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
+                if let Some(Some(withdrawal)) = carry {
+                    self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
+                }
                 Ok((version, reanchor, record, None))
             })?;
 
         let receipt = settlement_receipt_record(*artifact_id, &record)?;
+        let receipt = self.with_withdrawn_units(*artifact_id, &record, receipt)?;
         Ok(SettleSelectOutcome {
             stranded_proposal,
             version,
@@ -411,6 +445,10 @@ impl Vault {
     ) -> Result<SettleDiscardOutcome> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
         crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
+        crate::edit_roundtrip::paragraph_review::verify_paragraph_judgments(proposal)?;
+        if let Some(bundle) = &proposal.sheet_answers {
+            bundle.ops()?;
+        }
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
@@ -430,9 +468,11 @@ impl Vault {
             pptx_slide_creation_id_mints: Vec::new(),
             pptx_review_identities: pptx_review_identities(proposal),
             pptx_judgments: proposal.manifest.slide_judgments.clone(),
+            docx_judgments: proposal.manifest.paragraph_judgments.clone(),
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
-            sheet_answers: None,
+            // The decisions stay on the record; only a Keep's are kept answers.
+            sheet_answers: proposal.sheet_answers.clone(),
             deck: None,
         };
         RECORD.encode_value(&record)?;
@@ -525,9 +565,9 @@ impl Vault {
                 artifact_id: *artifact_id,
                 proposal_ref: record.proposal_ref.clone(),
                 version,
-                question: bundle.question.clone(),
-                question_version: bundle.question_version.clone(),
-                principal: bundle.principal.clone(),
+                question: bundle.question.text.clone(),
+                question_version: bundle.question.version.to_string(),
+                principal: bundle.principal.to_hex(),
                 sheet: bundle.sheet.clone(),
                 answer,
                 kept_by: kept_by.clone(),
@@ -629,9 +669,15 @@ impl Vault {
         artifact_id: &EntityId,
         proposal: &EditProposal,
         actor: WriteActor,
+        carried: bool,
     ) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
         crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
+        if carried {
+            crate::edit_roundtrip::paragraph_review::verify_carried_paragraph_judgments(proposal)?;
+        } else {
+            crate::edit_roundtrip::paragraph_review::verify_paragraph_judgments(proposal)?;
+        }
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
         if !proposal.validation.ok {
@@ -671,6 +717,24 @@ impl Vault {
                 )));
             }
             verify_sheet_answer_bytes(bundle, Some(&source), Some(&proposal.new_bytes))?;
+            // A folder column answers for files read at a version: one that
+            // has moved since is not the file the answer read.
+            for pin in bundle
+                .answers
+                .iter()
+                .filter(|answer| answer.value.is_some())
+                .filter_map(|answer| answer.source.as_ref())
+            {
+                let current = match self.blob_artifact_head(&pin.id)? {
+                    Some(head) => self.read_blob_artifact_version(&pin.id, head.version)?,
+                    None => None,
+                };
+                if current.is_none_or(|bytes| blake3::hash(&bytes).as_bytes() != &pin.body_hash) {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "a file the typed answers read has changed since; ask again",
+                    )));
+                }
+            }
         }
         // The spreadsheet door cannot settle a disguised PowerPoint manifest.
         if proposal.format == OfficeFormat::Xlsx

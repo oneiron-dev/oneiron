@@ -20,10 +20,14 @@ pub use model::{
 
 mod capability;
 mod ceremony;
+mod escalation;
+pub use escalation::{HOLD_ALLOW, HOLD_DECLINE, HeldSigning, HeldSigningAnswer, HeldSigningState};
 mod principals;
 pub use capability::EsignCapability;
 pub(crate) use capability::recipient_capability_unrevoked_in;
-pub use ceremony::{ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningOutcome, SigningPage};
+pub use ceremony::{
+    ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningCaller, SigningOutcome, SigningPage,
+};
 pub use principals::{SigningAutonomy, SigningPrincipal};
 pub(crate) use principals::{automated_outbound_allowed, automated_signing_allowed};
 
@@ -38,6 +42,8 @@ pub use rate::{EsignRateCheck, EsignRateReceipt};
 pub mod render;
 mod seal;
 pub use seal::{EsignSealError, SealedDocument, SealedItem};
+mod seal_run;
+pub use seal_run::EsignSealRun;
 mod sealer;
 pub use sealer::{
     EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,

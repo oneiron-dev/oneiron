@@ -6,6 +6,7 @@
 mod ask_band;
 mod ask_facade;
 mod ask_guest;
+mod ask_limits;
 mod ask_option_link;
 mod ask_policy;
 mod ask_preflight;
@@ -16,10 +17,12 @@ pub(crate) use ask_soft_confirm::validate_dispatch as validate_ask_soft_confirm_
 mod ask_soft_confirm_delivery;
 mod ask_soft_confirm_types;
 mod ask_types;
+mod attendee_answer;
 mod board_task;
 pub(crate) use board_task::board_task_for_id;
 mod brief;
 mod consts;
+pub(crate) use consts::TASK_EXTERNAL_ATTEMPT_KIND;
 mod consult_fanout_admission;
 mod consult_fanout_facade;
 mod consult_fanout_resume;
@@ -30,17 +33,22 @@ mod consult_party_backfill;
 mod consult_payload;
 mod consult_result;
 mod create_facade;
+mod create_origin;
 mod create_spec;
 mod create_validation;
 mod decision_port;
 mod dormant_magistrate;
 mod entity_delta_facade;
+mod external_attempt;
+pub(crate) use external_attempt::decode as decode_external_task_attempt;
 mod fanout_check;
 mod follow_up;
 mod highway;
 mod highway_accept;
+mod highway_block;
 mod highway_post;
 mod highway_report;
+pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
 mod lifecycle_facade;
@@ -51,19 +59,27 @@ mod presence_diagnostics;
 mod presence_pages;
 mod presence_scan;
 mod project_ask;
+mod project_tradeoff;
+mod proposal_create;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
 mod refusal;
+mod report_journal;
 mod room_thread;
 mod route_receipts;
+mod runner_done;
 mod scheduling;
+mod subproject;
 mod symbol_lease;
 mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
-pub(crate) use wire_decode::{TaskBinding, leader_task_body_in, task_binding};
+pub(crate) use wire_decode::{
+    TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
+    task_is_blocked_in, task_text_in,
+};
 mod wire_encode;
 
 #[cfg(test)]
@@ -72,7 +88,7 @@ mod tests;
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
     ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutMode,
-    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope,
+    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, FanoutMeterRow,
 };
 pub use consult_ladder_facade::{
     CrossActorRoute, LadderTransitionReceipt, project_consult_ladder_state,
@@ -118,6 +134,7 @@ pub use highway_types::{
     TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskReport, TaskReportBody,
     TaskStatusQuery, TaskStatusView, TaskVia,
 };
+pub use runner_done::{RunnerDoneAnswer, RunnerDoneQuestion, runner_done_question};
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
@@ -179,7 +196,7 @@ pub(crate) fn open_thread_task_holder_in(
     }
 }
 
-pub(crate) use owner_index::index_owner_fact;
+pub(crate) use owner_index::{index_owner_fact, indexed_tasks_of_in};
 pub(crate) use policy_change_followup::{
     enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
 };
@@ -207,8 +224,17 @@ pub(crate) use symbol_lease::forget_symbols;
 mod recall_door;
 pub mod sdk;
 mod sdk_connector;
+mod sdk_diary;
+mod sdk_disclosure;
+mod sdk_embedding_space;
+mod sdk_guest_revoke;
 mod sdk_host;
+mod sdk_legal_hold;
 mod sdk_self;
+mod sdk_share;
+mod sdk_shared;
+mod sdk_shared_members;
+pub mod verb_hook_boundary;
 
 #[cfg(test)]
 mod ask_outcome_tests;
@@ -221,7 +247,10 @@ pub(crate) use ask_option_link::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use ask_record::waits_for_ask_group;
-pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
+pub(crate) use ask_record::{
+    AttendeeEntryFact, admit_attendee_entry_in_txn, ask_notice_at_in, attendee_entry_id,
+    guard_ask_fact_put, read_attendee_entry_in,
+};
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };

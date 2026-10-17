@@ -5,19 +5,24 @@
 //! the result bodies its rows name into one artifact under a key derived from
 //! the vault data key. The first backup mints that key, wrapped to this
 //! device, when the vault has none; a rehearsal or restore on this device
-//! unlocks it from the device wrap the backup carries. Each one is
+//! unlocks it from the device wrap the backup carries, and one on a host
+//! without that wrap from the password, passkey or escrow wrap it carries,
+//! trusting the signers the owner pinned. A restore where no vault is yet
+//! makes the vault there. Each one is
 //! written under a hidden partial name and renamed into place, so a listing
 //! never shows a half-written file. File names carry the vault's directory
 //! name and a hash of its full path, so vaults sharing one backup directory
 //! never list or prune each other's files, then a sequence number one past
 //! the highest already there. Retention orders by that number, never by the
 //! clock, so a clock that steps back cannot make a new backup look oldest.
+//! A backup holds every record its image carries, so while any legal hold
+//! stands none expires (ARCH-0038 #legal-hold).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use oneiron::recovery::checkpoint::{CheckpointKey, SideRestoreSource};
+use oneiron::recovery::checkpoint::{CheckpointKey, RestoreReason, SideRestoreSource};
 use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
 
@@ -95,7 +100,7 @@ pub(crate) struct BackupOutcome {
     pub(crate) backup: BackupRecord,
     /// BLAKE3 of the checkpoint image; a rehearsal reports the same id.
     pub(crate) checkpoint_id: String,
-    /// Older backups deleted to honour `keep`.
+    /// Older backups deleted to honour `keep`; none while a legal hold stands.
     pub(crate) pruned: Vec<String>,
 }
 
@@ -144,7 +149,11 @@ pub(crate) fn take_as(
     std::fs::rename(&partial, &path)?;
     sync_dir(&plan.dir)?;
     let bytes = std::fs::metadata(&path)?.len();
-    let pruned = prune(plan, &file)?;
+    let pruned = if vault.legal_hold_keeps_backups()? {
+        Vec::new()
+    } else {
+        prune(plan, &file)?
+    };
     Ok(BackupOutcome {
         backup: BackupRecord {
             file,
@@ -299,6 +308,25 @@ pub(crate) fn rehearse(
     rehearse_in(&std::env::temp_dir(), backup, config, keep_at, source)
 }
 
+/// [`rehearse`] with a key the caller unlocked and pinned, in place of the
+/// source's.
+pub(crate) fn rehearse_keyed(
+    backup: &Path,
+    config: oneiron::VaultConfig,
+    keep_at: Option<&Path>,
+    source: &SideRestoreSource,
+    key: CheckpointKey,
+) -> anyhow::Result<Rehearsal> {
+    rehearse_in_with(
+        &std::env::temp_dir(),
+        backup,
+        config,
+        keep_at,
+        source,
+        Some(key),
+    )
+}
+
 /// [`rehearse`], with a scratch directory it does not keep made under `temp`.
 pub(crate) fn rehearse_in(
     temp: &Path,
@@ -306,6 +334,17 @@ pub(crate) fn rehearse_in(
     config: oneiron::VaultConfig,
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
+) -> anyhow::Result<Rehearsal> {
+    rehearse_in_with(temp, backup, config, keep_at, source, None)
+}
+
+fn rehearse_in_with(
+    temp: &Path,
+    backup: &Path,
+    config: oneiron::VaultConfig,
+    keep_at: Option<&Path>,
+    source: &SideRestoreSource,
+    key: Option<CheckpointKey>,
 ) -> anyhow::Result<Rehearsal> {
     let scratch = match keep_at {
         Some(path) => path.to_path_buf(),
@@ -323,7 +362,7 @@ pub(crate) fn rehearse_in(
             .unwrap_or(Path::new("/")),
     )?;
     let scratch = Owned::create(scratch)?;
-    let outcome = rehearse_into(backup, config, &scratch.vault(), source);
+    let outcome = rehearse_into(backup, config, &scratch.vault(), source, key);
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
         scratch.remove();
@@ -339,10 +378,14 @@ fn rehearse_into(
     config: oneiron::VaultConfig,
     scratch: &Path,
     source: &SideRestoreSource,
+    key: Option<CheckpointKey>,
 ) -> anyhow::Result<Rehearsal> {
-    let key = source
-        .checkpoint_key(backup)
-        .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?;
+    let key = match key {
+        Some(key) => key,
+        None => source.checkpoint_key(backup).map_err(|error| {
+            anyhow::anyhow!("backup {} does not open: {error}", backup.display())
+        })?,
+    };
     // The copy sits beside the live vault, so its key custody forks: an erase
     // in a kept scratch copy never reaches the live vault's keys.
     let (restored, report) = oneiron::Vault::restore_checkpoint_beside(
@@ -514,11 +557,47 @@ pub(crate) fn restore_over(
     restore_over_syncing(backup, vault_path, config, keystore, exchange, sync_dir)
 }
 
+/// [`restore_over`] with a key the caller unlocked from another wrap the
+/// backup carries and pinned to the signers it trusts.
+pub(crate) fn restore_over_keyed(
+    backup: &Path,
+    vault_path: &Path,
+    config: oneiron::VaultConfig,
+    key: CheckpointKey,
+) -> anyhow::Result<Restored> {
+    restore_over_with(backup, vault_path, config, |_| Ok(key), exchange, sync_dir)
+}
+
 fn restore_over_syncing(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
     keystore: Option<Arc<dyn oneiron_keystore::DeviceKeystore>>,
+    swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
+) -> anyhow::Result<Restored> {
+    // This install's keystore unlocks the key from the device wrap the backup
+    // carries, and trusts the signers it holds.
+    let open_key = |vault_path: &Path| match keystore {
+        Some(keystore) => CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
+            .map(|key| key.trusting_device(keystore)),
+        None => CheckpointKey::unlock_on_this_device(backup, vault_path),
+    };
+    restore_over_with(
+        backup,
+        vault_path,
+        config,
+        |vault_path| open_key(vault_path).map_err(anyhow::Error::from),
+        swap,
+        sync_after_swap,
+    )
+}
+
+fn restore_over_with(
+    backup: &Path,
+    vault_path: &Path,
+    config: oneiron::VaultConfig,
+    open_key: impl FnOnce(&Path) -> anyhow::Result<CheckpointKey>,
     swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
@@ -541,15 +620,9 @@ fn restore_over_syncing(
         .ok_or_else(|| anyhow::anyhow!("vault path {} has no name", vault_path.display()))?
         .to_string_lossy()
         .into_owned();
-    // The backup opens before anything is made: this install's keystore
-    // unlocks its key from the device wrap it carries, and trusts the signers
-    // it holds.
-    let key = match keystore {
-        Some(keystore) => CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
-            .map(|key| key.trusting_device(keystore)),
-        None => CheckpointKey::unlock_on_this_device(backup, vault_path),
-    }
-    .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?;
+    // The backup opens before anything is made.
+    let key = open_key(vault_path.as_path())
+        .map_err(|error| anyhow::anyhow!("backup {} does not open: {error:#}", backup.display()))?;
     let stamp = file_stamp(now_unix_ms());
     let previous = vault_path.with_file_name(format!("{name}.pre-restore-{stamp}"));
     anyhow::ensure!(
@@ -666,6 +739,56 @@ fn restore_over_syncing(
         kinds,
         durability_warning,
     })
+}
+
+/// What a restore where no vault was made.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct RestoredFresh {
+    pub(crate) backup: PathBuf,
+    pub(crate) checkpoint_id: String,
+    pub(crate) vault: PathBuf,
+    pub(crate) kinds: BTreeMap<String, u64>,
+    pub(crate) entities: u64,
+}
+
+/// Restores `backup` into a new vault at `vault_path`, where none is: the
+/// restore on a clean host. The vault takes the backup's vault's place; its
+/// exterior key custody is whatever this host holds, which on a new host is
+/// none, so gate rows sealed under claim keys kept elsewhere do not come back.
+/// The vault comes back open, its writer lease held, for the caller to unlock
+/// its data key and wrap it to this install.
+pub(crate) fn restore_fresh(
+    backup: &Path,
+    vault_path: &Path,
+    config: oneiron::VaultConfig,
+    key: &CheckpointKey,
+) -> anyhow::Result<(oneiron::Vault, RestoredFresh)> {
+    let path = std::path::absolute(vault_path)?;
+    anyhow::ensure!(
+        !path.join("data.mdb").exists(),
+        "vault {} exists; a restore over it keeps its authority and custody",
+        path.display()
+    );
+    let (restored, report) = oneiron::Vault::restore_checkpoint(
+        backup,
+        key,
+        &path,
+        config,
+        RestoreReason::Restore,
+        now_unix_ms() / 1_000,
+    )
+    .map_err(|error| anyhow::anyhow!("backup {} does not restore: {error}", backup.display()))?;
+    let kinds = kind_counts(&restored)?;
+    Ok((
+        restored,
+        RestoredFresh {
+            backup: backup.to_path_buf(),
+            checkpoint_id: report.epoch.checkpoint_id,
+            vault: path,
+            entities: kinds.values().sum(),
+            kinds,
+        },
+    ))
 }
 
 /// What `oneiron restore --activate` did.

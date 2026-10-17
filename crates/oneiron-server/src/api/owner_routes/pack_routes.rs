@@ -3,7 +3,8 @@
 //! lists what is installed, and binds or dials its hooks. Hub refs sync at
 //! their stored policy, and hub skills import, sync, restore and read their
 //! receipts here (OF-213). The organ inventory and the owner's organ build
-//! upload live here too (OF-575).
+//! upload live here too (OF-575), and so do the Slack app's manifest and
+//! install link (OF-519).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,9 +26,15 @@ use oneiron::skill_hub::{
 };
 use serde::{Deserialize, Serialize};
 
+use oneiron::lens::{GeneratedUiCard, GeneratedUiStateSnapshot};
+use oneiron::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
+
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
+use crate::builtin_host::{
+    HostConnectionChecks, ProviderSetup, public_origin, slack_app_manifest, start_slack_install,
+};
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
@@ -41,9 +48,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/packs", get(installed).post(put))
         .route("/packs/install", post(install_from_hub))
+        .route("/packs/setup", get(setup_view))
+        .route("/packs/setup/prepare", post(setup_prepare))
+        .route("/packs/setup/answer", post(setup_answer))
+        .route("/packs/setup/verify", post(setup_verify))
+        .route("/packs/slack/manifest", get(slack_manifest))
+        .route("/packs/slack/install", post(slack_install))
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
+        .route("/packs/hooks/qualify", post(qualify_hooks))
         .route("/packs/hooks/enabled", post(set_hook_enabled))
+        .route("/packs/remove", post(remove_pack))
         .route("/packs/ref-sync", get(ref_sync).put(set_ref_sync))
         .route("/packs/sync", post(sync_pack))
         .route("/packs/organs", get(pack_organs))
@@ -312,6 +327,48 @@ async fn bind_hooks(
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct QualifyHooks {
+    /// The Candidate pack's source, as 32 hex (its receipt's `source_id`).
+    source: String,
+}
+
+#[derive(Serialize)]
+struct HookQualification {
+    #[serde(flatten)]
+    put: PackPut,
+    replays: Vec<oneiron::skill_hub::pack_catalog::PackHookReplay>,
+}
+
+/// `POST /v1/owner/packs/hooks/qualify`: a Candidate hub pack's hooks take
+/// their test, a replay over past entries that lands nothing. A clean replay
+/// installs the pack; the replays come back either way.
+async fn qualify_hooks(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<QualifyHooks>, JsonRejection>,
+) -> OwnerReply<HookQualification> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let runtime = server.hook_runtime.get().cloned();
+    let qualified = blocking(move || {
+        let runtime = runtime
+            .ok_or_else(|| OwnerError::Refused("no hook sandbox runs on this server".to_owned()))?;
+        let source = EntityId::from_hex(&request.source)
+            .map_err(|_| OwnerError::Invalid("source is not an entity id".to_owned()))?;
+        let qualified = server
+            .vault()
+            .qualify_pack_hooks(&owner, runtime.as_ref(), source)?;
+        Ok(HookQualification {
+            put: PackPut::from(qualified.disposition),
+            replays: qualified.replays,
+        })
+    })
+    .await?;
+    Ok(Json(qualified))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HookEnabled {
     /// The binding claim, as 32 hex.
     binding: String,
@@ -335,6 +392,20 @@ async fn set_hook_enabled(
     })
     .await?;
     Ok(Json(()))
+}
+
+/// `POST /v1/owner/packs/remove`: the owner removes an installed pack. Its
+/// receipt leaves the Active catalog and every hook binding of it stops; a
+/// built-in goes back to its Candidate. Replies with the removed receipt.
+async fn remove_pack(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<BindHooks>, JsonRejection>,
+) -> OwnerReply<PackInstallReceipt> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let removed = blocking(move || Ok(server.vault().remove_pack(&owner, &request.pack)?)).await?;
+    Ok(Json(removed))
 }
 
 /// `GET /v1/owner/packs/organs`: every organ of an Active installation, with
@@ -379,7 +450,9 @@ async fn put_organ_build(
             .map_err(|error| OwnerError::Host(error.into()))?
             .len();
         if length > MAX_ORGAN_BUILD_BYTES {
-            return Err(OwnerError::Invalid("the organ build is too large".to_owned()));
+            return Err(OwnerError::Invalid(
+                "the organ build is too large".to_owned(),
+            ));
         }
         let bytes = std::fs::read(&request.path).map_err(|error| OwnerError::Host(error.into()))?;
         Ok(server.vault().put_pack_organ_build(
@@ -878,4 +951,262 @@ async fn approve_skill_activation(
     })
     .await?;
     Ok(Json(row))
+}
+
+/// One pack's setup: by name, and by content hash when several sources wait.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupKey {
+    pack: String,
+    /// One exact source; else the Active one, or the pack's one Candidate.
+    #[serde(default)]
+    source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupAnswerRequest {
+    pack: String,
+    #[serde(default)]
+    source: Option<String>,
+    /// A typed answer.
+    #[serde(default)]
+    answer: Option<PackSetupAnswer>,
+    /// Or one action from the setup's cards, with the card's `$state`.
+    #[serde(default)]
+    card_action: Option<PackSetupCardActionRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupCardActionRequest {
+    action_id: String,
+    #[serde(default)]
+    state: GeneratedUiStateSnapshot,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackSetupVerifyRequest {
+    pack: String,
+    #[serde(default)]
+    source: Option<String>,
+    connection: String,
+}
+
+/// The setup, its GenUI cards and its plain text.
+#[derive(Serialize)]
+struct PackSetupReply {
+    setup: PackSetupView,
+    cards: Vec<GeneratedUiCard>,
+    text: String,
+    /// A built-in channel's provider URLs at this host, and Slack's manifest.
+    #[serde(flatten)]
+    provider: ProviderSetup,
+    /// Set when a card asked to store a credential: the owner secrets door
+    /// takes the value, then a `secret_stored` answer pins its record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    store_secret: Option<PackSetupStoreSecret>,
+}
+
+#[derive(Serialize)]
+struct PackSetupStoreSecret {
+    door: &'static str,
+    connection: String,
+    name: String,
+    /// The binding the stored credential needs, with the read scope.
+    effector: String,
+}
+
+impl PackSetupReply {
+    fn new(setup: PackSetupView, server: &SyncServer) -> Result<Self, OwnerError> {
+        let provider = ProviderSetup::for_pack(
+            &setup.pack_name,
+            server.config.oauth_resource_indicator.as_deref(),
+        )?;
+        Ok(Self {
+            cards: setup.cards()?,
+            text: setup.text() + &provider.text(),
+            setup,
+            provider,
+            store_secret: None,
+        })
+    }
+}
+
+/// `GET /v1/owner/packs/setup?pack=&source=`: the owner's guided setup of one
+/// pack (OF-378), readable while the pack is still a Candidate.
+async fn setup_view(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<PackSetupKey>, QueryRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let key = query_params(query)?;
+    let reply = blocking(move || {
+        PackSetupReply::new(
+            server
+                .vault()
+                .pack_setup(&owner, &key.pack, key.source.as_deref())?,
+            &server,
+        )
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/prepare`: open, or resume, the setup. Opening
+/// grants nothing.
+async fn setup_prepare(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupKey>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        PackSetupReply::new(
+            server
+                .vault()
+                .prepare_pack_setup(&owner, &request.pack, request.source.as_deref())?,
+            &server,
+        )
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/answer`: one typed answer, or one card action.
+/// A credential value never comes here: a card's store button answers with
+/// the owner secrets door to open.
+async fn setup_answer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupAnswerRequest>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        let vault = server.vault();
+        let source = request.source.as_deref();
+        let answer = match (request.answer, request.card_action) {
+            (Some(answer), None) => answer,
+            (None, Some(card)) => {
+                let view = vault.pack_setup(&owner, &request.pack, source)?;
+                match view.card_action(&card.action_id, &card.state)? {
+                    PackSetupCardAction::Answer(answer) => answer,
+                    PackSetupCardAction::Verify { connection } => {
+                        let checks = HostConnectionChecks::new(&server)?;
+                        return PackSetupReply::new(
+                            vault.verify_pack_connection(
+                                &owner,
+                                &request.pack,
+                                source,
+                                &connection,
+                                &checks,
+                            )?,
+                            &server,
+                        );
+                    }
+                    PackSetupCardAction::StoreSecret {
+                        connection,
+                        secret,
+                        effector,
+                    } => {
+                        let mut reply = PackSetupReply::new(view, &server)?;
+                        reply.store_secret = Some(PackSetupStoreSecret {
+                            door: "/v1/owner/secrets/register",
+                            connection,
+                            name: secret,
+                            effector,
+                        });
+                        return Ok(reply);
+                    }
+                }
+            }
+            _ => {
+                return Err(OwnerError::Invalid(
+                    "send exactly one of answer or card_action".to_owned(),
+                ));
+            }
+        };
+        PackSetupReply::new(
+            vault.answer_pack_setup(&owner, &request.pack, source, &answer)?,
+            &server,
+        )
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/packs/setup/verify`: check one connection before the pack
+/// uses it. The check is the engine's fixed read-only provider call for the
+/// declared check name; a pack never names a URL.
+async fn setup_verify(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PackSetupVerifyRequest>, JsonRejection>,
+) -> OwnerReply<PackSetupReply> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        let checks = HostConnectionChecks::new(&server)?;
+        PackSetupReply::new(
+            server.vault().verify_pack_connection(
+                &owner,
+                &request.pack,
+                request.source.as_deref(),
+                &request.connection,
+                &checks,
+            )?,
+            &server,
+        )
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `GET /v1/owner/packs/slack/manifest`: the Slack app manifest at this
+/// host's public origin, to paste at api.slack.com/apps (OF-519). It needs
+/// no checked connection, since the app is made first.
+async fn slack_manifest(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<serde_json::Value> {
+    owner(&auth, &server)?;
+    let manifest = blocking(move || {
+        let origin =
+            public_origin(server.config.oauth_resource_indicator.as_deref()).ok_or_else(|| {
+                OwnerError::Invalid(
+                    "this host has no public https origin; set oauth_resource_indicator to it first"
+                        .to_owned(),
+                )
+            })?;
+        Ok(slack_app_manifest(&origin)?)
+    })
+    .await?;
+    Ok(Json(manifest))
+}
+
+/// The Slack setup to install for: by content hash when several wait.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlackInstallRequest {
+    #[serde(default)]
+    source: Option<String>,
+}
+
+/// `POST /v1/owner/packs/slack/install`: one link that installs the Slack
+/// app to the owner's workspace (OF-519). Slack's redirect redeems it once,
+/// within ten minutes, and the host stores and checks the bot token under
+/// this owner's proof.
+async fn slack_install(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SlackInstallRequest>, JsonRejection>,
+) -> OwnerReply<crate::builtin_host::SlackInstallLink> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let link = blocking(move || start_slack_install(&server, owner, request.source)).await?;
+    Ok(Json(link))
 }

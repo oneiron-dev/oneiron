@@ -66,10 +66,15 @@ pub(super) async fn serve_with_config(
     let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, vault_config.clone());
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(&config);
+    #[cfg(unix)]
+    let folder_rescans = super::history_import::notes::folder::FolderRescans::from_config(&config);
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
     config.keystore.install_on(&vault, &config.vault_path);
+    if let Some(embedding) = &config.embedding {
+        embedding.apply_to(&vault)?;
+    }
     #[cfg(unix)]
     if let Err(error) = vault.collect_result_bodies(4096) {
         tracing::warn!(%error, "result body collection at start failed");
@@ -150,6 +155,12 @@ pub(super) async fn serve_with_config(
                 .as_ref()
                 .map(crate::config::BrowserConfig::guest),
         )
+        .with_desktop_guest(
+            config
+                .desktop
+                .as_ref()
+                .map(crate::config::DesktopConfig::guest),
+        )
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
@@ -185,6 +196,8 @@ pub(super) async fn serve_with_config(
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
     let sync_server = Arc::new(sync_server);
+    // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
+    crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
     // The vault's first oversight receipts, before the host's own workers
     // start: a vault that cannot sign them never reports ready.
     let oversight = sync_server
@@ -194,6 +207,12 @@ pub(super) async fn serve_with_config(
     // A wake pass keeps a plugged-in laptop awake until it ends; on battery
     // normal idle sleep holds (ruled 2026-10-08).
     let awake = host.keep_awake(AwakePolicy::default());
+    // A live model run holds the same assertion through each admitted call,
+    // not only a wake pass (Docs Q18).
+    oneiron_vault_contract::host_adapters::hold_awake_for_runs({
+        let awake = awake.clone();
+        move || Box::new(awake.hold()) as Box<dyn Send>
+    });
     let admit = crate::server::admit_every_pass();
     let lifecycle = sync_server.spawn_lifecycle_scheduler(Arc::new(move || {
         let pass = admit()?;
@@ -202,9 +221,61 @@ pub(super) async fn serve_with_config(
     let mut workers = sync_server.spawn_slot_workers();
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
+    // Crossed thresholds ask the ladder whether everything is okay (OF-520).
+    workers.push(crate::wire_health::spawn(&sync_server));
+    // Due standing questions are answered through the ladder (OF-506).
+    if !ai.bind_question_timer(&sync_server) {
+        workers.push(crate::decision_graph::spawn(&sync_server));
+    }
+    // Uncertain identities are decided, or asked of the person (OF-123).
+    workers.push(crate::ai_host::identity::spawn(&sync_server));
+    // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
+    workers.push(crate::ai_host::coach_heal::spawn(
+        &sync_server,
+        config.failure_signals.publisher_candidates()?,
+    ));
+    // The nightly Coach jobs that need the host's model or rules (OF-420).
+    workers.push(crate::ai_host::coach_host::spawn(&sync_server));
+    // Failure signals reach the deployment's publisher (OF-380).
+    workers.extend(crate::ai_host::failure_signals::spawn(
+        &sync_server,
+        crate::ai_host::failure_signals::FailureSignalHost::new(
+            &config.failure_signals,
+            config.privacy_posture == oneiron::HostingPrivacyPosture::Hosted,
+            std::env::var("ONEIRON_FAILURE_SIGNALS_TOKEN")
+                .ok()
+                .filter(|token| !token.is_empty())
+                .map(zeroize::Zeroizing::new),
+        ),
+        crate::server::admit_every_pass(),
+    ));
+    // The owner's model-graded detectors read the retrieval telemetry (OF-418).
+    workers.extend(crate::ai_host::self_heal_detectors::spawn(
+        &sync_server,
+        &config.self_heal,
+    ));
+    workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
+    // Approved sends leave through the connector executor (OF-187).
+    workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
+    // Checked built-in channels and their provider webhooks (OF-519).
+    workers.push(crate::builtin_host::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
+    // Documents whose signing finished are sealed as a task (OF-415).
+    #[cfg(unix)]
+    workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(
+        &sync_server,
+    )));
+    workers.push(crate::api::spawn_esign_hold_worker(Arc::clone(
+        &sync_server,
+    )));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
+    // Attached folders rescan after the import queue starts (OF-554).
+    #[cfg(unix)]
+    workers.extend(folder_rescans.map(|rescans| rescans.spawn(Arc::clone(&sync_server))));
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, mut stopped) = tokio::sync::watch::channel(false);
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
@@ -212,17 +283,27 @@ pub(super) async fn serve_with_config(
     if config.hooks {
         workers.extend(spawn_fact_hooks(&sync_server, stopped.clone()).await);
     }
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
+    }
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
-    let mesh_vault = Arc::clone(&sync_server.vault);
+    // The server's own voice loop (OF-410): off unless `[models.voice]`
+    // names its socket.
+    #[cfg(unix)]
+    let voice = crate::voice_host::VoiceBoot::start(
+        &sync_server,
+        config.models.as_ref().map(|models| &models.voice),
+    );
+    let mesh_server = Arc::clone(&sync_server);
     let app = build_app(sync_server).layer(cors_layer);
     // The paired-machine mesh listener (OF-535): off unless the host names
     // its bind address.
     let mesh = crate::handler::mesh::start(
-        mesh_vault,
+        mesh_server,
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
         config.limits.connections().header_read_timeout,
@@ -272,6 +353,12 @@ pub(super) async fn serve_with_config(
     if let Some(mesh) = mesh {
         mesh.stop().await;
     }
+    // A voice call in flight ends through its own teardown before the
+    // models it speaks on stop.
+    #[cfg(unix)]
+    if let Some(voice) = voice {
+        voice.stop().await;
+    }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;
     // A receipt write already admitted ends before the process does.
@@ -307,11 +394,22 @@ async fn spawn_fact_hooks(
     .await
     .and_then(|built| built);
     match built {
-        Ok(sandbox) => Some(FactHookRunner::spawn(
-            Arc::clone(server.vault()),
-            Arc::new(sandbox),
-            stop,
-        )),
+        Ok(sandbox) => {
+            let runtime: Arc<dyn oneiron::runtime_hooks::HookBodyRuntime> = Arc::new(sandbox);
+            // `vault.hooks.replay` replays on the runner's own sandbox.
+            let _ = server.hook_runtime.set(Arc::clone(&runtime));
+            // Verb hooks run on it too: one sandbox per process.
+            server.vault().install_hook_runtime(Arc::clone(&runtime));
+            // Generative fact hooks ask `ai.verdict` on serve's own ladder.
+            let verdict: Arc<dyn oneiron::runtime_hooks::HookVerdict> =
+                Arc::new(crate::hook_verdict::ServerHookVerdict::new(server));
+            Some(FactHookRunner::spawn(
+                Arc::clone(server.vault()),
+                runtime,
+                Some(verdict),
+                stop,
+            ))
+        }
         Err(error) => {
             tracing::warn!(%error, "hook sandbox did not load; fact hooks are off");
             None

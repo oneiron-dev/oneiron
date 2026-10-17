@@ -14,12 +14,14 @@ use crate::federation::{
     Ceiling, FederationDirectionScope, FederationGrantScope, Position, ScopeAxis, ScopeId,
     base_world_axis, decode_federation_grant_body,
 };
+use crate::provenance::birth::WithheldKey;
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::sync::bridge::parse_edge_key;
 use crate::sync::local_claims::withheld_claim_carriers;
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
+use crate::sync::row_birth::{BirthReach, copy_births_within};
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
@@ -204,7 +206,11 @@ pub(super) fn effective_scope_for_grant(
         .map(Ceiling::new)
 }
 
-pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> Result<LoroDoc> {
+pub(super) fn strip_guest_share_metadata(
+    source: &LoroDoc,
+    key: &WindowKey,
+    withheld: &WithheldKey,
+) -> Result<LoroDoc> {
     let out = create_window_doc("guest-share", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -254,9 +260,9 @@ pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> R
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
-    // Its NOTEs already passed the selection that made `source`, and so did
-    // the births of the rows it kept.
-    crate::sync::row_birth::copy_births_for_entities(source, &out)?;
+    // Its NOTEs already passed the selection that made `source`. A guest is
+    // another vault, as far as its rows' births go.
+    copy_births_within(source, &out, BirthReach::OtherVault(withheld))?;
     crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
     out.commit();
     Ok(out)
@@ -322,8 +328,16 @@ fn authorized_base_edge_endpoints(
                 Err(error) => return Err(error),
             };
             reverse_rematerialize_with(vault, &base, &base_key, withhold)?;
-            let selected =
-                filter_window_doc(vault, &base, &base_key, selector, position, withhold)?;
+            // Read only for what it selects: no birth is copied.
+            let selected = filter_window_doc(
+                vault,
+                &base,
+                &base_key,
+                selector,
+                position,
+                withhold,
+                BirthReach::OtherVault(&WithheldKey::fresh()),
+            )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -339,7 +353,7 @@ fn authorized_base_edge_endpoints(
 
 /// `withhold` names the worlds kept off the machine the export serves. Every
 /// export door withholds; promotion authority asks only what the grant
-/// covers.
+/// covers. `reach` says where the shipped rows' births may go.
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -347,6 +361,7 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     position: &Position,
     withhold: Withhold<'_>,
+    reach: BirthReach<'_>,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -743,8 +758,9 @@ pub(super) fn filter_window_doc(
         }
     });
 
-    // Rule A: a birth crosses only beside an owner this filter shipped.
-    crate::sync::row_birth::copy_births_for_entities(source, &out)?;
+    // Rule A: a birth crosses only beside an owner this filter shipped, and
+    // only as far as `reach` lets it.
+    copy_births_within(source, &out, reach)?;
     crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
     out.commit();
     Ok(out)

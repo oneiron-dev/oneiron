@@ -2,6 +2,7 @@
 
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use sha2::Digest;
 use std::collections::BTreeSet;
 
@@ -61,6 +62,10 @@ pub struct Share {
     pub revoked_at: Option<u64>,
     /// Exclusive expiry in Unix seconds.
     pub expires_at: Option<u64>,
+    /// The saved mention `recipient_ref` came from, when an agent named the
+    /// person (OF-123 act-now guard): admission refuses while that mention is
+    /// unsettled. Not stored with the grant; a share read back carries none.
+    pub mention: Option<crate::outbound::MentionProvenance>,
 }
 
 /// Optional request narrowing, never evidence of the recipient's current authority.
@@ -127,6 +132,7 @@ impl Share {
             created_at: grant.created_at,
             revoked_at: grant.revoked_at,
             expires_at: grant.expires_at,
+            mention: None,
         })
     }
 
@@ -338,16 +344,24 @@ pub(crate) fn share_effect_target(
     id: &EntityId,
     issuer: &WriteActor,
     share: &Share,
+    travel: &crate::share_travel::TravelChoice,
 ) -> Result<String> {
     let mut grant = share.grant();
     grant.status = AccessGrantStatus::Active;
     grant.revoked_at = None;
     let mut hash = Sha256::new();
-    hash.update(b"oneiron.share.effect.v1\0");
+    hash.update(b"oneiron.share.effect.v2\0");
     hash.update(id.as_bytes());
     hash.update(issuer.entity_ref().as_bytes());
     hash.update([issuer.actor_class() as u8]);
     hash.update(encode_access_grant_body(&grant)?);
+    // OF-491: the born-with text the sharer chose to send is part of what was
+    // approved. An approval to share a brief alone cannot release its prompt.
+    hash.update((travel.born_with.len() as u64).to_be_bytes());
+    for field in &travel.born_with {
+        hash.update(field.as_str().as_bytes());
+        hash.update(b"\0");
+    }
     Ok(format!(
         "share:brief:{}",
         crate::entity_id::bytes_to_hex_lower(&hash.finalize())
@@ -380,7 +394,8 @@ fn read_admitted_share_in_txn(
     let Some(admission) = ShareAdmission::decode(&bytes) else {
         return Ok(None);
     };
-    let target = share_effect_target(id, &admission.issuer, &share)?;
+    let travel = crate::share_travel::brief_travel_for_store_in_txn(store, txn, id)?;
+    let target = share_effect_target(id, &admission.issuer, &share, &travel)?;
     let digest: [u8; 32] = Sha256::digest(target.as_bytes()).into();
     if admission.digest != digest || admission.revoked_at != share.revoked_at {
         return Ok(None);
@@ -506,12 +521,30 @@ impl Vault {
 
     /// Creates an active share only after recording an allowing external-effect decision.
     /// The transport must derive `issuer` from the authenticated principal, not request data.
-    /// Pending and denied decisions are durable but never create a grant.
+    /// Pending and denied decisions are durable but never create a grant. The brief's
+    /// born-with text stays home; [`Self::create_share_travelling`] lets the sharer send it.
     pub fn create_share(
         &self,
         share_id: &EntityId,
         issuer: &WriteActor,
         share: &Share,
+    ) -> Result<()> {
+        self.create_share_travelling(
+            share_id,
+            issuer,
+            share,
+            &crate::share_travel::TravelChoice::default_for(crate::share_travel::TravelKind::Brief),
+        )
+    }
+
+    /// [`Self::create_share`], with the born-with text of the brief the sharer
+    /// chose to send (OF-491), fixed in the transaction that admits the share.
+    pub fn create_share_travelling(
+        &self,
+        share_id: &EntityId,
+        issuer: &WriteActor,
+        share: &Share,
+        travel: &crate::share_travel::TravelChoice,
     ) -> Result<()> {
         let grant = share.grant();
         let data = encode_access_grant_body(&grant)?;
@@ -533,9 +566,7 @@ impl Vault {
             }
             if self
                 .store
-                .sync_state
-                .get(&txn, &crate::deletion::local_hard_delete_key(&id))?
-                .is_some()
+                .port_deletion_marked(&txn, DeletionMarker::HardDelete, &id)?
             {
                 return Err(Error::InvariantViolation(
                     "cannot share a hard-deleted brief",
@@ -543,8 +574,25 @@ impl Vault {
             }
         }
         verify_share_actor(&self.store, &txn, issuer)?;
-        let (gate_id, decision) =
-            crate::gate::check_share_create_policy(&self.store, &mut txn, share_id, issuer, share)?;
+        // OF-123 act-now guard: a recipient taken from a saved mention waits
+        // until that mention is settled. Refused before the Gate records
+        // anything, so nothing is written.
+        if let Some(mention) = share.mention.as_ref()
+            && let Some(name) =
+                crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+                    self, &txn, mention,
+                )?
+        {
+            return Err(Error::Record(RecordError::IdentityUnsettled { name }));
+        }
+        let (gate_id, decision) = crate::gate::check_share_create_policy(
+            &self.store,
+            &mut txn,
+            share_id,
+            issuer,
+            share,
+            travel,
+        )?;
         if decision.outcome() != GateOutcome::Allow {
             let error = Error::Gate(GateError::GateWriteRejected {
                 outcome: decision.outcome().as_str(),
@@ -557,7 +605,7 @@ impl Vault {
             txn.commit()?;
             return Err(error);
         }
-        let target = share_effect_target(share_id, issuer, share)?;
+        let target = share_effect_target(share_id, issuer, share, travel)?;
         let admission = ShareAdmission {
             issuer: *issuer,
             gate_id,
@@ -567,6 +615,7 @@ impl Vault {
         };
         self.apply_access_grant_body(&mut txn, share_id, share.created_at, data)?;
         ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
+        crate::share_travel::put_brief_travel_in_txn(self, &mut txn, share_id, travel)?;
         txn.commit()?;
         Ok(())
     }

@@ -13,23 +13,48 @@
 //! - `generated_ui` — the Generated-UI card/segment/`$state` protocol.
 //! - `mediation` — host mediation: principals, backing refs, [`LensRenderFrame`].
 //! - `validate` — cross-cutting validators and the surface compiler.
+//! - `proposal`, `activation` — pack lens proposals and the owner's slot
+//!   selection (`vault.lenses.*`); `sdk` — the default vault projection verb.
+//! - `record_ref` — OF-063 typed record refs and their scoped resolution.
 
+mod activation;
 mod atom;
 mod default_vault;
 pub use default_vault::{DefaultVaultInput, DefaultVaultItem, compose_default_vault};
 mod guest;
+mod inspection;
 mod instrument;
 mod intent;
 pub use crate::claim::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
 pub use guest::LensExecutionRuntime;
+pub use inspection::{
+    INSPECTION_HANDLE_LEN, INSPECTION_HANDLE_VERSION, InspectionHandle, InspectionResolveRequest,
+    InspectionResolved, InspectionState, decode_inspection_handle, encode_inspection_handle,
+};
 pub use instrument::{InstrumentAtoms, InstrumentView, render_instrument};
 pub use intent::{LENS_INTENT_MAX_BYTES, LensIntentRecord};
 mod generated_ui;
 mod mediation;
 mod mount;
 pub use mount::LensMount;
+mod proposal;
+pub use activation::{
+    LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
+};
+pub use proposal::{
+    LENS_LIST_MAX_PAGE, LENS_PROPOSAL_MAX_BYTES, LensListPage, LensListRequest, LensListRow,
+    LensProposalState, LensProposeRequest, LensSlot,
+};
+mod sdk;
+pub use sdk::{LENS_DEFAULT_MAX_SOURCES, LensDefaultRequest, LensDossierSource};
+mod record_ref;
+pub use record_ref::{
+    LinkedText, ProseSpan, RECORD_LINKS_TEXT_MAX_BYTES, RECORD_LINKS_TURN_PAGE_MAX,
+    RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordLinks,
+    RecordLinksRequest, RecordRef, RecordRefPreview, ResolveRecordRefRequest,
+};
 mod self_ui;
 mod validate;
 mod wire_ids;

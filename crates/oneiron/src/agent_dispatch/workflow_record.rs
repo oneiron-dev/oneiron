@@ -68,12 +68,19 @@ pub(super) struct WorkflowIntent {
     pub context_from: Vec<String>,
     pub depth_remaining: Option<u8>,
     pub project_ref: Option<String>,
+    /// OF-543: the type the spawner placed the workflow at, as supplied. None
+    /// leaves each leaf to dispatch's own placement. A retry naming another
+    /// type is another intent.
+    pub type_ref: Option<crate::task_type::TaskTypeRef>,
     /// The spawn's `budget`: a hard carve for the whole workflow.
     #[serde(default)]
     pub budget: Option<u64>,
     /// A root workflow's spend scope.
     #[serde(default)]
     pub spend: Option<super::SpendScopeId>,
+    /// The room its leaves work in (OF-531).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<crate::workspace_roster::RoomWork>,
 }
 
 #[derive(Serialize, Deserialize)]

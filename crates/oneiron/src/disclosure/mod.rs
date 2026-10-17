@@ -11,6 +11,7 @@
 //! assembly); this module owns mode/tier/Scope classification, storage, and
 //! the agent-visible assembly block.
 
+mod attendee_ask;
 mod disclosable_set;
 mod room_party;
 mod scope_codec;
@@ -18,6 +19,10 @@ mod tier_classification;
 mod vault_agent;
 mod vault_context;
 
+pub use self::attendee_ask::{
+    ATTENDEE_UNKNOWN_OPTION, AttendeeIdentityChoice, AttendeeIdentityResolution,
+    UnknownAttendeeAsk, attendee_ask_ref,
+};
 pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
 pub use self::room_party::RoomParty;
@@ -30,6 +35,7 @@ pub use self::scope_codec::{
 pub use self::tier_classification::{
     DISCLOSURE_CLAIM_PREDICATES, DISCLOSURE_TIER_A_ENTITY_TYPES,
     DISCLOSURE_TIER_A_PREDICATE_PREFIXES, DisclosureMode, DisclosureTier,
+    PREDICATE_DISCLOSURE_ATTENDEE_ASK, PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
     PREDICATE_DISCLOSURE_SCOPE, PREDICATE_DISCLOSURE_TIER, PREDICATE_DISCLOSURE_TOPIC,
     is_disclosure_claim_predicate,
 };
@@ -38,6 +44,7 @@ pub use self::vault_context::{DisclosureAssembly, DisclosureContext, presence_di
 pub(crate) use self::tier_classification::{disclosure_tier, validate_disclosure_claim_structure};
 pub(crate) use self::vault_agent::is_vault_agent_in;
 use self::vault_context::disclosure_tier_a_marked_in;
+pub(crate) use self::vault_context::{contact_clearance_in_txn, contact_clearances_in_txn};
 
 #[cfg(test)]
 mod tests;

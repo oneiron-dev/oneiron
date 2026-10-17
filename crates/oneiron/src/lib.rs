@@ -93,6 +93,7 @@ pub(crate) mod gate;
 pub mod policy_model;
 pub mod receipt;
 pub mod share;
+pub mod share_travel;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
@@ -177,7 +178,9 @@ pub mod fanout_auto;
 pub mod inbox;
 pub mod learning;
 pub mod learning_setting;
+pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod policy_setting_doors;
 pub mod posterior;
 pub mod skill;
 pub mod skill_attribution;
@@ -193,6 +196,7 @@ pub mod vault_cleanup;
 pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod blob_artifact;
+pub mod browser_library;
 pub mod build_cache;
 pub mod checkout;
 pub mod code_artifact;
@@ -380,8 +384,8 @@ pub use crate::dreamer_runner::{
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
     DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerBudgetReserveOutcome,
     DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerHomeNodeCandidate,
-    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
-    EnqueueDreamerVaultCleanupAttempt, ReserveDreamerBudget,
+    DreamerParkCause, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, EnqueueDreamerVaultCleanupAttempt, ReserveDreamerBudget,
 };
 pub use crate::dreamer_wake::{
     DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
@@ -585,6 +589,14 @@ pub(crate) fn unix_seconds_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+pub(crate) fn unix_millis_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {

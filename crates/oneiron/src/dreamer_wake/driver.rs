@@ -1,6 +1,7 @@
 //! The wake loop: admit, warn, dispatch under panic containment, stop conditions.
 
 mod concurrent;
+mod hooks;
 
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
@@ -13,7 +14,7 @@ use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
     DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneKind,
-    DreamerRunnerStore, ParkDreamerAttempt, SettleDreamerBudget,
+    DreamerParkCause, DreamerRunnerStore, ParkDreamerAttempt, SettleDreamerBudget,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
@@ -249,14 +250,21 @@ impl<'a> DreamerWakeDriver<'a> {
         exec: &mut E,
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
+        let hooks = match self.pre_wake_hooks(&input)? {
+            Ok(hooks) => hooks,
+            Err(skipped) => return Ok(skipped),
+        };
         self.begin_wake(input.now)?;
         let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
             self.vault,
             input.scope,
             input.host_scope.as_ref(),
         )?;
-        self.run_prepared_wake_pass(input, exec, cancel, &prepared)
-            .await
+        let report = self
+            .run_prepared_wake_pass(input, exec, cancel, &prepared)
+            .await?;
+        self.post_wake_hooks(hooks, &report);
+        Ok(report)
     }
 
     fn begin_wake(&mut self, now: u64) -> Result<()> {
@@ -278,6 +286,8 @@ impl<'a> DreamerWakeDriver<'a> {
         crate::llm::resume_signalled_steps(self.vault, now.saturating_mul(1_000))?;
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
+        // PEOPLE `about`: a person whose facts moved queues its lines anew.
+        crate::dreamer_consolidation::enqueue_person_about_on_wake(self.vault, now)?;
 
         Ok(())
     }
@@ -369,6 +379,25 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 outcome => outcome,
             };
+            // Then each resident's own dreaming (OF-490), on the same pass.
+            let cleanup = match cleanup {
+                DreamerAdmissionOutcome::Empty
+                    if !self.consolidation_only
+                        && input.trigger == WakeTrigger::Timer
+                        && input.scope == DreamerConsolidationScope::Macro =>
+                {
+                    self.store.admit_next_resident_dream(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
             let priority = match cleanup {
                 DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
                     self.store.admit_next_skill_optimize(AdmitDreamerAttempt {
@@ -402,6 +431,38 @@ impl<'a> DreamerWakeDriver<'a> {
             let priority = match priority {
                 DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
                     self.store.admit_next_recipe_wake(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
+            // Then the TASKs routed to the Dreamer: the work a person or agent
+            // asked for, before the vault's own weaving.
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
+                    self.store.admit_next_task_realize(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
+            // Then the weave lens renders: each published digest period
+            // through the weave-report skill, for the reader it is for.
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
+                    self.store.admit_next_weave_lens(AdmitDreamerAttempt {
                         lease_owner: input.lease_owner.clone(),
                         now: input.now,
                         budget_id: self.budget_id.clone(),
@@ -536,6 +597,7 @@ impl<'a> DreamerWakeDriver<'a> {
             let executed = if cancel_requested {
                 Ok(DreamerAttemptExecution::Park {
                     reason: DREAMER_CANCELLED_PARK_REASON.to_owned(),
+                    cause: DreamerParkCause::Cancelled,
                 })
             } else if let Err(publish_error) =
                 self.publish(attempt_id, ProgressKind::Running, None, input.now)
@@ -564,6 +626,7 @@ impl<'a> DreamerWakeDriver<'a> {
             {
                 Ok(DreamerAttemptExecution::Park {
                     reason: (*reason).to_owned(),
+                    cause: DreamerParkCause::Other,
                 })
             } else {
                 let mut ctx = WakeAttemptContext {
@@ -696,6 +759,7 @@ impl<'a> DreamerWakeDriver<'a> {
                             self.park_attempt(
                                 attempt_id,
                                 reason,
+                                DreamerParkCause::ExecutorError,
                                 input.lease_owner.clone(),
                                 input.now,
                             )?;
@@ -704,6 +768,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     }
                     DreamerAttemptExecution::Park {
                         reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                        cause: DreamerParkCause::Checkpoint,
                     }
                 }
             };
@@ -780,6 +845,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 DreamerAttemptExecution::ParkWithSpend {
                     reason,
+                    cause,
                     completed_units,
                     step_hashes,
                 } => {
@@ -798,6 +864,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         ParkDreamerAttempt {
                             attempt_id,
                             reason: reason.clone(),
+                            cause,
                             park_owner: input.lease_owner.clone(),
                             now: input.now,
                         },
@@ -810,7 +877,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     )?;
                     report.parked += 1;
                 }
-                DreamerAttemptExecution::Park { reason } => {
+                DreamerAttemptExecution::Park { reason, cause } => {
                     // Executor-authored reasons get the same clamp as the
                     // error arm's: park validation failing on length here
                     // would propagate AFTER the refund but BEFORE the park,
@@ -834,6 +901,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         self.park_attempt(
                             attempt_id,
                             reason,
+                            cause,
                             input.lease_owner.clone(),
                             input.now,
                         )?;

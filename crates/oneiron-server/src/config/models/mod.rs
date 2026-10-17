@@ -27,15 +27,20 @@ mod media;
 mod provider;
 #[cfg(test)]
 mod tests;
+mod voice;
 
 pub use compaction::CompactionSettings;
 pub use decision_read::{
     DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal,
 };
-pub use decisions::{DecisionsSettings, SeatPickSettings, SystemOneSettings};
+pub use decisions::{
+    BigReply, BigSettings, DecisionsSettings, ImagePickSettings, SeatPickSettings,
+    SystemOneSettings,
+};
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
-pub use media::{MediaSeatConfig, MediaSettings};
+pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
+pub use voice::VoiceSettings;
 
 use levels::{RoleFile, Shorthand};
 use provider::ProviderFile;
@@ -71,6 +76,8 @@ pub(crate) struct ModelsFile {
     #[serde(default)]
     decisions: decisions::DecisionsFile,
     media: Option<media::MediaFile>,
+    #[serde(default)]
+    voice: voice::VoiceFile,
 }
 
 /// `[models.broker]`: where the credential broker listens and the OS user it
@@ -94,6 +101,10 @@ struct DreamerFile {
     pass_budget_units: Option<u64>,
     summary_prompt: Option<String>,
     summary_prompt_file: Option<PathBuf>,
+    resident_prompt: Option<String>,
+    resident_prompt_file: Option<PathBuf>,
+    task_prompt: Option<String>,
+    task_prompt_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -166,6 +177,8 @@ pub struct ModelsConfig {
     /// The media seats (`[models.media]`): image, video, speech,
     /// transcription and embedding ladders, and their meter.
     pub media: MediaSettings,
+    /// The server's own voice loop (`[models.voice]`).
+    pub voice: VoiceSettings,
 }
 
 /// The credential broker (ARCH-0069 `#broker-design`): a separate process
@@ -217,6 +230,12 @@ pub struct DreamerSettings {
     /// Without one, summary declarations are refused (ARCH-0006a: only the
     /// Dreamer writes a summary body).
     pub summary_instruction: Option<String>,
+    /// The instruction each resident's own dreaming writes its diary entry
+    /// with (OF-490). Without one, no resident dreams.
+    pub resident_instruction: Option<String>,
+    /// The wording a TASK routed to the Dreamer realizes with. Without one,
+    /// the engine's own (`dreamer.task_realize`).
+    pub task_instruction: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -327,6 +346,18 @@ impl ModelsFile {
                 self.dreamer.summary_prompt_file,
                 base,
             )?,
+            resident_instruction: levels::prompt_text(
+                "models.dreamer.resident_prompt",
+                self.dreamer.resident_prompt,
+                self.dreamer.resident_prompt_file,
+                base,
+            )?,
+            task_instruction: levels::prompt_text(
+                "models.dreamer.task_prompt",
+                self.dreamer.task_prompt,
+                self.dreamer.task_prompt_file,
+                base,
+            )?,
         };
         if dreamer.idle_floor_secs == 0 || dreamer.session_ceiling_secs <= dreamer.idle_floor_secs {
             anyhow::bail!(
@@ -401,6 +432,7 @@ impl ModelsFile {
         let broker = self.broker.unwrap_or_default().resolve()?;
         let media = self.media.unwrap_or_default().resolve(&providers)?;
         let decisions = self.decisions.resolve()?;
+        let voice = self.voice.resolve(base)?;
         let mut models = ModelsConfig {
             providers,
             roles,
@@ -416,6 +448,7 @@ impl ModelsFile {
             decision_read: None,
             decisions,
             media,
+            voice,
         };
         if let Some(file) = self.decision_read {
             models.decision_read = Some(file.resolve(base, &models)?);
@@ -527,6 +560,12 @@ fn validate_ladders(
                     rung.model.provider
                 )
             })?;
+            if provider.kind.media_only() {
+                anyhow::bail!(
+                    "models.roles.{key}: {} is on a media provider, which serves [models.media] seats only",
+                    rung.model
+                );
+            }
             let tagger_role = *role == ModelRole::ExtractionEncoder;
             if tagger_role != (provider.kind == ProviderKind::Oneironer) {
                 anyhow::bail!(

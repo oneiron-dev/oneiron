@@ -35,11 +35,11 @@ pub use job_maximum::{
     AddFundsNotice, CheckpointRef, DeclaredMaximum, JobMaximum, JobSignal, JobStartRefused,
     MaximumShown, MaximumStop, ResumeOffer, ResumeRefused, StopRefused,
 };
-pub use media::MediaGate;
+pub use media::{MediaGate, MediaStreamLease};
 pub use permit::RunPermit;
 pub use receipt::{
-    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink, RunTokenUsage,
-    TeacherReport,
+    CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
+    RunTokenUsage, TeacherReport,
 };
 pub use settle::CallOutcome;
 

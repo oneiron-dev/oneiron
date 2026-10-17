@@ -485,6 +485,15 @@ impl Vault {
                 {
                     return Err(Error::CorruptedIndex("gate consent bundle member"));
                 }
+                // An answer to a Coach heal counts as its review (OF-418).
+                crate::dreamer_runner::maintenance::coach_heal::record_owner_review_in_txn(
+                    self,
+                    wtxn,
+                    id,
+                    &body,
+                    entry.member.created_at,
+                    now,
+                )?;
 
                 frontier.update(entry.member.read_frontier_hash);
                 member_claim_ids.push(id);
@@ -524,6 +533,25 @@ impl Vault {
                 } else {
                     self.cancel_deferred_claim_in_txn(wtxn, id)?;
                 }
+                // The fact hooks' settlement feed hears each member in the
+                // transaction that settles it (OF-579).
+                crate::runtime_hooks::record_settlement_in_txn(
+                    self,
+                    wtxn,
+                    crate::runtime_hooks::SettledFact {
+                        proposal: *id,
+                        outcome: match action {
+                            GateConsentBundleAction::Approve => {
+                                crate::runtime_hooks::SettledOutcome::Approved
+                            }
+                            GateConsentBundleAction::Decline => {
+                                crate::runtime_hooks::SettledOutcome::Declined
+                            }
+                        },
+                        settled_by: actor.entity_ref(),
+                        kind: crate::runtime_hooks::SettlementKind::GateConsentBundle,
+                    },
+                )?;
             }
             let record = GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,

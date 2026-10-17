@@ -58,7 +58,7 @@ pub(crate) use step::{
     StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim,
     index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
     signal_step_wait_in_txn, verified_step_consolidation_eligible_in_txn,
-    verified_step_effector_eligible_in_txn,
+    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
 
 pub use oneiron_model::llm::{
@@ -75,6 +75,7 @@ pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, Budge
 
 pub use oneiron_model::llm::{
     LabelReadFailure, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet,
+    joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
@@ -124,4 +125,5 @@ pub use budget::{
     RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
     RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose,
 };
+pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};

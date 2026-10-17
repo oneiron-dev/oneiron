@@ -12,11 +12,12 @@ use crate::registry::{
     ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
 };
 use crate::sync::loro_support::{TombstoneIndex, map_for_each_value_bytes, map_get_bytes};
+use crate::sync::selector::validate_sync_identity_body;
 use crate::{Error, Result};
 
-/// Refuses diagnostic and secret-custody carriers before a full-window update
-/// can mutate the live document, materialize rows, persist bytes or fan out to
-/// another peer.
+/// Refuses diagnostic and secret-custody carriers and identity-shaped FACET
+/// bodies before a full-window update can mutate the live document,
+/// materialize rows, persist bytes or fan out to another peer.
 ///
 /// Inspect the incoming operation range, not just final map state: a put
 /// followed by a delete still carries the refused body in wire history.
@@ -37,6 +38,16 @@ pub(in crate::sync) fn validate_window_update_residence(
     key: &crate::sync::WindowKey,
 ) -> Result<()> {
     validate_window_update(doc, update, Some(key), None, &HashMap::new())
+}
+
+/// A home's promotion snapshot: the locality admission, with `vault` to judge
+/// each custody transition it carries by (OF-422).
+pub(in crate::sync) fn validate_promotion_snapshot(
+    vault: &crate::Vault,
+    doc: &LoroDoc,
+    snapshot: &[u8],
+) -> Result<()> {
+    validate_window_update(doc, snapshot, None, Some(vault), &HashMap::new())
 }
 
 /// Owner-lane admission with the vault's durable entity residence as proof
@@ -89,8 +100,9 @@ fn validate_window_update(
         candidate
     };
     let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
-    let local_only = |blob: &[u8]| {
-        EntityMetadataHeader::parse(blob).and_then(|header| match header.entity_type {
+    let carrier_refusal = |blob: &[u8]| -> Option<Error> {
+        let header = EntityMetadataHeader::parse(blob)?;
+        let refused = match header.entity_type {
             ENTITY_TYPE_DIAGNOSTIC => Some(Error::InvalidConfig(
                 "diagnostic observations are local-only".into(),
             )),
@@ -99,7 +111,12 @@ fn validate_window_update(
             // a live world's pad replicates with the base rows.
             ENTITY_TYPE_WORLD_KEY_PAD => vault.and_then(|vault| late_pad(vault, blob)),
             _ => None,
-        })
+        };
+        if refused.is_some() {
+            return refused;
+        }
+        let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        validate_sync_identity_body(header.entity_type, body).err()
     };
     if let Some(key) = key {
         let witnesses = candidate.get_map("retained_claim_worlds");
@@ -158,7 +175,7 @@ fn validate_window_update(
         let mut misplaced = false;
         map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
             if refused.is_none() {
-                refused = blob.and_then(local_only);
+                refused = blob.and_then(carrier_refusal);
             }
             misplaced |= key.is_some_and(|key| {
                 blob.is_none_or(|blob| {
@@ -174,6 +191,17 @@ fn validate_window_update(
         if let Some(error) = refused {
             return Err(error);
         }
+        // OF-422: every custody transition the snapshot holds is the owner's.
+        crate::sync::custody::admit_custody_map(
+            vault,
+            key,
+            &candidate.get_map(crate::sync::custody::CUSTODY_MAP),
+        )?;
+        // OF-522: every room turn row the snapshot holds is whole.
+        crate::sync::room_turns::admit_room_turn_map(
+            key,
+            &candidate.get_map(crate::sync::room_turns::ROOM_TURNS_MAP),
+        )?;
         // A snapshot can also carry the state at a root, where a carrier
         // deleted after the root survives outside the retained ops, and
         // later exports reuse that root as encoded. Two Loro readers decode
@@ -203,12 +231,21 @@ fn validate_window_update(
             let mut at_root = None;
             map_for_each_value_bytes(&root.get_map("entities"), |_, blob| {
                 if at_root.is_none() {
-                    at_root = blob.and_then(local_only);
+                    at_root = blob.and_then(carrier_refusal);
                 }
             });
             if let Some(error) = at_root {
                 return Err(error);
             }
+            crate::sync::custody::admit_custody_map(
+                vault,
+                key,
+                &root.get_map(crate::sync::custody::CUSTODY_MAP),
+            )?;
+            crate::sync::room_turns::admit_room_turn_map(
+                key,
+                &root.get_map(crate::sync::room_turns::ROOM_TURNS_MAP),
+            )?;
         }
         if misplaced {
             return Err(Error::InvalidConfig(
@@ -283,6 +320,9 @@ fn validate_window_update(
     }
     let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
     let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
+    let custody = ContainerID::new_root(crate::sync::custody::CUSTODY_MAP, ContainerType::Map);
+    let room_turns =
+        ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -293,6 +333,11 @@ fn validate_window_update(
         };
         if op.container == births {
             crate::sync::row_birth::validate_carried_birth(&candidate, &map_key, &value)?;
+        } else if op.container == custody {
+            // OF-422: put-then-delete still carries the bytes on the wire.
+            crate::sync::custody::admit_custody_carrier(vault, key, &map_key, &value)?;
+        } else if op.container == room_turns {
+            crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
         } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)
@@ -306,7 +351,7 @@ fn validate_window_update(
         } else if op.container == entities {
             match value {
                 LoroValue::Binary(blob) => {
-                    if let Some(error) = local_only(&blob) {
+                    if let Some(error) = carrier_refusal(&blob) {
                         return Err(error);
                     }
                     if key.is_some_and(|key| {
@@ -391,10 +436,10 @@ fn check_edge_residence(
     let mut worlds = [None, None];
     let mut learned = [None, None];
     for (index, id) in [src, tgt].iter().enumerate() {
-        let stored = vault.store.entities.get(&txn, id.as_bytes())?;
+        let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &txn, id)?;
         let live = map_get_bytes(&entities, &id.to_hex());
         let old = historical.get(id);
-        let raw = if let Some(stored) = stored.as_deref() {
+        let raw = if let Some(stored) = stored.as_deref().map(Vec::as_slice) {
             let header = EntityMetadataHeader::parse(stored)
                 .ok_or(Error::CorruptedIndex("entity metadata"))?;
             if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM

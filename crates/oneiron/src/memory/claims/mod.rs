@@ -71,7 +71,8 @@ pub struct ClaimInput {
 pub struct CommitReceipt {
     /// Short-id ref of the written claim. For a rejected element (approval
     /// `rejected`) no entity exists; this carries the caller-supplied id
-    /// hex (or empty when the id itself was invalid).
+    /// hex (or empty when the id itself was invalid) as a plain attempted
+    /// id, never a record ref: such a receipt's `claim` is `None`.
     pub claim_short_id: String,
     /// Final approval as stored: `auto`/`proposed` (or `rejected` when the
     /// element did not persist).
@@ -82,6 +83,14 @@ pub struct CommitReceipt {
     /// [`Memory::receipts`]; falls back to a facade marker when no
     /// decision exists (e.g. rejected before the gate ran).
     pub receipt_ref: String,
+    /// The written claim as a typed record ref (OF-063), built from the id
+    /// the write landed, with no read. `None` when nothing landed (a
+    /// rejected element), so a rejection never names a record.
+    #[serde(default)]
+    pub claim: Option<crate::lens::RecordRef>,
+    /// The claim this write superseded, as a typed record ref, if any.
+    #[serde(default)]
+    pub superseded: Option<crate::lens::RecordRef>,
 }
 
 /// Named deletion reasons (S7). There is deliberately NO bare bool delete on
@@ -160,25 +169,39 @@ pub struct PendingWrite {
     pub dreamer_run_id: Option<String>,
 }
 
-/// One gate decision receipt.
+/// One receipt: a gate decision, or, when `vault.receipts` names `kinds`,
+/// a receipt of the unified family in the same shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryReceipt {
-    /// Stable ref (`gate:<decision-hex>`).
+    /// Stable ref (`gate:<decision-hex>`, or the family receipt's id).
     pub receipt_ref: String,
-    /// Gate outcome: `allow`/`pending`/`deny`.
+    /// The receipt family kind (`gate`, `hook`, `outbound`, ...).
+    pub kind: String,
+    /// Gate outcome: `allow`/`pending`/`deny`; the receipt's own outcome
+    /// for another kind.
     pub outcome: String,
     /// Unix seconds.
     pub created_at: u64,
-    /// Gate reason codes.
+    /// Gate reason codes; the policy trace for another kind.
     pub reason_codes: Vec<String>,
-    /// Actor class string the decision was made for.
+    /// Actor class string the decision was made for; empty for a kind that
+    /// names none.
     pub actor_class: String,
     /// Actor entity hex, when the write carried an envelope.
     pub actor_ref: Option<String>,
-    /// Gate content kind (e.g. `claim`).
+    /// Gate content kind (e.g. `claim`); empty for a kind that names none.
     pub content_kind: String,
     /// 32-hex id of the claim the decision covers, if any.
     pub claim_ref: Option<String>,
+    /// That claim as a typed record ref (OF-063), built from its id with no
+    /// read, so labelled with its kind and id.
+    #[serde(default)]
+    pub claim: Option<crate::lens::RecordRef>,
+    /// A family receipt's own fields (a hook run's hook, CODE id, body hash
+    /// and run key), with its trigger, job and principal refs. Empty on a
+    /// gate-ledger row.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub fields: std::collections::BTreeMap<String, String>,
 }
 
 pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {

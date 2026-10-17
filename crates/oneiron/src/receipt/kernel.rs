@@ -313,6 +313,14 @@ pub enum ReceiptKind {
     /// the duration, the outcome, `now` and the rows it read. Written by the
     /// runner in the run's own transaction, to its own store.
     Hook,
+    /// One record ref a write named that its writer cannot resolve (OF-063):
+    /// the actor, the verb row, the field pointer and the time. `refused`
+    /// when a typed slot named it and the write never ran; `unlinked` when
+    /// AI-written prose linked it and the text landed with the link shown as
+    /// plain label. Written where it is found, on its own write, as its own
+    /// RECEIPT_RECORD; it never holds the ref or any other content of the
+    /// attempt.
+    ReferenceRefusal,
 }
 
 impl ReceiptKind {
@@ -331,6 +339,7 @@ impl ReceiptKind {
             Self::Extraction => "extraction",
             Self::ServedForm => "served_form",
             Self::Hook => "hook",
+            Self::ReferenceRefusal => "reference_refusal",
         }
     }
 
@@ -349,6 +358,7 @@ impl ReceiptKind {
             "extraction" => Some(Self::Extraction),
             "served_form" => Some(Self::ServedForm),
             "hook" => Some(Self::Hook),
+            "reference_refusal" => Some(Self::ReferenceRefusal),
             _ => None,
         }
     }

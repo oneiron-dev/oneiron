@@ -5,38 +5,58 @@
 //! The one store it keeps is the call receipt table: the lasting receipt
 //! every wire reply carries (OF-538), which no other substrate records.
 
+mod authority_audit;
 mod brief_share;
 mod call;
+mod decision_asks;
 mod direct_dispatch;
 mod dispatch_observation;
 mod family;
 mod field_set;
 mod grant;
+mod guest_revoke;
 mod identity_kind;
 mod kernel;
 mod ledgers;
+mod lens;
 mod pack_attribution;
 mod projection;
+mod questions;
 mod record;
+mod reference_refusal;
 mod send_receipt_txn;
 mod served_form;
 mod session;
+mod share_doors;
 
 #[cfg(test)]
 mod tests;
 
+pub use self::authority_audit::{
+    AUTHORITY_AUDIT_DEFAULT_LIMIT, AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW,
+    AuthorityAuditEventKind, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery,
+    AuthorityAuditRow, authority_audit_embedded,
+};
 pub use self::call::{
     CALL_RECEIPT_REF_PREFIX, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,
     CallTransport, MAX_CALL_RECEIPT_SERVED, call_bytes_digest, call_json_digest,
+    call_refusal_digest,
 };
+pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
-    ContextReceiptFields, append_context_receipt_fields, append_pack_attribution_fields,
-    append_pack_manifest_fields, append_task_type_fields, memories_state_ref,
+    ContextReceiptFields, FIELD_LEARNING_DECIDED_BY, FIELD_LEARNING_PATTERN,
+    FIELD_LEARNING_TEAM_REF, append_context_receipt_fields, append_pack_attribution_fields,
+    append_pack_manifest_fields, append_task_type_fields, append_team_receipt_fields,
+    memories_state_ref,
 };
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
     StandingOutboundGrantsLensQuery,
+};
+pub use self::guest_revoke::{
+    GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeDisclosure,
+    GuestRevokeOutcome, GuestRevokeResponse, NotRecallable, project_guest_revoke,
 };
 pub use self::identity_kind::{proposal_outcome_amended_body, proposal_outcome_delta};
 pub use self::kernel::{
@@ -45,6 +65,7 @@ pub use self::kernel::{
     ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView,
 };
 pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
+pub use self::lens::{LensActivationReceipt, LensApproval, LensProposalReceipt, LensSlotDecision};
 pub use self::pack_attribution::{
     ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext,
     SkillContribution, UsedProvenanceEdge,
@@ -58,8 +79,17 @@ pub use self::projection::{
     ReceiptProjectionIntent, ReceiptProjectionRun, project_receipts_by_brief,
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
-pub use self::served_form::ServedForm;
+pub use self::questions::{
+    GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskDeclined, GraphAskOutcome,
+    GraphAskRequest, GraphAskSelection, QuestionAnswersRequest, QuestionCreateRequest,
+    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
+};
+pub(crate) use self::reference_refusal::{
+    ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals,
+};
+pub use self::served_form::{PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
+pub use self::share_doors::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 
 pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::dispatch_observation::{

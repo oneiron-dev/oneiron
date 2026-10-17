@@ -6,10 +6,11 @@ use rmpv::Value;
 
 use super::keys::{
     KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR, KEY_ANCHOR_THREAD_ID, KEY_ANCHORS,
-    KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH, KEY_DECK, KEY_MANIFEST_OPS,
-    KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_JUDGMENTS, KEY_PPTX_MINTS, KEY_PPTX_REVIEW_IDENTITIES,
-    KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_SHEET_ANSWERS,
-    KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
+    KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH, KEY_DECK, KEY_DOCX_JUDGMENTS,
+    KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PPTX_JUDGMENTS, KEY_PPTX_MINTS,
+    KEY_PPTX_REVIEW_IDENTITIES, KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT,
+    KEY_SHEET_ANSWERS, KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_RECORD_KEYS,
+    SETTLEMENT_SCHEMA_VERSION,
 };
 use super::records::{PptxReviewIdentity, SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::anchored_annotation::{decode_locator, encode_locator};
@@ -67,6 +68,14 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
         })
         .transpose()?
         .unwrap_or(Value::Nil);
+    if record.docx_judgments.len()
+        > crate::edit_roundtrip::paragraph_review::MAX_PARAGRAPH_JUDGMENTS
+    {
+        return Err(Error::InvariantViolation("too many paragraph judgments"));
+    }
+    let docx_judgments = rmp_serde::to_vec_named(&record.docx_judgments)
+        .map(Value::Binary)
+        .map_err(|_| Error::InvariantViolation("paragraph judgment encode failed"))?;
     let deck = record
         .deck
         .as_ref()
@@ -172,6 +181,7 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
         ),
         (Value::from(KEY_SHEET_ANSWERS), sheet_answers),
         (Value::from(KEY_DECK), deck),
+        (Value::from(KEY_DOCX_JUDGMENTS), docx_judgments),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -235,6 +245,17 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
             field(&entries, KEY_PPTX_REVIEW_IDENTITIES).ok_or_else(corrupt)?,
         )?,
         pptx_judgments: decode_judgments(field(&entries, KEY_PPTX_JUDGMENTS).ok_or_else(corrupt)?)?,
+        docx_judgments: match field(&entries, KEY_DOCX_JUDGMENTS) {
+            Some(Value::Binary(bytes)) => {
+                let rows: Vec<crate::edit_roundtrip::ParagraphJudgment> =
+                    rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
+                if rows.len() > crate::edit_roundtrip::paragraph_review::MAX_PARAGRAPH_JUDGMENTS {
+                    return Err(corrupt());
+                }
+                rows
+            }
+            _ => return Err(corrupt()),
+        },
         anchors,
         reason: field_opt_str(&entries, KEY_REASON)?,
         sheet_answers: match field(&entries, KEY_SHEET_ANSWERS) {

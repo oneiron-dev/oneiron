@@ -1,16 +1,15 @@
 //! The output contract a substrate owner's policy document asks the model for,
-//! and the strict reader that turns an answer back into engine terms.
+//! and the strict reader of the audit notes a rationale contract carries.
 //!
 //! The engine does not tell the model how to answer — the policy document does,
 //! top and bottom, in the substrate owner's own words. What the engine holds is
-//! the DECLARATION of which shape those words asked for, so it can parse the
-//! answer without guessing. That is the whole division: the owner writes the
-//! instruction, the engine declares the shape and reads the result.
+//! the DECLARATION of which shape those words asked for: it sets the answer
+//! format of the request that carries the document, picks the question the
+//! safeguard read asks (does the content violate the policy, or which row),
+//! and says whether the audit notes are owed.
 //!
-//! Parsing is strict on purpose. An answer the engine cannot read is a
-//! CLASSIFICATION FAILURE, not an allow: the plane that required the call
-//! treats it exactly as it treats a model that never answered — a hosted plane
-//! fails closed, and the owner's sovereign plane fails open.
+//! Parsing is strict on purpose. Notes the engine cannot read are no notes:
+//! the verdict stands and the audit fields stay empty.
 
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
@@ -86,7 +85,7 @@ pub struct PolicyModelAnswer {
     ///
     /// Unvalidated at this layer on purpose: reading the answer and knowing
     /// which rules exist are two different jobs, and only the caller holds the
-    /// resolved plane. `resolve_policy_model_response` dedupes this and drops
+    /// resolved plane. `retain_resolvable_rule_ids` dedupes this and drops
     /// every id that names no resolved rule before it reaches an audit.
     pub rule_ids: Vec<String>,
     pub confidence: Option<String>,
@@ -149,35 +148,25 @@ pub(super) const POLICY_MODEL_ANSWER_PARSE_MAX_BYTES: usize = POLICY_MODEL_RULE_
 pub(super) const POLICY_MODEL_RULE_IDS_PARSE_MAX: usize =
     super::pattern::POLICY_PATTERN_RULES_MAX * 10;
 
+/// The rationale contract's audit fields, asked apart from its verdict once
+/// the verdict is decided.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CategoryWire {
-    violation: u8,
-    policy_category: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RationaleWire {
-    violation: u8,
-    policy_category: Option<String>,
+struct NotesWire {
     rule_ids: Vec<String>,
     confidence: String,
     rationale: String,
 }
 
-/// Reads a model answer under `contract`. Every failure is the same kind of
-/// failure — the engine could not read the answer — so the caller has one thing
-/// to handle rather than a taxonomy of malformations.
+/// Reads the notes a `rationale_json` pass asks for once its verdict is
+/// decided: the rule ids, the confidence word and the rationale, under the
+/// bounds the whole rationale answer is held to. The notes carry no verdict.
 ///
 /// Everything the model supplies is BOUNDED here, at the only place it enters
 /// engine terms: the rationale and the confidence word by length, the rule-id
 /// array by count. Downstream this text becomes ledger rows, and the ledger
 /// must not be floodable by an answer.
-pub(super) fn parse_model_answer(
-    contract: PolicyOutputContract,
-    text: &str,
-) -> Result<PolicyModelAnswer> {
+pub(super) fn parse_rationale_notes(text: &str) -> Result<PolicyModelAnswer> {
     // BEFORE the parse, not after it. Every other bound here runs on a value
     // `serde_json` has already built, which makes them semantic bounds rather
     // than memory ones; this is the only one that can stop a body the engine
@@ -187,55 +176,17 @@ pub(super) fn parse_model_answer(
             "model answer is larger than the engine will read",
         ));
     }
-    let text = strip_json_fence(text);
-    match contract {
-        PolicyOutputContract::Binary => parse_binary(text),
-        PolicyOutputContract::CategoryJson => parse_category_json(text),
-        PolicyOutputContract::RationaleJson => parse_rationale_json(text),
-    }
-}
-
-fn parse_binary(text: &str) -> Result<PolicyModelAnswer> {
-    let violation = match text.trim() {
-        "0" => false,
-        "1" => true,
-        _ => return Err(unreadable("binary answer must be exactly 0 or 1")),
-    };
-    Ok(PolicyModelAnswer {
-        violation,
-        ..PolicyModelAnswer::default()
-    })
-}
-
-fn parse_category_json(text: &str) -> Result<PolicyModelAnswer> {
-    let wire: CategoryWire =
-        serde_json::from_str(text).map_err(|error| unreadable_owned(format!("{error}")))?;
-    let violation = violation_bit(wire.violation)?;
-    let policy_category = category_field(violation, wire.policy_category)?;
-    Ok(PolicyModelAnswer {
-        violation,
-        policy_category,
-        ..PolicyModelAnswer::default()
-    })
-}
-
-fn parse_rationale_json(text: &str) -> Result<PolicyModelAnswer> {
-    let wire: RationaleWire =
-        serde_json::from_str(text).map_err(|error| unreadable_owned(format!("{error}")))?;
-    let violation = violation_bit(wire.violation)?;
-    let policy_category = category_field(violation, wire.policy_category)?;
+    let wire: NotesWire = serde_json::from_str(strip_json_fence(text))
+        .map_err(|error| unreadable_owned(format!("{error}")))?;
     if wire.rule_ids.len() > POLICY_MODEL_RULE_IDS_PARSE_MAX {
         return Err(unreadable(
             "rule_ids carries more entries than an answer may cite",
         ));
     }
     Ok(PolicyModelAnswer {
-        violation,
-        policy_category,
         // Bounded above only as a flood stop. WHICH ids survive, and the
-        // dedupe, still belong to `resolve_policy_model_response`: this reader
-        // sees an answer, not the plane it was answered against — see
-        // `PolicyModelAnswer::rule_ids`.
+        // dedupe, belong to `retain_resolvable_rule_ids`: this reader sees an
+        // answer, not the plane it was answered against.
         rule_ids: wire.rule_ids,
         confidence: Some(truncate_on_char_boundary(
             wire.confidence,
@@ -245,30 +196,24 @@ fn parse_rationale_json(text: &str) -> Result<PolicyModelAnswer> {
             wire.rationale,
             POLICY_RATIONALE_MAX_LEN,
         )),
+        ..PolicyModelAnswer::default()
     })
 }
 
-/// The violation field is a BIT, not a number: `2` is not "more violating", it
-/// is an answer the policy document did not ask for.
-fn violation_bit(value: u8) -> Result<bool> {
-    match value {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(unreadable("violation must be 0 or 1")),
-    }
-}
-
-/// A violation names its category and a clean answer names none. The
-/// asymmetric cases are both unreadable: a violation with no category cannot be
-/// routed to a row, and a category beside `violation: 0` says two things at
-/// once.
-fn category_field(violation: bool, category: Option<String>) -> Result<Option<String>> {
-    match (violation, category) {
-        (true, Some(category)) if !category.trim().is_empty() => Ok(Some(category)),
-        (true, _) => Err(unreadable("a violation must name a policy_category")),
-        (false, None) => Ok(None),
-        (false, Some(category)) if category.trim().is_empty() => Ok(None),
-        (false, Some(_)) => Err(unreadable("a clean answer must not name a policy_category")),
+/// The response format of the notes request: the rationale contract's audit
+/// fields and nothing else.
+pub(super) fn rationale_notes_format() -> ResponseFormat {
+    ResponseFormat::Json {
+        schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rule_ids", "confidence", "rationale"],
+            "properties": {
+                "rule_ids": { "type": "array", "items": { "type": "string" } },
+                "confidence": { "type": "string" },
+                "rationale": { "type": "string" },
+            },
+        }),
     }
 }
 

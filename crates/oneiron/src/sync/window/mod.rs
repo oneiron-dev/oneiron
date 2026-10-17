@@ -27,13 +27,16 @@ mod egress;
 mod forward;
 mod history_free;
 mod project_history;
+mod rebootstrap;
 mod replacement;
 mod reverse;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub mod test_hooks;
 mod tombstones;
+mod withdrawn;
 
+pub(in crate::sync) use self::admission::validate_promotion_snapshot;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
 pub(in crate::sync) use self::admission::validate_window_update_with_staged_worlds;
@@ -60,10 +63,12 @@ pub use self::history_free::{
     export_window_replacement_for, export_window_since, export_window_since_for,
     export_window_updates_since, promotion_baseline, update_reaches_below_root,
 };
+pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
 pub(crate) use self::reverse::reverse_rematerialize_for_sealing;
+pub(crate) use self::reverse::reverse_rematerialize_rows;
 pub(in crate::sync) use self::reverse::reverse_rematerialize_with;
 pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{
@@ -75,6 +80,7 @@ pub use self::tombstones::{
 };
 #[cfg(test)]
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
+pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
 /// Reserved prefix for Loro commit MESSAGES written by the edit-distance
 /// proposal-artifact substrate (ED-00, ONE-1756).
@@ -102,6 +108,10 @@ pub struct LoadedWindow {
     _observer_a: Subscription,
     /// Observer B subscriptions (entities, edges, tombstones materialization).
     _observer_b: (Subscription, Subscription, Subscription, Subscription),
+    /// Observer B for the custody map (OF-422), on a base window only.
+    _observer_custody: Option<Subscription>,
+    /// Observer B for the room turn map (OF-522), on a base window only.
+    _observer_room_turns: Option<Subscription>,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -163,12 +173,22 @@ impl LoadedWindow {
             outbound,
         );
         let observer_b = bridge::register_observer_b(&doc, vault, materializer, key.as_str());
+        let observer_custody = key
+            .world()
+            .is_none()
+            .then(|| bridge::register_custody_observer(&doc, vault, materializer, key.as_str()));
+        let observer_room_turns = key
+            .world()
+            .is_none()
+            .then(|| bridge::register_room_turns_observer(&doc, vault, materializer, key.as_str()));
 
         Self {
             doc,
             key,
             _observer_a: observer_a,
             _observer_b: observer_b,
+            _observer_custody: observer_custody,
+            _observer_room_turns: observer_room_turns,
             observer_a_state,
         }
     }

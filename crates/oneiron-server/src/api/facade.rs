@@ -10,8 +10,11 @@
 //!
 //! The route projection is generated from `scripts/sdk/agent-verbs.json`.
 //! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
-//! all use the same inventory and engine DTOs as the native clients. Live
-//! subscriptions remain owned by the held socket rather than this router.
+//! all use the same inventory and engine DTOs as the native clients. Every
+//! route runs its row through the generated dispatch (`dispatch.rs`), the one
+//! the held socket's `rpc.req` runs too (OF-489), so a verb meets the same
+//! admission on both. Live subscriptions remain owned by the held socket
+//! rather than this router.
 //!
 //! ERRORS are the facade's own, not the server's closed
 //! [`crate::error::ErrorCode`] enum.
@@ -21,19 +24,40 @@
 //! instead of collapsing into `INTERNAL_SERVER_ERROR`. `crate::error` is not
 //! edited to admit these codes; that is the whole point of the local type.
 
+pub(super) mod action_routes;
 mod agent_verbs;
+mod call_context;
+mod decision_ask_doors;
+pub(super) mod decision_role_asks;
+mod dispatch;
+mod embedding_space_doors;
+mod graph_ask_doors;
+mod guest_doors;
 pub(super) mod host_doors;
+mod legal_hold_doors;
+mod policy_doors;
+pub(super) mod role_picks;
+mod setting_doors;
+mod share_doors;
+mod shared_act_doors;
+mod shared_member_doors;
 #[cfg(test)]
 pub(super) mod tests;
+mod weave_doors;
+
+pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
+use call_context::{VerbContext, context_required, facade_invocation_id};
+pub(crate) use dispatch::call_verb;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
@@ -44,19 +68,24 @@ use super::call_receipt;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use oneiron::claim::{CallerLocality, ScopedReadActorKey};
 use oneiron::federation::record_scope::BirthPosition;
 use oneiron::federation::{ScopeAxis, ScopeId};
+use oneiron::memory::RewriteAdmit;
 use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
+    MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
+use oneiron::runtime_hooks::verb::{InvocationClaim, InvocationEntry, InvocationOutcome};
+use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbHookPre, VerbHookStop, hook_class};
+use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::credential_memory;
-use super::write_facet::{landing_facet, request_session};
+use super::write_facet::{SESSION_HEADER, landing_facet};
 
 /// Request-body ceiling for the facade nest: 64 MiB.
 ///
@@ -80,12 +109,183 @@ pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
 }
 
 /// [`facade_routes`] with every reply's call receipt (OF-538): one layer
-/// around the generated routes and the unknown-verb fallback alike.
+/// around the generated routes and the unknown-verb fallback alike. Inside
+/// it, a request that names its invocation claims it for the whole route.
 pub(crate) fn recorded_facade_routes(server: Arc<SyncServer>) -> Router<Arc<SyncServer>> {
-    facade_routes().layer(axum::middleware::from_fn_with_state(
-        server,
-        facade_call_receipt,
-    ))
+    facade_routes()
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&server),
+            facade_invocation_claim,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            facade_call_receipt,
+        ))
+}
+
+/// Claims the invocation a request names, once, around its whole route
+/// (OF-580): a second request naming it for the same call waits for this
+/// one's reply and gets it, and one naming it for another call is refused at
+/// once. An action's verb-table row reaches its route here with its step's
+/// id, and is claimed once, here. A request no credential authenticates, or
+/// whose header is no id, is left to its route's own refusal.
+async fn facade_invocation_claim(
+    State(server): State<Arc<SyncServer>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Ok(Some(invocation)) = facade_invocation_id(request.headers()) else {
+        return next.run(request).await;
+    };
+    let (mut parts, body) = request.into_parts();
+    let Ok(auth) = CoreAuth::from_request_parts(&mut parts, &server).await else {
+        return next.run(Request::from_parts(parts, body)).await;
+    };
+    let bytes = axum::body::to_bytes(body, FACADE_MAX_BODY_BYTES)
+        .await
+        .unwrap_or_default();
+    let digest = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(value) => oneiron::receipt::call_json_digest(&value),
+        Err(_) => oneiron::receipt::call_bytes_digest(&bytes),
+    };
+    let header = |name: &str| {
+        parts
+            .headers
+            .get(name)
+            .map_or(&[][..], HeaderValue::as_bytes)
+    };
+    let call = invocation_body(
+        Some(&auth),
+        auth.locality(),
+        &[
+            b"facade".as_slice(),
+            parts.uri.path().as_bytes(),
+            header(ROOM_TURN_HEADER),
+            header(SESSION_HEADER),
+            digest.as_bytes(),
+        ],
+    );
+    match claim_door_invocation(&server, invocation, call).await {
+        DoorClaim::Run(claim) => {
+            let response = next
+                .run(Request::from_parts(parts, Body::from(bytes)))
+                .await;
+            finish_door_claim(claim, response).await
+        }
+        DoorClaim::Answered(outcome) => door_replay(outcome),
+        DoorClaim::InFlight => FacadeApiError::new(
+            StatusCode::CONFLICT,
+            INVOCATION_IN_FLIGHT,
+            "another request is still running this invocation",
+            ["Retry with the same invocation once the first call returns."],
+        )
+        .into_response(),
+        DoorClaim::Conflict => FacadeApiError::new(
+            StatusCode::CONFLICT,
+            INVOCATION_CONFLICT,
+            "this invocation id names a different call",
+            ["Name a fresh invocation for a different call."],
+        )
+        .into_response(),
+    }
+}
+
+/// How long a request naming an invocation another request is running
+/// waits for that call's reply before it is told to retry.
+const INVOCATION_WAIT: Duration = Duration::from_secs(30);
+/// The refusal a request naming a running invocation gets once its wait
+/// runs out, or when the first call left no reply to send again.
+pub(crate) const INVOCATION_IN_FLIGHT: &str = "invocation_in_flight";
+/// The refusal a request naming a running invocation for a different call
+/// gets at once.
+pub(crate) const INVOCATION_CONFLICT: &str = "invocation_conflict";
+
+/// What a door does with an invocation its client named (OF-580).
+pub(crate) enum DoorClaim {
+    /// This request runs the call: hand its reply to [`finish_door_claim`].
+    Run(InvocationClaim),
+    /// The first call's reply, sent as this request's.
+    Answered(InvocationOutcome),
+    /// The first call is still running past the wait, or left no reply.
+    InFlight,
+    /// The id names a different call.
+    Conflict,
+}
+
+/// Claims `invocation` for the request whose call `body` names, waiting up
+/// to [`INVOCATION_WAIT`] for another request's run of the same call. Each
+/// door that takes a client's id claims it once, at its outermost point.
+pub(crate) async fn claim_door_invocation(
+    server: &SyncServer,
+    invocation: InvocationId,
+    body: [u8; 32],
+) -> DoorClaim {
+    match server.vault.claim_invocation(invocation, body) {
+        InvocationEntry::Claimed(claim) => DoorClaim::Run(claim),
+        InvocationEntry::Conflict => DoorClaim::Conflict,
+        InvocationEntry::Busy(wait) => {
+            match tokio::task::spawn_blocking(move || wait.outcome(INVOCATION_WAIT)).await {
+                Ok(Some(outcome)) => DoorClaim::Answered(outcome),
+                _ => DoorClaim::InFlight,
+            }
+        }
+    }
+}
+
+/// The call a claimed invocation names: the caller (its actor, class and
+/// credential), where it sits, and the door's own parts, each
+/// length-prefixed.
+pub(crate) fn invocation_body(
+    auth: Option<&CoreAuth>,
+    locality: CallerLocality,
+    parts: &[&[u8]],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron door invocation body v1");
+    let mut part = |bytes: &[u8]| {
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    if let Some(auth) = auth {
+        let (actor_ref, actor_class) = call_receipt::call_actor(auth);
+        part(actor_ref.as_bytes());
+        part(actor_class.as_bytes());
+        part(
+            call_receipt::credential_ref(auth)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+    }
+    part(match locality {
+        CallerLocality::OnDevice => b"on-device".as_slice(),
+        CallerLocality::OffDevice => b"off-device".as_slice(),
+    });
+    for &bytes in parts {
+        part(bytes);
+    }
+    *hasher.finalize().as_bytes()
+}
+
+/// Sends `response` as the claimed call's reply, saving it for each request
+/// waiting on the same call. A body that is not JSON is sent as it is and
+/// saved for none of them.
+pub(crate) async fn finish_door_claim(claim: InvocationClaim, response: Response) -> Response {
+    let (head, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    if let Ok(body) = serde_json::from_slice(&bytes) {
+        claim.finish(InvocationOutcome {
+            status: head.status.as_u16(),
+            body,
+        });
+    }
+    Response::from_parts(head, Body::from(bytes))
+}
+
+/// The first call's reply, sent again to a request that waited on it.
+pub(crate) fn door_replay(outcome: InvocationOutcome) -> Response {
+    let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, Json(outcome.body)).into_response()
 }
 
 /// Records one facade call once its handler has answered, in its own write
@@ -144,6 +344,18 @@ async fn facade_call_receipt(
             }
         };
     }
+    if let Some(refusal) = &refusal {
+        result_digest = Some(oneiron::receipt::call_refusal_digest(
+            &refusal.body.error.code,
+            &refusal.body.error.message,
+        ));
+    }
+    if let Some(refusal) = &refusal {
+        result_digest = Some(oneiron::receipt::call_refusal_digest(
+            &refusal.body.error.code,
+            &refusal.body.error.message,
+        ));
+    }
     let outcome = match &refusal {
         Some(refusal) => CallOutcome::Refused {
             code: refusal.body.error.code.clone(),
@@ -182,7 +394,31 @@ async fn facade_call_receipt(
 /// wrong root is refused with that verb as its correction, before the actor,
 /// the body or any effect is touched; there is no redirect and no alias.
 async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
+    unknown_verb(uri.path().trim_start_matches('/'))
+}
+
+/// Every generated facade route ([`agent_verbs`]): the request's credential
+/// and headers are the call's context, its JSON body the verb's input, and
+/// the row runs in the facade's dispatch ([`call_verb`]), which the held
+/// socket runs too. A body that is not JSON is refused where the row reads
+/// it, as its handler refused it before.
+async fn facade_route(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    let call = FacadeCall::http(&auth, &headers);
     let verb = uri.path().trim_start_matches('/');
+    let output = call_verb(&server, &call, verb, facade_json(payload)).await?;
+    Ok(Json(output.value))
+}
+
+/// `verb`, which names no facade verb, refused before the actor, the input
+/// or any effect is touched: with its correction when it is a canonical verb
+/// under the wrong root, else as not found.
+fn unknown_verb(verb: &str) -> FacadeApiError {
     let served = oneiron::task_verb::sdk::AgentVerb::ALL
         .iter()
         .filter(|verb| verb.is_facade())
@@ -255,23 +491,211 @@ fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApi
 /// the room: the engine reads the roster and its Scope from the vault.
 pub(crate) const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
 
-fn facade_room_turn(headers: &HeaderMap) -> Result<Option<EntityId>, FacadeApiError> {
-    let Some(value) = headers.get(ROOM_TURN_HEADER) else {
-        return Ok(None);
+/// Names the logical verb a request runs (ARCH-0080 §3), as 32 hex digits:
+/// its verb hooks fire once for it, and a retry of a pending call names the
+/// same one to find its ask.
+pub(crate) const INVOCATION_HEADER: &str = "x-oneiron-invocation";
+
+/// `memory` bound to the invocation the call names, if it names one, and
+/// to the off-record session it names (OF-063: inside an anonymous one a
+/// reference refusal writes no receipt, as its call writes none, OF-538).
+fn facade_invocation<'v>(
+    memory: oneiron::Memory<'v>,
+    call: &FacadeCall<'_>,
+) -> Result<oneiron::Memory<'v>, FacadeApiError> {
+    let memory = match call.session_ref() {
+        Some(session_ref) => memory.in_off_record_session(session_ref),
+        None => memory,
     };
-    value
-        .to_str()
-        .ok()
-        .and_then(|room| EntityId::from_hex(room).ok())
-        .map(Some)
-        .ok_or_else(|| {
-            FacadeApiError::new(
-                StatusCode::BAD_REQUEST,
-                MEMORY_CODE_BAD_REQUEST,
-                "invalid room turn header",
-                ["Name the room as its 32-hex id."],
-            )
-        })
+    Ok(match call.invocation()? {
+        Some(invocation) => memory.with_invocation(invocation),
+        None => memory,
+    })
+}
+
+/// The pre chain of row `verb` for `actor` over `args`, off the async
+/// runtime (ARCH-0080 §3): a hook may write, open an ask and run its
+/// sandbox. Every server door that runs a row itself, not through `invoke`,
+/// crosses it here. Its hooks read as `actor`; a door that holds its
+/// caller's key calls [`row_hooks_pre_with`].
+pub(crate) async fn row_hooks_pre(
+    server: &Arc<SyncServer>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    invocation: Option<InvocationId>,
+    verb: &str,
+    args: serde_json::Value,
+) -> Result<VerbHookPre, MemoryError> {
+    row_hooks_pre_with(server, None, None, actor, class, invocation, verb, args).await
+}
+
+/// [`row_hooks_pre`] for a door that holds its caller's read key and its own
+/// admission of rewritten args. The hooks read under `reader`, capped by
+/// their grant, and as `actor` when it is `None`. A rewrite must pass the
+/// row's input check, then `check`, as if the caller sent it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "row_hooks_pre's inputs plus the caller's key and rewrite admission"
+)]
+pub(crate) async fn row_hooks_pre_with(
+    server: &Arc<SyncServer>,
+    reader: Option<ScopedReadActorKey>,
+    check: Option<RewriteAdmit>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    invocation: Option<InvocationId>,
+    verb: &str,
+    args: serde_json::Value,
+) -> Result<VerbHookPre, MemoryError> {
+    let server = Arc::clone(server);
+    let verb = verb.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let call = VerbCall {
+            verb: verb.clone(),
+            invocation: invocation.unwrap_or_else(InvocationId::mint),
+            actor,
+            class: hook_class(class),
+            scope: None,
+            board_epoch: None,
+            domain: verb_hook_boundary::row_domain(&verb),
+            reader,
+        };
+        let admit = |args: &serde_json::Value| {
+            oneiron::task_verb::sdk::validate_input(&verb, args)
+                .map_err(|error| error.to_string())?;
+            check
+                .as_ref()
+                .map_or(Ok(()), |check| check(verb.as_str(), args))
+        };
+        server
+            .vault
+            .pre_verb_hooks(call, args, &admit)?
+            .map_err(|stop| MemoryError::from(oneiron::Error::from(stop)))
+    })
+    .await
+    .map_err(|_| hooks_did_not_finish())?
+}
+
+/// The post chain over that row's result, off the async runtime: the
+/// caller's view of it.
+pub(crate) async fn row_hooks_post(
+    server: &Arc<SyncServer>,
+    pre: VerbHookPre,
+    result: serde_json::Value,
+) -> Result<serde_json::Value, MemoryError> {
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || verb_hook_boundary::row_post(&server.vault, pre, result))
+        .await
+        .map_err(|_| hooks_did_not_finish())?
+}
+
+fn hooks_did_not_finish() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INTERNAL,
+        "the verb's hooks did not finish on this server",
+        &["Retry; if the failure persists, report it with this request's id."],
+    )
+}
+
+/// The pre chain of a row this route runs itself (ARCH-0080 §3): the args to
+/// run it with. Its caller is the credential's actor; a credential bound to
+/// none calls as the host, the vault's owner in person when it is
+/// owner-grade. The row's door checks its own authority first, so a hook
+/// never fires on a call the door refuses.
+async fn facade_hooks_pre(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    verb: &str,
+    value: serde_json::Value,
+) -> Result<VerbHookPre, FacadeApiError> {
+    let auth = call.auth();
+    if verb == "vault.export" {
+        export_admits(server, auth)?;
+    } else {
+        host_doors::door_admits(server, auth, verb)?;
+    }
+    let bound = facade_actor(auth).ok();
+    let (actor, class) = match bound {
+        Some(actor) => actor,
+        None => (
+            verb_hook_boundary::host_actor().map_err(MemoryError::from)?,
+            if auth.is_owner_grade() {
+                EdgeActorClass::Human
+            } else {
+                EdgeActorClass::System
+            },
+        ),
+    };
+    let invocation = call.invocation()?;
+    // What only a hook reads, built only when one may run: the caller's read
+    // key, its credential's where its connection sits (an owner-grade
+    // credential that calls as the host reads as the host, its owner), and
+    // the re-admission of a rewritten ref.
+    let (reader, check) = if VerbCall::may_run(&server.vault, verb) {
+        let reader = match bound {
+            Some(_) => Some(
+                credential_memory(&server.vault, Some(auth), actor, class)
+                    .at(auth.locality())
+                    .read_key()?,
+            ),
+            None if auth.is_owner_grade() => None,
+            None => Some(
+                super::scoped_read_for_core_auth(&server.vault, auth)?
+                    .actor_key()
+                    .clone(),
+            ),
+        };
+        (reader, Some(facade_rewrite_admit(server, auth, &value)))
+    } else {
+        (None, None)
+    };
+    Ok(row_hooks_pre_with(server, reader, check, actor, class, invocation, verb, value).await?)
+}
+
+/// What the facade admits before a host-door row's pre chain, for a door
+/// that runs the chain itself: the row door's own authority check, and
+/// whole-vault export's owner admission. A hook never fires on a call the
+/// row's door refuses.
+pub(crate) fn row_door_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> Result<(), MemoryError> {
+    if verb == "vault.export" {
+        export_admits(server, auth).map_err(FacadeApiError::into_memory_error)
+    } else {
+        host_doors::door_admits(server, auth, verb)
+    }
+}
+
+/// Whole-vault export's owner admission, as the export runs it in its own
+/// snapshot: the host's root, or the owner's own live slip. The route has
+/// already refused a credential short of owner-grade or with no verified
+/// slip.
+fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), FacadeApiError> {
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(());
+    };
+    if proof.claims().holder_ref == "host" {
+        server.vault.admit_host_owner_export(proof)?;
+    } else {
+        let (actor, class) = facade_actor(auth)?;
+        server
+            .vault
+            .memory(actor, class)
+            .at(auth.locality())
+            .admit_export(Some(proof))?;
+    }
+    Ok(())
+}
+
+/// The post chain over that row's result: the caller's view of it.
+async fn facade_hooks_post(
+    server: &Arc<SyncServer>,
+    pre: VerbHookPre,
+    output: serde_json::Value,
+) -> Result<serde_json::Value, FacadeApiError> {
+    Ok(row_hooks_post(server, pre, output).await?)
 }
 
 /// The proof a write carries when the vault's owner makes it in person, on the
@@ -325,18 +749,26 @@ pub(super) fn owner_authorship(
 }
 
 /// Runs one SDK verb as the caller's credential reads, inside the named room
-/// turn when the request names one.
+/// turn when the call names one. Its reads list the rows they pick in
+/// `producers`.
 fn facade_invoke(
     server: &SyncServer,
-    headers: &HeaderMap,
-    auth: &CoreAuth,
+    call: &FacadeCall<'_>,
     actor: EntityId,
     class: EdgeActorClass,
     verb: &str,
     value: serde_json::Value,
+    producers: &oneiron::memory::ProducerRows,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let memory = credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
-    Ok(match facade_room_turn(headers)? {
+    let auth = call.auth();
+    let memory = facade_invocation(
+        credential_memory(&server.vault, Some(auth), actor, class)
+            .at(auth.locality())
+            .listing_producers(producers),
+        call,
+    )?;
+    let memory = facade_rewrites_admitted(server, auth, verb, &value, memory);
+    Ok(match call.room_turn()? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => {
             // The owner's own request on the owner's own full credential:
@@ -359,9 +791,9 @@ fn facade_invoke(
 /// still fails closed.
 fn facade_landing(
     server: &SyncServer,
-    headers: &HeaderMap,
-    auth: &CoreAuth,
+    call: &FacadeCall<'_>,
 ) -> Result<BirthPosition, FacadeApiError> {
+    let auth = call.auth();
     let Some(proof) = auth.verified_slip() else {
         return Ok(BirthPosition::default());
     };
@@ -369,14 +801,7 @@ fn facade_landing(
         auth.require_unrestricted_record_scope()?;
         return Ok(BirthPosition::default());
     }
-    let session = request_session(headers).map_err(|()| {
-        FacadeApiError::new(
-            StatusCode::BAD_REQUEST,
-            MEMORY_CODE_BAD_REQUEST,
-            "invalid session header",
-            ["Name the session as its 32-hex id."],
-        )
-    })?;
+    let session = call.session()?;
     let write_facet = server
         .vault
         .paired_write_facet(&proof.claims().slip_id)
@@ -403,40 +828,46 @@ fn facade_landing(
 /// [`facade_invoke`] for a verb that births records at `position`.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the generated route passes facade_invoke's inputs plus the birth position"
+    reason = "the generated dispatch passes facade_invoke's inputs plus the birth position"
 )]
 fn facade_invoke_born(
     server: &SyncServer,
-    headers: &HeaderMap,
-    auth: &CoreAuth,
+    call: &FacadeCall<'_>,
     actor: EntityId,
     class: EdgeActorClass,
     verb: &str,
     value: serde_json::Value,
     position: BirthPosition,
+    producers: &oneiron::memory::ProducerRows,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let memory = credential_memory(&server.vault, Some(auth), actor, class)
-        .at(auth.locality())
-        .with_birth_position(position);
-    Ok(match facade_room_turn(headers)? {
+    let auth = call.auth();
+    let memory = facade_invocation(
+        credential_memory(&server.vault, Some(auth), actor, class)
+            .at(auth.locality())
+            .with_birth_position(position)
+            .listing_producers(producers),
+        call,
+    )?;
+    let memory = facade_rewrites_admitted(server, auth, verb, &value, memory);
+    Ok(match call.room_turn()? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
     })
 }
 
 /// A verb that reads around the read lane is not served inside a room turn.
-fn facade_outside_room_turn(headers: &HeaderMap, verb: &str) -> Result<(), FacadeApiError> {
-    facade_room_turn_serves(headers, verb, false)
+fn facade_outside_room_turn(call: &FacadeCall<'_>, verb: &str) -> Result<(), FacadeApiError> {
+    facade_room_turn_serves(call, verb, false)
 }
 
 /// Refuses, before any lookup the verb would make, a verb the named room
 /// turn does not serve, so the refusal says nothing about the verb's target.
 fn facade_room_turn_serves(
-    headers: &HeaderMap,
+    call: &FacadeCall<'_>,
     verb: &str,
     served: bool,
 ) -> Result<(), FacadeApiError> {
-    if !served && facade_room_turn(headers)?.is_some() {
+    if !served && call.room_turn()?.is_some() {
         return Err(FacadeApiError::new(
             StatusCode::BAD_REQUEST,
             MEMORY_CODE_BAD_REQUEST,
@@ -513,6 +944,57 @@ fn facade_admit_readable_ref(
     }
 }
 
+/// Re-admits each top-level `*_ref` field a hook's rewrite changed, as the
+/// route admitted the caller's own refs ([`facade_admit_readable_ref`]): a
+/// rewrite may not point the verb at an entity this credential cannot read.
+/// The reason refuses the rewrite.
+fn facade_admit_rewritten(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    original: &serde_json::Value,
+    rewritten: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(fields) = rewritten.as_object() else {
+        return Ok(());
+    };
+    for (field, value) in fields {
+        if field.ends_with("_ref") && original.get(field) != Some(value) {
+            facade_admit_readable_ref(vault, auth, rewritten, field)
+                .map_err(|refusal| refusal.body.error.message)?;
+        }
+    }
+    Ok(())
+}
+
+/// [`facade_admit_rewritten`] against the caller's `original` args, as a
+/// row's rewrite admission.
+fn facade_rewrite_admit(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    original: &serde_json::Value,
+) -> RewriteAdmit {
+    let (vault, auth, original) = (Arc::clone(&server.vault), auth.clone(), original.clone());
+    Arc::new(move |_: &str, rewritten: &serde_json::Value| {
+        facade_admit_rewritten(&vault, &auth, &original, rewritten)
+    })
+}
+
+/// `memory` bound to re-admit a hook's rewritten refs, when a hook may run on
+/// `verb`.
+fn facade_rewrites_admitted<'v>(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+    original: &serde_json::Value,
+    memory: oneiron::Memory<'v>,
+) -> oneiron::Memory<'v> {
+    if VerbCall::may_run(&server.vault, verb) {
+        memory.with_rewrite_admit(facade_rewrite_admit(server, auth, original))
+    } else {
+        memory
+    }
+}
+
 /// Drops every TASKS row this credential cannot read from a described
 /// section, as MCP's board does, then encodes the description. A row id that
 /// is not an entity id cannot be proven readable, so only a credential without
@@ -554,7 +1036,7 @@ fn facade_readable_task_rows(
 /// engine code this server has never heard of still reaches the client spelled
 /// the way the engine spelled it; only the HTTP status is this file's opinion.
 #[derive(Clone, Debug)]
-pub(super) struct FacadeApiError {
+pub(crate) struct FacadeApiError {
     status: StatusCode,
     body: FacadeErrorEnvelope,
 }
@@ -590,6 +1072,10 @@ struct FacadeErrorBody {
     /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
     #[serde(flatten)]
     wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
+    /// A verb hook's stop (ARCH-0080 §3): skipped with its reason, pending
+    /// on an ask with the invocation and the ask, or hidden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook: Option<Box<VerbHookStop>>,
 }
 
 impl FacadeApiError {
@@ -609,6 +1095,7 @@ impl FacadeApiError {
                     suggestions: suggestions.into_iter().map(Into::into).collect(),
                     receipt_ref: None,
                     wrong_root: None,
+                    hook: None,
                 },
                 narrowing: None,
             },
@@ -662,11 +1149,22 @@ impl From<MemoryError> for FacadeApiError {
             MEMORY_CODE_INVALID_STATE
             | MEMORY_CODE_OFF_RECORD_SESSION_DOOR
             | MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER => StatusCode::CONFLICT,
+            // OF-123: the person the effect names is not settled yet; the
+            // same request succeeds once `self.identity.settle` settles it.
+            oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => StatusCode::CONFLICT,
             // A paid call its line cannot cover, as a chat turn's is.
             MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
+            // A verb hook asked first: accepted, not run, and the body names
+            // the ask a retry with the same invocation waits on.
+            MEMORY_CODE_PENDING_ASK => StatusCode::ACCEPTED,
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            // OF-063: the write named a record its writer cannot resolve. The
+            // request was well formed and refused, so it is the caller's
+            // to correct, and a missing record and an unreadable one are this
+            // same status.
+            oneiron::memory::MEMORY_CODE_INVENTED_REFERENCE => StatusCode::UNPROCESSABLE_ENTITY,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -683,6 +1181,7 @@ impl From<MemoryError> for FacadeApiError {
                     suggestions: error.suggestions,
                     receipt_ref: None,
                     wrong_root: error.wrong_root,
+                    hook: error.hook,
                 },
                 narrowing: error.read_receipt,
             },
@@ -709,6 +1208,20 @@ impl FacadeApiError {
     /// The refusal's wire reply: its status and `{error, narrowing?}` body.
     fn reply(&self) -> Response {
         (self.status, Json(&self.body)).into_response()
+    }
+
+    /// The refusal as the engine's typed error, for a door outside the
+    /// facade (MCP's row door admission, the held socket's `rpc.err`): its
+    /// open code, message and suggestions, its read receipt, wrong-root
+    /// correction and hook stop. Only the HTTP status stays behind.
+    pub(crate) fn into_memory_error(self) -> MemoryError {
+        let FacadeErrorEnvelope { error, narrowing } = self.body;
+        let mut refusal = MemoryError::new(&error.code, error.message, &[]);
+        refusal.suggestions = error.suggestions;
+        refusal.read_receipt = narrowing;
+        refusal.wrong_root = error.wrong_root;
+        refusal.hook = error.hook;
+        refusal
     }
 }
 

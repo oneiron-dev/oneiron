@@ -1,42 +1,57 @@
-//! The generated read: a typed pack answered by one durable generation on the caller's own
-//! backend, for a caller already on an async path. The ladder is synchronous, so this entry
-//! awaits the generation as the dial's first read under the call's clock, then routes each
-//! answer exactly as [`DecisionLadder::run_pack`] does; a stronger rung is one of the
-//! ladder's own slots.
+//! The generated read: a typed pack answered by one generation on the caller's own backend,
+//! for a caller already on an async path. The ladder is synchronous, so this entry awaits the
+//! generation as the dial's first read under the call's clock, then routes each answer
+//! exactly as [`DecisionLadder::run_pack`] does; a stronger rung is one of the ladder's own
+//! slots. The generation goes out as the caller's own calls do: a durable step, the raw seam
+//! on the caller's lease, or the raw seam under a per-call admission.
 
 use serde_json::{Map, Value, json};
 
 use super::ladder::{OpenPack, ProviderDecision, Read, asked, joined, take, validate_pin};
 use super::types::invalid;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionPack, DecisionQuestion, DecisionRung, ProviderPin, Reversibility, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionPack,
+    DecisionQuestion, DecisionRung, ProviderPin, Reversibility, TypedDecision,
 };
 use crate::llm::{
-    BudgetGuard, CallClass, ContentPart, DeterministicFallback, DurableStepContext,
-    DurableStepResult, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmUsage,
-    ResponseFormat, StepOutcome, call_as_step,
+    BudgetDenied, BudgetGuard, BudgetLease, CallClass, ContentPart, DeterministicFallback,
+    DurableStepContext, DurableStepResult, LlmBackend, LlmError, LlmMessage, LlmMessageRole,
+    LlmRequest, LlmResponse, LlmUsage, ResponseFormat, StepOutcome, call_as_step,
 };
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::{EntityId, Result};
+use crate::{EntityId, Error, Result};
 
 /// A noul's labels as the generation answers them, yes first.
 const NOUL_LABELS: [&str; 2] = ["yes", "no"];
 
-/// The rung whose read is one durable generation: the step's caller, its backend and budget,
-/// and the request it goes out as.
+/// The rung whose read is one generation: its backend, how each request goes out, and the
+/// request it goes out as.
 pub struct GeneratedRung<'a> {
     /// The dial's first rung and the model the request names.
     pub pin: ProviderPin,
     pub backend: &'a dyn LlmBackend,
-    pub guard: &'a BudgetGuard,
-    pub step: &'a DurableStepContext<'a>,
-    /// The host's model, envelope, params and options. The read sets its messages, its
-    /// answer format and, on a durable call, an abstaining fallback.
+    pub step: GeneratedStep<'a>,
+    /// The host's model, envelope, params, options and its own prompt. The read adds its
+    /// turn after the host's messages, and sets its answer format and, on a durable call, an
+    /// abstaining fallback.
     pub request: LlmRequest,
     /// The host's last word on the built request (its role authorization and reasoning
     /// binding), before the step hashes it.
     pub seal: &'a (dyn Fn(LlmRequest) -> Result<LlmRequest> + Sync),
+}
+
+/// How each of the read's requests goes out.
+pub enum GeneratedStep<'a> {
+    /// A durable step on the guard: memoized, replayed on resume, and a trap parks the
+    /// caller's attempt.
+    Durable {
+        step: &'a DurableStepContext<'a>,
+        guard: &'a BudgetGuard,
+    },
+    /// The raw seam on the lease the caller issued.
+    Raw { lease: &'a BudgetLease },
+    /// The raw seam, each request admitted on the guard and settled on what it spent.
+    Admitted { guard: &'a BudgetGuard },
 }
 
 /// What a generated pack gave its caller.
@@ -48,6 +63,23 @@ pub enum GeneratedDecisions {
     },
     /// The durable step suspended the attempt; it parked, and replays on resume.
     Trapped,
+    /// A raw request came back with no reply; nothing was decided.
+    Unread(GeneratedMiss),
+}
+
+/// Why a raw read came back with no reply.
+pub enum GeneratedMiss {
+    /// The backend failed the request.
+    Backend(LlmError),
+    /// The guard admitted no request.
+    Budget(BudgetDenied),
+}
+
+/// One request's outcome.
+enum Reply {
+    Answers(Result<Vec<ProviderDecision>>),
+    Trapped,
+    Unread(GeneratedMiss),
 }
 
 impl DecisionLadder<'_> {
@@ -56,7 +88,8 @@ impl DecisionLadder<'_> {
     /// dial reaches the person) over the call's state, and the reply gives a probability
     /// per label; a question it leaves out, or answers with no weight, abstains, and so does
     /// every question on the step's deterministic fallback. A step that traps, refuses or
-    /// fails returns to the caller as its own outcome; it is not a decision.
+    /// fails, and a raw request the backend fails or the guard does not admit, returns to the
+    /// caller as its own outcome; it is not a decision.
     #[expect(
         clippy::too_many_arguments,
         reason = "the generated rung joins run_pack's inputs"
@@ -94,6 +127,7 @@ impl DecisionLadder<'_> {
             principal,
             evidence,
             &[],
+            &[],
             state,
             dial,
             policy,
@@ -112,6 +146,7 @@ impl DecisionLadder<'_> {
                 questions: chunk,
                 evidence,
                 images: &[],
+                audio: &[],
                 state,
                 deadline,
             };
@@ -120,8 +155,10 @@ impl DecisionLadder<'_> {
                 first.extend(chunk.iter().map(|_| Some(Read::NotStarted)));
                 continue;
             }
-            let Some(answers) = read(rung, &pack, &call, &mut steps).await? else {
-                return Ok(GeneratedDecisions::Trapped);
+            let answers = match read(rung, &pack, &call, &mut steps).await? {
+                Reply::Answers(answers) => answers,
+                Reply::Trapped => return Ok(GeneratedDecisions::Trapped),
+                Reply::Unread(miss) => return Ok(GeneratedDecisions::Unread(miss)),
             };
             first.extend(
                 take(&rung.pin, &call, answers, readings)?
@@ -134,29 +171,76 @@ impl DecisionLadder<'_> {
     }
 }
 
-/// One generation for `call`'s questions, or none when the step trapped.
+/// One generation for `call`'s questions.
 async fn read(
     rung: &GeneratedRung<'_>,
     pack: &OpenPack<'_>,
     call: &DecisionPack<'_>,
     steps: &mut Vec<([u8; 32], LlmUsage)>,
-) -> DurableStepResult<Option<Result<Vec<ProviderDecision>>>> {
+) -> DurableStepResult<Reply> {
     let asked = asked(call, pack.person);
     let request = (rung.seal)(request(rung.request.clone(), &asked, call.state))?;
     let hash = request.canonical_hash()?;
-    let response = match call_as_step(rung.step, rung.backend, rung.guard, request).await? {
-        StepOutcome::Finished { response, .. } => response,
-        StepOutcome::Trapped { .. } => return Ok(None),
+    let response = match rung.step {
+        GeneratedStep::Durable { step, guard } => {
+            match call_as_step(step, rung.backend, guard, request).await? {
+                StepOutcome::Finished { response, .. } => response,
+                StepOutcome::Trapped { .. } => return Ok(Reply::Trapped),
+            }
+        }
+        GeneratedStep::Raw { lease } => match rung.backend.generate(request, lease).await {
+            Ok(response) => response,
+            Err(error) => return Ok(Reply::Unread(GeneratedMiss::Backend(error))),
+        },
+        GeneratedStep::Admitted { guard } => match admitted(rung.backend, guard, request).await? {
+            Ok(response) => response,
+            Err(miss) => return Ok(Reply::Unread(miss)),
+        },
     };
     steps.push((hash, response.usage.clone()));
-    Ok(Some(answers(&response, &asked).and_then(|answers| {
-        joined(answers, call.questions.len(), pack.person)
-    })))
+    Ok(Reply::Answers(answers(&response, &asked).and_then(
+        |answers| joined(answers, call.questions.len(), pack.person),
+    )))
 }
 
-/// `shell` asking `asked` over `state`: one user turn names each question by id with its
-/// text and labels beside the state, and the answer format is a weight per label for each
-/// question id.
+/// `request` on the raw seam under its own admission on `guard`, settled on what it spent.
+async fn admitted(
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+) -> Result<std::result::Result<LlmResponse, GeneratedMiss>> {
+    let lease = match guard.admit_for_request(&request) {
+        Ok(admission) => Reserved {
+            guard,
+            lease: admission.lease,
+        },
+        Err(denied) => return Ok(Err(GeneratedMiss::Budget(denied))),
+    };
+    let response = backend.generate(request, &lease.lease).await;
+    match &response {
+        Ok(reply) => guard.settle_per_call(&lease.lease, &reply.usage),
+        Err(_) => guard.settle_reserved(&lease.lease),
+    }
+    .map_err(|_| Error::InvariantViolation("generated read budget settlement"))?;
+    Ok(response.map_err(GeneratedMiss::Backend))
+}
+
+/// A started request's reservation: a request dropped before it returns spends its
+/// estimate. Settling a settled lease again is a no-op.
+struct Reserved<'a> {
+    guard: &'a BudgetGuard,
+    lease: BudgetLease,
+}
+
+impl Drop for Reserved<'_> {
+    fn drop(&mut self) {
+        let _ = self.guard.settle_reserved(&self.lease);
+    }
+}
+
+/// `shell` asking `asked` over `state`: after the host's own messages, one user turn names
+/// each question by id with its text and labels beside the state, and the answer format is
+/// a weight per label for each question id.
 fn request(mut shell: LlmRequest, asked: &[&DecisionQuestion], state: &Value) -> LlmRequest {
     let mut properties = Map::new();
     let questions: Vec<Value> = asked
@@ -199,12 +283,12 @@ fn request(mut shell: LlmRequest, asked: &[&DecisionQuestion], state: &Value) ->
             config: Some(json!({"version": 1, "rows": [{"failure": "fatal", "value": {}}]})),
         };
     }
-    shell.messages = vec![LlmMessage {
+    shell.messages.push(LlmMessage {
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: json!({"questions": questions, "state": state}).to_string(),
         }],
-    }];
+    });
     shell
 }
 

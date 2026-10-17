@@ -20,6 +20,13 @@ use crate::prompt::PromptRecompileStamp;
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
 
+/// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
+pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
+/// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
+pub const FIELD_LEARNING_PATTERN: &str = "learning.pattern";
+/// OF-540: the pattern's decider kind (`leader|chair|vote|referee`).
+pub const FIELD_LEARNING_DECIDED_BY: &str = "learning.decided_by";
+
 const BOARD_STATE_REF_PREFIX: &str = "board:";
 const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
 
@@ -308,6 +315,26 @@ pub fn append_task_type_fields(
     Ok(())
 }
 
+/// Stamps the OF-540 team-run field-set on an ATTEMPT receipt or a TASK
+/// lifecycle body: the run's exact team reference, its pattern token and the
+/// pattern's decider kind, one string each, rendered from the stamp the
+/// dispatch froze. Actors, vote tallies and referee rules stay in the run's
+/// `TeamReceipt`.
+pub fn append_team_receipt_fields(
+    fields: &mut BTreeMap<String, String>,
+    stamp: &crate::agent_dispatch::TeamRunStamp,
+) {
+    fields.insert(FIELD_LEARNING_TEAM_REF.to_owned(), stamp.team_ref.clone());
+    fields.insert(
+        FIELD_LEARNING_PATTERN.to_owned(),
+        stamp.pattern.as_str().to_owned(),
+    );
+    fields.insert(
+        FIELD_LEARNING_DECIDED_BY.to_owned(),
+        stamp.pattern.decider_kind().to_owned(),
+    );
+}
+
 impl ReceiptRecord {
     /// The OF-543 task-type stamp recorded on this receipt, read from the
     /// recorded fields alone. `None` on receipts that predate the stamp.
@@ -317,11 +344,7 @@ impl ReceiptRecord {
         if node_id.is_empty() {
             return None;
         }
-        let tree_version = self
-            .fields
-            .get(FIELD_TYPE_REF_TREE_VERSION)?
-            .parse()
-            .ok()?;
+        let tree_version = self.fields.get(FIELD_TYPE_REF_TREE_VERSION)?.parse().ok()?;
         Some(crate::task_type::TaskTypeRef::new(
             node_id.clone(),
             tree_version,

@@ -12,6 +12,8 @@
 //! derivation and row encode/decode; `telemetry` holds the per-vault cleanup
 //! counters and span emission.
 
+mod annotation_hold;
+mod budget_hold;
 mod cancel;
 mod completion;
 mod encoding;
@@ -30,6 +32,8 @@ pub(crate) use validate::validate_lease_owner;
 #[cfg(test)]
 mod tests;
 
+pub use annotation_hold::{ANNOTATION_HOLD_ACTOR, AnnotationHold, AnnotationHoldSweep};
+pub use budget_hold::{BUDGET_HOLD_ACTOR, HoldAttemptForBudget};
 pub use cancel::{
     ATTEMPT_RUNTIME_ACTOR, AcceptAttemptLanding, AttemptCancelPressure, AttemptCancelReceipt,
     AttemptCancelReceiptKind, AttemptCancelState, AttemptCancellation, AttemptLanding,

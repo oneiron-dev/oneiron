@@ -160,9 +160,24 @@ impl AudienceCache {
                     .get(&(room, revision))
                     .ok_or(Error::CorruptedIndex("audience snapshot"))?;
                 for person in audience {
+                    // An unplaced speaker stays in the audience under the
+                    // cut its entry fact froze (ILDF2 P5): never dropped,
+                    // never wider than from its entry into this room. A live
+                    // Ready receipt for the room is current standing too
+                    // (OF-417); it is re-proved here, never cached.
                     if !membership::windows_rows(rows, *person)?
                         .iter()
                         .any(|w| w.contains(h.occurred_start))
+                        && !attendee::speaker_entry_covers_in(
+                            vault,
+                            txn,
+                            room,
+                            *person,
+                            h.occurred_start,
+                        )?
+                        && !crate::workspace_roster::room_join_audience_in(
+                            vault, txn, room, *person,
+                        )?
                     {
                         return Ok(false);
                     }

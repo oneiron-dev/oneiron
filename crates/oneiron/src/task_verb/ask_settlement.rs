@@ -58,13 +58,63 @@ pub(crate) fn settle_ask_if_due(vault: &Vault, id: EntityId) -> Result<()> {
     })
 }
 
+/// [`settle_with_owner_in`] carrying no owner proof: status reads, sweeps,
+/// waits and every path that admitted no owner's word in this transaction.
 pub(super) fn settle_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     now: u64,
 ) -> Result<Option<TaskAskResult>> {
+    settle_with_owner_in(vault, txn, id, now, None)
+}
+
+/// Cuts the ask `id` when it is due. `owner` is the live proof of the
+/// owner whose word was admitted in this same transaction, when there was
+/// one; it is passed in-process and never stored. An attendee ask cuts on a
+/// definitive word only under it (`super::attendee_answer::may_cut`), and
+/// that cut resolves the speaker's identity in this transaction.
+pub(super) fn settle_with_owner_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    now: u64,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+) -> Result<Option<TaskAskResult>> {
+    settle_with_cutoff_in(vault, txn, id, now, owner, false)
+}
+
+/// Cuts the ask `id` now as Stale because the domain question it carried
+/// was replaced outside the ask (a routed project tradeoff whose gate
+/// question moved): its witnessed TURN reads the same, but it no longer asks
+/// anything. Stale is Unknown with a Hold fallback, never a pick. Earlier
+/// answers stay evidence, and an ask already settled keeps its receipt. A
+/// missing group, or a revision this node does not admit, fails, so a caller
+/// never closes its own side while the ask stays open.
+pub(super) fn void_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    now: u64,
+) -> Result<TaskAskResult> {
+    settle_with_cutoff_in(vault, txn, id, now, None, true)?.ok_or_else(ask_record::invalid)
+}
+
+/// The cutoff behind [`settle_with_owner_in`] and [`void_in`]; `invalidated`
+/// cuts Stale whatever the ask's own question and electorate read.
+fn settle_with_cutoff_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    now: u64,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    invalidated: bool,
+) -> Result<Option<TaskAskResult>> {
     if let Some(result) = read_result(vault, txn, id)? {
+        // A replay runs the continuation again; it acts at most once.
+        super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
+        deliver_to_parked_runs(vault, txn, id, &result, now)?;
+        crate::runtime_hooks::verb_ask_settled_in_txn(vault, txn, id, &result, now)?;
         return Ok(Some(result));
     }
     let Some(group) = ask_record::read_group(vault, txn, id)? else {
@@ -83,7 +133,7 @@ pub(super) fn settle_in(
     let mut evidence = ask_record::evidence_in(vault, txn, id, &group)?;
     let mut unmet_sources = BTreeSet::new();
     let (coverage, decision) = reduce(&group.effective, &who, &mut evidence, &mut unmet_sources)?;
-    let stale = is_stale(vault, txn, &group)?;
+    let stale = invalidated || is_stale(vault, txn, &group)?;
     if stale {
         for entry in &mut evidence {
             entry.ladder_changed = None;
@@ -134,6 +184,9 @@ pub(super) fn settle_in(
     } else {
         return Ok(None);
     };
+    if !super::attendee_answer::may_cut(vault, txn, &group, reason, &decision, owner)? {
+        return Ok(None);
+    }
     let decision = if stale {
         TaskAskDecision::Unknown
     } else {
@@ -231,12 +284,35 @@ pub(super) fn settle_in(
             result.settlement.outcome_answer_ref = Some(bound.claim);
         }
     }
+    // OF-365: an attendee ask's owner-proved word resolves the speaker's
+    // identity in the settling commit; no other ask is touched.
+    super::attendee_answer::resolve_answer_in(vault, txn, &group, &result, owner)?;
     let proof = ask_record::sign_link_settlement(vault, txn, id, &group, &result)?;
     result.settlement.link_result_proof = proof;
     ask_record::put(vault, txn, reference, SETTLEMENT, &result, now)?;
     super::ask_facade::signal_waiters(vault, txn, id, now.saturating_mul(1000))
         .map_err(|_| ask_record::invalid())?;
+    // OF-220: an engine block's ask moves its TASK in the settling commit.
+    super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
+    deliver_to_parked_runs(vault, txn, id, &result, now)?;
+    // A verb hook's ask marks its stopped call ready for the hook runner.
+    crate::runtime_hooks::verb_ask_settled_in_txn(vault, txn, id, &result, now)?;
     Ok(Some(result))
+}
+
+/// A code run parked on the group's wait (`tasks.wait`, or a verb hook's
+/// ask) gets the settled status as its reply in the settling commit. A
+/// replay delivers again, to nothing that already has it.
+fn deliver_to_parked_runs(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    result: &TaskAskResult,
+    now: u64,
+) -> Result<()> {
+    let reply = serde_json::to_value(TaskAskStatus::Settled(Box::new(result.clone())))
+        .map_err(|_| crate::Error::InvariantViolation("a settled ask status is not JSON"))?;
+    crate::code_run::deliver_wait_in_txn(vault, txn, id, &reply, now.saturating_mul(1000)).map(drop)
 }
 
 pub(super) fn question_digest(

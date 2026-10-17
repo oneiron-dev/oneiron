@@ -10,6 +10,16 @@ A project card is the first interview turn, not authorization to silently fill g
 Only a human answers the goal interview. The loop may suggest a revision but must
 never apply one; return its proposal to the responsible human for a new interview.
 
+## Seed
+Before the first question, read `vault.projects.goal.intake` for the project
+(`Vault::project_goal_interview_context`): the goal claim in force, its goal
+generation, the card draft the project was minted with (`card_seed`: goal, why
+and axis names) and the loop's open revision proposals. The card draft is the
+interview's first turn: a starting point the human confirms or changes, never
+an answer. Its axes are names only; ask for each measure and bound. Revision
+proposals are optional preferences to offer the human; never merge one into
+the record without the human's own pick.
+
 ## Interview
 1. Identify the project and responsible human. Reuse known facts; ask only for
    missing answers that change admission. Confirm the goal in their words and
@@ -24,18 +34,24 @@ never apply one; return its proposal to the responsible human for a new intervie
 5. Record **preferences** only for tradeoffs the human actually chose: prefer X
    over Y and their reason. Empty is valid before the first human pick. Never
    infer a preference from a model score or a proposal.
-6. Ask for the **exploration budget**: maximum spend, exploration slice within
-   it, and allowed human minutes. This is a soft share, not a budget lease or
-   permission to widen a Grant. Confirm responsibility, constraints and open
-   questions before committing.
+6. Ask for the **exploration budget**: maximum spend and the exploration slice
+   within it, both in one named unit, and allowed human minutes. The slice
+   funds live trials of proposed skill revisions under this goal; a trial run
+   that would pass it waits for the vault owner's yes. This is a soft share, not a
+   budget lease or permission to widen a Grant. Confirm responsibility,
+   constraints and open questions before committing.
 
 ## Commit
 Build a `GoalRecord` with `goal`, `why`, `primary_axes`, `floor_axes`,
 `cost_axes`, `preferences`, and `exploration_budget`. Each `GoalAxis` has
 `name`, `measure`, `bound`. Each `GoalPreference` has `prefer`, `over`, `reason`.
-`GoalExplorationBudget` has `max_spend`, `exploration_slice`, `human_minutes`
-(nonnegative integers in the host's budget unit; the slice cannot exceed the
-maximum). Include a `human_minutes` cost axis. Do not invent bounds or convert
+`GoalExplorationBudget` has `max_spend`, `exploration_slice`, `unit` and
+`human_minutes`. `max_spend` and `exploration_slice` are nonnegative integers
+counted in `unit`, the host's budget unit name (lowercase letters, digits, `_`
+or `-`, such as `tokens`); the slice cannot exceed the maximum. A trial is
+charged against the slice only when its run's launch estimate is in that same
+unit. `human_minutes` is a nonnegative integer of minutes. Include a
+`human_minutes` cost axis. Do not invent bounds or convert
 an unanswered question into a blank field; pause to ask. Show the draft to the
 human and accept their explicit confirmation.
 

@@ -26,6 +26,17 @@ impl ForeignSkillPublisher {
         &self.grant_ref
     }
 }
+/// The one Grant that admits `identity` to offer from `hub`; its digest is
+/// the publisher's grant ref.
+pub(super) fn skill_publisher_grant(identity: &str, hub: EntityId) -> Result<GrantBound> {
+    let actor = ActorBound::new(identity)?.with_actor_class("foreign-publisher")?;
+    GrantBound::action(
+        actor,
+        ActionClass::new("skill.offer")?,
+        ActionEnvelope::new([format!("hub:{}", hub.to_hex())])?,
+    )
+}
+
 impl Vault {
     /// Registers or revises a configured hub on an authenticated owner decision.
     /// A source grants no activation permission. The immutable ask binds this full
@@ -101,12 +112,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.hub_record_in_txn(&txn, &hub)?;
         drop(txn);
-        let actor = ActorBound::new(identity)?.with_actor_class("foreign-publisher")?;
-        let bound = GrantBound::action(
-            actor,
-            ActionClass::new("skill.offer")?,
-            ActionEnvelope::new([format!("hub:{}", hub.to_hex())])?,
-        )?;
+        let bound = skill_publisher_grant(identity, hub)?;
         let grant_ref = bound.digest().to_hex();
         self.create_standing_grant(owner, bound)?;
         Ok(ForeignSkillPublisher {

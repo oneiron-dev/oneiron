@@ -12,12 +12,12 @@ use serde_json::{Value, json};
 
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
-use crate::skill_hub::pack_catalog::{HookActorClass, HookPhase, PackHookBinding};
+use crate::skill_hub::pack_catalog::{HookActorClass, HookPhase, HookRenderClass, PackHookBinding};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::apply;
 use super::block::{self, HookBlock};
-use super::body::{HookBodyRun, HookBodyRuntime};
+use super::body::{HookBodyRun, HookBodyRuntime, HookVerdict};
 use super::filter;
 use super::grant::{self, HookGrant};
 use super::lineage::{self, HookCheck, HookCheckReason, LineageLink};
@@ -41,11 +41,22 @@ const MAX_OUTCOME_BYTES: usize = 64 * 1024;
 const MAX_FIELD: usize = 512;
 
 /// The fact-hook runner. One per vault.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct FactHookRunner {
     /// Pending intents were drained since start (or since the last failed
     /// pass).
     drained: AtomicBool,
+    /// Answers `ai.verdict` for generative hooks; without it none is.
+    verdict: Option<std::sync::Arc<dyn HookVerdict>>,
+}
+
+impl std::fmt::Debug for FactHookRunner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FactHookRunner")
+            .field("drained", &self.drained)
+            .field("verdict", &self.verdict.is_some())
+            .finish()
+    }
 }
 
 /// What one pass did.
@@ -85,6 +96,13 @@ impl FactHookRunner {
         Self::default()
     }
 
+    /// The runner whose generative hooks ask `ai.verdict` of `verdict`.
+    #[must_use]
+    pub fn with_verdict(mut self, verdict: std::sync::Arc<dyn HookVerdict>) -> Self {
+        self.verdict = Some(verdict);
+        self
+    }
+
     /// One pass over every source for every enabled fact binding, in
     /// priority order (higher first, ties by body hash). With no binding it
     /// reads nothing.
@@ -112,6 +130,12 @@ impl FactHookRunner {
             report.disabled = true;
             return Ok(report);
         }
+        // Calls a settled verb hook ask made ready run here, the first pass
+        // at start included: outside any write, at hook depth 0. A failed
+        // drain leaves its calls for the next pass.
+        if let Err(error) = vault.drain_verb_asks() {
+            tracing::warn!(%error, "settled verb hook asks wait for the next pass");
+        }
         if !self.drained.swap(true, Ordering::AcqRel) {
             apply::drain_pending(vault, &mut report)?;
         }
@@ -134,6 +158,7 @@ impl FactHookRunner {
         let mut pass = Pass {
             vault,
             runtime,
+            verdict: self.verdict.as_deref(),
             bindings: &bindings,
             all: &all,
             bodies: HashMap::new(),
@@ -149,25 +174,33 @@ impl FactHookRunner {
     /// Runs passes until `shutdown` turns true. It subscribes to the vault's
     /// change notice before the first pass, catches up from every cursor at
     /// start, then wakes on a notice or every [`HOOK_RUNNER_TICK`]. Each pass
-    /// runs on a blocking thread.
+    /// runs on a blocking thread. `verdict` answers generative hooks'
+    /// `ai.verdict`.
     #[cfg(feature = "sync")]
     pub fn spawn(
         vault: std::sync::Arc<Vault>,
         runtime: std::sync::Arc<dyn HookBodyRuntime>,
+        verdict: Option<std::sync::Arc<dyn HookVerdict>>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         use std::sync::Arc;
         // Subscribed before the first pass, so a commit between that pass and
         // the first wait still wakes the loop.
         let mut changes = vault.subscribe_proactivity_changes();
-        let runner = Arc::new(Self::new());
+        let runner = Arc::new(match verdict {
+            Some(verdict) => Self::new().with_verdict(verdict),
+            None => Self::new(),
+        });
         tokio::spawn(async move {
             loop {
                 if *shutdown.borrow() {
                     break;
                 }
-                let (pass_runner, pass_vault, pass_runtime) =
-                    (Arc::clone(&runner), Arc::clone(&vault), Arc::clone(&runtime));
+                let (pass_runner, pass_vault, pass_runtime) = (
+                    Arc::clone(&runner),
+                    Arc::clone(&vault),
+                    Arc::clone(&runtime),
+                );
                 let pass = tokio::task::spawn_blocking(move || {
                     pass_runner.run_pass(&pass_vault, pass_runtime.as_ref(), HOOK_PASS_ENTRIES)
                 })
@@ -232,6 +265,7 @@ fn pause_disabled(vault: &Vault, all: &[(EntityId, PackHookBinding)]) -> Result<
 struct Pass<'v> {
     vault: &'v Vault,
     runtime: &'v dyn HookBodyRuntime,
+    verdict: Option<&'v dyn HookVerdict>,
     /// Enabled fact bindings, in run order.
     bindings: &'v [(EntityId, PackHookBinding)],
     /// Every live binding, for the authority recheck before an intent lands.
@@ -353,7 +387,14 @@ impl Pass<'_> {
             return Ok(());
         };
         let actor = self.actor_class(entry.actor)?;
-        if !filter::fact_matches(&binding.selector, entry.kind, seen.claim.as_ref(), actor) {
+        if !filter::fact_matches(
+            self.vault,
+            &binding.selector,
+            entry.kind,
+            entry.entity,
+            seen.claim.as_ref(),
+            actor,
+        )? {
             self.report.skipped += 1;
             return Ok(());
         }
@@ -376,7 +417,12 @@ impl Pass<'_> {
         seen: &SeenFact,
         body: std::result::Result<String, String>,
     ) -> Result<()> {
-        let now = self.vault.store.clock.now_recorded_at().saturating_mul(1_000);
+        let now = self
+            .vault
+            .store
+            .clock
+            .now_recorded_at()
+            .saturating_mul(1_000);
         let input = input_json(
             run.binding_id,
             run.binding,
@@ -386,12 +432,32 @@ impl Pass<'_> {
             now,
         )?;
         let started = Instant::now();
+        let budget_ms = run.binding.selector.budget_ms;
+        let deadline = started + Duration::from_millis(u64::from(budget_ms));
         let mut pins = Vec::new();
         let result = match body {
             Ok(body) => {
                 let mut answer = |request: &str| read::answer(lane, run.grant, request, &mut pins);
+                // The verdict is asked for the grant's reader, the identity
+                // whose reach the hook reads with.
+                let host = self.verdict;
+                let mut verdict = |request: &str| match (run.binding.selector.render_class, host) {
+                    (HookRenderClass::Generative, Some(host)) => host.verdict(
+                        run.grant.reader,
+                        filter::edge_class(run.grant.reader_class),
+                        request,
+                        deadline,
+                    ),
+                    (HookRenderClass::Generative, None) => {
+                        Err("no verdict host serves this runner".to_owned())
+                    }
+                    (HookRenderClass::DeterministicEager, _) => Err(
+                        "a deterministic hook calls no model: declare render_class: generative"
+                            .to_owned(),
+                    ),
+                };
                 self.runtime
-                    .run_hook(&body, &input, run.binding.selector.budget_ms, &mut answer)
+                    .run_fact_hook(&body, &input, budget_ms, &mut answer, &mut verdict)
             }
             Err(reason) => Err(Error::InvalidConfig(reason)),
         };
@@ -420,10 +486,7 @@ impl Pass<'_> {
         let vault = self.vault;
         let at = vault.store.clock.now_recorded_at();
         let key = run.key;
-        let queued = verdict
-            .outcome
-            .as_ref()
-            .is_some_and(HookOutcome::is_queued);
+        let queued = verdict.outcome.as_ref().is_some_and(HookOutcome::is_queued);
         let proposal = match &verdict.outcome {
             Some(HookOutcome::Propose { .. }) => Some(apply::proposal_id(&key)?),
             _ => None,
@@ -472,7 +535,7 @@ impl Pass<'_> {
             if queued {
                 let intent = HookIntent {
                     binding: run.binding_id,
-                    author: run.binding.owner,
+                    author: run.binding.author_id(),
                     outcome_json: verdict.outcome_json.clone().unwrap_or_default(),
                     lineage: chain,
                     state: HookIntentState::Pending,
@@ -537,8 +600,8 @@ pub(super) struct Verdict {
 }
 
 /// A body that failed, trapped or ran past its budget is `failed`. An
-/// outcome that does not parse, is not a fact-hook kind, is not one the
-/// binding allows, or has the wrong shape is `refused`.
+/// outcome that does not parse, is not a kind of the binding's phase, is not
+/// one the binding allows, or has the wrong shape is `refused`.
 pub(super) fn judge(binding: &PackHookBinding, result: Result<HookBodyRun>) -> Verdict {
     let run = match result {
         Ok(run) => run,
@@ -583,8 +646,17 @@ fn accept(binding: &PackHookBinding, json: &str) -> std::result::Result<HookOutc
     let outcome: HookOutcome =
         serde_json::from_str(json).map_err(|_| "the outcome does not parse".to_owned())?;
     let kind = outcome.kind();
-    if !kind.applies_in(HookPhase::Fact) {
-        return Err(format!("{} is not a fact-hook outcome", kind_token(kind)));
+    let phase = binding.selector.phase;
+    if !kind.applies_in(phase) {
+        return Err(format!(
+            "{} is not a {} outcome",
+            kind_token(kind),
+            match phase {
+                HookPhase::Pre => "pre-hook",
+                HookPhase::Post => "post-hook",
+                HookPhase::Fact => "fact-hook",
+            }
+        ));
     }
     if !binding.selector.outcomes.contains(&kind) {
         return Err(format!("the binding does not allow {}", kind_token(kind)));
@@ -630,7 +702,7 @@ pub(super) fn input_json(
     serde_json::to_string(&input).map_err(|_| Error::InvariantViolation("hook input encode"))
 }
 
-fn block_id(key: &RunKey) -> Result<EntityId> {
+pub(super) fn block_id(key: &RunKey) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(b"oneiron.hook-block.v1", &[key.as_slice()])
 }
 
@@ -703,7 +775,7 @@ fn receipt(
         receipt_id: store::receipt_id(&run.key),
         receipt_kind: ReceiptKind::Hook,
         occurred_at: now / 1_000,
-        actor: Some(binding.owner.to_hex()),
+        actor: Some(binding.author_id().to_hex()),
         on_behalf_of: None,
         outcome: verdict.token.clone(),
         job_ref: None,

@@ -10,6 +10,10 @@
 //! replacement now holds, so it is archived: it reads, and refuses every
 //! write until an owner activates it as a side vault, which forks its custody
 //! the same way.
+//!
+//! Host-order legal holds are live state of the same kind: runtime rows no
+//! image carries (OF-470 C2). A source's whole host-order family is read with
+//! its custody, and a restore beside it, or an activation, takes it on.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -34,6 +38,10 @@ use super::retention::{checkpoint_retirements, retirement_prefixes};
 use super::types::GateDecisionId;
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// The host-order legal-hold family in `vault_meta`: its holds, their target
+/// index, the host-only log and erase links (`legal_hold`).
+const HOST_HOLD_PREFIX: &[u8] = b"legal_hold:host:";
 
 /// A vault's archive mark. [`ARCHIVED_ANYWHERE`]: archived wherever it is.
 /// [`LIVE_ONLY_AT`] and a canonical root: archived unless it sits at that
@@ -72,16 +80,63 @@ fn live_only_at(home: &Path) -> Result<Vec<u8>> {
 }
 
 /// The `vault_meta` rows a vault's live custody state is read from: its
-/// custody binding, its archive mark, its store identity, and its
-/// key-retirement intents.
+/// custody binding, its archive mark, its store identity, its key-retirement
+/// intents, and its host orders, whose target index the intents read.
 fn live_custody_prefixes() -> Vec<&'static [u8]> {
     let mut prefixes = vec![
         CUSTODY_ROOT_KEY,
         ARCHIVED.decl().prefix,
         STORE_IDENTITY.decl().prefix,
     ];
-    prefixes.extend(retirement_prefixes());
+    prefixes.extend(
+        retirement_prefixes()
+            .into_iter()
+            .filter(|prefix| !prefix.starts_with(HOST_HOLD_PREFIX)),
+    );
+    prefixes.push(HOST_HOLD_PREFIX);
     prefixes
+}
+
+/// Whether a host-order row is one the key-retirement intents read.
+fn host_row_is_intent(key: &[u8]) -> bool {
+    retirement_prefixes()
+        .iter()
+        .any(|prefix| prefix.starts_with(HOST_HOLD_PREFIX) && key.starts_with(prefix))
+}
+
+/// Every host-order row of an open vault, read in `txn`.
+pub(crate) fn host_hold_rows_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Rows> {
+    vault_meta_rows(&store.env, txn, &[HOST_HOLD_PREFIX])
+}
+
+/// Replaces every host-order row of a vault with `rows`, in `wtxn`. Rows
+/// outside the family are refused.
+pub(crate) fn replace_host_holds_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<()> {
+    if rows
+        .iter()
+        .any(|(key, _)| !key.starts_with(HOST_HOLD_PREFIX))
+    {
+        return Err(Error::CorruptedIndex("host-order legal hold rows"));
+    }
+    let vault_meta = store
+        .env
+        .open_database::<Bytes, Bytes>(wtxn, Some("vault_meta"))?
+        .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+    let stale: Vec<Vec<u8>> = vault_meta
+        .prefix_iter(wtxn, HOST_HOLD_PREFIX)?
+        .map(|row| row.map(|(key, _)| key.to_vec()))
+        .collect::<std::result::Result<_, _>>()?;
+    for key in stale {
+        vault_meta.delete(wtxn, &key)?;
+    }
+    for (key, value) in rows {
+        vault_meta.put(wtxn, key, value)?;
+    }
+    Ok(())
 }
 
 /// One vault's live key-custody state, read when a side restore of it
@@ -91,6 +146,8 @@ pub(crate) struct LiveCustody {
     root: PathBuf,
     store_identity: Option<Vec<u8>>,
     rows: Rows,
+    /// Its whole host-order family, for the vault a restore makes beside it.
+    host_holds: Rows,
 }
 
 impl LiveCustody {
@@ -103,6 +160,7 @@ impl LiveCustody {
         let mut mark = None;
         let mut store_identity = None;
         let mut intents = Vec::new();
+        let mut host_holds = Vec::new();
         for (key, value) in rows {
             if key == ARCHIVED.decl().prefix {
                 mark = Some(value);
@@ -110,6 +168,11 @@ impl LiveCustody {
                 store_identity = Some(value);
             } else if key == CUSTODY_ROOT_KEY {
                 root = orcb::decode_custody_root(&value)?;
+            } else if key.starts_with(HOST_HOLD_PREFIX) {
+                if host_row_is_intent(&key) {
+                    intents.push((key.clone(), value.clone()));
+                }
+                host_holds.push((key, value));
             } else {
                 intents.push((key, value));
             }
@@ -121,7 +184,13 @@ impl LiveCustody {
             root,
             store_identity,
             rows: intents,
+            host_holds,
         })
+    }
+
+    /// The source's whole host-order family, as it was read.
+    pub(crate) fn host_holds(&self) -> &[(Vec<u8>, Vec<u8>)] {
+        &self.host_holds
     }
 
     /// Whether `other`, read later, is the state of the same vault: the same
@@ -686,6 +755,8 @@ impl Store {
             .drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased())
             .and_then(|()| self.read_back_in_txn(&wtxn, &root))
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
+            // The orders standing on its source now, not the ones it had.
+            .and_then(|()| replace_host_holds_in_txn(self, &mut wtxn, source.host_holds()))
             .and_then(|()| ARCHIVED.delete(self, &mut wtxn, &()))
             .and_then(|_| Ok(wtxn.commit()?));
         if let Err(err) = committed {

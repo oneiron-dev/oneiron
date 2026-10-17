@@ -70,6 +70,7 @@ impl Vault {
         let super::VaultArchive {
             mut document,
             secrets,
+            result_files,
         } = super::read_vault_archive(bytes)?;
         document.validate(self)?;
         if actor.is_none()
@@ -93,7 +94,7 @@ impl Vault {
             .collect::<Result<_>>()?;
         // Run result bodies are written whole before any row names them; the
         // rows commit with the rest below, or not at all.
-        let staged_results = stage_run_results(self, &document.run_results)?;
+        let staged_results = stage_run_results(self, &document.run_results, &result_files)?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
@@ -371,29 +372,26 @@ impl Vault {
 fn stage_run_results(
     vault: &Vault,
     results: &ExportRunResults,
+    files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<BTreeMap<[u8; 32], crate::code_run::FinishedOutput>> {
-    let contents: BTreeMap<&str, &str> = results
-        .bodies
-        .iter()
-        .filter_map(|body| Some((body.blake3.as_str(), body.content.as_deref()?)))
-        .collect();
     let mut staged = BTreeMap::new();
     for output in results.runs.iter().flat_map(|run| &run.outputs) {
-        let digest = parse_digest(&output.blake3)?;
+        let Some(blake3) = &output.blake3 else {
+            continue;
+        };
+        let digest = parse_digest(blake3)?;
         if staged.contains_key(&digest) {
             continue;
         }
-        let Some(content) = contents.get(output.blake3.as_str()) else {
+        let Some(body) = files.get(blake3.as_str()) else {
             continue;
         };
-        if content.len() as u64 != output.bytes
-            || *blake3::hash(content.as_bytes()).as_bytes() != digest
-        {
+        if body.len() as u64 != output.bytes || *blake3::hash(body).as_bytes() != digest {
             return Err(invalid("run result body does not match its digest"));
         }
         staged.insert(
             digest,
-            vault.stage_code_run_output(output.path.clone(), content.as_bytes())?,
+            vault.stage_code_run_output(output.path.clone(), body)?,
         );
     }
     Ok(staged)
@@ -427,7 +425,9 @@ fn restore_secrets_in_txn(
             return Err(invalid("archive custody record id appears twice"));
         }
         if secret.metadata.name != secret.name {
-            return Err(invalid("archive custody record name disagrees with its metadata"));
+            return Err(invalid(
+                "archive custody record name disagrees with its metadata",
+            ));
         }
         let Some(body) = &secret.body else {
             missing.push(secret.metadata.clone());
@@ -440,7 +440,8 @@ fn restore_secrets_in_txn(
         if record.metadata() != secret.metadata {
             return Err(invalid("archive custody record disagrees with its body"));
         }
-        if let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
+        if let Some(existing) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
         {
             if existing.get(ENTITY_METADATA_HEADER_LEN..) == Some(body.as_slice())
                 && EntityMetadataHeader::parse(&existing).is_some_and(|header| {
@@ -450,7 +451,9 @@ fn restore_secrets_in_txn(
                 unchanged += 1;
                 continue;
             }
-            return Err(invalid("import ID collides with a different custody record"));
+            return Err(invalid(
+                "import ID collides with a different custody record",
+            ));
         }
         crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)?;
         restored += 1;
@@ -468,7 +471,11 @@ fn put_run_results_in_txn(
     for run in &results.runs {
         let run_id = parse_id(&run.run_id)?;
         for output in &run.outputs {
-            let Some(finished) = staged.get(&parse_digest(&output.blake3)?) else {
+            let Some(blake3) = &output.blake3 else {
+                withheld += 1;
+                continue;
+            };
+            let Some(finished) = staged.get(&parse_digest(blake3)?) else {
                 withheld += 1;
                 continue;
             };

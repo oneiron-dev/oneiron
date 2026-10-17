@@ -30,6 +30,8 @@ mod birth_position;
 mod booking;
 mod claim_conflict;
 mod conflict_settle;
+mod diary_read;
+mod people_verbs;
 mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
@@ -46,12 +48,14 @@ mod entity_erase;
 mod export;
 mod expression_preference;
 pub mod extraction;
+mod inspection;
 mod key_value;
 mod locality;
 mod machine_write;
 mod notes;
 mod outbound;
 mod owner_door;
+mod presented_credential;
 mod read_lane;
 mod reads;
 mod recall;
@@ -70,8 +74,11 @@ mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_resolve::{
-    AssetConsumer, HydratedAsset, LandedImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+    AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
+    LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+    pull_image, resolve_audio_ref, resolve_image_ref,
 };
+pub(crate) use asset_resolve::{asset_audio_in_lane, asset_image_in_lane};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
@@ -91,11 +98,18 @@ pub use claims::{
     PendingWrite, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
+pub use diary_read::{
+    DIARY_READ_VERB, DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold,
+    DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord, DiaryReadRequest, DiaryReadsRequest,
+    DiaryReadsView, DiaryReviewAnswer, DiaryReviewState,
+};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
-pub use export::{EXPORT_TARGET_ARCHIVE, ExportOptions, ExportReceipt, MemoryExport};
+pub use export::{
+    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, ExportReceipt, MemoryExport,
+};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
@@ -108,9 +122,22 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial,
-    MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
+    MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT,
+    MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
+    MemoryWrongRoot,
 };
+pub use people_verbs::{
+    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
+    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
+};
+// OF-063: a write that names a record its writer cannot resolve is refused
+// with this code; hover and open resolve a typed record ref through the lens.
+pub use crate::lens::{
+    LinkedText, ProseSpan, RecordLinks, RecordLinksRequest, RecordRef, RecordRefPreview,
+    ResolveRecordRefRequest,
+};
+pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
+pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,
@@ -128,12 +155,13 @@ pub use recall::{
 pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
+pub(crate) use structural::append_agent_diary_in_txn;
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
-pub use support::{HostWriteOrigin, Memory, parse_actor_key, resolve_entity_ref};
+pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
@@ -144,7 +172,8 @@ pub use witness::{
     StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
 };
 pub(crate) use witness::{
-    MessageStreamRuntime, message_completion_in_txn, message_stream_finality_in_txn,
+    MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
+    message_stream_finality_in_txn,
 };
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 

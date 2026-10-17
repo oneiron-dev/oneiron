@@ -28,13 +28,11 @@ use serde_json::{Value as JsonValue, json};
 use crate::error::{Error, Result};
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DEFAULT_SAFEGUARD_MODEL_BINDING,
-    DeterministicFallback, FinishReason, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
-    ModelTierRef,
+    DeterministicFallback, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef,
 };
 
 use super::contract::{
     POLICY_MODEL_ANSWER_PARSE_MAX_BYTES, PolicyModelAnswer, PolicyOutputContract,
-    parse_model_answer,
 };
 use super::planes::{HostedLegalPolicy, PolicyPlane, PolicyRubricRow, parse_hosted_category_label};
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
@@ -198,23 +196,36 @@ impl PolicyClassifyPrompt {
         ids
     }
 
-    /// The labels an answer may name, scoped to the plane whose rows are in
-    /// this prompt. A plane never sees another plane's vocabulary.
-    fn category_vocabulary(&self) -> Vec<JsonValue> {
-        let mut labels: Vec<JsonValue> = vec![JsonValue::Null];
+    /// The labels a violation may name, each once, scoped to the plane whose
+    /// rows are in this prompt. A plane never sees another plane's vocabulary.
+    pub(super) fn violation_labels(&self) -> Vec<&str> {
+        let mut labels: Vec<&str> = Vec::new();
         for row in &self.rubric_rows {
-            let label = match row.plane {
-                // The owner plane's rows are free prose sharing one plane
-                // label, so `row_ref` is the only vocabulary that tells two of
-                // them apart.
-                PolicyPlane::OwnerPolicy => JsonValue::from(row.row_ref.as_str()),
-                PolicyPlane::HostedLegal => JsonValue::from(row.category.as_str()),
-            };
+            let label = vocabulary_label(row);
             if !labels.contains(&label) {
                 labels.push(label);
             }
         }
         labels
+    }
+
+    /// The labels an answer may name: null for a clean answer, then
+    /// [`Self::violation_labels`].
+    fn category_vocabulary(&self) -> Vec<JsonValue> {
+        std::iter::once(JsonValue::Null)
+            .chain(self.violation_labels().into_iter().map(JsonValue::from))
+            .collect()
+    }
+}
+
+/// The label a row answers to in its plane's vocabulary: an owner row's
+/// `row_ref`, a hosted row's plane-qualified category.
+pub(super) fn vocabulary_label(row: &PolicyRubricRow) -> &str {
+    match row.plane {
+        // The owner plane's rows are free prose sharing one plane label, so
+        // `row_ref` is the only vocabulary that tells two of them apart.
+        PolicyPlane::OwnerPolicy => row.row_ref.as_str(),
+        PolicyPlane::HostedLegal => row.category.as_str(),
     }
 }
 
@@ -240,85 +251,35 @@ pub(super) enum AnswerPlane<'a> {
     Hosted(&'a HostedLegalPolicy),
 }
 
-/// A model answer resolved to a decision and the row it is attributed to.
-pub(super) struct ResolvedAnswer {
-    pub(crate) decision: PolicyClassifyDecision,
-    pub(crate) category: PolicyVerdictCategory,
-    /// The answer, with `rule_ids` already deduped and cut down to the rules
-    /// the plane actually resolved.
-    pub(crate) answer: PolicyModelAnswer,
-    /// How many cited ids named no resolved rule and were dropped.
-    ///
-    /// The COUNT, not the ids. A model can invent unboundedly many distinct
-    /// strings and every one of them would otherwise become a ledger row, which
-    /// is the flood the removed rule-id cap was standing in front of. The
-    /// surviving ids are bounded by the plane's own row count, so the loss can
-    /// be made visible without reopening the hole.
-    pub(crate) dropped_rule_ids: usize,
-}
-
-/// Reads a safeguard-model response and routes it to a row of `plane`.
+/// The action and attribution a violation on `plane` resolves to: the row
+/// `label` names in the plane's vocabulary or, with no label (a categoryless
+/// contract), the strictest row.
 ///
-/// Every non-clean answer must land on a row the model was actually shown, and
-/// the ROW decides the action — a model does not get to pick `Block` over a row
-/// its plane wrote as `Warn`. An answer that names nothing the plane publishes
-/// is unreadable, which is what keeps a hallucinated label from taking effect.
-///
-/// The model's CITATIONS get the same treatment as its verdict. `rule_ids`
-/// arrives unvalidated, and an id naming no rule this plane resolved is a
-/// claim about a rule that does not exist — so it is dropped here, against the
-/// rows actually in the prompt, rather than carried into a receipt as though
-/// the engine had checked it. Duplicates collapse. What that leaves is bounded
-/// by the plane's own row count, which is the bound that used to be a fixed
-/// number pulled out of the air.
-pub(super) fn resolve_policy_model_response(
-    response: &LlmResponse,
+/// Every violation must land on a row the model was actually shown, and the
+/// ROW decides the action — a model does not get to pick `Block` over a row its
+/// plane wrote as `Warn`. A label that names nothing the plane publishes
+/// resolves to nothing, which is what keeps a hallucinated label from taking
+/// effect.
+pub(super) fn resolve_violation(
     prompt: &PolicyClassifyPrompt,
     plane: &AnswerPlane<'_>,
-) -> Result<ResolvedAnswer> {
-    // Only a finished answer is a verdict, however well its text parses. A
-    // cut, filtered, cancelled, paused or tool-pending answer is partial, and
-    // a fallback runner's reply is no model's read at all. This request
-    // declares no tools, so a tool call is no answer either.
-    if response.finish_reason != FinishReason::Stop
-        || response
-            .message
-            .content
-            .iter()
-            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
-    {
-        return Err(Error::InvalidConfig(
-            "policy model response did not finish".to_owned(),
-        ));
+    label: Option<&str>,
+) -> Result<(PolicyClassifyDecision, PolicyVerdictCategory)> {
+    match plane {
+        AnswerPlane::Owner => resolve_owner_violation(label, &prompt.rubric_rows),
+        AnswerPlane::Hosted(policy) => resolve_hosted_violation(label, policy),
     }
-    let text = response_text(response).ok_or_else(|| {
-        Error::InvalidConfig("policy model response contained no text part".to_owned())
-    })?;
-    let mut answer = parse_model_answer(prompt.output_contract, &text)?;
-    let dropped_rule_ids = retain_resolvable_rule_ids(&mut answer, prompt);
-    if !answer.violation {
-        return Ok(ResolvedAnswer {
-            decision: PolicyClassifyDecision::Allow,
-            category: PolicyVerdictCategory::None,
-            answer,
-            dropped_rule_ids,
-        });
-    }
-    let (decision, category) = match plane {
-        AnswerPlane::Owner => resolve_owner_violation(&answer, &prompt.rubric_rows)?,
-        AnswerPlane::Hosted(policy) => resolve_hosted_violation(&answer, policy)?,
-    };
-    Ok(ResolvedAnswer {
-        decision,
-        category,
-        answer,
-        dropped_rule_ids,
-    })
 }
 
 /// Dedupes `answer.rule_ids` and drops every id naming no rule `prompt`
 /// resolved. Order is the model's own — the ids it put first stay first, so
 /// what survives still reads as the model's answer.
+///
+/// `rule_ids` arrives unvalidated, and an id naming no rule this plane
+/// resolved is a claim about a rule that does not exist — so it is dropped
+/// here, against the rows actually in the prompt, rather than carried into a
+/// receipt as though the engine had checked it. What that leaves is bounded by
+/// the plane's own row count.
 ///
 /// Returns how many UNRESOLVABLE ids were dropped. A repeated citation is not
 /// counted: collapsing it loses nothing, so calling it a loss would put a
@@ -334,7 +295,7 @@ pub(super) fn resolve_policy_model_response(
 /// The dropped count collapses repeats too, for the same reason it always
 /// did: one junk id cited fifty times is one thing the model got wrong, and
 /// reporting fifty would make the number mean something else.
-fn retain_resolvable_rule_ids(
+pub(super) fn retain_resolvable_rule_ids(
     answer: &mut PolicyModelAnswer,
     prompt: &PolicyClassifyPrompt,
 ) -> usize {
@@ -360,7 +321,7 @@ fn retain_resolvable_rule_ids(
 }
 
 fn resolve_owner_violation(
-    answer: &PolicyModelAnswer,
+    label: Option<&str>,
     rubric_rows: &[PolicyRubricRow],
 ) -> Result<(PolicyClassifyDecision, PolicyVerdictCategory)> {
     let owner_rows = || {
@@ -368,7 +329,7 @@ fn resolve_owner_violation(
             .iter()
             .filter(|row| row.plane == PolicyPlane::OwnerPolicy)
     };
-    let row = match answer.policy_category.as_deref() {
+    let row = match label {
         // A categoryless contract resolves to the strictest row the owner
         // wrote, with manifest order breaking ties — the same rule that
         // governs when several of the owner's rows could apply.
@@ -393,10 +354,10 @@ fn resolve_owner_violation(
 }
 
 fn resolve_hosted_violation(
-    answer: &PolicyModelAnswer,
+    label: Option<&str>,
     policy: &HostedLegalPolicy,
 ) -> Result<(PolicyClassifyDecision, PolicyVerdictCategory)> {
-    let row = match answer.policy_category.as_deref() {
+    let row = match label {
         None => policy.strictest_row(),
         Some(label) => policy.row_for_category(label),
     }
@@ -440,7 +401,7 @@ pub(super) const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
 /// The model's text parts, joined — and STOPPED at the bound rather than
 /// checked against it afterwards.
 ///
-/// `parse_model_answer` bounds the text it is handed, which is the right place
+/// `parse_rationale_notes` bounds the text it is handed, which is the right place
 /// for a semantic limit and the wrong place for a memory one: by then this
 /// function has already built the whole string. A backend returning a thousand
 /// parts costs the sum of them here no matter what the parser later says.

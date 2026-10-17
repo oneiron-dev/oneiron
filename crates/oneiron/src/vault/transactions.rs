@@ -440,7 +440,7 @@ impl Vault {
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
         let stale_sweep = crate::federation::StaleSweepWatch::begin(self);
-        let (result, approved_vad_ids, proactivity_changed, task_ids, retirement_staged) =
+        let (result, approved_vad_ids, proactivity_changed, (task_ids, rows), retirement_staged) =
             self.store.group_write_as(callback, None, |wtxn| {
                 let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
                     Ok(staged) => staged,
@@ -470,7 +470,7 @@ impl Vault {
                         result,
                         approved,
                         postcommit.proactivity_changed,
-                        postcommit.task_ids,
+                        (postcommit.task_ids, postcommit.rows),
                         staged != retirements_before,
                     )),
                     Err(err) => Rows::Discard(Err(E::from(err))),
@@ -481,6 +481,12 @@ impl Vault {
             self.store.notify_proactivity_changes();
         }
         self.store.notify_task_updates(task_ids);
+        // A row written after its window loaded reaches it only through the
+        // live mirror.
+        #[cfg(feature = "sync")]
+        self.note_committed_rows(rows);
+        #[cfg(not(feature = "sync"))]
+        drop(rows);
         if retirement_staged {
             self.finish_gate_decision_retirements_after_commit();
         }

@@ -1,6 +1,9 @@
 //! Durable soft-confirm outbox, retried independently of answer replay.
+use std::ops::Bound::{Excluded, Unbounded};
+
 use super::TaskAskSoftConfirmDelivery;
 use crate::edge::EdgeActorClass;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -19,6 +22,42 @@ fn store(
     state: TaskAskSoftConfirmDelivery,
 ) -> Result<()> {
     DELIVERIES.put(&vault.store, txn, &(group, person), &state)
+}
+
+/// The delivery key the sweep visited last, read from its cursor; `None` from
+/// the start.
+fn cursor_after(cursor: &[u8]) -> Result<Option<(EntityId, EntityId)>> {
+    if cursor.is_empty() {
+        return Ok(None);
+    }
+    let corrupt = || crate::Error::CorruptedIndex("ask soft-confirm cursor");
+    let (group, person) = cursor.split_first_chunk::<16>().ok_or_else(corrupt)?;
+    let person: [u8; 16] = person.try_into().map_err(|_| corrupt())?;
+    Ok(Some((
+        EntityId::from_bytes(*group)?,
+        EntityId::from_bytes(person)?,
+    )))
+}
+
+/// One page of at most `limit` delivery rows past `after`, or from the start,
+/// each counted as read.
+fn page(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<&(EntityId, EntityId)>,
+    limit: usize,
+    count: &mut ScanCount,
+) -> Result<Vec<((EntityId, EntityId), TaskAskSoftConfirmDelivery)>> {
+    DELIVERIES
+        .iter_range(
+            &vault.store,
+            txn,
+            after.map_or(Unbounded, Excluded),
+            Unbounded,
+        )?
+        .take(limit)
+        .inspect(|_| count.row())
+        .collect()
 }
 
 /// Inserted atomically with the immutable notice and answer.
@@ -109,6 +148,7 @@ impl Vault {
                     trigger_ref: notice.task_ref.to_hex(),
                     job_ref: None,
                     occurred_at: None,
+                    mention: None,
                 };
                 match self
                     .memory(companion, EdgeActorClass::Agent)
@@ -143,9 +183,12 @@ impl Vault {
         })
     }
 
-    /// Restart/wake repair: each call walks a bounded page of durable pending
-    /// rows and attempts normal gated outbound scheduling. A failure remains
-    /// pending; the queue is never consumed without a scheduled send.
+    /// Restart/wake repair: each call reads one page of at most `limit`
+    /// delivery rows past the sweep's cursor, from the start again once it
+    /// has passed the last, and attempts normal gated outbound scheduling
+    /// for the pending ones. A settled row counts toward the page and moves
+    /// the cursor too. A failure remains pending; the queue is never
+    /// consumed without a scheduled send.
     pub fn retry_pending_ask_soft_confirms(&self, limit: usize) -> Result<usize> {
         if limit == 0 {
             return Ok(0);
@@ -156,41 +199,40 @@ impl Vault {
             .ask_operational_policy()
             .ok_or_else(super::ask_record::invalid)?
             .retry_limit(limit);
-        let cursor = CURSOR.get(&self.store, &txn, &())?.unwrap_or_default();
-        let mut rows = Vec::new();
-        for row in DELIVERIES.iter_from(&self.store, &txn, &[])? {
-            let ((group, person), state) = row?;
-            if matches!(
-                state,
-                TaskAskSoftConfirmDelivery::Scheduled | TaskAskSoftConfirmDelivery::Closed
-            ) {
-                continue;
-            }
-            let key = [group.as_bytes().as_slice(), person.as_bytes()].concat();
-            rows.push((key, group, person));
+        let after = cursor_after(&CURSOR.get(&self.store, &txn, &())?.unwrap_or_default())?;
+        // Every row the page reads counts, settled ones included; the check
+        // is kept by the vault's next write, never this read.
+        let mut count = ScanCount::start(
+            &self.store,
+            &txn,
+            EngineScan::AskSoftConfirmDeliveryRows,
+            &[],
+        )?;
+        let mut rows = page(self, &txn, after.as_ref(), limit, &mut count)?;
+        if rows.is_empty() && after.is_some() {
+            rows = page(self, &txn, None, limit, &mut count)?;
         }
         drop(txn);
-        if rows.is_empty() {
+        count.finish(self);
+        let Some(&((group, person), _)) = rows.last() else {
             return Ok(0);
-        }
-        let start = rows
-            .iter()
-            .position(|(key, _, _)| key > &cursor)
-            .unwrap_or(0);
+        };
+        let last = [group.as_bytes().as_slice(), person.as_bytes()].concat();
         let pending: Vec<_> = rows
-            .iter()
-            .cycle()
-            .skip(start)
-            .take(limit.min(rows.len()))
-            .map(|(key, group, person)| (key.clone(), *group, *person))
+            .into_iter()
+            .filter(|(_, state)| {
+                !matches!(
+                    state,
+                    TaskAskSoftConfirmDelivery::Scheduled | TaskAskSoftConfirmDelivery::Closed
+                )
+            })
+            .map(|(key, _)| key)
             .collect();
-        if let Some((last, _, _)) = pending.last() {
-            self.with_write_txn_grouped(|txn| {
-                CURSOR.put(&self.store, txn, &(), last)?;
-                Ok(())
-            })?;
-        }
-        for (_, group, person) in &pending {
+        self.with_write_txn_grouped(|txn| {
+            CURSOR.put(&self.store, txn, &(), &last)?;
+            Ok(())
+        })?;
+        for (group, person) in &pending {
             self.retry_ask_soft_confirm_delivery(*group, *person)?;
         }
         Ok(pending.len())

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::Vault;
 use crate::error::Result;
-use crate::interlocutor::InterlocutorResolutionInput;
+use crate::interlocutor::{InterlocutorResolutionInput, InterlocutorSet};
 use crate::policy_model::PolicyClassifyRequest;
 use crate::speculative::SpeculativeSessionConfig;
 use crate::store::GateSystemNoticeRecord;
@@ -84,6 +84,21 @@ pub struct SafeguardUpdate {
     pub notices: Vec<GateSystemNoticeRecord>,
 }
 
+/// What a roster refresh found (OF-365 P5). Dispatch `stop` before another
+/// playback dequeue, then assemble the brain's context afresh for
+/// `audience_revision`. The stopped utterance is not re-run on its own.
+#[must_use = "dispatch any output stop, then assemble context for the new audience revision"]
+#[derive(Debug)]
+pub struct AudienceRefresh {
+    pub audience_revision: u64,
+    /// Whether the audience differs from the one last read.
+    pub changed: bool,
+    /// The audience now; `None` when it could not be read, which counts as
+    /// a change.
+    pub interlocutors: Option<InterlocutorSet>,
+    pub stop: Option<OutputStop>,
+}
+
 struct Generation {
     budget: Option<super::budget::GenerationBudget>,
     request: BrainRequest,
@@ -107,6 +122,11 @@ pub struct VoiceCascadeSession {
     preparation_serial: u64,
     prepared_asr: Option<PreparedAsr>,
     preparation_active: bool,
+    /// The audience last read, at a final or a roster refresh.
+    audience: Option<InterlocutorSet>,
+    /// Moves on every audience change; a brain request and a prepared ASR
+    /// attempt carry the revision they were made at.
+    audience_revision: u64,
 }
 
 impl VoiceCascadeSession {
@@ -133,6 +153,8 @@ impl VoiceCascadeSession {
             preparation_serial: 0,
             prepared_asr: None,
             preparation_active: false,
+            audience: None,
+            audience_revision: 0,
         })
     }
 
@@ -214,6 +236,7 @@ impl VoiceCascadeSession {
                 let interlocutors = self
                     .vault
                     .resolve_interlocutors(&self.config.interlocutors)?;
+                self.observe_audience(Some(&interlocutors))?;
                 let retrieval = self
                     .retrieval
                     .finalize(handle, revision, &event.text, enricher);
@@ -235,6 +258,7 @@ impl VoiceCascadeSession {
                     session_ref: self.config.session_ref.clone(),
                     tools_enabled: self.config.tools_enabled,
                     interlocutors,
+                    audience_revision: self.audience_revision,
                     tool_events: Vec::new(),
                     externally_tainted,
                 };
@@ -320,6 +344,10 @@ impl VoiceCascadeSession {
         }
         let admission = guard
             .admit_for_request(request)
+            .inspect_err(|denied| {
+                self.vault
+                    .budget_denied_hooks(denied, &guard, request.model.as_str(), None);
+            })
             .map_err(|_| invalid("voice budget admission denied"))?;
         let lease = admission.lease;
         active.budget = Some(super::budget::GenerationBudget {
@@ -533,6 +561,20 @@ impl VoiceCascadeSession {
         Ok(true)
     }
 
+    /// The host could not carry `generation`'s output on: a sentence was not
+    /// spoken, its safeguard did not run, or a brain event was refused. A
+    /// generation left live there would refuse the next final, and a gap in
+    /// its speech would play as if nothing were missing. Dispatch the stop
+    /// before another playback dequeue. `None` for a stale generation.
+    pub fn fail_output(&mut self, generation: GenerationEpoch) -> Option<OutputStop> {
+        (!self.ended
+            && self
+                .generation
+                .as_ref()
+                .is_some_and(|active| active.request.generation == generation))
+        .then(|| self.stop_generation(StopReason::OutputFailed, true))
+    }
+
     /// Explicit normal end/disconnect. The host also ends ASR and drops its task,
     /// PCM and provider queues. This sends SessionEnded, never a fake barge-in.
     /// Repeated calls are harmless and still permit retrying SessionEnded delivery.
@@ -549,6 +591,50 @@ impl VoiceCascadeSession {
     #[must_use]
     pub fn is_ended(&self) -> bool {
         self.ended
+    }
+
+    /// Re-reads the session's interlocutors, for a host told the voice roster
+    /// changed: someone joined, a speaker was placed differently, or the
+    /// owner named one. An audience that differs from the one last read
+    /// moves the audience revision, which fences prepared ASR, and stops a
+    /// live generation, whose words were assembled for the old audience. An
+    /// audience that cannot be read counts as changed. Labels and scores
+    /// alone change nothing, and silence removes no one: the roster keeps
+    /// every speaker it heard until the session ends.
+    pub fn refresh_interlocutors(&mut self) -> Result<AudienceRefresh> {
+        self.require_open()?;
+        let interlocutors = self
+            .vault
+            .resolve_interlocutors(&self.config.interlocutors)
+            .ok();
+        let changed = self.observe_audience(interlocutors.as_ref())?;
+        let stop = (changed && self.generation.is_some())
+            .then(|| self.stop_generation(StopReason::RosterChanged, true));
+        Ok(AudienceRefresh {
+            audience_revision: self.audience_revision,
+            changed,
+            interlocutors,
+            stop,
+        })
+    }
+
+    /// Records the audience just read (`None`: unreadable), moving the
+    /// revision when it differs from the last one read. The first read moves
+    /// nothing: no output was assembled for an earlier audience.
+    fn observe_audience(&mut self, audience: Option<&InterlocutorSet>) -> Result<bool> {
+        let changed = match (&self.audience, audience) {
+            (Some(prior), Some(audience)) => !prior.same_audience(audience),
+            (None, Some(_)) => false,
+            (_, None) => true,
+        };
+        if changed {
+            self.audience_revision = self
+                .audience_revision
+                .checked_add(1)
+                .ok_or_else(|| invalid("audience revision exhausted"))?;
+        }
+        self.audience = audience.cloned();
+        Ok(changed)
     }
 
     fn stop_generation(&mut self, reason: StopReason, cancel_llm: bool) -> OutputStop {

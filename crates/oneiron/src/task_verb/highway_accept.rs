@@ -15,7 +15,8 @@ use crate::attempt_queue::{
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::task_authority::{
-    TaskAuthorityFact, TaskAuthorityFactKind, TaskStanding, put_task_authority_fact_in_txn,
+    BindingGeneration, TaskAuthorityFact, TaskAuthorityFactKind, TaskStanding,
+    put_task_authority_fact_in_txn,
 };
 
 use super::brief::StoredBrief;
@@ -146,6 +147,14 @@ enum Accepted {
     WrongNode,
 }
 
+/// What one Accept's transaction did, for its receipt.
+struct AcceptStep {
+    accepted: Accepted,
+    brief: Option<StoredBrief>,
+    node: Option<crate::EntityId>,
+    generation: Option<BindingGeneration>,
+}
+
 impl Memory<'_> {
     pub(super) fn highway_accept(
         &self,
@@ -163,146 +172,216 @@ impl Memory<'_> {
                 "Answer the ask through its handle.",
             ));
         }
-        let task_hex = task_ref.to_hex();
         let now = self.vault().now_recorded_at();
+        let step = self
+            .with_verified_actor_write_txn(|wtxn| self.accept_in_txn(wtxn, via, task_ref, now))?;
+        let receipt = self.accept_receipt(via, task_ref, key, step, now)?;
+        if matches!(receipt.outcome, TaskOutcome::Accepted { .. }) && !receipt.idempotent_replay {
+            self.vault().store.notify_attempt_observers();
+            self.vault().store.notify_task_updates([task_ref]);
+        }
+        Ok(receipt)
+    }
+
+    /// Accept inside a write transaction the caller holds and verified: a
+    /// runner takes its TASK in the commit that leases its try (R1). The
+    /// caller's commit announces it.
+    pub(super) fn accept_in_runner_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        via: &TaskVia,
+        task_ref: crate::EntityId,
+        key: String,
+    ) -> MemoryResult<TaskCallReceipt> {
+        let now = self.vault().now_recorded_at();
+        let step = self.accept_in_txn(wtxn, via, task_ref, now)?;
+        self.accept_receipt(via, task_ref, key, step, now)
+    }
+
+    /// One Accept's transaction: the lane's proof, the take, and on a new
+    /// take the Working body and the Accepted fact.
+    fn accept_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        via: &TaskVia,
+        task_ref: crate::EntityId,
+        now: u64,
+    ) -> MemoryResult<AcceptStep> {
+        let task_hex = task_ref.to_hex();
         let queue = AttemptQueue::new(self.vault());
-        let (accepted, brief, node, generation) = self.with_verified_actor_write_txn(|wtxn| {
-            let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-            let standing = self
-                .vault()
-                .task_standing_in(&*wtxn, task_ref)?
-                .ok_or_else(not_found)?;
-            let lane = lane_of(body.assignee);
-            if lane != Lane::Runner {
-                require_assignee(&standing, self.actor())?;
+        let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+        let standing = self
+            .vault()
+            .task_standing_in(&*wtxn, task_ref)?
+            .ok_or_else(not_found)?;
+        let lane = lane_of(body.assignee);
+        if lane != Lane::Runner {
+            require_assignee(&standing, self.actor())?;
+        }
+        require_live_standard(&body, &standing)?;
+        let generation = self
+            .vault()
+            .actor_binding_generation_in_txn(&*wtxn, self.actor())?;
+        let node = local_node_in(self.vault(), &*wtxn)?;
+        // A replay is the same taker, under the same bindings, on a TASK
+        // still taken: after a release the next accept is a new take.
+        let taken_before = standing
+            .taker
+            .is_some_and(|taker| taker.actor == self.actor() && taker.generation == generation)
+            && matches!(
+                body.state,
+                Some(TaskExecutionState::Working { .. } | TaskExecutionState::Blocked { .. })
+            );
+        let accepted = match (lane, via) {
+            (Lane::Runner, TaskVia::Wire) => {
+                return Err(invalid_state(
+                    "the engine's runner takes this task; it is not addressed to an external taker",
+                    "Address the task to a peer, child or person to take it over the wire.",
+                ));
             }
-            require_live_standard(&body, &standing)?;
-            let generation = self
-                .vault()
-                .actor_binding_generation_in_txn(&*wtxn, self.actor())?;
-            let node = local_node_in(self.vault(), &*wtxn)?;
-            // A replay is the same taker, under the same bindings, on a TASK
-            // still taken: after a release the next accept is a new take.
-            let taken_before = standing
-                .taker
-                .is_some_and(|taker| taker.actor == self.actor() && taker.generation == generation)
-                && matches!(
-                    body.state,
-                    Some(TaskExecutionState::Working { .. } | TaskExecutionState::Blocked { .. })
-                );
-            let accepted = match (lane, via) {
-                (Lane::Runner, TaskVia::Wire) => {
-                    return Err(invalid_state(
-                        "the engine's runner takes this task; it is not addressed to an external taker",
-                        "Address the task to a peer, child or person to take it over the wire.",
-                    ));
+            (Lane::Runner, TaskVia::Host(binding)) => {
+                match host_fence_in(self.vault(), &*wtxn, binding, &task_hex)? {
+                    HostFence::Held(record) => Accepted::Taken {
+                        attempt: Some(record),
+                        replay: taken_before,
+                        lease_owner: Some(binding.lease_owner().to_owned()),
+                    },
+                    HostFence::Stale => Accepted::Stale,
+                    HostFence::Missing => Accepted::WrongNode,
                 }
-                (Lane::Runner, TaskVia::Host(binding)) => {
-                    match host_fence_in(self.vault(), &*wtxn, binding, &task_hex)? {
-                        HostFence::Held(record) => Accepted::Taken {
-                            attempt: Some(record),
-                            replay: taken_before,
-                            lease_owner: Some(binding.lease_owner().to_owned()),
-                        },
-                        HostFence::Stale => Accepted::Stale,
-                        HostFence::Missing => Accepted::WrongNode,
-                    }
-                }
-                (Lane::Human, _) => Accepted::Taken {
-                    attempt: None,
-                    replay: taken_before,
-                    lease_owner: None,
-                },
-                (Lane::External, _) => {
-                    let lease_owner = lease_owner_for(self.actor(), generation.as_ref());
-                    let payload =
-                        rmp_serde::to_vec_named(&body.brief.as_ref().map(StoredBrief::stamp))
-                            .map_err(|_| MemoryError::bad_request("brief stamp does not encode"))?;
-                    let enqueued = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
-                        wtxn,
-                        EnqueueAttempt {
-                            kind: TASK_EXTERNAL_ATTEMPT_KIND.to_owned(),
-                            payload,
-                            dedupe_key: Some(task_route_dedupe_key(task_ref)),
-                            run_id: None,
-                            now,
-                        },
-                        Some(task_hex.clone()),
-                        None,
-                    )?;
-                    let (EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record)) =
-                        enqueued;
-                    match record.state {
-                        AttemptState::Leased | AttemptState::Landing => {
-                            if record.lease_owner.as_deref() == Some(lease_owner.as_str()) {
-                                Accepted::Taken {
-                                    attempt: Some(record),
-                                    replay: true,
-                                    lease_owner: Some(lease_owner),
-                                }
-                            } else {
-                                Accepted::HeldByOther {
-                                    since: record.claimed_at.unwrap_or(record.updated_at),
-                                }
+            }
+            (Lane::Human, _) => Accepted::Taken {
+                attempt: None,
+                replay: taken_before,
+                lease_owner: None,
+            },
+            (Lane::External, _) => {
+                let lease_owner = lease_owner_for(self.actor(), generation.as_ref());
+                // The try freezes the brief revision and the TASK's team run;
+                // an existing try keeps the payload it was enqueued with.
+                let payload = super::external_attempt::encode(
+                    body.brief.as_ref().map(StoredBrief::stamp),
+                    body.team.clone(),
+                )?;
+                let enqueued = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
+                    wtxn,
+                    EnqueueAttempt {
+                        kind: TASK_EXTERNAL_ATTEMPT_KIND.to_owned(),
+                        payload,
+                        dedupe_key: Some(task_route_dedupe_key(task_ref)),
+                        run_id: None,
+                        now,
+                    },
+                    Some(task_hex.clone()),
+                    None,
+                )?;
+                let (EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record)) =
+                    enqueued;
+                match record.state {
+                    AttemptState::Leased | AttemptState::Landing => {
+                        if record.lease_owner.as_deref() == Some(lease_owner.as_str()) {
+                            Accepted::Taken {
+                                attempt: Some(record),
+                                replay: true,
+                                lease_owner: Some(lease_owner),
+                            }
+                        } else {
+                            Accepted::HeldByOther {
+                                since: record.claimed_at.unwrap_or(record.updated_at),
                             }
                         }
-                        AttemptState::Queued | AttemptState::Scheduled => {
-                            match queue.claim_for_task_in_txn(
-                                wtxn,
-                                record.id,
-                                &task_hex,
-                                TASK_EXTERNAL_ATTEMPT_KIND,
-                                ClaimAttempt {
-                                    lease_owner: lease_owner.clone(),
-                                    now,
-                                },
-                            )? {
-                                ClaimOutcome::Claimed(record) => Accepted::Taken {
-                                    attempt: Some(record),
-                                    replay: false,
-                                    lease_owner: Some(lease_owner),
-                                },
-                                ClaimOutcome::Empty => {
+                    }
+                    AttemptState::Queued | AttemptState::Scheduled => {
+                        match queue.claim_for_task_in_txn(
+                            wtxn,
+                            record.id,
+                            &task_hex,
+                            TASK_EXTERNAL_ATTEMPT_KIND,
+                            ClaimAttempt {
+                                lease_owner: lease_owner.clone(),
+                                now,
+                            },
+                        )? {
+                            ClaimOutcome::Claimed(record) => Accepted::Taken {
+                                attempt: Some(record),
+                                replay: false,
+                                lease_owner: Some(lease_owner),
+                            },
+                            ClaimOutcome::Empty => {
+                                // OF-368: a TASK answering an unattached
+                                // comment waits, so the claim held its try
+                                // instead of leasing it. The refusal rolls
+                                // the accept back with that pause.
+                                if self
+                                    .vault()
+                                    .annotation_task_hold_in_txn(&*wtxn, &task_ref)?
+                                    .is_some()
+                                {
                                     return Err(invalid_state(
-                                        "this task's next try is not ready yet",
-                                        "Accept again once its backoff has passed.",
+                                        "this task waits while its comment is unattached",
+                                        "Accept again once the comment is reattached.",
                                     ));
                                 }
+                                return Err(invalid_state(
+                                    "this task's next try is not ready yet",
+                                    "Accept again once its backoff has passed.",
+                                ));
                             }
                         }
-                        _ => {
-                            return Err(invalid_state(
-                                "this task's try is paused or already settled",
-                                "Read the task's status, then accept again.",
-                            ));
-                        }
+                    }
+                    _ => {
+                        return Err(invalid_state(
+                            "this task's try is paused or already settled",
+                            "Read the task's status, then accept again.",
+                        ));
                     }
                 }
-            };
-            let brief = body.brief.clone();
-            if let Accepted::Taken { replay: false, .. } = &accepted {
-                if matches!(body.state, None | Some(TaskExecutionState::Queued)) {
-                    body.state = Some(TaskExecutionState::Working { started_at: now });
-                    self.rewrite_task_in_txn(wtxn, task_ref, body, now)?;
-                }
-                put_task_authority_fact_in_txn(
-                    self.vault(),
-                    wtxn,
-                    TaskAuthorityFact {
-                        task_ref,
-                        kind: TaskAuthorityFactKind::Accepted,
-                        actor_ref: self.actor(),
-                        assigned_ref: None,
-                        actor_generation: generation,
-                        assigned_generation: None,
-                        occurred_at: now,
-                    },
-                )
-                .map_err(MemoryError::from)?;
             }
-            Ok((accepted, brief, node, generation))
-        })?;
+        };
+        let brief = body.brief.clone();
+        if let Accepted::Taken { replay: false, .. } = &accepted {
+            if matches!(body.state, None | Some(TaskExecutionState::Queued)) {
+                body.state = Some(TaskExecutionState::Working { started_at: now });
+                self.rewrite_task_in_txn(wtxn, task_ref, body, now)?;
+            }
+            put_task_authority_fact_in_txn(
+                self.vault(),
+                wtxn,
+                TaskAuthorityFact {
+                    task_ref,
+                    kind: TaskAuthorityFactKind::Accepted,
+                    actor_ref: self.actor(),
+                    assigned_ref: None,
+                    actor_generation: generation,
+                    assigned_generation: None,
+                    occurred_at: now,
+                },
+            )
+            .map_err(MemoryError::from)?;
+        }
+        Ok(AcceptStep {
+            accepted,
+            brief,
+            node,
+            generation,
+        })
+    }
 
+    /// The receipt one Accept owes.
+    fn accept_receipt(
+        &self,
+        via: &TaskVia,
+        task_ref: crate::EntityId,
+        key: String,
+        step: AcceptStep,
+        now: u64,
+    ) -> MemoryResult<TaskCallReceipt> {
+        let AcceptStep {
+            accepted,
+            brief,
+            node,
+            generation,
+        } = step;
         let mut lifecycle =
             self.lifecycle_record(via, "accept", "accepted", Some(task_ref), None, now);
         stamp_fields(&mut lifecycle.fields, brief.as_ref());
@@ -331,6 +410,11 @@ impl Memory<'_> {
                             .fields
                             .insert("retry_of".to_owned(), attempt_hex(retry_of));
                     }
+                    // OF-540: the realizing attempt's frozen team run, never
+                    // the project's current pattern.
+                    if let Some(team) = crate::agent_dispatch::attempt_team_stamp(record)? {
+                        crate::receipt::append_team_receipt_fields(&mut lifecycle.fields, &team);
+                    }
                 }
                 if let Some(lease_owner) = lease_owner {
                     lifecycle
@@ -339,10 +423,6 @@ impl Memory<'_> {
                 }
                 if let Some(node) = node {
                     lifecycle.fields.insert("node".to_owned(), node.to_hex());
-                }
-                if !replay {
-                    self.vault().store.notify_attempt_observers();
-                    self.vault().store.notify_task_updates([task_ref]);
                 }
                 (
                     handle.map_or(task, TaskHandle::Attempt),

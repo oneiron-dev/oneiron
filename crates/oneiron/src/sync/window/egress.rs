@@ -13,7 +13,6 @@ use super::reverse::{
     delete_edges_touching_entities, is_delegated_channel_identity_carrier,
     is_unsyncable_secret_custody, quarantine_outbound_protected_tombstones,
     remove_entity_crdt_carriers, reverse_remat_skip_redaction_receipt_mirror,
-    skip_companion_register_sync_mirror,
 };
 use super::types::WindowKey;
 use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityKey};
@@ -216,12 +215,13 @@ pub(super) fn scrub_local_claim_carriers(
         if failure.is_some() || !ids.contains(&id) {
             return;
         }
-        let deleted = vault
-            .store
-            .entities
-            .get(&rtxn, id.as_bytes())
-            .and_then(|raw| {
-                crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, raw.as_deref())
+        let deleted =
+            crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, &rtxn, &id, |raw| {
+                crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, Some(raw))
+            })
+            .and_then(|verdict| match verdict {
+                Some(marked) => Ok(marked),
+                None => crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, None),
             });
         match deleted {
             Ok(true) => deleted_carriers.push((id, carrier.to_vec())),
@@ -240,17 +240,24 @@ pub(super) fn scrub_local_claim_carriers(
     if key.world().is_some() {
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         for id in &ids {
-            if let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())?
-                && crate::sync::types::retained_world_shell_belongs_to_window(
-                    vault,
-                    &rtxn,
-                    doc,
-                    &tombstones,
-                    id,
-                    &raw,
-                    key,
-                    false,
-                )?
+            if crate::ports::EntityStoreRead::port_entity_with_raw(
+                &vault.store,
+                &rtxn,
+                id,
+                |raw| {
+                    crate::sync::types::retained_world_shell_belongs_to_window(
+                        vault,
+                        &rtxn,
+                        doc,
+                        &tombstones,
+                        id,
+                        raw,
+                        key,
+                        false,
+                    )
+                },
+            )?
+            .unwrap_or(false)
             {
                 retained.push(*id);
             }
@@ -336,12 +343,13 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
         if failure.is_some() {
             return;
         }
-        let marked = vault
-            .store
-            .entities
-            .get(rtxn, id.as_bytes())
-            .and_then(|raw| {
-                crate::deletion::row_deletion_marked(&vault.store, rtxn, &id, raw.as_deref())
+        let marked =
+            crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, rtxn, &id, |raw| {
+                crate::deletion::row_deletion_marked(&vault.store, rtxn, &id, Some(raw))
+            })
+            .and_then(|verdict| match verdict {
+                Some(marked) => Ok(marked),
+                None => crate::deletion::row_deletion_marked(&vault.store, rtxn, &id, None),
             });
         match marked {
             Ok(true) => deleted.push((raw_key.to_owned(), id)),
@@ -490,6 +498,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
     scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    super::withdrawn::scrub_withdrawn_generation_carriers(vault, key, doc)?;
     // A persisted or returned snapshot carries the same project history as
     // a delta does (Astra #1434 r9 F5).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -617,7 +626,6 @@ fn replay_mirrors(
         if !claim_sync_allowed(&raw)
             || is_unsyncable_secret_custody(&raw)
             || is_delegated_channel_identity_carrier(&raw)
-            || skip_companion_register_sync_mirror(&raw)
         {
             let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if wrote_doc {

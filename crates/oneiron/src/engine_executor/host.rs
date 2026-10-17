@@ -8,13 +8,15 @@ use super::store::{
 };
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream,
-    JsResultCall, JsResultRef, SelfDispatchResponse,
+    JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
 };
 use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput,
-    CodeRunReplayRecord, CodeRunResultBinding, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
-    RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect,
-    SelfFailedResult, SelfSkillCall, SelfSkillCallResult, agent_verb_rows_of,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
+    CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
+    ReaderFindingRef, ResultFacet, ResultRead, ResultReply, RunCall, SelfCall, SelfDeniedResult,
+    SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult, SelfReaderReportCall,
+    SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult, agent_verb_rows_of, result_cannot,
+    result_card, result_refusal,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -24,12 +26,9 @@ use crate::compaction::output::OutputRef;
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
 use crate::entity_id::EntityId;
 use crate::error::GateError;
-use crate::secret_rotation::ArtifactTaintState;
+use crate::store::BodySink;
 use crate::{Error, Result};
 use serde_json::json;
-
-/// Live names a refusal for an unknown result lists, newest first.
-const UNKNOWN_HANDLE_LIVE_NAMES: usize = 64;
 
 pub(super) struct RecordingJsHost<'a, 's> {
     gated_write: &'a GatedActorWrite<'a>,
@@ -75,6 +74,27 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The run's executor, `provider/name@revision`, as the callable skills
     /// its program calls are credited to (OF-353).
     skill_executor: Option<String>,
+}
+
+/// The name a reader child reads its parent's source by.
+const READER_SOURCE_NAME: &str = "src";
+
+/// A result a reference names for this run: one of its own, the source a
+/// reader child reads in its parent's record, or a finding of one of the
+/// run's children in that child's.
+struct ResolvedResult {
+    output: CodeRunRawOutput,
+    name: Option<String>,
+    /// The run whose occurrence of it a read's taint is read in.
+    owner: EntityId,
+    /// The rows a read of it is withheld by beside the run's own, when it is
+    /// not the run's: `Some(None)` when they are not known.
+    rows: Option<Option<Vec<EntityId>>>,
+    /// The range of its body a read of it must stay inside, and reads by
+    /// default, in the owner's offsets.
+    within: Option<(u64, u64)>,
+    /// Whether a read of it re-checks that the reader child's job is live.
+    child_source: bool,
 }
 
 impl<'a, 's> RecordingJsHost<'a, 's> {
@@ -217,6 +237,21 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             Ok(lease) => lease,
             Err(refused) => return Ok(refused),
         };
+        // The call's verb hooks once it is admitted (ARCH-0080 §3): a rewrite
+        // names the skill and the args it runs with.
+        let (skill, hooked) = match self.gated_write.enter_verb_hooks(
+            SelfCall::SkillsCall(skill),
+            Some(site),
+            lease.read_as.clone(),
+        )? {
+            Ok((SelfCall::SkillsCall(skill), hooked)) => (skill, hooked),
+            Ok(_) => {
+                return Err(Error::InvariantViolation(
+                    "a skill call's hooks rewrote it into another call",
+                ));
+            }
+            Err(stopped) => return Ok(stopped),
+        };
         let Some(executor) = self.skill_executor.clone() else {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
@@ -245,13 +280,17 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 Error::InvalidConfig("callable skill returned non-JSON output".to_owned())
             })
         });
-        Ok(match output {
+        let outcome = match output {
             Ok(output) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
                 skill: skill.skill,
                 output,
             }),
             Err(error) => failed(error.to_string()),
-        })
+        };
+        // The post chain reads the answer as the guest gets it: a large one
+        // by its handle.
+        let outcome = self.store_large_answer(seq, outcome)?;
+        self.gated_write.leave_verb_hooks(hooked, outcome)
     }
 
     /// One `self.*` call over the bridge. `runtime` is the sibling a call
@@ -289,7 +328,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             let row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             self.bridge_calls.push(row);
-            return Ok(self.respond(outcome));
+            return Ok(self.respond(outcome, None));
         }
         if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some() {
             // Fail-closed after the first hard failure or unrecorded call:
@@ -310,7 +349,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             let row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             self.bridge_calls.push(row);
-            return Ok(self.respond(outcome));
+            return Ok(self.respond(outcome, None));
         }
         // ONE-1314: the current step's own history, observed at the last
         // moment before this call dispatches. The durable half was observed
@@ -326,6 +365,14 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 let skill = skill.clone();
                 self.call_skill(seq, started_at_ms, &call, skill, runtime)
             }
+            (SelfCall::ReaderSpawn(spawn), _) => {
+                let spawn = (**spawn).clone();
+                self.spawn_reader(seq, spawn)
+            }
+            (SelfCall::ReaderReport(report), _) => {
+                let report = report.clone();
+                self.report_finding(seq, report)
+            }
             _ => {
                 let site = ExecutorCallSite {
                     run_id: self.run_id,
@@ -337,6 +384,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                     .dispatch_for_executor_run(site, call.clone())
             }
         };
+        // A verb hook's view of this call's result, taken whatever came of
+        // the call: the guest reads it, the row keeps the outcome.
+        let view = self.gated_write.take_hook_view();
         let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
             Ok(outcome) => outcome,
             Err(err) => {
@@ -355,7 +405,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 )?;
                 self.bridge_calls.insert(place, row);
                 self.hard_failure = Some(err);
-                return Ok(self.respond(error_outcome));
+                return Ok(self.respond(error_outcome, None));
             }
         };
         let finished_at_ms = started_at_ms;
@@ -371,7 +421,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             self.declined = Some(refusal.task_ref);
         }
         self.bridge_calls.insert(place, row);
-        Ok(self.respond(outcome))
+        Ok(self.respond(outcome, view))
     }
 
     /// The run's live result names, oldest first: this step's binds over
@@ -412,77 +462,43 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         &self,
         reference: &JsResultRef,
     ) -> Option<(CodeRunRawOutput, Option<String>)> {
-        let live = self.live_bindings();
-        let mut held = self.results.iter().chain(&self.captured);
-        match reference {
-            JsResultRef::Name(name) => {
-                let binding = live.iter().find(|binding| binding.name == *name)?;
-                let output = held.find(|output| output.handle == binding.handle)?;
-                Some((output.clone(), Some(binding.name.clone())))
-            }
-            JsResultRef::Handle(handle) => {
-                let output = held.find(|output| names_result(output, handle))?;
-                let name = live
-                    .iter()
-                    .rev()
-                    .find(|binding| binding.handle == output.handle)
-                    .map(|binding| binding.name.clone());
-                Some((output.clone(), name))
-            }
-        }
+        crate::code_run::resolve_result(
+            self.results.iter().chain(&self.captured),
+            &self.live_bindings(),
+            reference,
+        )
     }
 
     /// The refusal for a reference to no result of this run, with the live
     /// names it could have meant.
     fn unknown_handle(&self) -> serde_json::Value {
-        let live = self.live_bindings();
-        let names: Vec<&str> = live
-            .iter()
-            .rev()
-            .take(UNKNOWN_HANDLE_LIVE_NAMES)
-            .map(|binding| binding.name.as_str())
-            .collect();
-        json!({
-            "denied": "unknown_handle",
-            "reasonCodes": ["unknown_handle"],
-            "live": names,
-            "liveCount": live.len(),
-        })
+        crate::code_run::unknown_handle(&self.live_bindings())
+    }
+
+    /// The rows the run's results were served from: the conservative union
+    /// of every row its recorded and this step's verb answers were served
+    /// from, or none known when one answer kept no set.
+    fn result_rows(&self) -> Option<Vec<EntityId>> {
+        self.recorded_rows
+            .as_ref()
+            .zip(agent_verb_rows_of(&self.bridge_calls))
+            .map(|(recorded, step)| [recorded.as_slice(), step.as_slice()].concat())
     }
 
     /// Whether the run's results stay on this device for its door's caller
-    /// now (DEC-0005). A result's rows are the run's conservative union:
-    /// every row its recorded and this step's verb answers were served from,
-    /// or none known when one answer kept no set.
+    /// now (DEC-0005), by [`Self::result_rows`].
     fn withholds_results(&self) -> Result<bool> {
-        let rows = self
-            .recorded_rows
-            .as_ref()
-            .zip(agent_verb_rows_of(&self.bridge_calls))
-            .map(|(recorded, step)| [recorded.as_slice(), step.as_slice()].concat());
+        self.withholds_rows(self.result_rows())
+    }
+
+    /// Whether a result served from `rows` stays on this device for the
+    /// door's caller now.
+    fn withholds_rows(&self, rows: Option<Vec<EntityId>>) -> Result<bool> {
         self.gated_write
             .withholds_retained(rows.as_deref())
             .map_err(|refusal| {
                 Error::InvalidConfig(format!("stored result read refused: {}", refusal.code))
             })
-    }
-
-    /// A result's card, from its manifest and taint sidecars, never its
-    /// body: the handle facets, its name, and its taint. A body that is not
-    /// clean shows no preview.
-    fn result_card(
-        storage: &ExecutorStorage<'_>,
-        output: &CodeRunRawOutput,
-        name: Option<&str>,
-    ) -> Result<serde_json::Value> {
-        let (state, secret) = storage.code_run_result_taint(output)?;
-        let mut card = result_handle_json(output);
-        card["name"] = json!(name);
-        card["taint"] = json!({"state": taint_word(state), "secret": secret});
-        if state.is_tainted() {
-            card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
-        }
-        Ok(card)
     }
 
     /// `store(value, name?)`: the value the program just streamed, stored as
@@ -509,6 +525,18 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         {
             return Ok(result_refusal("invalid_result_name"));
         }
+        Ok(json!({"output": self.bind_stored(storage, sink, name)?}))
+    }
+
+    /// Publishes the body `sink` wrote as a stored value of the run, named
+    /// by its digest, and binds it to `name`, or to the next free `r<n>`:
+    /// its card. The same bytes stored twice are one output.
+    fn bind_stored(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+    ) -> Result<serde_json::Value> {
         let path = store_result_output_path(&sink.digest()?);
         let output = storage.publish_code_run_output(path, sink, true, self.run_id)?;
         if !self
@@ -521,23 +549,321 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone());
-        Ok(json!({"output": Self::result_card(storage, &output, Some(name.as_str()))?}))
+        result_card(storage, self.run_id, &output, Some(name.as_str()))
     }
 
-    /// `describe(r)`: the card of one of the run's results, admitted as a
-    /// read of it is, rows and taint re-checked now.
-    fn describe_result(&mut self, reference: &JsResultRef) -> Result<serde_json::Value> {
+    /// The result `target` names, read as every read of a result is:
+    /// resolved for this run, admitted as a read of its recorded outputs, and
+    /// its rows and its taint checked now. A refusal is the reply the guest
+    /// gets in its place.
+    ///
+    /// A reader child also reads its parent's source, as `src` or by its
+    /// handle, inside the range its parent delegated, while its job is live;
+    /// a parent also reads its children's settled findings by their handles.
+    /// Any other handle names nothing: a guessed handle grants nothing.
+    fn checked_result(
+        &mut self,
+        target: &JsResultTarget,
+    ) -> Result<std::result::Result<ResultRead, serde_json::Value>> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        let Some((output, name)) = self.resolve_result(reference) else {
-            return Ok(self.unknown_handle());
+        let Some(found) = self.resolve_for_read(storage, &target.reference)? else {
+            return Ok(Err(self.unknown_handle()));
         };
-        self.admit_result_read(storage)?;
-        if self.withholds_results()? {
-            return Ok(result_refusal("result_withheld"));
+        if let (Some((start, end)), Some((from, to))) = (found.within, target.range)
+            && (from < start || to > end)
+        {
+            return Ok(Err(result_refusal("outside_delegated_range")));
         }
-        Ok(json!({"output": Self::result_card(storage, &output, name.as_deref())?}))
+        if found.child_source && !self.gated_write.reader_job_live()? {
+            return Ok(Err(result_refusal("reader_task_settled")));
+        }
+        self.admit_result_read(storage)?;
+        let rows = match found.rows {
+            None => self.result_rows(),
+            Some(extra) => self
+                .result_rows()
+                .zip(extra)
+                .map(|(run, extra)| [run, extra].concat()),
+        };
+        if self.withholds_rows(rows)? {
+            return Ok(Err(result_refusal("result_withheld")));
+        }
+        let whole = found
+            .within
+            .is_some_and(|range| range == (0, found.output.raw_len));
+        let range = target.range.or(found.within.filter(|_| !whole));
+        ResultRead::new(storage, found.owner, found.output, found.name, range)
+    }
+
+    /// What `reference` names for a read by this run: its own result first,
+    /// then a reader child's source, then a finding of one of its children.
+    fn resolve_for_read(
+        &self,
+        storage: &ExecutorStorage<'_>,
+        reference: &JsResultRef,
+    ) -> Result<Option<ResolvedResult>> {
+        if let Some((output, name)) = self.resolve_result(reference) {
+            return Ok(Some(ResolvedResult {
+                output,
+                name,
+                owner: self.run_id,
+                rows: None,
+                within: None,
+                child_source: false,
+            }));
+        }
+        if let Some(child) = self.gated_write.reader_child() {
+            let source = &child.source;
+            let names_source = match reference {
+                JsResultRef::Name(name) => name == READER_SOURCE_NAME,
+                JsResultRef::Handle(handle) => *handle == source.handle,
+            };
+            if !names_source {
+                return Ok(None);
+            }
+            let Some(output) =
+                recorded_output(storage, source.owner, &source.path, &source.handle)?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(ResolvedResult {
+                output,
+                name: Some(READER_SOURCE_NAME.to_owned()),
+                owner: source.owner,
+                rows: Some(source.rows.clone()),
+                within: Some(source.range),
+                child_source: true,
+            }));
+        }
+        let JsResultRef::Handle(handle) = reference else {
+            return Ok(None);
+        };
+        let Some(finding) = storage
+            .reader_finding(self.run_id, handle)?
+            .and_then(|job| job.finding)
+        else {
+            return Ok(None);
+        };
+        let Some(output) = recorded_output(storage, finding.owner, &finding.path, &finding.handle)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ResolvedResult {
+            output,
+            name: None,
+            owner: finding.owner,
+            rows: Some(finding.rows),
+            within: None,
+            child_source: false,
+        }))
+    }
+
+    /// The source of a `self.spawn`: one of this run's own results, read as
+    /// every read of it is, its range the ref's or the whole body. A source
+    /// the run may not read now is refused as that read would be.
+    fn delegate_source(
+        &mut self,
+        source: &str,
+    ) -> Result<std::result::Result<DelegatedSource, String>> {
+        let target = JsResultTarget::parse(source);
+        if self.resolve_result(&target.reference).is_none() {
+            return Ok(Err("unknown_handle".to_owned()));
+        }
+        let read = match self.checked_result(&target)? {
+            Ok(read) => read,
+            Err(refused) => {
+                let code = refused
+                    .get("denied")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("denied");
+                return Ok(Err(code.to_owned()));
+            }
+        };
+        if read.is_tainted() {
+            return Ok(Err("tainted".to_owned()));
+        }
+        let output = read.output();
+        Ok(Ok(DelegatedSource {
+            owner: self.run_id,
+            path: output.path.clone(),
+            handle: output.handle.clone(),
+            range: read.range().unwrap_or((0, output.raw_len)),
+            rows: self.result_rows(),
+        }))
+    }
+
+    /// `self.spawn(...)`: the source resolved in this run, then the spawn
+    /// dispatched with it bound; the run's record keeps the guest's call. A
+    /// reader child's spawn goes straight to its refusal.
+    fn spawn_reader(
+        &mut self,
+        seq: u64,
+        mut spawn: SelfReaderSpawnCall,
+    ) -> Result<SelfDispatchOutcome> {
+        if self.gated_write.reader_child().is_none() {
+            match self.delegate_source(&spawn.source)? {
+                Ok(source) => spawn.bound = Some(source),
+                Err(reason) => {
+                    return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        effect: SelfEffect::ReaderSpawn,
+                        outcome: reason,
+                        reason_codes: Vec::new(),
+                    }));
+                }
+            }
+        }
+        let site = ExecutorCallSite {
+            run_id: self.run_id,
+            seq,
+            step_start: self.step_start,
+            earlier: &self.bridge_calls,
+        };
+        self.gated_write
+            .dispatch_for_executor_run(site, SelfCall::ReaderSpawn(Box::new(spawn)))
+    }
+
+    /// A reader child's `tasks.update({task_ref, resultRef})`: its finding
+    /// resolved among its own results only, a whole stored JSON value, then
+    /// the report dispatched with it bound. Its parent's source is not its
+    /// own and is refused.
+    fn report_finding(
+        &mut self,
+        seq: u64,
+        mut report: SelfReaderReportCall,
+    ) -> Result<SelfDispatchOutcome> {
+        let failed = |code: &str| {
+            SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::ReaderReport,
+                error: code.to_owned(),
+            })
+        };
+        if self.gated_write.reader_child().is_some() {
+            let storage = self.storage.ok_or(Error::InvalidConfig(
+                "executor result storage unavailable".into(),
+            ))?;
+            let target = JsResultTarget::parse(&report.result_ref);
+            let Some((output, _)) = self
+                .resolve_result(&target.reference)
+                .filter(|_| target.range.is_none())
+            else {
+                return Ok(failed("finding_not_own"));
+            };
+            let card = result_card(storage, self.run_id, &output, None)?;
+            if card["taint"]["state"] != "clean" {
+                return Ok(failed("finding_tainted"));
+            }
+            if card["shape"]["format"] != "json" {
+                return Ok(failed("finding_not_json"));
+            }
+            report.bound = Some(ReaderFindingRef {
+                owner: self.run_id,
+                path: output.path,
+                handle: output.handle,
+                bytes: output.raw_len,
+                rows: self.result_rows(),
+            });
+        }
+        let site = ExecutorCallSite {
+            run_id: self.run_id,
+            seq,
+            step_start: self.step_start,
+            earlier: &self.bridge_calls,
+        };
+        self.gated_write
+            .dispatch_for_executor_run(site, SelfCall::ReaderReport(report))
+    }
+
+    /// `describe(r)`: the card of one of the run's results, or of a range
+    /// of one.
+    fn describe_result(&mut self, target: &JsResultTarget) -> Result<serde_json::Value> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        Ok(match self.checked_result(target)? {
+            Ok(read) => json!({"output": read.card(storage)?}),
+            Err(refused) => refused,
+        })
+    }
+
+    /// `can({read: r})`: the verdict of the checks a read of `target` makes
+    /// (resolved in this run, admitted as a read of its recorded outputs,
+    /// its rows and its taint), for this run as the reader, with no preview
+    /// and no byte of the body. A refused admission halts the bridge as a
+    /// read's does.
+    ///
+    /// With `child`, a readable result is also checked as a spawn's source
+    /// would be, writing nothing: the run's own result, then the seat, the
+    /// clock and the scope. The verdict names the children's cutoff and what
+    /// their scope may still spend, or why a spawn would be refused.
+    fn can_read_result(
+        &mut self,
+        target: &JsResultTarget,
+        child: bool,
+    ) -> Result<serde_json::Value> {
+        let mut verdict = match self.checked_result(target)? {
+            Ok(read) => read.preflight(),
+            Err(refused) => result_cannot(refused),
+        };
+        if !child || verdict["can"] != json!(true) {
+            return Ok(json!({"output": verdict}));
+        }
+        if self.resolve_result(&target.reference).is_none() {
+            return Ok(json!({"output": {"can": false, "reason": "unknown_handle"}}));
+        }
+        match self
+            .gated_write
+            .preflight_reader_spawn(self.run_id, crate::unix_millis_now())?
+        {
+            Ok((cutoff, available)) => {
+                verdict["child"] = json!({
+                    "cutoff_unix_ms": cutoff,
+                    "spend_available_units": available,
+                });
+            }
+            Err(reason) => verdict = json!({"can": false, "reason": reason}),
+        }
+        Ok(json!({"output": verdict}))
+    }
+
+    /// One facet of one of the run's results, checked as `describe` is. A
+    /// query whose selection is past one reply is stored as a new result of
+    /// the run, as `store` stores a value, and answered by its card. It is
+    /// read only from a clean body, and its own bytes are scanned for
+    /// secrets as they are stored.
+    fn read_result(
+        &mut self,
+        target: &JsResultTarget,
+        facet: ResultFacet,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        let read = match self.checked_result(target)? {
+            Ok(read) => read,
+            Err(refused) => return Ok(refused),
+        };
+        let mut sink = match facet {
+            ResultFacet::Query => Some(storage.code_run_output_sink()?),
+            _ => None,
+        };
+        Ok(match read.read(storage, facet, input, sink.as_mut())? {
+            ResultReply::Output(output) => json!({"output": output}),
+            ResultReply::Denied(refused) => refused,
+            ResultReply::Spilled { count, next } => {
+                let sink = sink.ok_or(Error::InvariantViolation(
+                    "a result read spilled with no sink",
+                ))?;
+                let card = self.bind_stored(storage, sink, None)?;
+                let mut output = json!({"derived": card, "count": count, "done": next.is_none()});
+                if let Some(next) = next {
+                    output["next"] = next;
+                }
+                json!({"output": output})
+            }
+        })
     }
 
     /// One chunk of a stored result of this run, read by range, while the
@@ -634,11 +960,17 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// The ONE response chokepoint: every guest-visible bridge-call
     /// response — success, wait, or typed error outcome — leaves through
-    /// here so the budget envelope can never be skipped.
-    fn respond(&self, outcome: SelfDispatchOutcome) -> SelfDispatchResponse {
+    /// here so the budget envelope can never be skipped. `view` is a verb
+    /// hook's view of the outcome, which the guest reads in its place.
+    fn respond(
+        &self,
+        outcome: SelfDispatchOutcome,
+        view: Option<serde_json::Value>,
+    ) -> SelfDispatchResponse {
         SelfDispatchResponse {
             outcome,
             budget: self.budget(),
+            view,
         }
     }
 }
@@ -701,10 +1033,25 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         ))
     }
 
+    fn store_reply(&mut self, reply: &serde_json::Value) -> Result<Option<serde_json::Value>> {
+        let Some(storage) = self.storage else {
+            return Ok(None);
+        };
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, reply)?;
+        self.bind_stored(storage, sink, None).map(Some)
+    }
+
     fn result_call(&mut self, call: JsResultCall) -> Result<serde_json::Value> {
         match call {
             JsResultCall::Store { name } => self.store_result(name),
-            JsResultCall::Describe(reference) => self.describe_result(&reference),
+            JsResultCall::Describe(target) => self.describe_result(&target),
+            JsResultCall::CanRead { target, child } => self.can_read_result(&target, child),
+            JsResultCall::Read {
+                target,
+                facet,
+                input,
+            } => self.read_result(&target, facet, input),
         }
     }
 
@@ -721,28 +1068,21 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
     }
 }
 
-/// A result call's refusal, as the guest's thrown error carries it.
-fn result_refusal(code: &str) -> serde_json::Value {
-    json!({"denied": code, "reasonCodes": [code]})
-}
-
-/// Whether `handle` names `output`: its handle as its card gives it, or its
-/// digest as model context cites it (`output:blake3:<hex>:<len>`).
-fn names_result(output: &CodeRunRawOutput, handle: &str) -> bool {
-    output.handle == handle
-        || handle
-            .strip_prefix("output:blake3:")
-            .and_then(|rest| rest.split(':').next())
-            .is_some_and(|hex| hex == crate::entity_id::bytes_to_hex_lower(&output.raw_blake3))
-}
-
-/// A taint state as a card spells it.
-fn taint_word(state: ArtifactTaintState) -> &'static str {
-    match state {
-        ArtifactTaintState::Clean => "clean",
-        ArtifactTaintState::TaintedLive => "tainted_live",
-        ArtifactTaintState::TaintedStale => "tainted_stale",
-    }
+/// The output at `path` with `handle` in `run`'s committed record.
+fn recorded_output(
+    storage: &ExecutorStorage<'_>,
+    run: EntityId,
+    path: &str,
+    handle: &str,
+) -> Result<Option<CodeRunRawOutput>> {
+    Ok(storage
+        .get_code_run_replay_record(&run)?
+        .and_then(|record| {
+            record
+                .outputs
+                .into_iter()
+                .find(|output| output.path == path && output.handle == handle)
+        }))
 }
 
 fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOutcome> {

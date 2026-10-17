@@ -63,6 +63,8 @@ pub use self::binding::{ChannelIdentityBinding, ChannelIdentityFulfillment};
 pub use self::codec::{
     decode_channel_identity_body, encode_channel_identity_body, is_channel_identity_claim_predicate,
 };
+pub use self::facts::ChannelIdentityFacts;
+pub(crate) use self::facts::channel_identity_facts_in_txn;
 pub use self::keys::{
     ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND, CHANNEL_IDENTITY_BODY_KEYS,
     CHANNEL_IDENTITY_CLAIM_PREDICATES, CHANNEL_IDENTITY_DELEGATED_BODY_KEYS,
@@ -76,20 +78,21 @@ pub use self::keys::{
     PREDICATE_CHANNEL_IDENTITY_STATE, PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
     SUBJECT_CLASS_SELF_HELD, WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
 };
-pub(crate) use self::facts::channel_identity_facts_in_txn;
-pub use self::facts::ChannelIdentityFacts;
 pub use self::lifecycle::{ChannelIdentityState, ChannelIdentityStep};
 pub use self::record::ChannelIdentity;
 pub use self::shape::{ChannelIdentityShape, SelfHeldShape};
 pub use self::transition::DelegatedProvisionRequest;
 
-pub(crate) use self::assignment::{clear_assignment_for_delete, maintain_assignment_put};
+pub(crate) use self::assignment::{
+    clear_assignment_for_delete, close_claim_heads_for_delete_in_txn, maintain_assignment_put,
+};
 #[cfg(test)]
 use self::codec::validate_channel_identity_body_bytes;
 pub(crate) use self::codec::validate_channel_identity_claim_structure;
 pub(crate) use self::codec::validate_channel_identity_put_carrier;
 #[cfg(test)]
 use self::record::StoredIdentityParts;
+pub use self::sender::ChannelIdentityFaceClassifier;
 pub(crate) use self::sender::enrich_dispatch_channel_identity;
 pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::transition::{

@@ -11,7 +11,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, ScopedReadActorKey};
 use crate::gate::PolicyManifestResolution;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::side_table::{self, Raw, SideKey, SideTable};
+use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
 
@@ -50,6 +50,58 @@ const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_UNIT_WATCH);
 pub(super) const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_PENDING);
+/// Key: source + question + root unit.
+const RESTS_ON: SideTable<(EntityId, EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::TYPED_QUESTION_RESTS_ON);
+const ROOT_SOURCES: SideTable<(EntityId, EntityId), Vec<EntityId>, Named> =
+    SideTable::new(&side_table::TYPED_QUESTION_ROOT_SOURCES);
+
+/// Records what `root`'s newest standing answer rests on besides `root`
+/// itself (its neighbours, the sources it names as evidence), so an edit to
+/// any of them queues `root`'s arrival. It replaces what the answer before
+/// it rested on.
+pub(super) fn watch_sources(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+    root: EntityId,
+    sources: &[EntityId],
+) -> Result<()> {
+    unwatch_sources(store, txn, question, root)?;
+    let sources: std::collections::BTreeSet<EntityId> = sources
+        .iter()
+        .copied()
+        .filter(|source| *source != root)
+        .collect();
+    if sources.is_empty() {
+        return Ok(());
+    }
+    for source in &sources {
+        RESTS_ON.put(store, txn, &(*source, question, root), &())?;
+    }
+    ROOT_SOURCES.put(
+        store,
+        txn,
+        &(question, root),
+        &sources.into_iter().collect::<Vec<_>>(),
+    )
+}
+
+/// Drops the source watchers `root`'s standing answer registered.
+pub(super) fn unwatch_sources(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    question: EntityId,
+    root: EntityId,
+) -> Result<()> {
+    if let Some(old) = ROOT_SOURCES.get(store, txn, &(question, root))? {
+        for source in old {
+            RESTS_ON.delete(store, txn, &(source, question, root))?;
+        }
+        ROOT_SOURCES.delete(store, txn, &(question, root))?;
+    }
+    Ok(())
+}
 pub(super) fn unwatch_units(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -98,6 +150,25 @@ fn predicate(source: &OutcomeSource) -> &str {
     }
 }
 
+/// Whether a question watches `unit` for arrivals. A batch that writes such a
+/// unit wakes the question pump after it commits, as a claim write does.
+pub(crate) fn unit_watched_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    unit: &EntityId,
+) -> Result<bool> {
+    Ok(UNIT_WATCH
+        .iter_from(store, txn, unit.as_bytes())?
+        .next()
+        .transpose()?
+        .is_some()
+        || RESTS_ON
+            .iter_from(store, txn, unit.as_bytes())?
+            .next()
+            .transpose()?
+            .is_some())
+}
+
 /// Called after the batch's final entity and edge state is installed, on both
 /// ordinary writes and replicated batches. Question metadata remains local.
 pub(crate) fn project_arrivals_in_txn(
@@ -114,13 +185,21 @@ fn enqueue_arrivals(
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<()> {
-    for unit in ids {
-        let questions: Vec<EntityId> = UNIT_WATCH
-            .scan_from(store, txn, unit.as_bytes())?
+    for changed in ids {
+        // The questions watching the unit itself, and the roots whose
+        // standing answer rests on it.
+        let mut roots: Vec<(EntityId, EntityId)> = UNIT_WATCH
+            .scan_from(store, txn, changed.as_bytes())?
             .into_iter()
-            .map(|((_, question), _)| question)
+            .map(|((_, question), _)| (question, *changed))
             .collect();
-        for question in questions {
+        roots.extend(
+            RESTS_ON
+                .scan_from(store, txn, changed.as_bytes())?
+                .into_iter()
+                .map(|((_, question, root), _)| (question, root)),
+        );
+        for (question, unit) in roots {
             let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))?
             else {
                 continue;
@@ -138,9 +217,9 @@ fn enqueue_arrivals(
             };
             if !head.paused
                 && record.definition.refresh.on_arrival
-                && record.definition.units.contains(unit)
+                && record.definition.units.contains(&unit)
             {
-                PENDING.put(store, txn, &(question, *unit), &EntityId::now())?;
+                PENDING.put(store, txn, &(question, unit), &EntityId::now())?;
             }
         }
     }

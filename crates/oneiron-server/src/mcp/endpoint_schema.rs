@@ -105,6 +105,25 @@ pub(super) fn execute_code_tool_schema() -> Value {
     )
 }
 
+pub(super) fn read_result_tool_schema() -> Value {
+    tool_schema_root(
+        "https://oneiron.local/schemas/mcp/read_result.args.v1.json",
+        json!({
+            "schema_version": schema_version_property(),
+            "actor": actor_schema(),
+            "consent": consent_schema(),
+            "run_ref": nonblank_string_schema(),
+            "ref": nonblank_string_schema(),
+            "facet": {
+                "type": "string",
+                "enum": ["describe", "slice", "search", "query", "chunks"],
+            },
+            "input": {"type": "object"},
+        }),
+        &["schema_version", "consent", "run_ref", "ref"],
+    )
+}
+
 /// One generated tool's schema, derived from its binding — never hand-listed.
 ///
 /// When the binding has required argument fields, `arguments` itself is
@@ -414,15 +433,10 @@ fn verb_argument_field_schema(field: &str) -> Value {
 
         }),
         "task_ref" | "room_ref" | "turn_ref" => entity_id_schema(),
-        // The advertised ceiling IS the writer's ceiling, stated in the closed
-        // schema so a caller learns the bound from `tools/list` instead of from
-        // a refusal. `maxLength` counts code points, so the byte bound the
-        // runtime enforces is the narrower of the two by construction.
         "label" => json!({
             "type": "string",
             "minLength": 1,
             "pattern": "\\S",
-            "maxLength": oneiron::context_board::TASK_LABEL_MAX_BYTES,
         }),
         _ => json!({}),
     }

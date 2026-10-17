@@ -4,15 +4,15 @@
 use super::qualify::{validate_installed_qualification, validate_qualification};
 use super::{
     PackAdapter, PackCandidateReason, PackInstallReceipt, PackInstallStatus, PackKind,
-    PackQualifier, PackSource, admission,
+    PackQualifier, PackSource, SetupCheckQualifier, admission,
 };
 use crate::side_table::{self, Raw, SideTable};
-use crate::skill_hub::HubFile;
+use crate::skill_hub::{HubFile, HubPin, HubRef};
 use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 4] = [
+const PACKS: [(&str, &str); 6] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -29,7 +29,73 @@ const PACKS: [(&str, &str); 4] = [
         "linkedin",
         include_str!("../../../../../packs/builtin/linkedin/PACK.md"),
     ),
+    (
+        "browser",
+        include_str!("../../../../../packs/builtin/browser/PACK.md"),
+    ),
+    (
+        "native_mail",
+        include_str!("../../../../../packs/builtin/native_mail/PACK.md"),
+    ),
 ];
+/// Each built-in pack's guided setup skill (OF-378), at the folder its
+/// PACK.md `setup` names. It ships in the same exact source, so the owner
+/// reads it while the connector is still a Candidate.
+const SETUP_SKILLS: [(&str, &str); 6] = [
+    (
+        "slack",
+        include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
+    ),
+    (
+        "line",
+        include_str!("../../../../../packs/builtin/line/skills/setup/SKILL.md"),
+    ),
+    (
+        "email",
+        include_str!("../../../../../packs/builtin/email/skills/setup/SKILL.md"),
+    ),
+    (
+        "linkedin",
+        include_str!("../../../../../packs/builtin/linkedin/skills/setup/SKILL.md"),
+    ),
+    (
+        "browser",
+        include_str!("../../../../../packs/builtin/browser/skills/setup/SKILL.md"),
+    ),
+    (
+        "native_mail",
+        include_str!("../../../../../packs/builtin/native_mail/skills/setup/SKILL.md"),
+    ),
+];
+const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
+
+/// One built-in pack's exact source: its PACK.md and its setup skill.
+fn builtin_source(name: &str, markdown: &str) -> Result<PackSource> {
+    let mut files = vec![HubFile::new("PACK.md", markdown.as_bytes())];
+    if let Some((_, skill)) = SETUP_SKILLS.iter().find(|(channel, _)| *channel == name) {
+        files.push(HubFile::new(SETUP_SKILL_PATH, skill.as_bytes()));
+    }
+    PackSource::from_files(files)
+}
+
+/// A built-in channel's exact embedded source.
+pub(super) fn embedded_builtin_source(channel: &str) -> Result<PackSource> {
+    let (name, markdown) = PACKS
+        .iter()
+        .find(|(name, _)| *name == channel)
+        .ok_or_else(|| super::invalid("unknown built-in connector pack"))?;
+    builtin_source(name, markdown)
+}
+
+/// The engine hub ref a built-in source's bundled skills are imported under,
+/// pinned to that exact source.
+fn builtin_hub_ref(name: &str, source: &PackSource) -> Result<HubRef> {
+    HubRef::new(
+        engine_hub_id()?,
+        format!("built-in:{name}"),
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )
+}
 
 fn engine_hub_id() -> Result<EntityId> {
     EntityId::derive(
@@ -40,6 +106,26 @@ fn engine_hub_id() -> Result<EntityId> {
 
 /// The publisher an engine-seeded receipt names.
 const ENGINE_PUBLISHER: &str = "oneiron-engine";
+
+/// A removed engine-seeded built-in goes back to the Candidate it was seeded
+/// as, and qualifies again on its checked setup.
+pub(super) fn reseeded_candidate(removed: &PackInstallReceipt) -> Option<PackInstallReceipt> {
+    let Some(PackAdapter::Builtin(channel)) = removed.adapter.as_ref() else {
+        return None;
+    };
+    if removed.publisher != ENGINE_PUBLISHER
+        || !PACKS.iter().any(|(name, _)| *name == channel.as_str())
+    {
+        return None;
+    }
+    let mut candidate = removed.clone();
+    candidate.status = PackInstallStatus::Candidate;
+    candidate.candidate_reason = Some(PackCandidateReason::QualificationRequired);
+    candidate.qualification_report_hash = None;
+    candidate.connector_qualification = None;
+    candidate.runtime = None;
+    Some(candidate)
+}
 
 pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
     super::local::seed_local_pack(vault)?;
@@ -62,7 +148,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         return Ok(());
     }
     for (name, markdown) in PACKS {
-        let source = PackSource::from_files(vec![HubFile::new("PACK.md", markdown.as_bytes())])?;
+        let source = builtin_source(name, markdown)?;
         if source.manifest.name != format!("oneiron.{name}")
             || source.manifest.kind != PackKind::Connector
             || source.manifest.adapter != Some(PackAdapter::Builtin(name.to_owned()))
@@ -93,6 +179,16 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             continue;
         }
         vault.stage_pack_source_in_txn(&mut txn, &source, TimeRange { start: 0, end: 0 }, 0)?;
+        // The setup skill imports the ordinary bundled way and is held
+        // Candidate with its pack until the connector qualifies.
+        let skills = vault.admit_pack_skills_in_txn(
+            &mut txn,
+            &source,
+            &builtin_hub_ref(name, &source)?,
+            None,
+            Some(PackCandidateReason::QualificationRequired),
+            crate::unix_seconds_now(),
+        )?;
         let receipt = PackInstallReceipt {
             source_id: source_id.to_hex(),
             pack_name: source.manifest.name.clone(),
@@ -114,7 +210,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             sections: source.sections().to_vec(),
             predicates: source.manifest.predicates.iter().cloned().collect(),
             kinds: source.manifest.kinds.iter().cloned().collect(),
-            skills: Vec::new(),
+            skills: skills.iter().map(EntityId::to_hex).collect(),
             installed_at: 0,
         };
         admission::PACK_CANDIDATE.put(&vault.store, &mut txn, &receipt.content_hash, &receipt)?;
@@ -126,18 +222,16 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
 
 impl Vault {
     /// Bootstrap never trusts an engine-built connector merely because it is
-    /// first-party. Its real isolated adapter must clear the same probes as a
-    /// hub pack before the receipt enters the Active installation catalog.
+    /// first-party. The exact embedded source must pass a qualifier before
+    /// the receipt enters the Active installation catalog: its checked setup
+    /// connection ([`SetupCheckQualifier`]) or a probe suite.
     pub fn qualify_builtin_connector_pack(
         &self,
         channel: &str,
         qualifier: &dyn PackQualifier,
     ) -> Result<PackInstallReceipt> {
-        let (_, markdown) = PACKS
-            .iter()
-            .find(|(name, _)| *name == channel)
-            .ok_or_else(|| super::invalid("unknown built-in connector pack"))?;
-        let source = PackSource::from_files(vec![HubFile::new("PACK.md", markdown.as_bytes())])?;
+        let source = embedded_builtin_source(channel)?;
+        let hub = builtin_hub_ref(channel, &source)?;
         let hash = source.content_hash().to_hex();
         let (candidate, installed) = {
             let txn = self.store.env.read_txn()?;
@@ -186,37 +280,176 @@ impl Vault {
                 ));
             }
             validate_installed_qualification(&source, &receipt)?;
+            // The held setup skill installs with its now-qualified pack.
+            let at = crate::unix_seconds_now();
+            let skills = self.admit_pack_skills_in_txn(txn, &source, &hub, None, None, at)?;
+            if let Some(prior) = installed.as_ref() {
+                self.supersede_pack_skills_in_txn(txn, prior, &skills, at)?;
+            }
+            receipt.skills = skills.iter().map(EntityId::to_hex).collect();
             admission::PACK_INSTALL.put(&self.store, txn, &receipt.pack_name, &receipt)?;
             admission::PACK_CANDIDATE.delete(&self.store, txn, &hash)?;
             Ok(receipt.clone())
         })
     }
 
-    /// A built-in channel runs as its engine pack (OF-519): once the vault
-    /// is seeded, a send on it needs `oneiron.<channel>` installed Active
-    /// with the built-in adapter. An owner who removed or replaced the pack
-    /// has no such channel. A channel no built-in pack names passes.
-    pub fn require_builtin_channel_pack(&self, channel: &str) -> Result<()> {
-        let Some((name, _)) = PACKS.iter().find(|(name, _)| *name == channel) else {
-            return Ok(());
+    /// A built-in whose setup check just turned Verified qualifies in the
+    /// same flow (Engine ruling 10-17). Only the engine-seeded receipt of the
+    /// exact embedded source moves, and only while the runtime gate would
+    /// refuse it: a Candidate, or a receipt an older engine qualified. A pack
+    /// with several connections waits until every one is checked. Returns
+    /// whether the pack is now Active.
+    pub(crate) fn qualify_builtin_on_checked_setup(
+        &self,
+        pack: &str,
+        content_hash: &str,
+    ) -> Result<bool> {
+        let Some(channel) = pack.strip_prefix("oneiron.") else {
+            return Ok(false);
         };
+        if !PACKS.iter().any(|(name, _)| *name == channel) {
+            return Ok(false);
+        }
+        let source = embedded_builtin_source(channel)?;
+        let Some(setup) = source.manifest().setup.as_ref() else {
+            return Ok(false);
+        };
+        if source.content_hash().to_hex() != content_hash {
+            return Ok(false);
+        }
+        let receipt = {
+            let txn = self.store.env.read_txn()?;
+            match admission::PACK_CANDIDATE.get(&self.store, &txn, &content_hash.to_owned())? {
+                Some(candidate) => Some(candidate),
+                None => self
+                    .installed_pack_in_txn(&txn, pack)?
+                    .filter(|installed| installed.content_hash == content_hash),
+            }
+        };
+        let Some(receipt) = receipt else {
+            return Ok(false);
+        };
+        let current = receipt.status == PackInstallStatus::Active
+            && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
+        if receipt.publisher != ENGINE_PUBLISHER
+            || receipt.adapter != Some(PackAdapter::Builtin(channel.to_owned()))
+            || current
+        {
+            return Ok(false);
+        }
+        for connection in &setup.connections {
+            if self
+                .require_candidate_pack_connection_verified(pack, content_hash, &connection.id)
+                .is_err()
+            {
+                return Ok(false);
+            }
+        }
+        self.qualify_builtin_connector_pack(channel, &SetupCheckQualifier { vault: self })?;
+        Ok(true)
+    }
+
+    /// A built-in channel runs as its engine pack (OF-519): once the vault
+    /// is seeded, a send or an inbound event on it needs a pack serving the
+    /// channel installed Active with the built-in adapter. An owner who
+    /// removed or replaced the pack has no such channel. A channel no
+    /// built-in pack names passes.
+    pub fn require_builtin_channel_pack(&self, channel: &str) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        if !SEEDED.contains(&self.store, &txn, &())? {
+        self.require_builtin_channel_pack_in_txn(&txn, channel)
+    }
+
+    /// [`Self::require_builtin_channel_pack`] in the caller's snapshot.
+    /// Email has two built-in packs: delegated Gmail (`email`) and the
+    /// native mailbox (`native_mail`); either one Active serves it.
+    pub(crate) fn require_builtin_channel_pack_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        channel: &str,
+    ) -> Result<()> {
+        let serves = |name: &str| name == channel || (channel == "email" && name == "native_mail");
+        if !PACKS.iter().any(|(name, _)| serves(name)) {
             return Ok(());
         }
-        match self.installed_pack_in_txn(&txn, &format!("oneiron.{name}"))? {
-            Some(receipt)
-                if receipt.status == PackInstallStatus::Active
-                    && receipt.adapter == Some(PackAdapter::Builtin((*name).to_owned()))
-                    && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION")) =>
-            {
-                Ok(())
-            }
-            _ => Err(super::invalid(
-                "the channel's built-in pack is not installed",
-            )),
+        if !SEEDED.contains(&self.store, txn, &())? {
+            return Ok(());
         }
+        for (name, _) in PACKS.iter().filter(|(name, _)| serves(name)) {
+            if let Some(receipt) = self.installed_pack_in_txn(txn, &format!("oneiron.{name}"))?
+                && receipt.status == PackInstallStatus::Active
+                && receipt.adapter == Some(PackAdapter::Builtin((*name).to_owned()))
+                && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION"))
+            {
+                return Ok(());
+            }
+        }
+        Err(super::invalid(
+            "the channel's built-in pack is not installed",
+        ))
     }
+
+    /// What a served host runs a built-in channel on (OF-519): the engine's
+    /// own `oneiron.<channel>` receipt installed Active for this engine
+    /// version, and the declared `connection` of that exact source with a
+    /// check that is still Verified. `None` when either is missing, so a
+    /// host drops the channel the moment its pack or its check goes.
+    pub fn checked_builtin_channel(
+        &self,
+        channel: &str,
+        connection: &str,
+    ) -> Result<Option<CheckedBuiltinConnection>> {
+        if !PACKS.iter().any(|(name, _)| *name == channel) {
+            return Ok(None);
+        }
+        let pack = format!("oneiron.{channel}");
+        let receipt = {
+            let txn = self.store.env.read_txn()?;
+            self.installed_pack_in_txn(&txn, &pack)?
+        };
+        let Some(receipt) = receipt.filter(|receipt| {
+            receipt.status == PackInstallStatus::Active
+                && receipt.adapter == Some(PackAdapter::Builtin(channel.to_owned()))
+                && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION"))
+        }) else {
+            return Ok(None);
+        };
+        let source = embedded_builtin_source(channel)?;
+        if source.content_hash().to_hex() != receipt.content_hash {
+            return Ok(None);
+        }
+        let Some(declared) = source
+            .manifest()
+            .setup
+            .as_ref()
+            .and_then(|setup| setup.connection(connection))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let Ok(check) = self.require_candidate_pack_connection_verified(
+            &pack,
+            &receipt.content_hash,
+            connection,
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some(CheckedBuiltinConnection {
+            content_hash: receipt.content_hash,
+            connection: declared,
+            check,
+        }))
+    }
+}
+
+/// A built-in channel's checked connection, as a served host reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedBuiltinConnection {
+    /// The exact installed source.
+    pub content_hash: String,
+    /// The connection as that source declares it: its credential names.
+    pub connection: super::PackSetupConnection,
+    /// Its Verified check: the account, and the provider's own id for it.
+    pub check: super::PackSetupCheckRecord,
 }
 
 #[cfg(test)]

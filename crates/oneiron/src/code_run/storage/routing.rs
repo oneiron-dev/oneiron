@@ -8,7 +8,9 @@ use crate::vault::VaultId;
 use crate::{EntityId, ModelId, Result, ScoredEntity, Vault, WriteActor};
 
 use super::super::codec::validate_raw_output;
-use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord};
+use super::super::replay::{
+    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
+};
 use super::super::support::invalid_code_run_replay;
 use super::records::{
     MODEL_HEAL_COUNTS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS,
@@ -203,9 +205,10 @@ impl SessionBinding<'_> {
         path: String,
         sink: BodySink,
         complete: bool,
+        owner: EntityId,
     ) -> Result<CodeRunRawOutput> {
         let finished = finish_output(path, sink, complete, self.session.limit_watch())?;
-        self.mark_secret(&finished.output, finished.secret)?;
+        self.mark_secret(&finished.output, owner, finished.secret)?;
         self.answered(|| {
             self.session.side_table_put_routed(
                 &self.route,
@@ -217,24 +220,31 @@ impl SessionBinding<'_> {
         Ok(finished.output)
     }
 
-    /// Marks a body the secret scan hit, on the session's route, before its
-    /// row is written. An off-record room files no lift proposal: nothing of
-    /// it reaches the base vault.
-    fn mark_secret(&self, output: &CodeRunRawOutput, secret: Option<&'static str>) -> Result<()> {
+    /// Marks the occurrence of a body the secret scan hit that run `owner`
+    /// holds, on the session's route, before its row is written. An
+    /// off-record room files no lift proposal: nothing of it reaches the
+    /// base vault.
+    fn mark_secret(
+        &self,
+        output: &CodeRunRawOutput,
+        owner: EntityId,
+        secret: Option<&'static str>,
+    ) -> Result<()> {
         let Some(reason) = secret else {
             return Ok(());
         };
+        let key = ResultOccurrence::of(Some(owner), output)?.mark_key(&output.handle);
         self.answered(|| {
             self.session.side_table_put_routed(
                 &self.route,
                 &RAW_OUTPUT_SECRETS,
-                &output.handle,
+                &key,
                 &reason.to_owned(),
             )
         })
     }
 
-    fn put_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
+    fn put_raw_output(&self, owner: EntityId, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
         let finished = finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
@@ -243,7 +253,7 @@ impl SessionBinding<'_> {
                 "raw output metadata does not match bytes",
             ));
         }
-        self.mark_secret(output, finished.secret)?;
+        self.mark_secret(output, owner, finished.secret)?;
         self.answered(|| {
             self.session.side_table_put_routed(
                 &self.route,
@@ -281,23 +291,22 @@ impl SessionBinding<'_> {
         })
     }
 
-    /// A body's taint from the room's sidecars: a secret-scan mark is live
+    /// The taint of the occurrence of a body that `owner` holds (the bytes'
+    /// own, with none), from the room's sidecars: a secret-scan mark is live
     /// taint for good, and so is any taint ref, since a room keeps no view
     /// of custody rotation.
     fn result_taint(
         &self,
+        owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<(ArtifactTaintState, Option<String>)> {
-        if let Some(reason) = self.answered(|| {
-            self.session
-                .side_table_get(&RAW_OUTPUT_SECRETS, &output.handle)
-        })? {
+        let key = ResultOccurrence::of(owner, output)?.mark_key(&output.handle);
+        if let Some(reason) =
+            self.answered(|| self.session.side_table_get(&RAW_OUTPUT_SECRETS, &key))?
+        {
             return Ok((ArtifactTaintState::TaintedLive, Some(reason)));
         }
-        let refs = self.answered(|| {
-            self.session
-                .side_table_get(&RAW_OUTPUT_TAINTS, &output.handle)
-        })?;
+        let refs = self.answered(|| self.session.side_table_get(&RAW_OUTPUT_TAINTS, &key))?;
         Ok(match refs {
             Some(refs) if !refs.is_empty() => (ArtifactTaintState::TaintedLive, None),
             _ => (ArtifactTaintState::Clean, None),
@@ -523,7 +532,12 @@ impl<'a> ExecutorStorage<'a> {
             call.order,
             actor,
         )?;
-        executor_speech_message_id_for_run(run_ref, run_id, call.order)
+        let id = executor_speech_message_id_for_run(run_ref, run_id, call.order)?;
+        // OF-418: a report on the record reaches the Coach's Issues job.
+        if let Self::Canonical(vault) = self {
+            vault.file_blocked_report(id, actor.entity_ref(), run_id, call.occurred_at)?;
+        }
+        Ok(id)
     }
 
     pub(crate) fn get_code_run_replay_record(
@@ -581,14 +595,17 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// Stores a complete body as the occurrence run `owner` holds; no body
+    /// descriptor is published.
     pub(crate) fn put_code_run_raw_output(
         &self,
+        owner: EntityId,
         output: &CodeRunRawOutput,
         raw: &[u8],
     ) -> Result<()> {
         match self {
-            Self::Canonical(vault) => vault.put_code_run_raw_output(output, raw),
-            Self::Session(binding) => binding.put_raw_output(output, raw),
+            Self::Canonical(vault) => vault.put_code_run_raw_output(Some(owner), output, raw),
+            Self::Session(binding) => binding.put_raw_output(owner, output, raw),
         }
     }
 
@@ -615,20 +632,40 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    /// The taint of one of this run's result bodies, from its sidecars and
-    /// never its bytes: its read-time state, and the reason the secret scan
-    /// marked it with, if it did.
+    /// The taint of one result occurrence, from its sidecars and never its
+    /// bytes: its read-time state, and the reason the secret scan marked it
+    /// with, if it did. `owner` is the run that holds it (the host's run
+    /// id); a context output, which no run holds, has none, and is read as
+    /// its bytes are.
     pub(crate) fn code_run_result_taint(
         &self,
+        owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<(ArtifactTaintState, Option<String>)> {
         match self {
             Self::Canonical(vault) => Ok((
-                vault.code_run_raw_output_taint_state(output)?,
-                vault.code_run_raw_output_secret(output)?,
+                vault.code_run_raw_output_taint_state(owner, output)?,
+                vault.code_run_raw_output_secret(owner, output)?,
             )),
-            Self::Session(binding) => binding.result_taint(output),
+            Self::Session(binding) => binding.result_taint(owner, output),
         }
+    }
+
+    /// The sparse line index of one of this run's file bodies (the newline
+    /// count before each 64 KiB block), from the first body directory the
+    /// run reads that holds one. `None` for an inline body, or for an index
+    /// lost and not rebuilt.
+    pub(crate) fn code_run_line_index(
+        &self,
+        output: &CodeRunRawOutput,
+    ) -> Result<Option<Vec<u64>>> {
+        let dirs = match self {
+            Self::Canonical(vault) => vec![vault.store.body_dir()?],
+            Self::Session(binding) => binding.answered(|| binding.session.body_dirs())?,
+        };
+        Ok(dirs
+            .iter()
+            .find_map(|dir| dir.read_line_index(&output.raw_blake3, output.raw_len)))
     }
 
     /// A writer for one result body, where this run's bodies go.
@@ -653,7 +690,7 @@ impl<'a> ExecutorStorage<'a> {
             Self::Canonical(vault) => {
                 vault.publish_code_run_output(path, sink, complete, Some(owner))
             }
-            Self::Session(binding) => binding.publish_output(path, sink, complete),
+            Self::Session(binding) => binding.publish_output(path, sink, complete, owner),
         }
     }
 

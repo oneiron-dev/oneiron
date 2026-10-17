@@ -223,7 +223,7 @@ impl Memory<'_> {
         if refused {
             return Err(hard_deleted_refusal(&id));
         }
-        self.entity_ref_receipt(&id)
+        self.entity_ref_receipt_of(&id, type_byte)
     }
 
     /// Appends one immutable habit check-in child (`ChildOf` edge written by
@@ -277,7 +277,7 @@ impl Memory<'_> {
         if refused {
             return Err(hard_deleted_refusal(&checkin_id));
         }
-        self.entity_ref_receipt(&checkin_id)
+        self.entity_ref_receipt_of(&checkin_id, crate::registry::ENTITY_TYPE_TASK)
     }
 
     /// Registers a blob artifact (B8 blob door; bytes ride
@@ -315,7 +315,7 @@ impl Memory<'_> {
         if refused {
             return Err(hard_deleted_refusal(&id));
         }
-        self.entity_ref_receipt(&id)
+        self.entity_ref_receipt_of(&id, ENTITY_TYPE_BLOB_ARTIFACT)
     }
 
     /// Appends one content-addressed version to a blob artifact. The whole
@@ -367,10 +367,21 @@ impl Memory<'_> {
             content_hash_hex: hex_string(&record.content_hash),
             claim_ref: record.claim_id.to_hex(),
             created_at: record.created_at,
+            artifact: Some(crate::lens::RecordRef::from_id(
+                ENTITY_TYPE_BLOB_ARTIFACT,
+                &artifact_id,
+                None,
+            )),
+            claim: Some(crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_CLAIM,
+                &record.claim_id,
+                None,
+            )),
         })
     }
 
-    /// Reads one blob artifact version's bytes (hash-verified by the engine).
+    /// Reads one blob artifact version's bytes (hash-verified by the engine),
+    /// with any keys in them masked unless the bound actor is the owner.
     pub fn read_blob_version(
         &self,
         artifact_ref: &str,
@@ -378,7 +389,7 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<Vec<u8>>> {
         let artifact_id = self.resolve_ref(artifact_ref)?;
         self.vault
-            .read_blob_artifact_version(&artifact_id, version)
+            .read_blob_artifact_version_as(&artifact_id, version, self.secret_sight()?)
             .map_err(MemoryError::from)
     }
 }

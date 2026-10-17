@@ -5,29 +5,52 @@
 //! (recovery). A step whose leaf is scheduled or backing off has no signal
 //! of its own, so while any workflow is open but waiting the pump also
 //! re-checks on a slow timer; with nothing open it only waits for a signal.
+//! Each pass also resumes a TASK's attempts held while its comment was
+//! unattached, once the comment is back (OF-368); a reattach signals no
+//! attempt, so while any is held the timer runs too.
 //! A failed step goes to the engine's failure ladder ([`super::step_failure`]).
-//! A metered leaf with no spend left under its lease's cap stops before its
-//! model call (OF-532); the engine pump settles each leaf's lease.
-use std::sync::Arc;
+//! A metered leaf near its cap sends the run's other running agents the
+//! wrap-up warning; with no spend left it is held before its model call, its
+//! saved results kept and its checkpoint recorded, resumable and never failed
+//! (OF-532, OF-541); the engine pump settles each leaf's lease.
+//! A leaf that ran binds its execution context while its lease still holds,
+//! on the host's decision ladder once the host installed one, so its pack
+//! receipt closes attributed (OF-540).
+//!
+//! On the same signal it asks each queued project question (OF-501): a
+//! person's turn queued it by reference, and it runs here, off that turn, on
+//! the host's typed ladder once the host installed one.
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use oneiron::Vault;
-use oneiron::agent_dispatch::{AgentDispatcher, WorkflowProgress};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue};
+use oneiron::agent_dispatch::{
+    AgentDispatcher, BudgetHoldLease, ProjectDetection, ProjectDetectionRun, SpendSignal,
+    WorkflowProgress,
+};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint};
 use oneiron::failure_ladder::FailureLadderOutcome;
+use oneiron::llm::decision::HeldLadder;
 use tokio::sync::{broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
-use super::step::StepRunner;
+use super::step::{StepRunner, deliver_hold_notice};
 use super::step_failure::{FailedStep, held_leases, settle};
 
 const LEASE_OWNER: &str = "oneiron-server-workflows";
+/// Project questions lease apart from workflow steps, so a failed step's
+/// settlement never reads one as its own.
+const DETECTION_LEASE_OWNER: &str = "oneiron-server-project-detection";
 /// How often an open-but-waiting workflow is looked at again.
 const WAITING_RECHECK: Duration = Duration::from_secs(30);
 
 pub(super) struct WorkflowPump {
     stop: watch::Sender<bool>,
     thread: std::thread::JoinHandle<()>,
+    /// The host's typed project question, once the host holds a ladder for it.
+    detection: Arc<OnceLock<ProjectDetection>>,
+    /// The host's decision ladder, whose judge a leaf's attribution names.
+    attribution: Arc<OnceLock<HeldLadder>>,
 }
 
 impl WorkflowPump {
@@ -37,6 +60,10 @@ impl WorkflowPump {
         status: Arc<StatusCell>,
     ) -> std::io::Result<Self> {
         let (stop, stopped) = watch::channel(false);
+        let detection = Arc::new(OnceLock::new());
+        let questions = Arc::clone(&detection);
+        let attribution = Arc::new(OnceLock::new());
+        let judges = Arc::clone(&attribution);
         // Waiting from the moment the pump exists, so a status read right
         // after start never sees the pre-start state.
         status.update(|status| status.workflows = WorkStatus::waiting());
@@ -56,9 +83,34 @@ impl WorkflowPump {
                         return;
                     }
                 };
-                pump(&runtime, &vault, &runner, &status, stopped);
+                pump(
+                    &runtime, &vault, &runner, &status, &questions, &judges, stopped,
+                );
             })?;
-        Ok(Self { stop, thread })
+        Ok(Self {
+            stop,
+            thread,
+            detection,
+            attribution,
+        })
+    }
+
+    /// Installs the host's typed project question, the way a code-mode
+    /// provider takes its seat decisions: from the next pass on, each queued
+    /// question runs on it. Until then the questions wait queued. `false`
+    /// when one is installed already.
+    #[allow(dead_code)] // No in-tree host builds the project question's ladder yet.
+    pub(super) fn with_project_detection(&self, detection: ProjectDetection) -> bool {
+        self.detection.set(detection).is_ok()
+    }
+
+    /// Installs the host's decision ladder for leaf attribution: from the next
+    /// leaf on, each one that ran binds its execution context, judged on it.
+    /// Until then leaves close unattributed. `false` when one is installed
+    /// already.
+    #[allow(dead_code)] // The host's attach installs it once it staffs its ladder.
+    pub(super) fn with_attribution_ladder(&self, judges: HeldLadder) -> bool {
+        self.attribution.set(judges).is_ok()
     }
 
     /// Asks the pump to stop between steps, without waiting.
@@ -78,6 +130,8 @@ fn pump(
     vault: &Vault,
     runner: &StepRunner,
     status: &StatusCell,
+    detection: &OnceLock<ProjectDetection>,
+    attribution: &OnceLock<HeldLadder>,
     mut stopped: watch::Receiver<bool>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
@@ -85,7 +139,8 @@ fn pump(
         if *stopped.borrow() {
             return;
         }
-        let open = match pump_once(runtime, vault, runner, status, &stopped) {
+        ask_project_questions(vault, detection, &stopped);
+        let open = match pump_once(runtime, vault, runner, status, attribution, &stopped) {
             Ok(open) => open,
             Err(error) => {
                 tracing::error!(%error, "workflow pump pass failed");
@@ -110,26 +165,38 @@ fn pump(
 }
 
 /// Runs every open workflow as far as it will go. Returns whether any
-/// workflow is still open (and so may need a timed re-check).
+/// workflow is still open, a wave plan is pending, or any attempt is still
+/// held for an unattached comment (and so may need a timed re-check).
 fn pump_once(
     runtime: &tokio::runtime::Runtime,
     vault: &Vault,
     runner: &StepRunner,
     status: &StatusCell,
+    attribution: &OnceLock<HeldLadder>,
     stopped: &watch::Receiver<bool>,
 ) -> oneiron::Result<bool> {
+    let held = match vault.release_annotation_holds() {
+        Ok(sweep) => sweep.held > 0,
+        Err(error) => {
+            tracing::warn!(%error, "annotation hold release failed");
+            true
+        }
+    };
     if !*stopped.borrow() {
         super::waves::run_once(runtime, vault, runner, status)?;
     }
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
+        // A notice a crash or a refusal left owed goes out first.
+        deliver_hold_notice(&dispatcher, *root, now_secs());
         loop {
             if *stopped.borrow() {
                 return Ok(true);
             }
             let mut claimed: Option<(AttemptId, u32)> = None;
             let mut retryable = false;
+            let mut held = None;
             let progress = dispatcher.run_workflow_step_output(
                 *root,
                 LEASE_OWNER,
@@ -140,22 +207,78 @@ fn pump_once(
                         status.workflows.state = WorkState::Working;
                         status.workflows.started += 1;
                     });
-                    // OF-532: a metered leaf runs under its spend lease. With
-                    // nothing left under the cap it stops here, before any
-                    // model call, and is not retried; the steps already done
-                    // keep their saved results.
+                    // OF-532/OF-541: a metered leaf runs under its spend lease.
+                    // Near the cap the run's other agents get the wrap-up
+                    // warning. With nothing left the leaf is held here, before
+                    // any model call: paused with its checkpoint, the steps
+                    // already done keep their saved results, and the owner is
+                    // owed a notice. A hold is not a failure and not retried.
                     if let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)? {
-                        let guard = dispatcher.guard_for_scope(&scope)?;
-                        if guard.read().remaining_units == 0 {
+                        let read = dispatcher.spend_read(&scope)?;
+                        let now = now_secs();
+                        let reason = format!("workflow spend cap under scope {scope}");
+                        dispatcher.budget_signal(
+                            *root,
+                            &read,
+                            Some(step.attempt.id),
+                            &reason,
+                            now,
+                        )?;
+                        if matches!(read.signal, Some(SpendSignal::AtCap { .. })) {
+                            let hold = dispatcher.hold_for_budget(
+                                *root,
+                                BudgetHoldLease {
+                                    attempt: step.attempt.id,
+                                    lease_owner: LEASE_OWNER.to_owned(),
+                                    attempt_count: step.attempt.attempt_count,
+                                    resume_point: AttemptResumePoint::new(
+                                        "workflow-step:before-model-call",
+                                        now,
+                                    ),
+                                },
+                                None,
+                                &reason,
+                                now,
+                            )?;
+                            held = Some(hold);
                             return Err(oneiron::Error::InvalidConfig(format!(
-                                "workflow step spend cap reached under scope {scope}"
+                                "workflow step held at the spend cap under scope {scope}"
                             )));
                         }
                     }
-                    runner.run(runtime, vault, step, context).map_err(|fault| {
-                        retryable = fault.retryable;
-                        fault.error
-                    })
+                    let ran = runner.run(runtime, vault, step, context);
+                    // OF-540: bound before the engine completes the leaf or
+                    // its failure is settled, while the lease still holds.
+                    bind_attribution(vault, step.attempt.id, attribution);
+                    match ran {
+                        Ok(output) => Ok(output),
+                        // The meter ran out inside the model call: held as
+                        // at the boundary, from the checkpoint before the
+                        // call it could not pay for.
+                        Err(fault) if fault.exhausted => {
+                            let now = now_secs();
+                            held = Some(dispatcher.hold_for_budget(
+                                *root,
+                                BudgetHoldLease {
+                                    attempt: step.attempt.id,
+                                    lease_owner: LEASE_OWNER.to_owned(),
+                                    attempt_count: step.attempt.attempt_count,
+                                    resume_point: AttemptResumePoint::new(
+                                        "workflow-step:before-model-call",
+                                        now,
+                                    ),
+                                },
+                                None,
+                                "workflow step budget ran out during its model call",
+                                now,
+                            )?);
+                            Err(fault.error)
+                        }
+                        Err(fault) => {
+                            retryable = fault.retryable;
+                            Err(fault.error)
+                        }
+                    }
                 },
             );
             status.update(|status| {
@@ -163,12 +286,21 @@ fn pump_once(
                 match &progress {
                     Ok(_) if claimed.is_some() => status.workflows.completed += 1,
                     Ok(_) => {}
+                    Err(_) if held.is_some() => {}
                     Err(error) => {
                         status.workflows.failed += u64::from(claimed.is_some());
                         status.workflows.last_error = Some(error.to_string());
                     }
                 }
             });
+            // The held leaf waits paused; its workflow waits with it until
+            // the owner resumes the hold. The notice rides the hold, and
+            // goes to the owners now.
+            if held.is_some() {
+                tracing::info!(?root, "a workflow is held at its spend cap");
+                deliver_hold_notice(&dispatcher, *root, now_secs());
+                break;
+            }
             match progress {
                 Ok(WorkflowProgress::Advanced(_)) => continue,
                 Ok(_) => break,
@@ -222,7 +354,50 @@ fn pump_once(
                     | oneiron::attempt_queue::AttemptState::Leased
             )
     });
-    Ok(wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
+    Ok(held || wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
+}
+
+/// Asks every queued project question on the host's ladder; with none
+/// installed they wait queued. A question that fails is logged and ends its
+/// attempt: the conversation's next person turn asks again.
+fn ask_project_questions(
+    vault: &Vault,
+    detection: &OnceLock<ProjectDetection>,
+    stopped: &watch::Receiver<bool>,
+) {
+    let Some(detection) = detection.get() else {
+        return;
+    };
+    let dispatcher = AgentDispatcher::new(vault);
+    while !*stopped.borrow() {
+        match dispatcher.run_project_detection(detection, DETECTION_LEASE_OWNER, now_secs()) {
+            Ok(ProjectDetectionRun::Idle) => return,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "a project question did not complete");
+                return;
+            }
+        }
+    }
+}
+
+/// Binds the execution context of the leaf `attempt` that just ran. One that
+/// cannot bind leaves the leaf to close unattributed; its work stands.
+fn bind_attribution(vault: &Vault, attempt: AttemptId, attribution: &OnceLock<HeldLadder>) {
+    static UNINSTALLED: std::sync::Once = std::sync::Once::new();
+    let Some(judges) = attribution.get() else {
+        UNINSTALLED.call_once(|| {
+            tracing::warn!(
+                "a workflow leaf ran before the host installed its decision ladder; it closes unattributed"
+            );
+        });
+        return;
+    };
+    if let Err(error) =
+        oneiron::skill_attribution::bind_agent_run_attribution(vault, attempt, LEASE_OWNER, judges)
+    {
+        tracing::warn!(%error, ?attempt, "a workflow leaf's pack attribution did not bind");
+    }
 }
 
 fn now_secs() -> u64 {

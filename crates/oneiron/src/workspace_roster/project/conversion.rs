@@ -33,6 +33,21 @@ impl MessageHangs {
     }
 }
 
+/// One card tap's conversion inputs: its intent, the authenticated owner and
+/// the owner-project signer, the tap's durable key and digest, and the
+/// caller's step on the fresh receipt inside the birth's write.
+struct CardBirth<'c, A> {
+    intent: &'c crate::genui::ProjectMintIntent,
+    owner: &'c crate::consent::AuthenticatedOwner,
+    signer: &'c OwnerProjectSigner<'c>,
+    tap_key: [u8; 32],
+    digest: [u8; 32],
+    after: A,
+}
+
+/// The plain conversion's absent card step.
+type NoCardStep = fn(&mut heed::RwTxn<'_>, &ProjectMintReceipt) -> Result<()>;
+
 fn room_thread_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -89,10 +104,11 @@ impl Vault {
         task: EntityId,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
+            // A binding with no policy row asks at the shipped threshold.
             let policy: crate::gate::ProjectConversionPolicy =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?
                     .project_conversion_policy()
-                    .ok_or_else(invalid)?;
+                    .unwrap_or_default();
             let mut row = room_thread_in(self, txn, room, thread)?;
             let turns = rooms::thread_turns_in(self, txn, room, thread)?;
             let source = rooms::room_in(self, txn, room)?;
@@ -102,24 +118,47 @@ impl Vault {
                 || !crate::task_verb::thread_task_is_open_in(self, txn, task)?
                 || row.converted_project.is_some()
                 || thread_project_in(self, txn, room, thread, self.project_type_byte()?)?.is_some()
-                || (!row.task_ids.contains(&task.to_hex())
-                    && turns.iter().map(|turn| turn.task_ids.len()).sum::<usize>()
-                        >= policy.max_tasks)
             {
                 return Err(invalid());
             }
+            // A thread binds however many tasks (rule 5). Once the bound set
+            // passes the policy's task threshold, its census raises the
+            // owner's question for the thread and the bind goes on.
+            let mut census = crate::scan_check::ScanCount::start_at(
+                crate::scan_check::EngineScan::ThreadTaskCensus,
+                thread.as_bytes(),
+                u64::try_from(policy.max_tasks).unwrap_or(u64::MAX),
+            );
+            census.rows(turns.iter().map(|turn| turn.task_ids.len()).sum());
+            census.rows(usize::from(!row.task_ids.contains(&task.to_hex())));
+            census.finish(self);
             if !row.task_ids.contains(&task.to_hex()) {
                 row.task_ids.push(task.to_hex());
                 rooms::TURNS.put(&self.store, txn, &thread, &row)?;
             }
-            Ok(())
-        })
+            // OF-529: an agent holding the task joins the thread now when a
+            // Ready receipt stands there, else at its first passing claim.
+            rooms::record_bound_task_in_txn(self, txn, room, &row, task)
+        })?;
+        // The changed turn reaches the room's live window after commit.
+        #[cfg(feature = "sync")]
+        self.refresh_room_turn_in_live_window(&thread);
+        Ok(())
     }
 
-    /// Convert a room thread once. A host may explicitly name a leader;
-    /// the policy row resolves the otherwise unchosen leader and roster.
+    /// Convert a room thread once, as the owner's act: the owner is
+    /// revalidated in the grouped write, the owner-project signer signs the
+    /// new state for the owner, and only an installed head commits. A host
+    /// may explicitly name a leader; the policy row resolves the otherwise
+    /// unchosen leader and roster.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the owner door binds its owner, signer, source, chosen leader and time"
+    )]
     pub fn convert_thread_to_project(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
         room: EntityId,
         thread: EntityId,
         source_message: EntityId,
@@ -127,61 +166,137 @@ impl Vault {
         leader: Option<EntityId>,
         now: u64,
     ) -> Result<ProjectRecord> {
-        self.convert_thread_impl(room, thread, source_message, project_id, leader, None, now)
+        self.convert_thread_impl::<NoCardStep>(
+            room,
+            thread,
+            source_message,
+            project_id,
+            leader,
+            Some((owner, signer)),
+            None,
+            now,
+        )
+        .map(|(project, _)| project)
     }
 
     /// Card tap uses host-held placement and revalidates its authenticated
     /// owner inside the same transaction that mints the project and forks;
-    /// the owner-project signer signs the new state for the owner.
+    /// the owner-project signer signs the new state for the owner. The tap's
+    /// Grant and receipt are the standalone mint's, written by the same
+    /// helper, and `after` runs on that receipt in the same write. An exact
+    /// retry returns the recorded project and receipt and runs nothing.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one authenticated tap's card, owner, signer, birth id, time and step"
+    )]
     pub(crate) fn convert_thread_with_card(
         &self,
-        intent: &crate::genui::ProjectMintIntent,
+        card: &crate::genui::ProjectProposalCard,
+        tap: &crate::genui::ConsentActionRequest,
         owner: &crate::consent::AuthenticatedOwner,
         signer: &OwnerProjectSigner<'_>,
         project_id: EntityId,
         now: u64,
-    ) -> Result<ProjectRecord> {
+        after: impl FnOnce(&mut heed::RwTxn<'_>, &ProjectMintReceipt) -> Result<()>,
+    ) -> Result<(ProjectRecord, ProjectMintReceipt)> {
+        let intent = card.evaluate_action(self, tap, owner)?;
         let room = EntityId::from_hex(intent.source_room_ref.as_deref().ok_or_else(invalid)?)?;
         let thread = EntityId::from_hex(intent.source_thread_ref.as_deref().ok_or_else(invalid)?)?;
         let message = EntityId::from_hex(&intent.source_message_ref)?;
-        self.convert_thread_impl(
+        let tap_key = super::mint::tap_key(card);
+        let txn = self.store.env.read_txn()?;
+        let digest = super::mint::tap_digest(card, owner.revalidate_in_txn(self, &txn)?)?;
+        if let Some(receipt) = self.project_tap_in_txn(&txn, &tap_key, &digest)? {
+            return Ok((self.tapped_project_in(&txn, &receipt)?, receipt));
+        }
+        drop(txn);
+        let birth = CardBirth {
+            intent: &intent,
+            owner,
+            signer,
+            tap_key,
+            digest,
+            after,
+        };
+        match self.convert_thread_impl(
             room,
             thread,
             message,
             project_id,
             None,
-            Some((intent, owner, signer)),
+            None,
+            Some(birth),
             now,
-        )
+        ) {
+            Ok((project, Some(receipt))) => Ok((project, receipt)),
+            Ok((_, None)) => Err(invalid()),
+            Err(err) => {
+                // A concurrent tap that won the writer holds the exact durable
+                // result; any other refusal stands, never a second project.
+                let txn = self.store.env.read_txn()?;
+                owner.revalidate_in_txn(self, &txn)?;
+                match self.project_tap_in_txn(&txn, &tap_key, &digest)? {
+                    Some(receipt) => Ok((self.tapped_project_in(&txn, &receipt)?, receipt)),
+                    None => Err(err),
+                }
+            }
+        }
     }
 
+    /// The project a recorded tap minted.
+    fn tapped_project_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        receipt: &ProjectMintReceipt,
+    ) -> Result<ProjectRecord> {
+        let id = EntityId::from_hex(&receipt.project_id).map_err(|_| invalid())?;
+        record::<ProjectRecord>(&self.store, txn, id, self.project_type_byte()?)?
+            .ok_or_else(invalid)
+    }
+
+    /// Every conversion is the owner's act: the bare path carries its owner
+    /// and signer in `bare`, a card tap in its `CardBirth`.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the private atomic door binds the source, chosen terms and time"
+        reason = "the private atomic door binds the source, chosen terms, owner and time"
     )]
-    fn convert_thread_impl(
+    fn convert_thread_impl<A>(
         &self,
         room: EntityId,
         thread: EntityId,
         source_message: EntityId,
         project_id: EntityId,
         leader: Option<EntityId>,
-        card: Option<(
-            &crate::genui::ProjectMintIntent,
-            &crate::consent::AuthenticatedOwner,
-            &OwnerProjectSigner<'_>,
-        )>,
+        bare: Option<(&crate::consent::AuthenticatedOwner, &OwnerProjectSigner<'_>)>,
+        card: Option<CardBirth<'_, A>>,
         now: u64,
-    ) -> Result<ProjectRecord> {
+    ) -> Result<(ProjectRecord, Option<ProjectMintReceipt>)>
+    where
+        A: FnOnce(&mut heed::RwTxn<'_>, &ProjectMintReceipt) -> Result<()>,
+    {
         let kind = self.project_type_byte()?;
         self.backfill_tasks_by_owner()?;
-        self.with_write_txn_grouped(|txn| {
-            if let Some((intent, owner, _)) = card {
-                let principal_ref = owner.principal_ref_in_txn(self, txn)?;
+        let converted = self.with_write_txn_grouped(|txn| {
+            // The bare path's owner is revalidated here, before anything is
+            // read for it; a card's below, with its intent.
+            if let Some((owner, _)) = bare {
+                owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            }
+            if let Some(birth) = &card {
+                let principal_ref = birth.owner.principal_ref_in_txn(self, txn)?;
+                let intent = birth.intent;
                 if intent.principal_ref != principal_ref
                     || intent.source_message_ref != source_message.to_hex()
                     || intent.source_room_ref.as_deref() != Some(room.to_hex().as_str())
                     || intent.source_thread_ref.as_deref() != Some(thread.to_hex().as_str())
+                {
+                    return Err(invalid());
+                }
+                // Two simultaneous taps can both see an absent mapping before
+                // the writer; the loser finds the winner's here.
+                if self
+                    .project_tap_in_txn(txn, &birth.tap_key, &birth.digest)?
+                    .is_some()
                 {
                     return Err(invalid());
                 }
@@ -216,7 +331,8 @@ impl Vault {
             // final. Only an unchosen leader falls back to the task holder,
             // then the room host.
             let confirmed = card
-                .map(|(intent, _, _)| EntityId::from_hex(&intent.leader_agent_def_ref))
+                .as_ref()
+                .map(|birth| EntityId::from_hex(&birth.intent.leader_agent_def_ref))
                 .transpose()?;
             let roots = turns
                 .iter()
@@ -234,9 +350,16 @@ impl Vault {
                 &bindings,
                 &source_members,
             )?;
-            if task_ids.len() > policy.max_tasks {
-                return Err(invalid());
-            }
+            // The thread's whole task set moves, however many (rule 5). Past
+            // the policy's task threshold its census raises the owner's
+            // question for the thread and the conversion goes on.
+            let mut census = crate::scan_check::ScanCount::start_at(
+                crate::scan_check::EngineScan::ThreadTaskCensus,
+                thread.as_bytes(),
+                u64::try_from(policy.max_tasks).unwrap_or(u64::MAX),
+            );
+            census.rows(task_ids.len());
+            census.finish(self);
             let mut holder = None;
             let mut tasks = Vec::with_capacity(task_ids.len());
             for &id in task_ids.keys() {
@@ -303,8 +426,8 @@ impl Vault {
             project.origin_room = Some(room.to_hex());
             project.origin_thread = Some(thread.to_hex());
             project.origin_at = Some(row.at);
-            if let Some((intent, _, _)) = card {
-                self.apply_card_terms_in_txn(txn, intent, project_id, now, &mut project)?;
+            if let Some(birth) = &card {
+                self.apply_card_terms_in_txn(txn, birth.intent, project_id, now, &mut project)?;
                 if policy.roster_selection == RosterSelection::LeaderOnly
                     && project.board.iter().any(|id| id != &project.leader)
                 {
@@ -340,11 +463,60 @@ impl Vault {
                 start: now,
                 end: now,
             };
-            match card {
+            let receipt = match card {
                 // The owner's card: the host signs the new state for the
                 // owner, it lands as history, and only an installed head
-                // commits.
-                Some((_, owner, signer)) => {
+                // commits. The tap is the Grant move, as in a root mint.
+                Some(birth) => {
+                    let signed_at = owner_signer::owner_signed_at(self, txn)?;
+                    self.sign_owner_project_in_txn(
+                        txn,
+                        birth.owner,
+                        birth.signer,
+                        project_id,
+                        &mut project,
+                        None,
+                        signed_at,
+                    )?;
+                    self.batch_in()
+                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
+                        .apply(txn)?;
+                    self.require_owner_head_in_txn(txn, project_id, &project)?;
+                    // A house mind the roster seats joins the new home room
+                    // through the three consents, filed by the owner (OF-417).
+                    let caller = crate::WriteActor::new(
+                        birth.owner.revalidate_in_txn(self, txn)?,
+                        crate::EdgeActorClass::Human,
+                    );
+                    let filed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                    crate::workspace_roster::workplace_join::file_house_joins_in_txn(
+                        self,
+                        txn,
+                        EntityId::from_hex(&project.home_room)?,
+                        &project.roster,
+                        caller,
+                        filed_at,
+                    )?;
+                    let receipt = self.grant_project_tap_in_txn(
+                        txn,
+                        birth.owner,
+                        birth.intent,
+                        leader,
+                        project_id,
+                        &birth.tap_key,
+                        &birth.digest,
+                    )?;
+                    (birth.after)(txn, &receipt)?;
+                    Some(receipt)
+                }
+                // The bare conversion is the owner's act as well: the host
+                // signs the new state for the owner in this grouped write, it
+                // lands as history, and only an installed head commits. No
+                // conversion writes an unsigned row.
+                None => {
+                    let Some((owner, signer)) = bare else {
+                        return Err(invalid());
+                    };
                     let signed_at = owner_signer::owner_signed_at(self, txn)?;
                     self.sign_owner_project_in_txn(
                         txn,
@@ -359,13 +531,23 @@ impl Vault {
                         .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
                         .apply(txn)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;
+                    // The house mind joins here too, as on the carded path.
+                    let caller = crate::WriteActor::new(
+                        owner.revalidate_in_txn(self, txn)?,
+                        crate::EdgeActorClass::Human,
+                    );
+                    let filed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                    crate::workspace_roster::workplace_join::file_house_joins_in_txn(
+                        self,
+                        txn,
+                        EntityId::from_hex(&project.home_room)?,
+                        &project.roster,
+                        caller,
+                        filed_at,
+                    )?;
+                    None
                 }
-                None => {
-                    self.batch_in()
-                        .put(&project_id, kind, at, now, &encode(&project)?)
-                        .apply(txn)?;
-                }
-            }
+            };
             if source_record.tasks.len() != previous_tasks {
                 self.batch_in()
                     .put(&source_project_id, kind, at, now, &encode(&source_record)?)
@@ -375,8 +557,11 @@ impl Vault {
             // headers. Only PROJECT.tasks determines current placement.
             row.converted_project = Some(project_id.to_hex());
             rooms::TURNS.put(&self.store, txn, &thread, &row)?;
-            Ok(project)
-        })
+            Ok((project, receipt))
+        })?;
+        #[cfg(feature = "sync")]
+        self.refresh_room_turn_in_live_window(&thread);
+        Ok(converted)
     }
 
     fn apply_card_terms_in_txn(
@@ -486,13 +671,14 @@ impl Vault {
         if owned != [room] {
             return Err(invalid());
         }
-        let runs = crate::conversation_dag::edge_ids(
+        // Every run the turn spawned hangs on it, however many (rule 5).
+        let runs = crate::vault::filtered_edge_peers_in(
             &self.store,
             &txn,
+            crate::ports::EdgeDirection::In,
             turn,
             EdgeKind::SpawnedBy,
-            true,
-            4096,
+            None,
         )?;
         let mut threads = Vec::new();
         // The containing thread hangs on its own message, even when it has no child.
@@ -521,14 +707,17 @@ impl Vault {
             }
         }
         // Parent → child index scopes this read to matching threads only.
+        // Every child is read, however many (rule 5); past the threshold row
+        // the owner's check is raised for the parent turn.
         let prefix = [room.as_bytes().as_slice(), turn.as_bytes().as_slice()].concat();
-        for (n, item) in rooms::THREAD_CHILDREN
-            .iter_from(&self.store, &txn, &prefix)?
-            .enumerate()
-        {
-            if n >= 4096 {
-                return Err(Error::IndexOverflow("message_thread_matches"));
-            }
+        let mut children = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::scan_check::EngineScan::RoomThreadChildRows,
+            &prefix,
+        )?;
+        for item in rooms::THREAD_CHILDREN.iter_from(&self.store, &txn, &prefix)? {
+            children.row();
             let (_, child) = item?;
             let row = rooms::turn_in(self, &txn, child)?;
             if row.room_id != room.to_hex()
@@ -540,16 +729,21 @@ impl Vault {
                 threads.push(child);
             }
         }
+        children.finish(self);
+        // Every project born from the message is read, however many.
+        let mut born = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::scan_check::EngineScan::MessageOriginRows,
+            message.as_bytes(),
+        )?;
         let mut projects = Vec::new();
-        for (n, item) in self
+        for item in self
             .store
             .vault_meta
             .prefix_iter(&txn, &origin::message_prefix(message))?
-            .enumerate()
         {
-            if n >= 4096 {
-                return Err(Error::IndexOverflow("message_project_matches"));
-            }
+            born.row();
             let (_, bytes) = item?;
             let id = EntityId::from_bytes(
                 bytes
@@ -579,6 +773,7 @@ impl Vault {
             }
             projects.push(id);
         }
+        born.finish(self);
         Ok(MessageHangs {
             runs,
             threads,

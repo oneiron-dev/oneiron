@@ -88,6 +88,9 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
+#[cfg(unix)]
+pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 mod off_record_rooms;
 mod org_admin;
 mod pairing;
@@ -98,6 +101,9 @@ mod sessions;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+// OF-489: the held socket runs every facade verb through the facade's one
+// generated dispatch, under the credential its connection bound.
+pub(crate) use self::facade::{FacadeApiError, FacadeCall, call_verb as facade_call_verb};
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -109,18 +115,25 @@ mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
 mod lease;
 mod llm;
+#[cfg(feature = "mesh")]
+pub(crate) use llm::MeshLlm;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
 pub(crate) mod memory_reason;
+// OF-445: the OpenAI-compatible memory-injection proxy.
+mod openai_proxy;
 mod openapi;
 mod openapi_registry;
+// OF-163: the host operator's own acts, behind the host's root credential.
+mod operator_routes;
 // OF-559/OF-202/OF-211/OF-296: the owner's own actions — backups, the secret
 // scan switch, whole-batch import consent and whole-run agent consent.
 mod owner_origin;
 mod owner_routes;
+pub(crate) use owner_routes::owner;
 mod packs;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
@@ -267,6 +280,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/context-board/turns/{turn}",
             get(context_board_turn_history),
         )
+        .route("/explain/memory/{entity}", get(core_explain_memory))
+        .route("/explain/gate/{receipt}", get(core_explain_gate))
         .route("/context-board/scratchpad", post(context_board_scratchpad))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
@@ -409,6 +424,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
         .nest("/v1/llm", self::llm::routes())
+        .merge(self::openai_proxy::routes())
         .nest("/v1/ai", self::ai::routes())
         .nest("/v1/core", core_routes)
         // ONE-1441: the facade projection is its own nest, not an arm inside
@@ -420,9 +436,18 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
         )
+        // OF-181: the app's one action layer, for its buttons and its agents.
+        .merge(self::facade::action_routes::routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
+        .merge(self::operator_routes::routes())
+        // OF-158: a removed member's own leave notices, on its revoked slip.
+        .merge(crate::auth::left_notice_routes())
         .merge(self::report::routes())
+        // OF-495: an agent role holder's skill tradeoff asks and picks.
+        .merge(self::facade::role_picks::routes())
+        // OF-516: a role holder's door to the ladder's person asks.
+        .merge(self::facade::decision_role_asks::routes())
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
@@ -435,6 +460,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // The public ceremony bypasses the hosted device lease but retains
         // matched-route wire receipts and threshold questions.
         .merge(self::esign::public_routes())
+        // OF-519: the served built-in channels' provider webhooks. Keyless;
+        // the provider's HMAC over the raw body authenticates each one.
+        .merge(crate::builtin_host::routes())
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,

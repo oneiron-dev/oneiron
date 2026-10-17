@@ -51,6 +51,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         crate::dreamer_consolidation::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE => {
             Some("dreamer.consolidation")
         }
+        crate::dreamer_consolidation::DREAMER_PERSON_ABOUT_ATTEMPT_TYPE => {
+            Some("dreamer.consolidation")
+        }
         // The review promotes beliefs on the consolidation executor, so it
         // runs as the consolidation facet that executor is built for.
         DREAMER_NOTE_REVIEW_ATTEMPT_KIND => Some("dreamer.consolidation"),
@@ -69,13 +72,32 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_READ_HARDENING_FACET => Some(coach::COACH_READ_HARDENING_FACET),
         coach::COACH_TRIPWIRES_FACET => Some(coach::COACH_TRIPWIRES_FACET),
         coach::COACH_TRADEOFF_ESCALATION_FACET => Some(coach::COACH_TRADEOFF_ESCALATION_FACET),
+        coach::COACH_TRAINING_OFFER_FACET => Some(coach::COACH_TRAINING_OFFER_FACET),
+        coach::COACH_OFFER_CHECK_FACET => Some(coach::COACH_OFFER_CHECK_FACET),
+        coach::COACH_TRAINING_OFFERS_FACET => Some(coach::COACH_TRAINING_OFFERS_FACET),
+        coach::COACH_RESEARCH_SELECT_FACET => Some(coach::COACH_RESEARCH_SELECT_FACET),
+        coach::COACH_LEARNING_SWEEP_FACET => Some(coach::COACH_LEARNING_SWEEP_FACET),
+        super::super::maintenance::agent_health::COACH_AGENT_HEALTH_FACET => {
+            Some(super::super::maintenance::agent_health::COACH_AGENT_HEALTH_FACET)
+        }
+        super::super::maintenance::agent_health::COACH_AGENT_HEALTH_ASK_FACET => {
+            Some(super::super::maintenance::agent_health::COACH_AGENT_HEALTH_ASK_FACET)
+        }
+        coach::COACH_ISSUES_FACET => Some(coach::COACH_ISSUES_FACET),
+        coach::COACH_CODE_FIX_FACET => Some(coach::COACH_CODE_FIX_FACET),
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
         super::super::maintenance::HARNESS_FACET => Some(super::super::maintenance::HARNESS_FACET),
+        super::super::maintenance::action_mode::ACTION_MODE_FACET => {
+            Some(super::super::maintenance::action_mode::ACTION_MODE_FACET)
+        }
         super::super::maintenance::representation::REPRESENTATION_FACET => {
             Some(super::super::maintenance::representation::REPRESENTATION_FACET)
         }
         super::super::maintenance::stewardship::STEWARDSHIP_FACET => {
             Some(super::super::maintenance::stewardship::STEWARDSHIP_FACET)
+        }
+        super::super::maintenance::identity::IDENTITY_RECHECK_FACET => {
+            Some(super::super::maintenance::identity::IDENTITY_RECHECK_FACET)
         }
         crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE => {
             Some(crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE)

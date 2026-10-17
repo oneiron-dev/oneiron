@@ -305,9 +305,7 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
     // whose seals count (H161), whichever door wrote it.
     let mut authority_written = false;
     for id in materialized {
-        let mut type_key = vec![ENTITY_TYPE_AUTHORITY_LOG];
-        type_key.extend_from_slice(id.as_bytes());
-        if store.type_index.get(&*wtxn, &type_key)?.is_some() {
+        if store.port_entity_type_indexed(wtxn, ENTITY_TYPE_AUTHORITY_LOG, id)? {
             authority_written = true;
             break;
         }
@@ -495,8 +493,8 @@ impl Vault {
 
 fn has_identity_topology_events(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, None)?
         .next()
+        .transpose()?
         .is_some())
 }

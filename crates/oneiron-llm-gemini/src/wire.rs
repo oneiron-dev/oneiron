@@ -170,6 +170,9 @@ fn encode_part(
             media_type,
             image: ImageContent::Url { url },
         } => json!({"fileData":{"mimeType":media_type,"fileUri":url}}),
+        ContentPart::Audio { media_type, data } => {
+            json!({"inlineData":{"mimeType":media_type,"data":data}})
+        }
     })
 }
 pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
@@ -208,5 +211,19 @@ pub(super) fn classify_status(status: u16, body: &Value) -> LlmError {
         429 => oneiron::llm::limit::limit_refusal(status, &Default::default(), body).into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         _ => FatalLlmError::InvalidRequest.into(),
+    }
+}
+/// [`classify_status`] for a media reply, which keeps its headers: a rate
+/// limit's named wait (`Retry-After`) survives.
+pub(super) fn classify_media_status(
+    status: u16,
+    headers: &std::collections::BTreeMap<String, String>,
+    body: &Value,
+) -> LlmError {
+    match status {
+        429 if body.pointer("/error/status").and_then(Value::as_str) != Some("BUDGET_EXCEEDED") => {
+            oneiron::llm::limit::limit_refusal(status, headers, body).into()
+        }
+        _ => classify_status(status, body),
     }
 }

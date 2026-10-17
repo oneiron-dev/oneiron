@@ -8,8 +8,10 @@
 //! born-from index never travels; the receiver rebuilds it from the envelope.
 //!
 //! A birth travels only with its owner: every filter that keeps or drops an
-//! entity carrier keeps or drops its birth with it, and the envelope is
-//! disclosed whole under the owner's grant.
+//! entity carrier keeps or drops its birth with it. Among the owner's own
+//! machines the envelope goes whole; a copy to or from another vault rewrites
+//! it (owner Q26 = B): each ref the copy does not carry becomes a masked
+//! handle, and who made the row, by which process, stays.
 
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
@@ -17,7 +19,7 @@ use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::birth::{RowBirth, stamp_replicated_row_birth_in_txn};
+use crate::provenance::birth::{RowBirth, WithheldKey, stamp_replicated_row_birth_in_txn};
 
 /// The window map that carries row births.
 pub(crate) const ROW_BIRTHS_MAP: &str = "row_births";
@@ -78,8 +80,59 @@ pub(crate) fn copy_births(src: &LoroDoc, dst: &LoroDoc, owners: &[EntityId]) -> 
     Ok(())
 }
 
+/// Where a window copy's rows go, as their births see it.
+#[derive(Clone, Copy)]
+pub(crate) enum BirthReach<'a> {
+    /// Among the owner's own machines: births go whole.
+    OwnMachines,
+    /// To or from another vault: births go rewritten, masked under the key
+    /// that destination reads ([`WithheldKey::for_destination`]).
+    OtherVault(&'a WithheldKey),
+}
+
+/// Copies the births `src` carries for every entity `dst` holds, as far as
+/// `reach` lets them go. Every crossing to or from another vault comes
+/// through here (OF-491, owner Q26 = B): its births travel rewritten
+/// ([`RowBirth::masked`]). Each input, prompt or trigger ref whose row `dst`
+/// does not carry becomes a masked handle ("1 source withheld") under the
+/// destination's key, so a ref reads as the same handle on every copy to it
+/// and never reverses; the process that made the row, its time and its input
+/// hash stay.
+pub(crate) fn copy_births_within(
+    src: &LoroDoc,
+    dst: &LoroDoc,
+    reach: BirthReach<'_>,
+) -> Result<()> {
+    match reach {
+        BirthReach::OwnMachines => copy_births_for_entities(src, dst),
+        BirthReach::OtherVault(key) => copy_masked_births(src, dst, key),
+    }
+}
+
+/// Copies, rewritten, the births `src` carries for every entity `dst` holds:
+/// a ref ships only when `dst` carries its row. A carrier that does not
+/// decode stays behind.
+fn copy_masked_births(src: &LoroDoc, dst: &LoroDoc, key: &WithheldKey) -> Result<()> {
+    let carried: std::collections::BTreeSet<EntityId> = dst
+        .get_map("entities")
+        .keys()
+        .filter_map(|key| owner(&key))
+        .collect();
+    let from = births(src);
+    let to = births(dst);
+    for id in &carried {
+        let hex = id.to_hex();
+        let Some(birth) = map_get_bytes(&from, &hex).and_then(|bytes| decode(&bytes)) else {
+            continue;
+        };
+        let masked = birth.masked(|row| carried.contains(row), key);
+        map_insert_bytes(&to, &hex, &encode(&masked)?)?;
+    }
+    Ok(())
+}
+
 /// Copies the births `src` carries for every entity `dst` holds.
-pub(crate) fn copy_births_for_entities(src: &LoroDoc, dst: &LoroDoc) -> Result<()> {
+fn copy_births_for_entities(src: &LoroDoc, dst: &LoroDoc) -> Result<()> {
     let owners: Vec<EntityId> = dst
         .get_map("entities")
         .keys()

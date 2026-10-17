@@ -14,10 +14,11 @@ use oneiron::llm::media::{
     MediaResponse, Modality,
 };
 use oneiron::llm::run_admission::{HostAccount, MediaGate, RunPermit, RunReceiptSink};
-use oneiron::llm::{SingleRouteBackend, SingleSend};
+use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCatalogEntry,
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStreamResult, ModelId, ModelLocality,
+    ModelTierRef,
 };
 use oneiron_llm_openai::{
     OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
@@ -25,15 +26,22 @@ use oneiron_llm_openai::{
 };
 use serde::Serialize;
 
-use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig};
+use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind};
 
+use super::broker::{BrokerSite, KeyDoor};
+use super::broker_media::broker_media_backend;
 use super::catalog::{catalog_entry, engine_model_id};
-use super::cooldown::OfferCooldowns;
+use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
+use super::gemini_media::gemini_backend;
+use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
-use super::ladder::{LadderRung, OfferLadder};
+use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, media_offer};
 use super::rerank::transport;
+use super::soniox::{self, SonioxRung};
 use super::status::{RungStatus, SeatState, SeatStatus};
+use super::voxcpm2_speech::VoxCpm2Speech;
+use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
 
 /// The run every media call is admitted under, one run per call.
@@ -59,6 +67,12 @@ pub(super) enum MediaAnswer {
 pub(super) struct HeldJob {
     pub(super) gate: MediaGate,
     pub(super) permit: Option<RunPermit>,
+    /// Its offer's health permit, held while the job runs: a recovering
+    /// offer's one probation request (OF-305). The job's end reports to it,
+    /// and dropping the job frees it.
+    pub(super) probe: Option<ProbePermit>,
+    /// The served receipt its answer carries, when its ladder stamps one.
+    pub(super) receipt: Option<PendingReceipt>,
     pub(super) provider_job: String,
     pub(super) model: ModelId,
     pub(super) operation: AiOperation,
@@ -67,16 +81,19 @@ pub(super) struct HeldJob {
 
 impl HeldJob {
     /// Where the job stands. A job that ended settles its permit: an answer
-    /// pays its usage, a failure its reservation.
+    /// pays its usage, a failure its reservation. Its end also counts toward
+    /// its offer's health: an answer toward recovery, and a provider that
+    /// was down as one more failure in a row. An answer carries the ladder's
+    /// served receipt.
     async fn poll(&mut self) -> LlmResult<MediaJobState> {
         let Some(permit) = &self.permit else {
             return Err(FatalLlmError::InvalidRequest.into());
         };
-        let state = self
+        let mut state = self
             .gate
             .poll(&self.model, &self.provider_job, permit.lease())
             .await?;
-        match &state {
+        match &mut state {
             MediaJobState::Done { response } => {
                 let units = response.usage.token_units(self.operation, &self.caps);
                 if let Some(permit) = self.permit.take()
@@ -84,8 +101,22 @@ impl HeldJob {
                 {
                     tracing::error!(%denied, "a media job's settlement was refused");
                 }
+                if let Some(probe) = self.probe.take() {
+                    probe.answered();
+                }
+                if let Some(receipt) = &self.receipt {
+                    let raw = std::mem::take(&mut response.usage.raw_provider);
+                    response.usage.raw_provider = receipt.stamp(raw);
+                }
             }
-            MediaJobState::Failed { .. } => self.settle_failed(),
+            MediaJobState::Failed { error } => {
+                self.settle_failed();
+                if let Some(probe) = self.probe.take()
+                    && provider_down(error)
+                {
+                    probe.down();
+                }
+            }
             MediaJobState::Queued | MediaJobState::Running { .. } => {}
         }
         Ok(state)
@@ -195,6 +226,8 @@ struct MediaSeat {
     ladder: Arc<OfferLadder>,
     rungs: BTreeMap<ModelId, Arc<OfferLadder>>,
     rows: Vec<MediaRow>,
+    /// The voice tiers its rungs serve: each tier's one rung, by its id.
+    tiers: BTreeMap<ModelTierRef, ModelId>,
 }
 
 /// One row `GET /v1/ai/options` lists: a model that serves an operation,
@@ -230,6 +263,14 @@ pub struct MediaRuntime {
     receipts: Arc<dyn RunReceiptSink>,
     host: Option<Arc<HostAccount>>,
     jobs: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>>,
+    /// The render targets (provider names) that render from a banked
+    /// identity's reference clip on each call and keep no clone.
+    reference_targets: BTreeSet<String>,
+    /// The hosted render targets (provider names) that clone a banked
+    /// identity, by name.
+    cloners: BTreeMap<String, Arc<HostedCloner>>,
+    /// The transcribe rungs that hear live (soniox), by engine id.
+    live_asr: BTreeMap<String, Arc<SonioxRung>>,
 }
 
 impl MediaRuntime {
@@ -240,15 +281,41 @@ impl MediaRuntime {
             receipts: Arc::new(LoggedReceipts),
             host: None,
             jobs: Mutex::default(),
+            reference_targets: BTreeSet::new(),
+            cloners: BTreeMap::new(),
+            live_asr: BTreeMap::new(),
         }
     }
 
+    /// The live socket rung `model` (a rung's engine id) opens, when it
+    /// hears live.
+    pub(super) fn live_rung(&self, model: &str) -> Option<Arc<SonioxRung>> {
+        self.live_asr.get(model).cloned()
+    }
+
+    /// The clone wire of hosted render target `target`, when it is one.
+    #[must_use]
+    pub fn voice_cloner(&self, target: &str) -> Option<Arc<HostedCloner>> {
+        self.cloners.get(target).cloned()
+    }
+
+    /// Whether `target` renders from a banked identity's reference clip on
+    /// each call (a `voxcpm2` worker) rather than from a recorded clone.
+    #[must_use]
+    pub fn renders_from_refs(&self, target: &str) -> bool {
+        self.reference_targets.contains(target)
+    }
+
     /// Builds each `[models.media]` seat. A rung whose provider cannot
-    /// start drops out of its ladder, and the reason shows in `status`.
+    /// start drops out of its ladder, and the reason shows in `status`. A
+    /// `key_secret` provider's calls go through the credential broker at
+    /// `site`, its key read at `keys`.
     pub(super) fn build(
         config: &ModelsConfig,
         rests: &Arc<OfferCooldowns>,
         status: &mut Vec<SeatStatus>,
+        site: Option<&Result<BrokerSite, String>>,
+        keys: Option<&Arc<dyn KeyDoor>>,
     ) -> Self {
         let mut runtime = Self::empty();
         if config.media.seats.is_empty() {
@@ -259,7 +326,15 @@ impl MediaRuntime {
             config.media.budget_units,
             BudgetExhaustionPolicy::Suspend,
         ));
-        let backends = media_backends(config);
+        runtime.reference_targets = config
+            .providers
+            .iter()
+            .filter(|(_, provider)| provider.kind.renders_from_refs())
+            .map(|(name, _)| name.clone())
+            .collect();
+        runtime.cloners = voice_cloners(config);
+        runtime.live_asr = soniox::live_rungs(config);
+        let backends = media_backends(config, site, keys);
         for (operation, seat) in &config.media.seats {
             let mut rungs = Vec::new();
             let mut rung_status = Vec::new();
@@ -293,11 +368,25 @@ impl MediaRuntime {
             let Some(seat_model) = seat_model.filter(|_| !rungs.is_empty()) else {
                 continue;
             };
+            // A tier bound to a rung that did not start serves no voice.
+            let tiers = seat
+                .tiers
+                .iter()
+                .filter_map(|(tier, model)| {
+                    let (id, _, _) = rows.iter().find(|(_, bound, _)| bound == model)?;
+                    Some((tier.clone(), id.clone()))
+                })
+                .collect();
             let locality = ladder_locality(&rungs, config);
+            let scope = SeatScope {
+                wire: Wire::Media(*operation),
+                stays_on_device: false,
+                configured: seat.rungs.len(),
+            };
             let alone = rungs
                 .iter()
                 .map(|rung| {
-                    let ladder = OfferLadder::pinned(rung.clone(), Arc::clone(rests));
+                    let ladder = OfferLadder::pinned(rung.clone(), Arc::clone(rests)).scoped(scope);
                     (rung.model.clone(), Arc::new(ladder))
                 })
                 .collect();
@@ -321,9 +410,12 @@ impl MediaRuntime {
                 MediaSeat {
                     model: seat_model.clone(),
                     locality,
-                    ladder: Arc::new(OfferLadder::seat(seat_model, rungs, Arc::clone(rests))),
+                    ladder: Arc::new(
+                        OfferLadder::seat(seat_model, rungs, Arc::clone(rests)).scoped(scope),
+                    ),
                     rungs: alone,
                     rows,
+                    tiers,
                 },
             );
         }
@@ -371,6 +463,26 @@ impl MediaRuntime {
             .map(|seat| (seat.model.clone(), seat.locality))
     }
 
+    /// One rung alone of each media seat, as a model that a parked offer's
+    /// media calls may fall back to once the owner names it (OF-305).
+    pub(super) fn fallback_rungs(&self) -> Vec<FallbackRung> {
+        self.seats
+            .values()
+            .flat_map(|seat| seat.rungs.values())
+            .filter_map(OfferLadder::fallback_rung)
+            .collect()
+    }
+
+    /// The ladder of the media seat that the status route lists as `role`
+    /// (`media.<operation>`).
+    pub(super) fn seat_ladder(&self, role: &str) -> Option<&Arc<OfferLadder>> {
+        let operation = role.strip_prefix("media.")?;
+        self.seats
+            .iter()
+            .find(|(seat, _)| seat.as_str() == operation)
+            .map(|(_, seat)| &seat.ladder)
+    }
+
     /// Where `model` runs, when a media seat or one of its rungs has that
     /// id: the host's attestation for the vault's inference check.
     #[must_use]
@@ -383,6 +495,50 @@ impl MediaRuntime {
             .iter()
             .find(|row| row.model == model.as_str())
             .map(|row| row.locality)
+    }
+
+    /// Each voice tier a rung of `operation`'s seat is bound to, as the
+    /// vault's voice routing reads it: the rung's own id, its tier and
+    /// where it runs.
+    #[must_use]
+    pub fn voice_backends(&self, operation: AiOperation) -> Vec<VoiceBackendBinding> {
+        let Some(seat) = self.seats.get(&operation) else {
+            return Vec::new();
+        };
+        seat.tiers
+            .iter()
+            .filter_map(|(tier, model)| {
+                let row = seat.rows.iter().find(|row| row.model == model.as_str())?;
+                Some(VoiceBackendBinding {
+                    model: model.clone(),
+                    tier: tier.clone(),
+                    locality: row.locality,
+                })
+            })
+            .collect()
+    }
+
+    /// The rungs a call naming `model` may reach, in ladder order: every
+    /// rung for the seat's id, the one rung for a rung's. Each comes with
+    /// its provider, the render target the voice bank keys its clones by,
+    /// and where it runs.
+    #[must_use]
+    pub fn rung_targets(
+        &self,
+        operation: AiOperation,
+        model: &ModelId,
+    ) -> Vec<(ModelId, String, ModelLocality)> {
+        let Some(seat) = self.seats.get(&operation) else {
+            return Vec::new();
+        };
+        seat.rows
+            .iter()
+            .filter(|row| seat.model == *model || row.model == model.as_str())
+            .filter_map(|row| {
+                let id = ModelId::new(row.model.clone()).ok()?;
+                Some((id, row.provider.clone(), row.locality))
+            })
+            .collect()
     }
 
     /// The ladder that serves `request`: its seat's, or one rung alone.
@@ -406,7 +562,12 @@ impl MediaRuntime {
     ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + '_> {
         let ladder = self.ladder(&request)?;
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
-        let run = undeclared_run(MEDIA_RUN, meter, self.host.clone(), Arc::clone(&self.receipts));
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
         Ok(async move { ladder.media(&run, request, None).await })
     }
 
@@ -502,6 +663,12 @@ impl super::ModelRuntime {
                 {
                     caps.inputs.insert(Modality::Image);
                 }
+                if seat
+                    .ladder
+                    .supports(&seat.model, &oneiron::LlmCapability::AudioInput)
+                {
+                    caps.inputs.insert(Modality::Audio);
+                }
                 if !inputs.is_subset(&caps.inputs) {
                     continue;
                 }
@@ -543,8 +710,13 @@ impl AiMediaDoor for MediaRuntime {
 }
 
 /// One media client per provider some media seat names, each serving the
-/// models those seats name on it.
-fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBackend>> {
+/// models those seats name on it. A `key_secret` provider's client sends
+/// through the credential broker.
+fn media_backends(
+    config: &ModelsConfig,
+    site: Option<&Result<BrokerSite, String>>,
+    keys: Option<&Arc<dyn KeyDoor>>,
+) -> BTreeMap<String, Arc<dyn MediaBackend>> {
     let mut models: BTreeMap<&str, BTreeMap<ModelId, String>> = BTreeMap::new();
     for model in config.media.seats.values().flat_map(|seat| &seat.rungs) {
         let provider = &config.providers[&model.provider];
@@ -558,10 +730,57 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
     let mut backends = BTreeMap::new();
     for (name, wire_models) in models {
         let provider = &config.providers[name];
-        match ProviderHttp::new(provider, KeyStyle::Bearer) {
-            Ok(http) => {
-                let backend: Arc<dyn MediaBackend> =
-                    Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models));
+        let built: anyhow::Result<Arc<dyn MediaBackend>> = match provider.kind {
+            _ if provider.key_secret.is_some() => {
+                broker_media_backend(name, provider, wire_models, site, keys)
+            }
+            ProviderKind::Cartesia => {
+                ProviderHttp::new(&cartesia(provider), KeyStyle::ApiKeyHeader).map(|http| {
+                    Arc::new(HostedSpeech {
+                        http,
+                        wire: HostedWire::Cartesia,
+                        models: wire_models,
+                    }) as Arc<dyn MediaBackend>
+                })
+            }
+            ProviderKind::Elevenlabs => ProviderHttp::new(provider, KeyStyle::Named("xi-api-key"))
+                .map(|http| {
+                    Arc::new(HostedSpeech {
+                        http,
+                        wire: HostedWire::ElevenLabs,
+                        models: wire_models,
+                    }) as Arc<dyn MediaBackend>
+                }),
+            ProviderKind::Voxcpm2 => {
+                // The worker's paths sit at its root, and it takes no call
+                // without its bearer credential. It is on loopback, so no
+                // environment proxy may carry the refs elsewhere.
+                let mut provider = provider.clone();
+                provider.base_url = provider.base_url.trim_end_matches('/').to_owned();
+                if provider.key_env.is_none() {
+                    Err(anyhow::anyhow!(
+                        "a voxcpm2 worker takes a bearer credential; set key_env"
+                    ))
+                } else {
+                    ProviderHttp::direct(&provider, KeyStyle::Bearer).map(|http| {
+                        Arc::new(VoxCpm2Speech {
+                            http,
+                            models: wire_models,
+                        }) as Arc<dyn MediaBackend>
+                    })
+                }
+            }
+            ProviderKind::Gemini => gemini_backend(provider, wire_models),
+            // It hears live only, through `open_voice_asr`; never the
+            // OpenAI-compatible wire below.
+            ProviderKind::Soniox => soniox::live_backend(provider),
+            _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
+                Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models))
+                    as Arc<dyn MediaBackend>
+            }),
+        };
+        match built {
+            Ok(backend) => {
                 backends.insert(name.to_owned(), backend);
             }
             Err(error) => {
@@ -570,6 +789,53 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
         }
     }
     backends
+}
+
+/// `provider` as Cartesia takes it: every call names its API version.
+fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
+    let mut provider = provider.clone();
+    if !provider
+        .headers
+        .keys()
+        .any(|header| header.eq_ignore_ascii_case("cartesia-version"))
+    {
+        provider
+            .headers
+            .insert("Cartesia-Version".into(), CARTESIA_VERSION.into());
+    }
+    provider
+}
+
+/// The clone wire of each configured hosted speech provider, by name.
+fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
+    let mut cloners = BTreeMap::new();
+    for (name, provider) in &config.providers {
+        let built = match provider.kind {
+            ProviderKind::Cartesia => {
+                ProviderHttp::new(&cartesia(provider), KeyStyle::ApiKeyHeader)
+                    .map(|http| (http, HostedWire::Cartesia))
+            }
+            ProviderKind::Elevenlabs => ProviderHttp::new(provider, KeyStyle::Named("xi-api-key"))
+                .map(|http| (http, HostedWire::ElevenLabs)),
+            _ => continue,
+        };
+        match built {
+            Ok((http, wire)) => {
+                cloners.insert(
+                    name.clone(),
+                    Arc::new(HostedCloner {
+                        http,
+                        wire,
+                        locality: provider.locality,
+                    }),
+                );
+            }
+            Err(error) => {
+                tracing::warn!(provider = %name, %error, "voice clone wire unavailable");
+            }
+        }
+    }
+    cloners
 }
 
 /// `model` on `provider` as a media rung at `position` for `operation`.
@@ -631,4 +897,31 @@ fn job_ticket(provider_job: &str) -> String {
     digest.update(provider_job.as_bytes());
     digest.update(&nanos.to_le_bytes());
     format!("job_{}", &digest.finalize().to_hex()[..24])
+}
+
+impl MediaRuntime {
+    /// Opens one bounded `ai.transcribe` stream (live partials) on a run of
+    /// its own on the media meter: one permit for the whole stream,
+    /// reserving `bound_ms` of audio, started at its rung's media gate
+    /// before any audio leaves. As a [`HeldJob`] holds a job's permit to its
+    /// end, the lease holds the stream's: it meters the audio its wire sends
+    /// and settles when the stream ends or is cancelled.
+    pub fn open_stream(
+        &self,
+        request: MediaRequest,
+        bound_ms: u64,
+    ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
+        if request.operation != AiOperation::Transcribe || bound_ms == 0 {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let ladder = self.ladder(&request)?;
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
+        ladder.open_media_stream(&run, request, bound_ms)
+    }
 }

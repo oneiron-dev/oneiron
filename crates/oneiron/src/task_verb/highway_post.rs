@@ -25,6 +25,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
+use crate::task_type::TaskTypeRef;
 use crate::write_envelope::WriteActor;
 
 use super::brief::{QueueTaskBrief, StoredBrief, brief_digest, hex32};
@@ -32,6 +33,7 @@ use super::consts::{
     TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE, TASK_POST_ID_DOMAIN,
     TASK_POST_STAMP_KEY, TASK_SETTLE_ID_DOMAIN,
 };
+use super::create_origin::{TaskCreateOrigin, proposal_origin_in, task_create_origin_in_txn};
 use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
 use super::create_validation::{
     task_body_in_txn, task_create_proposal_value, validate_task_create, validate_task_create_in,
@@ -134,8 +136,30 @@ fn request_digest(actor: EntityId, key: &str, post: &TaskPost) -> MemoryResult<[
     Ok(*hasher.finalize().as_bytes())
 }
 
-/// The create spec one post validates and mints as: a standard task.
-fn create_spec_of(post: &TaskPost, owner: EntityId, now: u64) -> TaskCreateSpec {
+/// The brief's type stamp in the create spec's spelling (OF-541): the
+/// node its `type_ref` names, resolved through the live tree of the brief's
+/// project (the team-shape skill's data) to the node whose id it is, at the
+/// version the brief read. A node that tree does not hold leaves the stamp
+/// unset, and the create places it.
+fn brief_type_ref_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    brief: &QueueTaskBrief,
+) -> MemoryResult<Option<TaskTypeRef>> {
+    let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, brief.project_ref)?;
+    Ok(tree
+        .node_by_entity(brief.type_ref.node_id)
+        .map(|node| TaskTypeRef::new(node.node_id.clone(), brief.type_ref.tree_version)))
+}
+
+/// The create spec one post validates and mints as: a standard task, with
+/// the brief's resolved stamp and its project's tree to place against.
+fn create_spec_of(
+    post: &TaskPost,
+    owner: EntityId,
+    type_ref: Option<TaskTypeRef>,
+    now: u64,
+) -> TaskCreateSpec {
     let mut spec = TaskCreateSpec::new(
         post.spec.clone().unwrap_or(Value::Nil),
         post.label.clone(),
@@ -147,6 +171,10 @@ fn create_spec_of(post: &TaskPost, owner: EntityId, now: u64) -> TaskCreateSpec 
     if let Some(ttl) = post.ttl {
         spec = spec.with_ttl(ttl);
     }
+    if let Some(type_ref) = type_ref {
+        spec = spec.with_type_ref(type_ref);
+    }
+    spec.brief = Some(post.brief.clone());
     spec
 }
 
@@ -159,7 +187,7 @@ fn changed_arguments() -> MemoryError {
 
 /// Writes the Assigned fact for an addressed lane: who the TASK is for, as
 /// an immutable companion fact, so the body's `assignee` stays display.
-fn put_assignment_fact_in_txn(
+pub(super) fn put_assignment_fact_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
@@ -185,7 +213,7 @@ fn put_assignment_fact_in_txn(
     Ok(())
 }
 
-fn settle_refusal(error: MemoryError) -> Error {
+pub(super) fn settle_refusal(error: MemoryError) -> Error {
     Error::InvalidConfig(format!(
         "task proposal settlement refused: {}",
         error.message
@@ -194,7 +222,9 @@ fn settle_refusal(error: MemoryError) -> Error {
 
 impl Memory<'_> {
     /// `tasks_create` for a briefed spec: the post it describes, run through
-    /// the highway and answered in the create receipt's shape.
+    /// the highway and answered in the create receipt's shape. A surface a
+    /// host bound to its creator posts as that host (OF-532); any other
+    /// posts on the wire.
     pub(super) fn post_create_spec(
         &self,
         spec: &TaskCreateSpec,
@@ -209,8 +239,12 @@ impl Memory<'_> {
                 "a briefed create is a standard task",
             ));
         }
+        let via = match self.task_host() {
+            Some(binding) => TaskVia::Host(binding.clone()),
+            None => TaskVia::Wire,
+        };
         let receipt = self.tasks_highway(
-            TaskVia::Wire,
+            via,
             TaskCall::Post(TaskPost {
                 intent_key,
                 brief,
@@ -224,13 +258,15 @@ impl Memory<'_> {
             TaskHandle::Task { task_ref } => Some(*task_ref),
             _ => None,
         });
-        Ok(match (receipt.handle, receipt.outcome) {
+        let created = match (receipt.handle, receipt.outcome) {
             (TaskHandle::Task { task_ref }, TaskOutcome::Created { route }) => TaskCreateReceipt {
                 task_ref: Some(task_ref),
                 proposal_ref: None,
                 approval: ClaimApprovalStatus::Auto,
                 effected: true,
                 route,
+                task_record: None,
+                proposal_record: None,
             },
             (TaskHandle::Proposed { proposal_ref }, TaskOutcome::Created { route }) => {
                 TaskCreateReceipt {
@@ -239,6 +275,8 @@ impl Memory<'_> {
                     approval: ClaimApprovalStatus::Approved,
                     effected: true,
                     route,
+                    task_record: None,
+                    proposal_record: None,
                 }
             }
             (TaskHandle::Proposed { proposal_ref }, TaskOutcome::Rejected { .. }) => {
@@ -248,6 +286,8 @@ impl Memory<'_> {
                     approval: ClaimApprovalStatus::Rejected,
                     effected: false,
                     route: None,
+                    task_record: None,
+                    proposal_record: None,
                 }
             }
             (TaskHandle::Proposed { proposal_ref }, _) => TaskCreateReceipt {
@@ -256,13 +296,16 @@ impl Memory<'_> {
                 approval: ClaimApprovalStatus::Proposed,
                 effected: false,
                 route: None,
+                task_record: None,
+                proposal_record: None,
             },
             _ => {
                 return Err(MemoryError::from(Error::InvariantViolation(
                     "a post answered with neither a task nor a proposal",
                 )));
             }
-        })
+        };
+        Ok(created.with_record_refs())
     }
 
     /// Post: under Auto, one transaction mints the TASK at an id derived
@@ -270,6 +313,10 @@ impl Memory<'_> {
     /// Otherwise the post parks as one Proposed `tasks.create` CLAIM. A
     /// replay of the same request answers the same handle; a different
     /// request under the same key is refused.
+    ///
+    /// A `Host` post is its creator's (OF-532): its binding is re-proved in
+    /// the write transaction, and an agent TASK it creates runs inside that
+    /// creator's lease tree, or, parked, lands there on approval.
     pub(super) fn highway_post(
         &self,
         via: &TaskVia,
@@ -278,12 +325,14 @@ impl Memory<'_> {
     ) -> MemoryResult<TaskCallReceipt> {
         let key = qualified_key(via, &post.intent_key, "intent key")?;
         let now = self.vault().now_recorded_at();
-        {
+        post.brief.admit_references(self, "tasks.create")?;
+        let type_ref = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             post.brief.validate_in(self.vault(), &txn)?;
-        }
+            brief_type_ref_in(self.vault(), &txn, &post.brief)?
+        };
         let digest = request_digest(self.actor(), &key, &post)?;
-        let spec = create_spec_of(&post, self.actor(), now);
+        let spec = create_spec_of(&post, self.actor(), type_ref, now);
         let validated = validate_task_create(self.vault(), &spec, now)?;
         let stored = StoredBrief::first(post.brief.clone());
         let task_ref = EntityId::derive(
@@ -304,6 +353,11 @@ impl Memory<'_> {
             if self.vault().get_raw_in(&*wtxn, &task_ref)?.is_some() {
                 return Err(MemoryError::bad_request("task post id is already occupied"));
             }
+            let creator = match via {
+                TaskVia::Host(binding) => Some(binding),
+                TaskVia::Wire => None,
+            };
+            let origin = task_create_origin_in_txn(self, &*wtxn, creator)?;
             if task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?
                 != PolicyApprovalCeiling::Auto
             {
@@ -325,7 +379,13 @@ impl Memory<'_> {
                 Some(stored.clone()),
                 now,
             )?;
-            let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
+            let route = self.route_created_task_with_origin_in_txn(
+                wtxn,
+                task_ref,
+                &validated,
+                origin.as_ref(),
+                now,
+            )?;
             put_assignment_fact_in_txn(
                 self.vault(),
                 wtxn,
@@ -398,7 +458,13 @@ impl Memory<'_> {
                 })
             }
             PostDirect::Gated => {
-                self.park_post(&post, &spec, &key, digest, now, decisions, lifecycle)
+                let creator = match via {
+                    TaskVia::Host(binding) => Some(binding),
+                    TaskVia::Wire => None,
+                };
+                self.park_post(
+                    &post, &spec, &key, digest, now, decisions, lifecycle, creator,
+                )
             }
         }
     }
@@ -437,10 +503,12 @@ impl Memory<'_> {
 
     /// The gated branch: replay an earlier proposal under this key, or park
     /// a new one; then, for a guest addressing a non-pre-admitted agent, ask
-    /// whether the agent takes it.
+    /// whether the agent takes it. A host's key is qualified by its creator,
+    /// so a replay is always the same creator's; a new proposal witnesses
+    /// that creator beside it (OF-532).
     #[expect(
         clippy::too_many_arguments,
-        reason = "the parked post's request, its identity and the surface's decisions"
+        reason = "the parked post's request, its identity, the surface's decisions and its creator"
     )]
     fn park_post(
         &self,
@@ -451,6 +519,7 @@ impl Memory<'_> {
         now: u64,
         decisions: Option<&TaskDecisions<'_>>,
         mut lifecycle: super::highway_types::TaskLifecycleRecord,
+        creator: Option<&super::highway_types::HostBinding>,
     ) -> MemoryResult<TaskCallReceipt> {
         if let Some(held) = self.held_proposal(TASK_CREATE_PROPOSAL_PREDICATE, key)? {
             if held.digest != digest {
@@ -508,12 +577,13 @@ impl Memory<'_> {
             )));
         };
         entries.push((Value::from(TASK_POST_STAMP_KEY), typed_value(&stamp)?));
-        let (proposal_ref, decision_ref) = self.persist_task_proposal(
+        let (proposal_ref, decision_ref) = self.persist_task_proposal_with_origin(
             TASK_CREATE_PROPOSAL_PREDICATE,
             Value::Map(entries),
             self.actor(),
             now,
             post_provenance(key, &digest, None),
+            creator,
         )?;
         lifecycle.outcome = "proposed".to_owned();
         lifecycle.trigger_ref = None;
@@ -625,6 +695,7 @@ impl Memory<'_> {
         if self.credential_withholds(task_ref)? {
             return Err(not_found());
         }
+        next.admit_references(self, "tasks.update")?;
         let base_rev = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let body = task_body_in_txn(self.vault(), &txn, task_ref)?;
@@ -710,16 +781,19 @@ impl Memory<'_> {
     }
 
     /// Lands one approved post inside the approving transaction: the TASK at
-    /// the settlement id, its route, and its Assigned fact.
+    /// the settlement id, its route under the creator its proposal witnessed
+    /// (OF-532), and its Assigned fact.
     fn land_settled_post_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         task_ref: EntityId,
         post: &TaskPost,
         provenance: &Value,
+        origin: Option<&TaskCreateOrigin>,
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
-        let spec = create_spec_of(post, self.actor(), now);
+        let type_ref = brief_type_ref_in(self.vault(), &*wtxn, &post.brief)?;
+        let spec = create_spec_of(post, self.actor(), type_ref, now);
         let validated = validate_task_create_in(self.vault(), &*wtxn, &spec, now)?;
         post.brief.validate_in(self.vault(), &*wtxn)?;
         self.mint_task_with_brief_at_in_txn(
@@ -731,7 +805,8 @@ impl Memory<'_> {
             Some(StoredBrief::first(post.brief.clone())),
             now,
         )?;
-        let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
+        let route =
+            self.route_created_task_with_origin_in_txn(wtxn, task_ref, &validated, origin, now)?;
         put_assignment_fact_in_txn(
             self.vault(),
             wtxn,
@@ -779,7 +854,7 @@ pub(crate) fn settle_task_proposal_in_txn(
 }
 
 /// The proposer of a settled claim, refused when it is the approver.
-fn proposer_of(claim: &ClaimBody, approver: Option<WriteActor>) -> Result<EntityId> {
+pub(super) fn proposer_of(claim: &ClaimBody, approver: Option<WriteActor>) -> Result<EntityId> {
     let proposer = crate::claim::session_claim_producer(claim)
         .ok_or(Error::InvariantViolation("task proposal names no producer"))?;
     if approver.is_some_and(|approver| approver.entity_ref() == proposer) {
@@ -788,6 +863,22 @@ fn proposer_of(claim: &ClaimBody, approver: Option<WriteActor>) -> Result<Entity
         ));
     }
     Ok(proposer)
+}
+
+/// The actor class a claim's write envelope stamped into its evidence:
+/// immutable, unlike its subject or any approver.
+pub(super) fn envelope_actor_class(claim: &ClaimBody) -> Option<EdgeActorClass> {
+    let Value::Map(entries) = claim.evidence.as_ref()? else {
+        return None;
+    };
+    let mut classes = entries.iter().filter(|(key, _)| {
+        key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY)
+    });
+    let (_, class) = classes.next()?;
+    if classes.next().is_some() {
+        return None;
+    }
+    EdgeActorClass::try_from_u8(u8::try_from(class.as_u64()?).ok()?)
 }
 
 fn class_of(byte: u8) -> Result<EdgeActorClass> {
@@ -807,10 +898,12 @@ fn settle_post(
     let Value::Map(entries) = &claim.value else {
         return Ok(());
     };
-    // A brief-less create proposal carries no post stamp; its approval stays
-    // the claim edit it always was.
+    // A brief-less create proposal carries no post stamp: it lands from
+    // its stored create fields.
     let Some(stamp_value) = task_body_optional(entries, TASK_POST_STAMP_KEY)? else {
-        return Ok(());
+        return super::proposal_create::settle_create_in_txn(
+            vault, wtxn, claim_id, claim, approver, now,
+        );
     };
     let stamp: PostStamp = from_value(stamp_value).ok_or(Error::Record(
         crate::error::RecordError::InvalidTaskBody("tasks.proposal.post"),
@@ -862,12 +955,16 @@ fn settle_post(
             world: stamp.birth_world,
             facet: stamp.birth_facet,
         });
+    // The creator the proposal witnessed, never its approver: approval may
+    // outlive the worker's lease, so the route rechecks the stored creator.
+    let origin = proposal_origin_in(vault, wtxn, claim_id).map_err(settle_refusal)?;
     memory
         .land_settled_post_in_txn(
             wtxn,
             task_ref,
             &post,
             &post_provenance(&stamp.intent_key, &stamp.request_digest, Some(claim_id)),
+            origin.as_ref(),
             now,
         )
         .map_err(settle_refusal)?;

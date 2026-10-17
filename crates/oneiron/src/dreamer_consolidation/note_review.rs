@@ -22,7 +22,7 @@ use super::support::{SCOPE_PROJECT_KEY, TURN_BODY_FACET_REF_KEY, invalid_consoli
 use super::value_projection::json_to_rmpv;
 use crate::claim::{ClaimSource, ClaimSubject, ScopedRead};
 use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims};
-use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{
@@ -184,7 +184,10 @@ impl ConsolidationExecutor<'_> {
                 response
             }
             Ok(StepOutcome::Trapped { .. }) => {
-                return Ok(Some(charges.park("durable step trapped for resume")));
+                return Ok(Some(charges.park_for(
+                    "durable step trapped for resume",
+                    DreamerParkCause::Signal,
+                )));
             }
             Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                 charges.record_usage(&usage);
@@ -200,7 +203,11 @@ impl ConsolidationExecutor<'_> {
             Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
                 return Ok(Some(charges.checkpoint()));
             }
-            Err(error) => return Ok(Some(charges.park(&error.to_string()))),
+            Err(error) => {
+                return Ok(Some(
+                    charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error)),
+                ));
+            }
         };
         if ctx.deadline.expired() {
             return Ok(Some(charges.checkpoint()));

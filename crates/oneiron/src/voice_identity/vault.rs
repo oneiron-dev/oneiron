@@ -218,6 +218,7 @@ impl Vault {
                         start_ms: segment.start_ms,
                         end_ms: segment.end_ms,
                         speaker_label: candidate.subject_ref.to_hex(),
+                        speaker_key: segment.speaker_key.clone(),
                         subject_ref: Some(candidate.subject_ref),
                         contact_ref: candidate.contact_ref,
                         evidence: VoiceAttributionEvidence::EnrolledPrint {
@@ -270,6 +271,7 @@ impl Vault {
                     start_ms: segment.start_ms,
                     end_ms: segment.end_ms,
                     speaker_label: label,
+                    speaker_key: segment.speaker_key.clone(),
                     subject_ref,
                     contact_ref,
                     evidence,
@@ -290,17 +292,31 @@ impl Vault {
             known_threshold,
             segments,
             created_at: request.created_at,
+            roster_revision: 1,
         };
         ROSTER.encode_value(&roster)?;
         let digest = digest16(
             b"voice_identity.roster",
             roster.voice_session_ref.as_bytes(),
         );
+        // The session's earlier roster is read and replaced in one write, so
+        // two runs never mint the same revision for different placements.
         self.with_write_txn_grouped(|wtxn| {
+            let mut roster = roster;
+            if let Some(prior) = ROSTER.get(&self.store, wtxn, &digest)? {
+                carry_unheard_speakers(&mut roster, &prior);
+                roster.roster_revision = if placements(&roster) == placements(&prior) {
+                    prior.roster_revision
+                } else {
+                    prior
+                        .roster_revision
+                        .checked_add(1)
+                        .ok_or_else(|| invalid_voice("voice roster revision exhausted"))?
+                };
+            }
             ROSTER.put(&self.store, wtxn, &digest, &roster)?;
-            Ok(())
-        })?;
-        Ok(roster)
+            Ok(roster)
+        })
     }
 
     /// Reads a stored roster. A missing roster is `Ok(None)`; a corrupt one is
@@ -509,6 +525,50 @@ pub(crate) fn put_raw_voice_roster_for_test(
 ) -> Result<()> {
     let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
     vault.with_write_txn_grouped(|wtxn| ROSTER.put_undecodable(&vault.store, wtxn, &digest, bytes))
+}
+
+/// Silence removes no one (OF-365 ruling a): a speaker an earlier run of the
+/// session heard and this run did not stays on the roster, as last placed,
+/// until the session ends.
+fn carry_unheard_speakers(roster: &mut VoiceSessionRosterV1, prior: &VoiceSessionRosterV1) {
+    let heard: BTreeSet<String> = roster
+        .segments
+        .iter()
+        .map(|segment| segment.speaker_key.clone())
+        .collect();
+    roster.segments.extend(
+        prior
+            .segments
+            .iter()
+            .filter(|segment| !heard.contains(&segment.speaker_key))
+            .cloned(),
+    );
+}
+
+/// Where each speaker sits, without words, spans, scores or labels. The
+/// roster's revision moves only when this does.
+fn placements(roster: &VoiceSessionRosterV1) -> BTreeSet<String> {
+    roster
+        .segments
+        .iter()
+        .map(|segment| {
+            let placed = match &segment.evidence {
+                VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => format!(
+                    "enrolled\0{}\0{}",
+                    subject_ref.to_hex(),
+                    segment
+                        .contact_ref
+                        .map(|id| id.to_hex())
+                        .unwrap_or_default()
+                ),
+                VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
+                    format!("invite\0{}", attendee_ref.to_hex())
+                }
+                VoiceAttributionEvidence::ResidualCluster { .. } => "residual".to_owned(),
+            };
+            format!("{}\0{placed}", segment.speaker_key)
+        })
+        .collect()
 }
 
 /// A vault that is not running wakes to delete the print at its deadline.

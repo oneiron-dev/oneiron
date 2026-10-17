@@ -148,9 +148,13 @@ pub fn create_question(
             version: 1,
             paused: false,
             last_refresh: None,
+            retry_at: None,
         };
         secret_scan_before_put(&head)?;
-        QUESTION_HEAD.put(&vault.store, txn, &HeadKey(id), &head)
+        QUESTION_HEAD.put(&vault.store, txn, &HeadKey(id), &head)?;
+        // The host's question timer re-reads its next due instant.
+        crate::batch::queue_proactivity_change(vault, txn);
+        Ok(())
     })?;
     Ok(record)
 }
@@ -220,6 +224,9 @@ pub fn edit_question(
             if !definition.refresh.on_arrival || !definition.units.contains(unit) {
                 super::arrival::PENDING.delete(&vault.store, txn, &(id, *unit))?;
             }
+            if !definition.units.contains(unit) {
+                super::arrival::unwatch_sources(&vault.store, txn, id, *unit)?;
+            }
         }
         let record = QuestionRecord {
             schema_version: 1,
@@ -232,9 +239,10 @@ pub fn edit_question(
         super::arrival::watch(&vault.store, txn, &record)?;
         head.version = version;
         head.last_refresh = None;
+        head.retry_at = None;
         secret_scan_before_put(&head)?;
         QUESTION_HEAD.put(&vault.store, txn, &HeadKey(id), &head)?;
-
+        crate::batch::queue_proactivity_change(vault, txn);
         Ok(record)
     })
 }
@@ -248,8 +256,14 @@ pub fn pause_question(
     vault.with_write_txn_grouped(|txn| {
         let mut head = owned_head(vault, txn, principal, id)?;
         head.paused = paused;
+        // A resumed question answers at once, not after an old failure's hold.
+        if !paused {
+            head.retry_at = None;
+        }
         secret_scan_before_put(&head)?;
-        QUESTION_HEAD.put(&vault.store, txn, &HeadKey(id), &head)
+        QUESTION_HEAD.put(&vault.store, txn, &HeadKey(id), &head)?;
+        crate::batch::queue_proactivity_change(vault, txn);
+        Ok(())
     })
 }
 

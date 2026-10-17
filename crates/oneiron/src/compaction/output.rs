@@ -338,21 +338,45 @@ pub fn store_output(vault: &Vault, bytes: &[u8]) -> Result<OutputRef> {
         .output_ref())
 }
 
-/// The whole body `source` names, checked against its digest and length.
+/// The whole body `source` names, checked against its digest and length. A
+/// body the secret scan marked, or one under live or stale taint, is read as
+/// the withheld mark instead, as every model-context view reads it: the view
+/// is redacted, the stored body never rewritten.
 pub fn restore_output(vault: &Vault, source: OutputRef) -> Result<Vec<u8>> {
+    if !output_clean(vault, source)? {
+        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+            .as_bytes()
+            .to_vec());
+    }
     vault
         .get_raw_body(source)?
         .ok_or(Error::CorruptedIndex("missing recoverable output"))
 }
 
+/// Whether the body `source` names may enter model context as it stands. A
+/// reference names bytes, not an occurrence, so no occurrence of them may
+/// carry a mark.
+fn output_clean(vault: &Vault, source: OutputRef) -> Result<bool> {
+    crate::engine_executor::clean_for_context(
+        &crate::code_run::ExecutorStorage::Canonical(vault),
+        None,
+        &crate::code_run::CodeRunRawOutput::of_ref(source),
+    )
+}
+
 /// Summary is an immutable derived projection keyed by source and recipe version.
 /// The callback runs outside the write transaction. A racing first writer wins.
+/// A body that is not clean is never summarized: no model reads it, and the
+/// withheld mark is its summary.
 pub fn summarize_output(
     vault: &Vault,
     source: OutputRef,
     recipe: &[u8],
     summarize: impl FnOnce(&[u8]) -> Result<String>,
 ) -> Result<String> {
+    if !output_clean(vault, source)? {
+        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
+    }
     let bytes = restore_output(vault, source)?;
     let key = (source.hash, *blake3::hash(recipe).as_bytes());
     {

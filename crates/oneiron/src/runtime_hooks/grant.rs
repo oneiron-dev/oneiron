@@ -32,13 +32,13 @@ pub struct HookGrant {
 }
 
 impl HookGrant {
-    /// The author's ceiling. Slice 1 bindings are owner-written, so this is
-    /// the owner's own reach.
+    /// The author's ceiling: the owner's own reach for an owner's hook, and
+    /// for a hub hook its publisher's, which reads only what its Grant does.
     #[must_use]
     pub fn author_ceiling(binding: &PackHookBinding) -> Self {
         Self {
-            reader: binding.owner,
-            reader_class: HookActorClass::Human,
+            reader: binding.author_id(),
+            reader_class: binding.author_class(),
             predicates: Vec::new(),
             worlds: Vec::new(),
         }
@@ -52,7 +52,9 @@ impl HookGrant {
                 .iter()
                 .any(|glob| glob_match(glob, &claim.predicate)))
             && (self.worlds.is_empty()
-                || claim.world.is_some_and(|world| self.worlds.contains(&world)))
+                || claim
+                    .world
+                    .is_some_and(|world| self.worlds.contains(&world)))
     }
 }
 
@@ -80,7 +82,9 @@ impl Vault {
                 .iter()
                 .any(|glob| glob.is_empty() || glob.len() > 256)
         {
-            return Err(Error::InvalidConfig("hook grant is out of bounds".to_owned()));
+            return Err(Error::InvalidConfig(
+                "hook grant is out of bounds".to_owned(),
+            ));
         }
         if !self
             .pack_hook_bindings()?

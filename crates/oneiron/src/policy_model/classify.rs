@@ -21,17 +21,15 @@ use crate::llm::{BudgetGuard, BudgetLease, LlmBackend, LlmRequest};
 use crate::store::GateSystemNoticeRecord;
 
 use super::binding::{PolicyContentBinding, content_binding};
-use super::classifier_lease::ClassifierLease;
 use super::contract::PolicyOutputContract;
+use super::decide::{SafeguardModel, safeguard_verdict};
 use super::notice::{policy_model_rationale_notice, policy_notice};
 use super::pattern::{
     CompiledPatternRule, CompiledPatternRules, PatternEvaluation, PolicyPatternRole,
     PolicyPatternRule, compile_pattern_rules,
 };
 use super::planes::{PolicyPlane, PolicyRubricRow, owner_rubric_rows};
-use super::prompt::{
-    AnswerPlane, PolicyClassifyPrompt, render_classify_prompt, resolve_policy_model_response,
-};
+use super::prompt::{AnswerPlane, PolicyClassifyPrompt, render_classify_prompt};
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig, RelayClassifierMode};
 use super::verdict::{
@@ -323,7 +321,7 @@ impl Vault {
         self.owner_plane_pass_with_safeguard(
             request,
             config,
-            safeguard.map(|(backend, lease)| OwnerSafeguard::Leased { backend, lease }),
+            safeguard.map(|(backend, lease)| SafeguardModel::Leased { backend, lease }),
         )
         .await
     }
@@ -340,7 +338,7 @@ impl Vault {
         self.owner_plane_pass_with_safeguard(
             request,
             config,
-            Some(OwnerSafeguard::Budgeted { backend, budget }),
+            Some(SafeguardModel::Budgeted { backend, budget }),
         )
         .await
     }
@@ -349,7 +347,7 @@ impl Vault {
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
-        safeguard: Option<OwnerSafeguard<'_>>,
+        safeguard: Option<SafeguardModel<'_>>,
     ) -> Result<OwnerPlanePass> {
         let context = self.policy_model_context(request, config)?;
         let binding = context.binding;
@@ -363,7 +361,7 @@ impl Vault {
             });
         };
         let evaluation = context.evaluate(&request.content);
-        let mut audit = pass_audit(&evaluation);
+        let audit = pass_audit(&evaluation);
 
         if evaluation.acting_role() == Some(PolicyPatternRole::Decide) {
             return Ok(OwnerPlanePass {
@@ -409,58 +407,28 @@ impl Vault {
         let Some(safeguard) = safeguard else {
             return Ok(skipped(PolicySkipReason::NoBackend, audit));
         };
-        let llm_request = prompt.llm_request(config);
-        let response = match safeguard {
-            OwnerSafeguard::Leased { backend, lease } => backend
-                .generate(llm_request, lease)
-                .await
-                .map_err(|_| PolicySkipReason::BackendUnavailable),
-            OwnerSafeguard::Budgeted { backend, budget } => {
-                // A completed call gets its own admission, even on a stale-
-                // policy retry. A denied admission is a skipped sovereign
-                // classifier pass, not a free invocation on an old lease.
-                if let Ok(admission) = budget.admit_for_request(&llm_request) {
-                    let lease = ClassifierLease::new(budget, admission.lease);
-                    let response = backend.generate(llm_request, lease.lease()).await;
-                    match &response {
-                        Ok(answer) => budget
-                            .settle_per_call(lease.lease(), &answer.usage)
-                            .map_err(|_| {
-                                Error::InvariantViolation("classifier budget settlement")
-                            })?,
-                        Err(_) => budget.settle_reserved(lease.lease()).map_err(|_| {
-                            Error::InvariantViolation("classifier budget settlement")
-                        })?,
-                    };
-                    response.map_err(|_| PolicySkipReason::BackendUnavailable)
-                } else {
-                    Err(PolicySkipReason::BudgetExhausted)
-                }
-            }
-        };
-        let response = match response {
-            Ok(response) => response,
-            Err(reason) => return Ok(skipped(reason, audit)),
-        };
-        let Ok(resolved) = resolve_policy_model_response(&response, &prompt, &AnswerPlane::Owner)
-        else {
-            return Ok(skipped(PolicySkipReason::ResponseUnusable, audit));
-        };
-        audit.model_rule_ids = resolved.answer.rule_ids;
-        audit.model_rule_ids_dropped = resolved.dropped_rule_ids;
-        audit.model_confidence = resolved.answer.confidence;
-        audit.model_rationale = resolved.answer.rationale;
-        Ok(OwnerPlanePass {
-            verdict: PolicyClassifyVerdict::new(
-                resolved.decision,
-                resolved.category,
-                PolicyConfidence::MEDIUM,
-                binding,
-                config,
-                PolicyPlane::OwnerPolicy,
-            )
-            .with_audit(audit),
-        })
+        // A budgeted call gets its own admission, even on a stale-policy
+        // retry. A denied admission is a skipped sovereign classifier pass,
+        // not a free invocation on an old lease.
+        let verdict = safeguard_verdict(
+            safeguard,
+            request,
+            &prompt,
+            &AnswerPlane::Owner,
+            crate::vault::embedded_owner_actor_id()?,
+            binding,
+            config,
+            audit,
+        )
+        .await?;
+        // The guard refused the pass: `host.budget.hit` on its line.
+        if let SafeguardModel::Budgeted { budget, .. } = safeguard
+            && verdict.decision.skip_reason() == Some(PolicySkipReason::BudgetExhausted)
+        {
+            let line = budget.read().attempt_id;
+            self.budget_denied_hooks(&crate::llm::BudgetDenied::Exhausted, budget, &line, None);
+        }
+        Ok(OwnerPlanePass { verdict })
     }
 
     /// The prompt this vault would send for `request`, or `None` when the owner
@@ -521,19 +489,6 @@ impl Vault {
         let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
         policy_model_context_for_policy(request, config, &policy)
     }
-}
-
-/// How the shared owner pass obtains its classifier lease. Ordinary callers
-/// already hold admission; stateless chat cannot reuse one across turns.
-enum OwnerSafeguard<'a> {
-    Leased {
-        backend: &'a dyn LlmBackend,
-        lease: &'a BudgetLease,
-    },
-    Budgeted {
-        backend: &'a dyn LlmBackend,
-        budget: &'a BudgetGuard,
-    },
 }
 
 /// Evaluate the owner policy for a traceless chat turn. Only the policy manifest

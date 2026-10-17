@@ -268,6 +268,11 @@ pub struct MemoryItem {
     /// the reader may read that conversation. `None` for every other item.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+    /// The item's record as a typed record ref (OF-063), built from the view
+    /// the reader's read admitted, with no other read. It carries no
+    /// revision pin: [`Self::reference`] still names the revision read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<crate::lens::RecordRef>,
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
@@ -802,6 +807,10 @@ impl Memory<'_> {
                 if let Some(vector) = execution.embedding {
                     pipeline = pipeline.search_vector(vector, limit);
                 }
+                for seed in execution.media {
+                    pipeline =
+                        pipeline.search_media(seed.space, seed.kind, seed.vector, &[], limit);
+                }
                 if !execution.phonetic_codes.is_empty() {
                     pipeline = pipeline.search_phonetic(execution.phonetic_codes);
                 }
@@ -887,6 +896,9 @@ impl Memory<'_> {
                 }
                 if let Some(vector) = execution.embedding {
                     builder = builder.search_vector(vector, limit);
+                }
+                for seed in execution.media {
+                    builder = builder.search_media(seed.space, seed.kind, seed.vector, &[], limit);
                 }
                 if !execution.phonetic_codes.is_empty() {
                     builder = builder.search_phonetic(execution.phonetic_codes);

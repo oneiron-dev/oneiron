@@ -10,22 +10,33 @@ use crate::{EntityId, Result, Vault};
 
 use super::source::FactKind;
 
-/// Whether `selector` takes this fact, as seen under the hook's grant.
+/// Whether `selector` takes the fact on `entity`, as seen under the hook's
+/// grant. A scope is read last, and only when the selector names one.
 pub(super) fn fact_matches(
+    vault: &Vault,
     selector: &HookSelector,
     kind: FactKind,
+    entity: EntityId,
     claim: Option<&ClaimBody>,
     actor: HookActorClass,
-) -> bool {
-    verbs_match(&selector.verbs, kind, claim.map(|body| body.predicate.as_str()))
-        && (selector.actors.is_empty() || selector.actors.contains(&actor))
-        && scope_matches(selector.scope.as_deref(), claim)
+) -> Result<bool> {
+    if !verbs_match(
+        &selector.verbs,
+        kind,
+        claim.map(|body| body.predicate.as_str()),
+    ) || !(selector.actors.is_empty() || selector.actors.contains(&actor))
+    {
+        return Ok(false);
+    }
+    scope_matches(vault, selector.scope.as_deref(), entity, claim)
 }
 
 /// Whether any selector entry could take a fact of `kind`, before anything
 /// is read.
 pub(super) fn verbs_admit_kind(verbs: &[String], kind: FactKind) -> bool {
-    verbs.iter().any(|verb| kind_admits(entry_parts(verb).0, kind))
+    verbs
+        .iter()
+        .any(|verb| kind_admits(entry_parts(verb).0, kind))
 }
 
 /// A selector entry is `<fact kind>:<predicate glob>`, or a bare predicate
@@ -52,36 +63,18 @@ fn kind_admits(kind_part: Option<&str>, kind: FactKind) -> bool {
     }
 }
 
-/// A scope only narrows: `world:<hex32>`, `facet:<token>` or
-/// `project:<token>`, matched against what the claim carries. A claim that
-/// carries no such field, or a scope of another shape, does not match.
-fn scope_matches(scope: Option<&str>, claim: Option<&ClaimBody>) -> bool {
-    let Some(scope) = scope else {
-        return true;
-    };
-    let (Some(body), Some((axis, wanted))) = (claim, scope.split_once(':')) else {
-        return false;
-    };
-    match axis {
-        "world" => EntityId::from_hex(wanted)
-            .ok()
-            .is_some_and(|world| body.world == Some(world)),
-        "facet" | "project" => scope_value(body.scope.as_ref(), axis).as_deref() == Some(wanted),
-        _ => false,
-    }
-}
-
-/// The text a claim's scope map holds under `axis`: a string, or a 16-byte
-/// id as lowercase hex.
-fn scope_value(scope: Option<&rmpv::Value>, axis: &str) -> Option<String> {
-    let rmpv::Value::Map(entries) = scope? else {
-        return None;
-    };
-    let (_, value) = entries.iter().find(|(key, _)| key.as_str() == Some(axis))?;
-    match value {
-        rmpv::Value::String(text) => text.as_str().map(str::to_owned),
-        rmpv::Value::Binary(bytes) if bytes.len() == 16 => Some(crate::receipt::hex_lower(bytes)),
-        _ => None,
+/// A scope only narrows, read as a `HookScope`: the record's world, the
+/// facets the one facet rule places it in, its claim's project or its room's,
+/// or the room it was said in. A selector with no scope takes every fact.
+fn scope_matches(
+    vault: &Vault,
+    scope: Option<&str>,
+    entity: EntityId,
+    claim: Option<&ClaimBody>,
+) -> Result<bool> {
+    match scope {
+        None => Ok(true),
+        Some(scope) => super::scope::fact_within(vault, scope, entity, claim),
     }
 }
 
@@ -105,7 +98,9 @@ pub(super) fn glob_match(pattern: &str, text: &str) -> bool {
             return false;
         }
     }
-    pattern.get(p..).is_some_and(|rest| rest.iter().all(|byte| *byte == b'*'))
+    pattern
+        .get(p..)
+        .is_some_and(|rest| rest.iter().all(|byte| *byte == b'*'))
 }
 
 /// The class of the actor a changelog row or a settlement names: the vault

@@ -188,6 +188,8 @@ side_tables! {
     EMERGENCY_REQUEST_PLAN_INDEX: VaultMeta b"booking:emergency_request_plan:v1:" Raw;
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
+    /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
+    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().
@@ -288,6 +290,19 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// One agent-health card (OF-568): the Coach's merged evidence, routing and outcome for one
+    /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
+    COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named;
+    /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
+    /// the receipt.
+    COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
+    /// One `self.report_blocked` receipt a durable run filed, and when, kept after the Coach
+    /// settles it, so a failing attempt's ladder case carries its own reports (OF-418). Key: id16
+    /// of the run, then id16 of the receipt.
+    COACH_BLOCKED_RUN: VaultMeta b"coach:blocked_run:v1:" Raw;
+    /// The proposed heal the Coach filed for a blocked report or a failure-ladder case, so a
+    /// replay files none twice. Key: id16 of the receipt or the case.
+    COACH_ISSUE_SETTLED: VaultMeta b"coach:issue_settled:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
     COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;
@@ -343,6 +358,10 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
+    /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
+    /// + fold u64 BE). Key: id16(dependent).
+    CODE_RUN_FOLD_WORDS: VaultMeta b"code_run:fold_words:v1:" Raw;
     /// Node-local fold ledger of one executor run: its marks, compact ask, folds and unfold
     /// appends (JSON). Key: id16(run).
     CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
@@ -356,8 +375,31 @@ side_tables! {
     CODE_RUN_RAW_OUTPUT_TAINT: VaultMeta b"code_run:raw_output:taint:v1:" Raw;
     /// A code run's raw output bytes, keyed by their deterministic content handle. Key: string.
     CODE_RUN_RAW_OUTPUT: VaultMeta b"code_run:raw_output:v1:" Raw;
+    /// The index rows of a code run's reader children, by a one-byte tag: `c` id16(parent) +
+    /// be64(ordinal) + id16(task) (children in spawn order), `f` id16(parent) + handle -> id16(task)
+    /// (findings), `q` be64(enqueued ms) + id16(task) (the queue), `w` id16(task) + id16(set)
+    /// (a child's waits), `d` be64(due ms) + id16(set or task) -> `s` or `j` (the due sweep).
+    CODE_RUN_READER_INDEX: VaultMeta b"code_run:reader_index:v1:" Raw;
+    /// One reader child of a code run: its binding, state, generation and latest finding (JSON).
+    /// Key: id16(task).
+    CODE_RUN_READER_JOB: VaultMeta b"code_run:reader_job:v1:" Raw;
+    /// A code run's reader row: its children's clock, fixed at its first spawn, their spend scope
+    /// and its counts (JSON). Key: id16(run).
+    CODE_RUN_READER_PARENT: VaultMeta b"code_run:reader_parent:v1:" Raw;
+    /// One wait over a code run's reader children, and its first done reduction (JSON). Key:
+    /// id16(set).
+    CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw;
+    /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
+    /// id16(wait) + be64(generation).
+    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw;
+    /// The code runs parked on a wait (`p` + id16(wait) + id16(run), value be64(generation)) and
+    /// the reply the wait settled with (`s` + id16(wait), value JSON). Key: u8 tag + id16 [+ id16].
+    CODE_RUN_WAIT_INDEX: VaultMeta b"code_run:wait_index:v1:" Raw;
+    /// Node-local C9 trap a host bound to one parked code-run wait, woken in the commit that
+    /// delivers it (fixed layout). Key: id16(run) + id16(wait) + be64(generation).
+    CODE_RUN_WAIT_TRAP: VaultMeta b"code_run:wait_trap:v1:" Raw;
     /// Per-code-artifact code-symbol manifest row. Key: id16.
     CODE_SYMBOL_MANIFEST: VaultMeta b"code_symbol:manifest:v1:" Raw;
     /// Index of symbol revisions by repo/path/name/fingerprint, empty marker value. Key:
@@ -404,6 +446,9 @@ side_tables! {
     COMMITMENT_DUE_PRIMARY: VaultMeta b"commitment_due:v1:" Raw;
     /// Instance and phase to primary due-row key. Key: id16 + u8.
     COMMITMENT_DUE_REVERSE: VaultMeta b"commitment_due_rev:v1:" Raw;
+    /// Where the owner's own commitment reminders go, and the owner's civil
+    /// clock for their delivery windows (OF-187). Key: ().
+    COMMITMENT_REMINDER_ROUTE: VaultMeta b"commitment_reminder_route:v1" Named;
     /// Series-membership history. Key: id16 + u64be + u64be + u32be + id16.
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.

@@ -27,8 +27,11 @@ const ROOM_TURN_VERBS: &[&str] = &[
     "vault.rooms.reply_strips",
     "vault.rooms.claim",
     "vault.rooms.speak",
+    "vault.rooms.offer",
     "vault.rooms.host",
+    "vault.rooms.host.hand",
     "vault.rooms.sharing",
+    "vault.rooms.participants",
 ];
 
 impl<'v> RoomTurnHandle<'v> {
@@ -100,6 +103,17 @@ impl<'v> RoomTurnHandle<'v> {
         crate::task_verb::sdk::recall_at_door(&self.memory, input, embed, door)
     }
 
+    /// [`Self::recall_at_door`] whose host may also embed the query into
+    /// declared spaces; see [`crate::task_verb::sdk::recall_at_door_seeded`].
+    pub fn recall_at_door_seeded(
+        &self,
+        input: crate::task_verb::sdk::RecallRequest,
+        embed: impl FnOnce(&str) -> crate::retrieval_depth::RecallQueryVectors,
+        door: &crate::task_verb::sdk::RecallDoor<'_>,
+    ) -> MemoryResult<MemoryPack> {
+        crate::task_verb::sdk::recall_at_door_seeded(&self.memory, input, embed, door)
+    }
+
     pub fn get_entity(
         &self,
         entity_ref: &str,
@@ -154,5 +168,47 @@ impl<'v> Memory<'v> {
             });
         }
         Ok(handle)
+    }
+
+    /// The reads of thread `thread` of `room` for this actor (OF-529): the
+    /// turn's world, facet, audience, peer and P7 gates under the ceiling
+    /// that thread puts on it ([`Self::thread_ceiling`]), met into the turn
+    /// this handle is bound to, if any. An agent standing on that thread's
+    /// own Ready receipt reads it this way without a seat, and reads nothing
+    /// else of the room. Unlike [`Self::for_room_projection`], P7 binds it
+    /// outside a turn too: a thread's reader is no member reading its own.
+    pub(crate) fn for_thread_projection(
+        &self,
+        room: EntityId,
+        thread: EntityId,
+    ) -> MemoryResult<RoomTurnHandle<'v>> {
+        self.verified_actor_class()?;
+        self.require_room_in_facets(room)?;
+        let ceiling = self.thread_ceiling(room, thread)?;
+        Ok(RoomTurnHandle {
+            memory: Memory {
+                vault: self.vault,
+                actor: self.actor,
+                actor_class: self.actor_class,
+                session_key: self.session_key,
+                machine_signer: self.machine_signer,
+                read_proof: self.read_proof.clone(),
+                room_turn: Some(ceiling),
+                host_origin: self.host_origin.clone(),
+                locality: self.locality,
+                producers: self.producers,
+                birth_position: self.birth_position,
+                // A thread's read writes nothing as the owner in person.
+                owner_authorship: None,
+                invocation: self.invocation,
+                invocation_slip: self.invocation_slip.clone(),
+                transport_invocation: self.transport_invocation,
+                origin_conversation: self.origin_conversation,
+                task_host: None,
+                off_record_session: self.off_record_session.clone(),
+                credential: self.credential,
+                rewrite_admit: self.rewrite_admit.clone(),
+            },
+        })
     }
 }

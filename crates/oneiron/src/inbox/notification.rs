@@ -67,6 +67,9 @@ pub enum NotificationKind {
     ImportFinished,
     /// A built proactivity digest; `source.result` names its id.
     Digest,
+    /// A decision waiting on its recipient; `source.producer` names what
+    /// asks and `source.result` the thing to answer.
+    Ask,
 }
 
 impl NotificationKind {
@@ -160,6 +163,31 @@ fn notification_id(source: &NotificationSource) -> Result<EntityId> {
 }
 
 impl Vault {
+    /// Whether `reader` saw or acked the NOTIFICATION `source` names, in the
+    /// caller's snapshot; `None` when no such row is live. For trusted loops
+    /// that settle a delivery's read (OF-499: the weave lens's read rate).
+    pub(crate) fn notification_seen_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: &NotificationSource,
+        reader: &EntityId,
+    ) -> Result<Option<bool>> {
+        let id = notification_id(source)?;
+        match live_entity_row_in_txn(&self.store, txn, &id)? {
+            LiveEntityRow::Live { entity_type, body }
+                if entity_type == ENTITY_TYPE_NOTIFICATION =>
+            {
+                let body = decode_notification_body(&body)?;
+                let reader = reader.to_hex();
+                Ok(Some(
+                    body.acked_by.get(&reader) == Some(&true)
+                        || body.seen_by.get(&reader) == Some(&true),
+                ))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Records `event` as a NOTIFICATION in the caller's transaction and
     /// returns its id. A replay finds the row it wrote first and returns it
     /// untouched, seen and acknowledged state included; a deleted row stays

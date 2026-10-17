@@ -25,14 +25,16 @@ impl Memory<'_> {
         Ok(roster)
     }
 
-    /// The roster the room's own record holds, for a caller that belongs to
-    /// it. Deriving the room's Scope from it shows the caller nothing.
+    /// The roster the room's own record holds, for a caller that reads it
+    /// ([`room_reader_in`]): a member, or an agent on a Ready join. Deriving
+    /// the room's Scope from it shows the caller nothing.
     fn roster_of(&self, room: EntityId) -> MemoryResult<Vec<RoomPresence>> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let members = room_members_in(vault, &txn, room)?
-            .filter(|members| members.contains(&self.actor()))
-            .ok_or_else(unknown_room)?;
+        let members = room_members_in(vault, &txn, room)?.ok_or_else(unknown_room)?;
+        if !room_reader_in(vault, &txn, room, &members, self.actor())? {
+            return Err(unknown_room());
+        }
         let worlds = reading_defaults_in(vault, &txn, &members)?;
         let clearances = clearances_in(vault, &txn, &members)?;
         drop(txn);
@@ -203,17 +205,65 @@ impl Memory<'_> {
         room_ceiling_in(vault, &txn, room, self.actor())?.ok_or_else(unknown_room)
     }
 
+    /// The ceiling thread `thread` of `room` puts on this caller's reads now
+    /// ([`thread_ceiling_in`]), met into the turn this handle is bound to,
+    /// as [`Self::room_turn_now`] meets the room's. A turn bound to another
+    /// room refuses.
+    pub(crate) fn thread_ceiling(
+        &self,
+        room: EntityId,
+        thread: EntityId,
+    ) -> MemoryResult<RoomTurnCeiling> {
+        self.refuse_other_room(room)?;
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let now =
+            thread_ceiling_in(vault, &txn, room, thread, self.actor())?.ok_or_else(unknown_room)?;
+        drop(txn);
+        Ok(match self.room_turn() {
+            Some(turn) => {
+                turn.terms.meet(&now.terms.get());
+                RoomTurnCeiling {
+                    terms: turn.terms.clone(),
+                    ..now
+                }
+            }
+            None => now,
+        })
+    }
+
+    /// The world ceiling of [`Self::thread_ceiling`], as
+    /// [`Self::room_read_worlds`] gives the room's: every row the thread
+    /// reads lies in it.
+    pub(crate) fn thread_read_worlds(
+        &self,
+        room: EntityId,
+        thread: EntityId,
+    ) -> MemoryResult<Scope> {
+        Ok(self.thread_ceiling(room, thread)?.terms.get().worlds)
+    }
+
     /// The ceiling a bound handle reads under now: the room's current terms
     /// met into the turn's, and the current roster as the audience, the same
     /// membership the room's own history reads check. A change mid-turn can
     /// only narrow the turn, and the turn keeps the narrowing for its later
     /// reads. Each row is checked again against the room as its own snapshot
-    /// reads it.
+    /// reads it. A turn bound to one thread rebuilds through that thread's
+    /// ceiling ([`thread_ceiling_in`]), so a thread-only reader keeps reading
+    /// it; a room turn reads as before.
     pub(crate) fn room_turn_now(&self) -> MemoryResult<Option<RoomTurnCeiling>> {
         let Some(turn) = self.room_turn() else {
             return Ok(None);
         };
-        let now = self.room_ceiling(turn.room)?;
+        let now = match turn.branch {
+            Some(thread) => {
+                let vault = self.vault();
+                let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+                thread_ceiling_in(vault, &txn, turn.room, thread, self.actor())?
+                    .ok_or_else(unknown_room)?
+            }
+            None => self.room_ceiling(turn.room)?,
+        };
         turn.terms.meet(&now.terms.get());
         Ok(Some(RoomTurnCeiling {
             terms: turn.terms.clone(),
@@ -399,15 +449,17 @@ impl Vault {
 }
 
 /// The one refusal for a room the caller cannot read: missing, deleted, not
-/// a channel, or not the caller's. Nothing about the record leaks first.
+/// a Conversation, or not the caller's. Nothing about the record leaks first.
 fn unknown_room() -> MemoryError {
     MemoryError::bad_request_with("unknown room", &[])
 }
 
-/// A channel's members from its owning record in `txn`: a project home
-/// room's validated roster, or an ordinary channel's membership ledger. A
+/// A room's members from its owning record in `txn`: a project home room's
+/// validated roster, or an ordinary Conversation's membership ledger, of any
+/// kind (channel, direct, group, agent or mirror: one room substrate). A
 /// body's unchecked extension fields never stand in for either. `None` is a
-/// room that is missing, deleted, not a channel, or holds no valid roster.
+/// room that is missing, deleted, not a valid Conversation, or holds no valid
+/// roster.
 fn room_members_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -416,13 +468,14 @@ fn room_members_in(
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &room)?.is_live() {
         return Ok(None);
     }
-    let channel = vault
+    let conversation = vault
         .store
         .port_entity_record(txn, &room)?
         .filter(|record| record.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION)
-        .and_then(|record| crate::conversation::ConversationBody::from_bytes(&record.body).ok())
-        .is_some_and(|body| body.kind == crate::conversation::ConversationKind::Channel);
-    if !channel {
+        .is_some_and(|record| {
+            crate::conversation::ConversationBody::from_bytes(&record.body).is_ok()
+        });
+    if !conversation {
         return Ok(None);
     }
     // The owning writer bounds the membership; the Scope reads all of it.
@@ -535,12 +588,37 @@ pub(crate) fn room_roster_in(
     }))
 }
 
+/// Whether `caller` reads `room` as `txn` reads it: a member of the room's
+/// `members`; a person or an agent standing on a live OF-531 Ready join for
+/// the room itself, a person's through its own pen
+/// ([`crate::workspace_roster::room_join_audience_in`], OF-417); or the
+/// room's host, its owner or a delegate (OF-530). A join or host standing
+/// opens the room's reads and takes no seat: the roster, and with it the
+/// audience every disclosure meets, stays the members alone, and the
+/// caller's own grants still bound each read.
+pub(crate) fn room_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    members: &[EntityId],
+    caller: EntityId,
+) -> crate::Result<bool> {
+    if members.contains(&caller)
+        || crate::workspace_roster::room_join_audience_in(vault, txn, room, caller)?
+    {
+        return Ok(true);
+    }
+    let host = crate::WriteActor::new(caller, crate::EdgeActorClass::Human);
+    Ok(crate::conversation::room_host_in_txn(vault, txn, room, host)?.is_some())
+}
+
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room
 /// (ARCH-0067 §8): `room_scope` over the roster in this snapshot, as its
 /// world ceiling and its clearance, that roster as the audience, and every
 /// other member's read key. One snapshot builds all of it, the same one that
-/// serves the row it is checked against. `None` when the room is not one
-/// `caller` belongs to here.
+/// serves the row it is checked against. `None` when `caller` does not read
+/// the room here ([`room_reader_in`]); an agent on a Ready join reads it
+/// without joining the roster.
 pub(crate) fn room_ceiling_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -550,7 +628,7 @@ pub(crate) fn room_ceiling_in(
     let Some(members) = room_roster_in(vault, txn, room)? else {
         return Ok(None);
     };
-    if members.binary_search(&caller).is_err() {
+    if !room_reader_in(vault, txn, room, &members, caller)? {
         return Ok(None);
     }
     let worlds = reading_defaults_in(vault, txn, &members)?;
@@ -579,5 +657,89 @@ pub(crate) fn room_ceiling_in(
         terms: crate::claim::TurnTerms::new(terms),
         peers: peer_read_keys_in(vault, txn, caller, &members)?,
         roster: members,
+        branch: None,
+    }))
+}
+
+/// Whether `caller` reads thread `thread` of `room` as `txn` reads it
+/// (OF-529): a reader of the room ([`room_reader_in`]), or an AGENT_DEF
+/// standing on an OF-531 Ready join for that thread itself. A thread's join
+/// opens that thread's reads alone, never the room's or another thread's,
+/// and takes no seat.
+pub(crate) fn thread_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    members: &[EntityId],
+    caller: EntityId,
+) -> crate::Result<bool> {
+    if room_reader_in(vault, txn, room, members, caller)? {
+        return Ok(true);
+    }
+    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
+        return Ok(false);
+    }
+    let agent = crate::workspace_roster::JoinSubject::Agent(caller);
+    match crate::workspace_roster::require_join_for_branch_in_txn(
+        vault,
+        txn,
+        room,
+        Some(thread),
+        &agent,
+        None,
+    ) {
+        Ok(_) => Ok(true),
+        Err(crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. })) => {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// [`room_ceiling_in`] for a reader of thread `thread` of `room`
+/// ([`thread_reader_in`]): the same terms, audience and peer reads over the
+/// room's roster in this snapshot, which a thread's reader never joins.
+/// `None` when `caller` does not read the thread here.
+pub(crate) fn thread_ceiling_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    caller: EntityId,
+) -> crate::Result<Option<RoomTurnCeiling>> {
+    let Some(members) = room_roster_in(vault, txn, room)? else {
+        return Ok(None);
+    };
+    if !thread_reader_in(vault, txn, room, thread, &members, caller)? {
+        return Ok(None);
+    }
+    let worlds = reading_defaults_in(vault, txn, &members)?;
+    let clearances = clearances_in(vault, txn, &members)?;
+    let roster: Vec<_> = members
+        .iter()
+        .zip(worlds.into_iter().zip(clearances))
+        .map(|(member, (active_worlds, clearance))| RoomPresence {
+            actor: *member,
+            actor_class: None,
+            label: String::new(),
+            present: true,
+            active_worlds,
+            clearance,
+        })
+        .collect();
+    let terms = RoomTerms {
+        worlds: room_worlds(&roster)?,
+        facets: room_facets_axis_in(vault, txn, room)?,
+        clearance: room_clearance(&roster),
+        p7: true,
+    };
+    Ok(Some(RoomTurnCeiling {
+        room,
+        caller,
+        terms: crate::claim::TurnTerms::new(terms),
+        peers: peer_read_keys_in(vault, txn, caller, &members)?,
+        roster: members,
+        branch: Some(thread),
     }))
 }

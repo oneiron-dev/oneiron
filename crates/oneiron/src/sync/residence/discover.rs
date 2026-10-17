@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::ports::{EntityStoreRead, TimelineQuery};
+use crate::ports::{DeletionMarker, EntityStoreRead, TimelineQuery, TombstoneStoreRead};
 
 use crate::sync::types::WindowKey;
 
@@ -23,29 +23,42 @@ pub fn discover_local_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
         .port_entity_timeline(&txn, TimelineQuery::default())?
     {
         let row = row?;
-        let raw = vault
+        // The row is read in place: its header and, for a claim that carries
+        // its body, the body's world.
+        let Some((header, body_world)) = vault
             .store
-            .entities
-            .get(&txn, row.id.as_bytes())?
-            .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
-        if row.id == default_manifest
-            || header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-        {
+            .port_entity_with_raw(&txn, &row.id, |raw| {
+                let header = EntityMetadataHeader::parse(raw)
+                    .ok_or(Error::CorruptedIndex("entity metadata"))?;
+                if row.id == default_manifest
+                    || header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
+                {
+                    return Ok(None);
+                }
+                let body_world = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                    && raw.len() > ENTITY_METADATA_HEADER_LEN
+                {
+                    let body =
+                        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+                    Some(body.world)
+                } else {
+                    None
+                };
+                Ok(Some((header, body_world)))
+            })?
+            .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?
+        else {
             continue;
-        }
+        };
         let base = WindowKey::from_timestamp(header.learned_at);
         keys.insert(base.to_string());
         if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            let scoped = if raw.len() > ENTITY_METADATA_HEADER_LEN {
-                crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?.world
+            let scoped = if let Some(world) = body_world {
+                world
             } else {
-                let mapping = format!("m:dw:{}", row.id.to_hex());
                 vault
                     .store
-                    .sync_state
-                    .get(&txn, &mapping)?
+                    .port_deletion_marker(&txn, DeletionMarker::WindowAddress, &row.id)?
                     .and_then(|raw| std::str::from_utf8(&raw).ok().and_then(WindowKey::try_new))
                     .and_then(|key| key.world())
             };

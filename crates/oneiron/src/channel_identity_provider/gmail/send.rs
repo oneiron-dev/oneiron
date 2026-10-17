@@ -37,7 +37,7 @@ use base64::Engine as _;
 use super::{EMAIL_CHANNEL, GmailDelegatedAdapter, MAX_GMAIL_THREAD_ID_BYTES, validate_gmail_id};
 use crate::Vault;
 use crate::channel_identity_provider::native_mail::{
-    approve_canonical_mail_send_once, canonical_recipient,
+    approve_canonical_mail_send_once, canonical_mail_send_digest, canonical_recipient,
 };
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::entity_id::EntityId;
@@ -98,7 +98,11 @@ impl GmailReplyThread {
         in_reply_to: &str,
         parent_references: &[S],
     ) -> Result<Self> {
-        validate_gmail_id(gmail_thread_id, MAX_GMAIL_THREAD_ID_BYTES, "gmail thread id")?;
+        validate_gmail_id(
+            gmail_thread_id,
+            MAX_GMAIL_THREAD_ID_BYTES,
+            "gmail thread id",
+        )?;
         let in_reply_to = canonical_message_id(in_reply_to)?;
         let mut references = canonical_message_id_list(parent_references)?;
         references.retain(|reference| reference != &in_reply_to);
@@ -182,7 +186,13 @@ impl GmailSendPlan {
             .ok_or_else(|| Error::InvalidConfig("gmail mailbox has no domain".to_owned()))?;
         let mut seed = blake3::Hasher::new();
         seed.update(b"oneiron.gmail.send.message_id.v1");
-        for part in [logical_ref, from_mailbox.as_str(), to.as_str(), subject, body_text] {
+        for part in [
+            logical_ref,
+            from_mailbox.as_str(),
+            to.as_str(),
+            subject,
+            body_text,
+        ] {
             hash_part(&mut seed, part);
         }
         let digest = seed.finalize().to_hex();
@@ -210,7 +220,11 @@ impl GmailSendPlan {
     ///
     /// [`Error::InvalidConfig`] for a blank, header-unsafe or over-long name.
     pub fn with_display_name(mut self, display_name: &str) -> Result<Self> {
-        validate_header_text(display_name, MAX_DISPLAY_NAME_BYTES, "gmail From display name")?;
+        validate_header_text(
+            display_name,
+            MAX_DISPLAY_NAME_BYTES,
+            "gmail From display name",
+        )?;
         if display_name.trim().is_empty() {
             return Err(Error::InvalidConfig(
                 "gmail From display name must not be blank".to_owned(),
@@ -386,9 +400,7 @@ fn is_reserved_header(name: &str) -> bool {
 /// that is how a value would smuggle a second header into the block.
 fn validate_header_text(value: &str, max: usize, label: &str) -> Result<()> {
     if value.len() > max {
-        return Err(Error::InvalidConfig(format!(
-            "{label} exceeds {max} bytes"
-        )));
+        return Err(Error::InvalidConfig(format!("{label} exceeds {max} bytes")));
     }
     if value.chars().any(char::is_control) {
         return Err(Error::InvalidConfig(format!(
@@ -639,14 +651,11 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
                     .with_receipt_fields(fields)
                     .with_possible_delivery();
                 }
-                let (rfc_message_id, source) = match sent
-                    .rfc_message_id
-                    .as_deref()
-                    .map(canonical_message_id)
-                {
-                    Some(Ok(observed)) => (observed, "provider"),
-                    _ => (plan.message_id.clone(), "plan"),
-                };
+                let (rfc_message_id, source) =
+                    match sent.rfc_message_id.as_deref().map(canonical_message_id) {
+                        Some(Ok(observed)) => (observed, "provider"),
+                        _ => (plan.message_id.clone(), "plan"),
+                    };
                 fields.insert(
                     RECEIPT_GMAIL_MESSAGE_ID.to_owned(),
                     sent.gmail_message_id.clone(),
@@ -733,6 +742,61 @@ impl GmailDelegatedAdapter {
         approve_canonical_mail_send_once(vault, owner, request, identity_ref, actor)
     }
 
+    /// One owner press for a REVIEWED BATCH: exact approvals for exactly the
+    /// enumerated sends, all minted in one transaction (ARCH-0046 "one press
+    /// for a reviewed batch").
+    ///
+    /// `reviewed_send_refs` is what the owner saw: the card's
+    /// `BundleExactSends` refs. The requests must be exactly those sends, one
+    /// each, every one this adapter's member send with a frozen plan. Each
+    /// gets its own canonical digest, so the press covers these sends and no
+    /// other: it mints no standing authority and is never converted into the
+    /// brief-wide grant the card's other scope choice would mint. Either every
+    /// approval lands or none does; an already-pressed send refuses the batch.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the requests are not exactly the reviewed
+    /// refs or any envelope is not this adapter's, plus the approve-once
+    /// door's owner and replay checks.
+    pub fn approve_send_batch(
+        &self,
+        vault: &Vault,
+        owner: &AuthenticatedOwner,
+        reviewed_send_refs: &[String],
+        requests: &[OutboundDispatchRequest],
+    ) -> Result<Vec<ConsentReceipt>> {
+        let mut reviewed = reviewed_send_refs
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let mut requested = requests
+            .iter()
+            .map(|request| request.intent_ref.as_str())
+            .collect::<Vec<_>>();
+        reviewed.sort_unstable();
+        requested.sort_unstable();
+        if requests.is_empty()
+            || reviewed != requested
+            || requested.windows(2).any(|pair| pair[0] == pair[1])
+        {
+            return Err(Error::InvalidConfig(
+                "gmail batch approval must cover exactly the reviewed sends, once each".to_owned(),
+            ));
+        }
+        let mut digests = Vec::with_capacity(requests.len());
+        for request in requests {
+            let (identity_ref, actor) = self.require_send_envelope(vault, request)?;
+            digests.push(canonical_mail_send_digest(request, identity_ref, actor)?);
+        }
+        vault.with_write_txn_grouped(|wtxn| {
+            digests
+                .into_iter()
+                .map(|digest| vault.approve_once_in_txn(wtxn, owner, digest))
+                .collect()
+        })
+    }
+
     /// Dispatches one member send through the recorded dispatch door, then
     /// records its thread passport and comm touch on delivery.
     ///
@@ -791,11 +855,25 @@ impl GmailDelegatedAdapter {
         self.require_send_grant()?;
         let identity_ref = request.channel_identity_ref.ok_or_else(invalid)?;
         self.require_active_row_matches_adapter(vault, &identity_ref)?;
+        // Whose mailbox it is comes from the binding head (OF-272); whether
+        // it may send is custody, on the local row.
+        let txn = vault.store.env.read_txn()?;
         let identity = vault
-            .get_channel_identity(&identity_ref)?
+            .get_channel_identity_in_txn(&txn, &identity_ref)?
             .ok_or_else(invalid)?;
+        let facts = crate::channel_identity::channel_identity_facts_in_txn(
+            &vault.store,
+            &txn,
+            &identity_ref,
+        )?
+        .ok_or_else(invalid)?;
+        drop(txn);
         let actor = request.actor.actor_entity_ref.ok_or_else(invalid)?;
-        if !request.intent.channel.trim().eq_ignore_ascii_case(EMAIL_CHANNEL)
+        if !request
+            .intent
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(EMAIL_CHANNEL)
             || !request.intent.verb.trim().eq_ignore_ascii_case("send")
             || request.intent_ref.trim().is_empty()
             || !request
@@ -804,7 +882,7 @@ impl GmailDelegatedAdapter {
                 .as_deref()
                 .is_some_and(|content_ref| content_ref.starts_with(GMAIL_SEND_PLAN_REF_PREFIX))
             || !identity.may_send()
-            || identity.binding().actor_ref() != Some(actor)
+            || facts.binding.actor_ref() != Some(actor)
             || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
         {
             return Err(invalid());
@@ -833,8 +911,8 @@ fn record_sent_thread(
         canonical_message_id(message_id)?,
         result.receipt.occurred_at,
     );
-    if let Some(identity) = vault.get_channel_identity(&identity_ref)?
-        && let Some(facet) = identity.binding().facet_ref()
+    if let Some(facts) = vault.channel_identity_facts(&identity_ref)?
+        && let Some(facet) = facts.binding.facet_ref()
     {
         input = input.with_facet(facet);
     }

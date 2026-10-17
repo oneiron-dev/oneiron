@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
 use super::{decode_recovery_artifact, seal_recovery_artifact};
-use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE};
+use crate::deletion::PENDING_TOMBSTONE;
 use crate::error::{ArtifactError, Error, Result};
-use crate::side_table::HexId;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::{EntityId, Vault};
 
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
@@ -284,6 +284,24 @@ pub struct CanonicalShellWorld {
     pub world: [u8; 16],
 }
 
+/// One room turn row a base window carries (OF-522), kept as the window holds
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalRoomTurn {
+    pub id: [u8; 16],
+    pub row: Vec<u8>,
+}
+
+/// One owner-signed custody transition a base window carries (OF-422): opaque
+/// signed and sealed bytes, kept as the window holds them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalCustodyTransition {
+    pub id: [u8; 16],
+    pub carrier: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalContainerManifest {
@@ -328,6 +346,14 @@ pub struct CanonicalSnapshot {
     /// an artifact with none encodes as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub suppressed_tasks: Vec<[u8; 16]>,
+    /// The base window's custody transitions (OF-422), by record id. Absent
+    /// when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custody_transitions: Vec<CanonicalCustodyTransition>,
+    /// The base window's room turn rows (OF-522), by turn id. Absent when
+    /// empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub room_turns: Vec<CanonicalRoomTurn>,
 }
 
 impl CanonicalSnapshot {
@@ -391,6 +417,8 @@ impl CanonicalSnapshot {
             "head_move_receipts",
             "note_forks",
             "note_proposals",
+            "custody",
+            "room_turns",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
@@ -448,9 +476,9 @@ fn mark_deleted_carriers_first(
             deleted.insert(*row?.0.id.as_bytes());
         }
         for row in &snapshot.entity_blobs {
-            if HARD_DELETE_MARKER
-                .get(&vault.store, &txn, &HexId(id(row.id)?))?
-                .is_some()
+            if vault
+                .store
+                .port_deletion_marked(&txn, DeletionMarker::HardDelete, &id(row.id)?)?
             {
                 deleted.insert(row.id);
             }
@@ -516,6 +544,8 @@ pub(crate) fn capture_canonical_window_within(
             "head_move_receipts",
             "note_forks",
             "note_proposals",
+            "custody",
+            "room_turns",
         ]
         .contains(&name.as_str())
     }) {
@@ -549,6 +579,8 @@ pub(crate) fn capture_canonical_window_within(
             .as_bytes(),
         },
         suppressed_tasks: Vec::new(),
+        custody_transitions: Vec::new(),
+        room_turns: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
@@ -571,6 +603,20 @@ pub(crate) fn capture_canonical_window_within(
             return Err(invalid("noncanonical edge key"));
         }
         snapshot.base_edges.push(edge);
+    }
+    for (key, row) in binary_rows_within(doc, "room_turns", budget)? {
+        snapshot.room_turns.push(CanonicalRoomTurn {
+            id: parse_id(&key)?,
+            row,
+        });
+    }
+    for (key, carrier) in binary_rows_within(doc, "custody", budget)? {
+        snapshot
+            .custody_transitions
+            .push(CanonicalCustodyTransition {
+                id: parse_id(&key)?,
+                carrier,
+            });
     }
     for (key, value) in binary_rows_within(doc, "tombstones", budget)? {
         snapshot.tombstones.push(CanonicalTombstone {
@@ -612,7 +658,11 @@ pub(crate) fn capture_canonical_window_within(
         .chain(snapshot.tombstones.iter().map(|row| row.id))
         .collect();
     for entity in candidates {
-        if let Some(value) = HARD_DELETE_MARKER.get(&vault.store, &txn, &HexId(id(entity)?))? {
+        if let Some(value) =
+            vault
+                .store
+                .port_deletion_marker(&txn, DeletionMarker::HardDelete, &id(entity)?)?
+        {
             if !crate::deletion::decode_tombstone_value(&value).is_hard() {
                 return Err(invalid("invalid hard delete marker"));
             }
@@ -641,8 +691,13 @@ pub(crate) fn capture_canonical_window_within(
         let entity = id(row.id)?;
         // Borrowed: only the stored row's header decides, so the body of a
         // projection under repair is never copied to answer it.
-        let stored = vault.store.entities.get(&txn, entity.as_bytes())?;
-        if crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, stored.as_deref())? {
+        let marked = match vault.store.port_entity_with_raw(&txn, &entity, |stored| {
+            crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, Some(stored))
+        })? {
+            Some(marked) => marked,
+            None => crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, None)?,
+        };
+        if marked {
             return Err(invalid("deleted row without its tombstone"));
         }
     }
@@ -793,8 +848,11 @@ pub(crate) fn capture_canonical_window_within(
             {
                 continue;
             }
-            let mapping = format!("m:dw:{}", id(entity.id)?.to_hex());
-            if vault.store.sync_state.get(&txn, &mapping)?.as_deref() != Some(window.as_bytes())
+            if vault
+                .store
+                .port_deletion_marker(&txn, DeletionMarker::WindowAddress, &id(entity.id)?)?
+                .as_deref()
+                != Some(window.as_bytes())
                 && carried.get(&id(entity.id)?.to_hex()).map(Vec::as_slice)
                     != Some(world.as_bytes().as_slice())
             {
@@ -858,6 +916,12 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     }
     for edge in &snapshot.base_edges {
         insert(&doc, "edges", &edge.key()?, &edge.value)?;
+    }
+    for row in &snapshot.custody_transitions {
+        insert(&doc, "custody", &id(row.id)?.to_hex(), &row.carrier)?;
+    }
+    for row in &snapshot.room_turns {
+        insert(&doc, "room_turns", &id(row.id)?.to_hex(), &row.row)?;
     }
     for tombstone in &snapshot.tombstones {
         insert(

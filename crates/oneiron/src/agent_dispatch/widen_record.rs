@@ -57,6 +57,16 @@ pub(super) enum WidenLanding {
     Workflow(AttemptId),
 }
 
+/// The board's refusal of a proposal (OF-568): who declined it, and when on
+/// the store's clock. A declined proposal never lands.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WidenDecline {
+    /// The board owner's actor id, hex.
+    pub by: String,
+    pub at: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WidenIntent {
@@ -75,6 +85,16 @@ pub(super) struct WidenIntent {
     /// The spawn's `budget` (OF-532), carved at approval like any launch.
     #[serde(default)]
     pub budget: Option<u64>,
+    /// The room the spawn works in (OF-531), re-proved at approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<crate::workspace_roster::RoomWork>,
+    /// The spawn's explicit team-run stamp (OF-540); absent inherits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<super::TeamRunStamp>,
+    /// The planner receipt the spawn was planned under (OF-541), frozen at
+    /// approval like the rest of the spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<super::SpawnPlanReceipt>,
 }
 
 impl WidenIntent {
@@ -98,6 +118,9 @@ impl WidenIntent {
             healer_case: spawn.healer_case.clone(),
             type_ref: spawn.type_ref.clone(),
             budget: spawn.budget,
+            room: spawn.room,
+            team: spawn.team.clone(),
+            plan: spawn.plan.clone(),
         })
     }
 
@@ -144,6 +167,9 @@ impl WidenIntent {
                 spend: None,
                 // A widened spawn is a child: it inherits its parent's origin.
                 origin_conversation: None,
+                room: self.room,
+                team: self.team.clone(),
+                plan: self.plan.clone(),
             },
         ))
     }
@@ -210,7 +236,41 @@ impl WidenRequest {
 pub(super) struct WidenRecord {
     pub version: u8,
     pub request: WidenRequest,
+    /// When the proposal was raised, on the store's clock. Outside the
+    /// request, so a retry of the same intent stays the same proposal.
+    pub recorded_at: u64,
     pub landed: Option<WidenLanding>,
+    pub declined: Option<WidenDecline>,
+}
+
+impl WidenRecord {
+    /// A proposal settles once: approved and landed, or declined.
+    pub(super) fn validate_settlement(&self) -> Result<()> {
+        if self.landed.is_some() && self.declined.is_some() {
+            return Err(invalid("widen proposal is both landed and declined"));
+        }
+        Ok(())
+    }
+}
+
+/// Each parent attempt's widen proposals raised at or after `since` that the
+/// board has not approved, pending or declined alike (the Coach's
+/// `misalignment` count, OF-568). A declined proposal is a board refusal and
+/// stays evidence; an approved one has landed, and an older one is outside
+/// the window. Key: the parent attempt's bytes.
+pub(crate) fn unlanded_widens_by_parent_since(
+    vault: &crate::Vault,
+    since: u64,
+) -> Result<std::collections::BTreeMap<[u8; 16], u64>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = std::collections::BTreeMap::new();
+    for (_, record) in WIDEN.scan(&vault.store, &rtxn)? {
+        if record.recorded_at >= since && record.landed.is_none() {
+            *out.entry(*record.request.intent.parent.as_bytes())
+                .or_default() += 1;
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Serialize, Deserialize)]

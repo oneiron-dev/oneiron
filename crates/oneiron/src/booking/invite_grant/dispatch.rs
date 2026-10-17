@@ -114,6 +114,7 @@ pub fn enqueue_confirm_invite(
         sequence: invite.sequence,
         ics_blob_ref: invite.ics_blob_ref.to_owned(),
         recipient: binding.recipient.clone(),
+        mention: None,
     };
 
     let admission = admit_calendar_invite(vault, actor, &payload, now).map_err(calendar_wrap)?;
@@ -355,22 +356,33 @@ fn active_identity_address(
         .entities_by_type(ENTITY_TYPE_CHANNEL_IDENTITY)
         .map_err(|error| engine_failure("channel identity scan", error))?
     {
+        // Channel, binding and address are the identity's facts, read from
+        // its `channel_identity.*` heads (OF-272); whether it may send is
+        // custody, on the local row.
+        let Some(facts) = vault
+            .channel_identity_facts(&id)
+            .map_err(|error| engine_failure("channel identity facts read", error))?
+        else {
+            continue;
+        };
+        if crate::counterparty_contact::normalize_channel_class(&facts.channel) != wanted
+            || facts.binding.actor_ref() != Some(actor)
+        {
+            continue;
+        }
         let Some(identity) = vault
             .get_channel_identity(&id)
             .map_err(|error| engine_failure("channel identity read", error))?
         else {
             continue;
         };
-        if !identity.may_send()
-            || crate::counterparty_contact::normalize_channel_class(identity.channel()) != wanted
-            || identity.binding().actor_ref() != Some(actor)
-        {
+        if !identity.may_send() {
             continue;
         }
         if found.is_some() {
             return Err(refused("multiple sending identities on this channel"));
         }
-        found = Some(identity.address_or_handle().to_owned());
+        found = Some(facts.address_or_handle);
     }
     Ok(found)
 }

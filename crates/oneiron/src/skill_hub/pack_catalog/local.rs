@@ -15,7 +15,9 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 pub const LOCAL_PACK_NAME: &str = "local";
 /// The `hub_ref` an owner's put records: the verb, not a hub.
 const PUT_REF: &str = "vault.packs.put";
-const LOCAL_PACK_MD: &str = "---\nname: local\ndescription: This vault's own hooks. It never publishes to a hub.\nversion: 1\nkind: capability\n---\n";
+// A plain manifest scalar may not hold `'` (`manifest::scalar`), so no
+// apostrophe in the description.
+const LOCAL_PACK_MD: &str = "---\nname: local\ndescription: The hooks of this vault. It never publishes to a hub.\nversion: 1\nkind: capability\n---\n";
 
 fn put_ref(source: &PackSource) -> Result<HubRef> {
     Ok(HubRef {
@@ -69,7 +71,7 @@ impl Vault {
         // The put is the owner's consent, advisories included: the tree's OSV
         // row is evidence on its hash, and holds nothing here.
         let advisories = self.pack_advisories(source, false, crate::unix_seconds_now())?;
-        self.with_write_txn_grouped(|txn| {
+        let disposition = self.with_write_txn_grouped(|txn| {
             let holder = owner.revalidate_in_txn(self, txn)?.to_hex();
             let at = crate::unix_seconds_now();
             let occurred = TimeRange { start: at, end: at };
@@ -105,7 +107,12 @@ impl Vault {
                 self.bind_pack_hooks_in_txn(txn, owner, source_id, source)?;
             }
             Ok(disposition)
-        })
+        })?;
+        // The bindings changed once the put committed.
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(disposition)
     }
 }
 

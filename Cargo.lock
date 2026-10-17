@@ -4928,15 +4928,18 @@ version = "0.20.5"
 dependencies = [
  "bitflags 2.13.2",
  "byteorder",
+ "chacha20poly1305",
+ "getrandom 0.4.3",
  "heed-traits",
  "heed-types",
  "libc",
- "lmdb-master-sys",
+ "lmdb-master3-sys",
  "once_cell",
  "page_size",
  "serde",
  "synchronoise",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -5120,7 +5123,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]
@@ -5649,7 +5652,7 @@ dependencies = [
  "tokio-websockets",
  "tracing",
  "url",
- "webpki-roots",
+ "webpki-roots 1.0.9",
  "ws_stream_wasm",
 ]
 
@@ -6274,10 +6277,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
-name = "lmdb-master-sys"
+name = "lmdb-master3-sys"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaeb9bd22e73bd1babffff614994b341e9b2008de7bb73bf1f7e9154f1978f8b"
+checksum = "78b1f49b7494125af9b87ddb83cb4828d4ddbaf83c3ed132d5ebd0d43d02f525"
 dependencies = [
  "cc",
  "doxygen-rs",
@@ -6860,7 +6863,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
- "webpki-roots",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]
@@ -7993,6 +7996,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
+ "image",
  "oneiron-container",
  "schemars 0.8.22",
  "serde",
@@ -8084,6 +8088,7 @@ dependencies = [
  "proptest",
  "quick-xml 0.42.0",
  "roxmltree",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -8176,6 +8181,7 @@ dependencies = [
  "security-framework-sys",
  "tempfile",
  "thiserror 2.0.20",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 
@@ -8209,6 +8215,7 @@ dependencies = [
 name = "oneiron-llm-gemini"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-core",
  "oneiron",
  "serde_json",
@@ -8244,11 +8251,17 @@ dependencies = [
 name = "oneiron-llm-own-server"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "futures-core",
  "oneiron",
+ "oneiron-mesh-transport",
  "oneiron-remote",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -8331,6 +8344,7 @@ dependencies = [
 name = "oneiron-organ-host"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "cms",
  "const-oid 0.9.6",
@@ -8338,12 +8352,15 @@ dependencies = [
  "ipnet",
  "libc",
  "oneiron",
+ "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
  "oneiron-spawn",
+ "p256",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
+ "rsa",
  "serde",
  "sha2 0.10.9",
  "tempfile",
@@ -8494,9 +8511,12 @@ dependencies = [
  "oneiron-keystore",
  "oneiron-linear",
  "oneiron-llm-anthropic",
+ "oneiron-llm-gemini",
  "oneiron-llm-openai",
+ "oneiron-llm-own-server",
  "oneiron-llm-systemone",
  "oneiron-mesh-transport",
+ "oneiron-organ-host",
  "oneiron-remote",
  "oneiron-spawn",
  "oneiron-vault-contract",
@@ -8541,7 +8561,11 @@ dependencies = [
 name = "oneiron-uniffi"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "oneiron",
+ "oneiron-remote",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "uniffi",
 ]
@@ -10062,7 +10086,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams 0.4.2",
  "web-sys",
- "webpki-roots",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]
@@ -12130,8 +12154,12 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite 0.26.2",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -12521,6 +12549,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.20",
  "utf-8",
@@ -13529,6 +13559,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]

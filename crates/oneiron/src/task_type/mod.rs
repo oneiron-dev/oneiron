@@ -27,12 +27,13 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 pub use placement::{
-    HEURISTIC_PLACEMENT_EXECUTOR, HeuristicPlacer, JEV_PLACEMENT_EXECUTOR, PLACEMENT_SKILL_ID,
-    PlacementOutcome, PlacementRequest, TaskTypePlacer, ensure_type_ref, place_task,
-    require_type_ref,
+    HEURISTIC_PLACEMENT_EXECUTOR, HEURISTIC_PLACEMENT_VERSION, PLACEMENT_QUESTION,
+    PLACEMENT_SKILL_ID, PlacementDecisions, PlacementOutcome, PlacementRequest, ensure_type_ref,
+    place_task, require_type_ref,
 };
 
 /// The one wire/value type for a type stamp (L08 contract, OF-540/OF-184/
@@ -45,11 +46,21 @@ pub use crate::learning::{ROOT_TYPE_NODE, TypeRef};
 
 /// The seven seed node ids, all children of the root, in canon order.
 pub const SEED_TYPES: [&str; 7] = [
-    "generate", "refine", "solve", "research", "judge", "build", "negotiate",
+    "generate",
+    "refine",
+    "solve",
+    "research",
+    "judge",
+    "build",
+    "negotiate",
 ];
 
 /// The root node id: every unsure placement lands here.
 pub const ROOT_NODE_ID: &str = "root";
+
+/// The derived-id domain of a node's [`EntityId`] spelling
+/// ([`TaskTypeNode::entity_id`]). Parts: the node id.
+const TYPE_NODE_ID_DOMAIN: &[u8] = b"oneiron.task_type.node.v1";
 
 /// The tree version [`TaskTypeTree::seeded`] starts at.
 pub const SEEDED_TREE_VERSION: u64 = 1;
@@ -219,7 +230,11 @@ pub enum DecisionAxis {
 }
 
 impl DecisionAxis {
-    pub const ALL: [Self; 3] = [Self::WinningPattern, Self::WinningModel, Self::TrustedCritic];
+    pub const ALL: [Self; 3] = [
+        Self::WinningPattern,
+        Self::WinningModel,
+        Self::TrustedCritic,
+    ];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -319,6 +334,13 @@ impl TaskTypeNode {
     #[must_use]
     pub fn is_live(&self) -> bool {
         self.merged_into.is_none()
+    }
+
+    /// This node's [`EntityId`] spelling, the one a TASK brief's `type_ref`
+    /// names it by: derived from the node id, so the vault tree and every
+    /// fork that holds the node spell it alike.
+    pub fn entity_id(&self) -> Result<EntityId> {
+        EntityId::derive(TYPE_NODE_ID_DOMAIN, &[self.node_id.as_bytes()])
     }
 
     /// True while this leaf's own data is too thin to read decisions from.
@@ -427,7 +449,12 @@ impl TaskTypeTree {
         for seed in SeedTaskType::ALL {
             nodes.insert(
                 seed.node_id().to_owned(),
-                TaskTypeNode::new(seed.node_id(), Some(ROOT_NODE_ID), seed.as_str(), Some(seed)),
+                TaskTypeNode::new(
+                    seed.node_id(),
+                    Some(ROOT_NODE_ID),
+                    seed.as_str(),
+                    Some(seed),
+                ),
             );
         }
         Self {
@@ -465,6 +492,16 @@ impl TaskTypeTree {
     #[must_use]
     pub fn node(&self, node_id: &str) -> Option<&TaskTypeNode> {
         self.nodes.get(node_id)
+    }
+
+    /// The node an [`EntityId`] spelling names, resolved through this tree
+    /// ([`TaskTypeNode::entity_id`]); `None` when this tree holds no such
+    /// node.
+    #[must_use]
+    pub fn node_by_entity(&self, id: EntityId) -> Option<&TaskTypeNode> {
+        self.nodes
+            .values()
+            .find(|node| node.entity_id().is_ok_and(|node_id| node_id == id))
     }
 
     /// Resolves a stamped ref to its live node, following `merged_into`
@@ -521,7 +558,10 @@ impl TaskTypeTree {
             if !node.is_thin() || node.parent.is_none() {
                 return self.type_ref(&node.node_id);
             }
-            cursor = node.parent.as_ref().and_then(|parent| self.nodes.get(parent));
+            cursor = node
+                .parent
+                .as_ref()
+                .and_then(|parent| self.nodes.get(parent));
         }
         self.root_ref()
     }
@@ -672,12 +712,12 @@ impl TaskTypeTree {
         if !a.is_live() || !b.is_live() || a.parent.is_none() || a.parent != b.parent {
             return false;
         }
-        DecisionAxis::ALL.iter().all(|axis| {
-            match (a.clear_winner(*axis), b.clear_winner(*axis)) {
+        DecisionAxis::ALL.iter().all(
+            |axis| match (a.clear_winner(*axis), b.clear_winner(*axis)) {
                 (Some(left), Some(right)) => left == right,
                 _ => true,
-            }
-        })
+            },
+        )
     }
 
     /// Merges two agreeing siblings back into their parent: counts fold up,
@@ -734,17 +774,20 @@ impl TaskTypeTree {
     /// vault tree's on any shared live node — the fork trigger.
     #[must_use]
     pub fn diverges_from(&self, vault: &Self) -> bool {
-        self.nodes.values().filter(|node| node.is_live()).any(|node| {
-            let Some(upstream) = vault.nodes.get(&node.node_id) else {
-                return false;
-            };
-            DecisionAxis::ALL.iter().any(|axis| {
-                matches!(
-                    (node.clear_winner(*axis), upstream.clear_winner(*axis)),
-                    (Some(mine), Some(theirs)) if mine != theirs
-                )
+        self.nodes
+            .values()
+            .filter(|node| node.is_live())
+            .any(|node| {
+                let Some(upstream) = vault.nodes.get(&node.node_id) else {
+                    return false;
+                };
+                DecisionAxis::ALL.iter().any(|axis| {
+                    matches!(
+                        (node.clear_winner(*axis), upstream.clear_winner(*axis)),
+                        (Some(mine), Some(theirs)) if mine != theirs
+                    )
+                })
             })
-        })
     }
 
     /// Forks this tree for one project. The fork carries the current shape
@@ -765,11 +808,7 @@ impl TaskTypeTree {
     /// Offers one leaf of this project fork back to `upstream`: promoted
     /// only when its held-out wins outnumber its held-out losses over at
     /// least [`PROMOTE_MIN_HELD_OUT_RUNS`] runs ("useful upstream?").
-    pub fn promote_leaf_to(
-        &self,
-        upstream: &mut Self,
-        node_id: &str,
-    ) -> Result<PromotionOutcome> {
+    pub fn promote_leaf_to(&self, upstream: &mut Self, node_id: &str) -> Result<PromotionOutcome> {
         let leaf = self
             .nodes
             .get(node_id)
@@ -946,41 +985,53 @@ impl From<TypeTree> for TaskTypeTree {
     }
 }
 
-/// The tree in force for a project: its fork if it has one, else the vault
-/// tree. `None` is the vault tree. No stored-tree table exists yet, so a
-/// vault with no stored tree reads the seed tree (version 1) and no
-/// project fork is found; the fork value operations are on
-/// [`TaskTypeTree`].
-pub fn type_tree(
-    _vault: &crate::Vault,
-    _project: Option<crate::entity_id::EntityId>,
-) -> Result<TypeTree> {
-    Ok(TypeTree::seeded())
+/// The tree in force for a project (OF-541): the one live tree task
+/// create, spawn dispatch and the planner read, stored as data inside the
+/// team-shape skill ([`crate::agent_dispatch::load_team_type_tree`]): the
+/// project's admitted fork, else the vault skill's newest admitted
+/// revision, else the seed tree. `None` is the vault tree.
+pub fn type_tree(vault: &crate::Vault, project: Option<EntityId>) -> Result<TypeTree> {
+    Ok(TypeTree::from(crate::agent_dispatch::load_team_type_tree(
+        vault, project,
+    )?))
 }
 
-/// Missing is invalid, never untyped; an unknown node or a wrong tree
-/// version is invalid. (The argument is a required [`TypeRef`], so a
-/// caller with no stamp cannot call this at all.)
+/// Missing is invalid, never untyped; an unknown node, a merged-away one,
+/// or a version past the tree in force is invalid. A stamp keeps the
+/// version it was placed at, so one read at an earlier version of the live
+/// tree still validates while the tree holds its node. (The argument is a
+/// required [`TypeRef`], so a caller with no stamp cannot call this at
+/// all.)
 pub fn validate_type_ref(
     vault: &crate::Vault,
-    project: Option<crate::entity_id::EntityId>,
+    project: Option<EntityId>,
     r: &TypeRef,
 ) -> Result<()> {
     r.validate()?;
     let tree = type_tree(vault, project)?;
-    tree.inner.validate_current_ref(&TaskTypeRef::from(r))
+    let stamp = TaskTypeRef::from(r);
+    if stamp.tree_version >= tree.inner.version {
+        return tree.inner.validate_current_ref(&stamp);
+    }
+    match tree.inner.node(&stamp.node_id) {
+        Some(_) => Ok(()),
+        None => Err(invalid_type_ref("typeRef names a node outside the tree")),
+    }
 }
 
 /// One routed typed judgment at spawn: places `request` against the tree
 /// in force and returns the stamp in the learning spelling. Unsure
-/// resolves to the tree root, never to `None`.
+/// resolves to the tree root, never to `None`. With the host's
+/// `decisions`, the placement ladder routes past the skill's rule rung;
+/// without them, the rule rung reads alone ([`place_task`]).
 pub fn place_type_ref(
     vault: &crate::Vault,
-    project: Option<crate::entity_id::EntityId>,
+    project: Option<EntityId>,
     request: &PlacementRequest,
+    decisions: Option<&PlacementDecisions<'_>>,
 ) -> Result<TypeRef> {
     let tree = type_tree(vault, project)?;
-    let outcome = place_task(&tree.inner, request);
+    let outcome = place_task(&tree.inner, request, decisions);
     Ok(TypeRef::from(&outcome.type_ref))
 }
 

@@ -125,7 +125,8 @@ impl Vault {
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )?;
             if preset.mode() == SpacePostingMode::PostAsOwner
-                && (!record.may_send() || !posting_supported(&identity_channel(self, txn, identity)?))
+                && (!record.may_send()
+                    || !posting_supported(&identity_channel(self, txn, identity)?))
             {
                 return Err(invalid_autonomy());
             }

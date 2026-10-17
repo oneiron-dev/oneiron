@@ -17,9 +17,9 @@ use super::{
     validate_skill_body_overwrite,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RecordError, RegistryError, Result};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,
@@ -71,6 +71,11 @@ pub(in crate::batch) fn apply_put(
     } = options.replication;
     let hub_sync_imported = options.hub.sync_imported;
     let claim_gate_prechecked = options.decision.prechecked;
+    // A record kept only for a refused privacy erasure takes no change, and
+    // the refusal names no hold, which could reveal a secret order (OF-470 C6).
+    if crate::store::legal_hold::use_limit_in_txn(store, wtxn, &id)?.is_some() {
+        return Err(crate::error::Error::EntityNotFound);
+    }
     crate::dreamer_runner::authority::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
@@ -151,6 +156,10 @@ pub(in crate::batch) fn apply_put(
     // Registered maintenance kinds with pinned body schemas get the same
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
+    //
+    // PERSON holds identity and a FACET is a scenario mask: the one local
+    // identity-body refusal runs once here, ahead of the per-kind arms.
+    crate::batch::validate_local_identity_body(entity_type, data)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
     let mut hub_origin_marker = None;
@@ -328,16 +337,6 @@ pub(in crate::batch) fn apply_put(
         new_agent_definition = Some(decoded);
     } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
         crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;
-    } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
-        return Err(Error::InvalidClaimBody(
-            "CompanionRecord storage retired; use PERSON/FACET",
-        ));
-    } else if entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(data)
-    {
-        return Err(Error::InvalidClaimBody(
-            "retired companion-shaped FACET; use PERSON identity and scenario masks",
-        ));
     } else if entity_type == ENTITY_TYPE_TASK {
         // The role's TREE invariants are not judged here: `ChildOf` nesting
         // belongs to the batch's one final-state gate
@@ -391,7 +390,7 @@ pub(in crate::batch) fn apply_put(
         && !crate::registry::is_delete_protected_engine_record(entity_type)
         && revision_put.is_none()
         && !crate::dreamer_runner::authority::is_base_agent_actor(&id)?
-        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+        && store.port_deletion_marked(wtxn, DeletionMarker::RowFence, &id)?
     {
         return Err(Error::InvariantViolation(
             "a replicated put cannot restore an entity deleted here",
@@ -730,7 +729,7 @@ pub(in crate::batch) fn apply_put(
     // has its body is fenced by an accepted delete awaiting its retry, and a
     // local edit does not withdraw that delete.
     if !replicated
-        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+        && store.port_deletion_marked(wtxn, DeletionMarker::RowFence, &id)?
         && crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
             .is_none_or(|old| old.len() == ENTITY_METADATA_HEADER_LEN)
     {

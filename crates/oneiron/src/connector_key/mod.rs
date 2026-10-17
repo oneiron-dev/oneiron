@@ -19,6 +19,7 @@ mod manifest_drift;
 mod meter;
 pub mod qualification;
 mod record;
+mod setup;
 mod slate;
 mod slate_draft;
 mod slate_setting;
@@ -49,6 +50,12 @@ pub use self::record::{
     ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust,
     EffectorBudgetReservePolicy, EffectorBudgetWindow, PendingConnectorCharter,
     PendingConnectorManifest,
+};
+pub use self::setup::{
+    BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,
+    NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PackConnectionCheck,
+    PackConnectionEvidence, PackConnectionVerifier, ProviderConnectionChecks,
+    SLACK_AUTH_TEST_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 

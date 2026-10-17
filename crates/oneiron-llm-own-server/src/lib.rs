@@ -1,4 +1,9 @@
 //! Own-server LlmBackend. Transport belongs to oneiron-remote; policy stays above the trait.
+//! [`mesh`] is the transport to a model on another of the owner's nodes (OF-575 MESH).
+pub mod mesh;
+pub use mesh::{
+    LLM_ALPN, LlmMeshHandler, LlmMeshService, LlmNodes, MeshLlmTransport, VaultLlmNodes,
+};
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmGenerateFuture,
     LlmRequest, LlmStreamResult, ModelId, ModelLocality,
@@ -86,6 +91,8 @@ fn validate_terminal(
             } => call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object(),
             // Tool results are history from a tool, never an assistant generation.
             oneiron::ContentPart::ToolResult { .. } => true,
+            // Input audio is history, never an assistant generation.
+            oneiron::ContentPart::Audio { .. } => true,
             oneiron::ContentPart::Image { media_type, image } => {
                 media_type.trim().is_empty()
                     || match image {

@@ -64,17 +64,45 @@ impl Vault {
         since: Option<FactPositionHex>,
         limit: usize,
     ) -> Result<Vec<HookReplayEntry>> {
+        self.hooks_replay_body(runtime, binding, None, since, limit)
+    }
+
+    /// [`Self::hooks_replay`] with `body` run in place of the bound one: a
+    /// regen candidate over the hook's golden set (ARCH-0080 §8).
+    pub(super) fn hooks_replay_body(
+        &self,
+        runtime: &dyn HookBodyRuntime,
+        binding: EntityId,
+        body: Option<String>,
+        since: Option<FactPositionHex>,
+        limit: usize,
+    ) -> Result<Vec<HookReplayEntry>> {
         let (binding_id, row) = self
             .pack_hook_bindings()?
             .into_iter()
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
+        self.hooks_replay_binding(runtime, binding_id, &row, body, since, limit)
+    }
+
+    /// [`Self::hooks_replay_body`] over `row` as given, stored or not: a hub
+    /// hook replays as the binding its Candidate pack would get, as its test
+    /// (ARCH-0080 §9).
+    pub(crate) fn hooks_replay_binding(
+        &self,
+        runtime: &dyn HookBodyRuntime,
+        binding_id: EntityId,
+        row: &PackHookBinding,
+        body: Option<String>,
+        since: Option<FactPositionHex>,
+        limit: usize,
+    ) -> Result<Vec<HookReplayEntry>> {
         if row.selector.phase != HookPhase::Fact {
             return Err(Error::InvalidConfig("only a fact hook replays".to_owned()));
         }
         let since = since.as_ref().map(FactPositionHex::parse).transpose()?;
         let limit = limit.clamp(1, MAX_REPLAY_ENTRIES);
-        let grant = effective_grant(self, binding_id, &row)?;
+        let grant = effective_grant(self, binding_id, row)?;
         let memory = self.memory(grant.reader, filter::edge_class(grant.reader_class));
         let lane = memory
             .read_lane(ClaimReadStatus::Recorded)
@@ -83,18 +111,24 @@ impl Vault {
             vault: self,
             runtime,
             binding_id,
-            binding: &row,
+            binding: row,
             grant: &grant,
-            body: self
-                .pack_hook_body(&row)
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| {
-                    String::from_utf8(bytes).map_err(|_| "hook body is not UTF-8".to_owned())
-                }),
+            body: match body {
+                Some(body) => Ok(body),
+                None => self
+                    .pack_hook_body(row)
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        String::from_utf8(bytes).map_err(|_| "hook body is not UTF-8".to_owned())
+                    }),
+            },
         };
         let starts: Vec<_> = match since {
             Some(position) => vec![(position.source(), Some(position))],
-            None => FactSource::ALL.iter().map(|source| (*source, None)).collect(),
+            None => FactSource::ALL
+                .iter()
+                .map(|source| (*source, None))
+                .collect(),
         };
         let mut entries = Vec::new();
         for (source, mut after) in starts {
@@ -166,7 +200,9 @@ impl Replay<'_> {
                     served += 1;
                     let live = read::answer(lane, self.grant, request, &mut scratch)?;
                     let hash = blake3::hash(live.as_bytes()).to_hex();
-                    if pinned.is_some_and(|pin| pin.request == request && pin.response_hash == hash.as_str()) {
+                    if pinned.is_some_and(|pin| {
+                        pin.request == request && pin.response_hash == hash.as_str()
+                    }) {
                         Ok(live)
                     } else {
                         missing.get_or_insert_with(|| request.to_owned());
@@ -183,7 +219,12 @@ impl Replay<'_> {
                 reason: format!("a read's history is gone: {}", bounded(&request)),
             };
         }
-        ran(judge(self.binding, result), Some(memo.outcome.clone()), true, false)
+        ran(
+            judge(self.binding, result),
+            Some(memo.outcome.clone()),
+            true,
+            false,
+        )
     }
 
     /// No run pinned this entry. The live entity stands in only while its
@@ -193,7 +234,14 @@ impl Replay<'_> {
             return Ok(None);
         };
         let actor = filter::actor_class(self.vault, entry.actor)?;
-        if !filter::fact_matches(&self.binding.selector, entry.kind, seen.claim.as_ref(), actor) {
+        if !filter::fact_matches(
+            self.vault,
+            &self.binding.selector,
+            entry.kind,
+            entry.entity,
+            seen.claim.as_ref(),
+            actor,
+        )? {
             return Ok(None);
         }
         if entry.body_hash != Some(seen.body_hash) {
@@ -202,8 +250,20 @@ impl Replay<'_> {
                     .to_owned(),
             }));
         }
-        let now = self.vault.store.clock.now_recorded_at().saturating_mul(1_000);
-        let input = input_json(self.binding_id, self.binding, entry, actor, &seen.claim_json, now)?;
+        let now = self
+            .vault
+            .store
+            .clock
+            .now_recorded_at()
+            .saturating_mul(1_000);
+        let input = input_json(
+            self.binding_id,
+            self.binding,
+            entry,
+            actor,
+            &seen.claim_json,
+            now,
+        )?;
         let mut pins = Vec::new();
         let result = match &self.body {
             Ok(body) => {

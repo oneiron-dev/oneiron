@@ -61,11 +61,50 @@ pub struct StandingAnswer {
     pub source_frontier: [u8; 32],
 }
 
-struct Source {
+/// What one source row puts on an answer resting on it.
+pub(super) struct Source {
     kind: u8,
     claim: Option<ClaimBody>,
     position: (EntityId, EntityId, EntityId),
     sensitivity: u8,
+}
+
+impl Source {
+    /// The row `raw` of type `kind` under its record Scope `scope`: its one
+    /// facet, project and world, its sensitivity and, for a claim, its body.
+    /// A Scope with no single position bounds no answer.
+    pub(super) fn of_row(kind: u8, raw: &[u8], scope: &crate::federation::Scope) -> Result<Self> {
+        let position = (
+            singleton(&scope.facets)?,
+            singleton(&scope.audience)?,
+            singleton(&scope.worlds)?,
+        );
+        let sensitivity = match scope.sensitivity {
+            crate::federation::SensitivityCeiling::AtMost(level) => match level {
+                crate::federation::Sensitivity::Public => 0,
+                crate::federation::Sensitivity::Private => 1,
+                crate::federation::Sensitivity::Sensitive => 2,
+                crate::federation::Sensitivity::Restricted => 3,
+            },
+            crate::federation::SensitivityCeiling::Bottom => {
+                return Err(invalid("unrepresentable evidence sensitivity"));
+            }
+        };
+        let claim = if kind == crate::registry::ENTITY_TYPE_CLAIM {
+            Some(crate::claim::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )?)
+        } else {
+            None
+        };
+        Ok(Self {
+            kind,
+            claim,
+            position,
+            sensitivity,
+        })
+    }
 }
 
 fn singleton(axis: &crate::federation::ScopeAxis<crate::federation::ScopeId>) -> Result<EntityId> {
@@ -219,34 +258,7 @@ fn sources_in_txn(
         {
             return Err(Error::EntityNotFound);
         }
-        let position = (
-            singleton(&scope.facets)?,
-            singleton(&scope.audience)?,
-            singleton(&scope.worlds)?,
-        );
-        let sensitivity = match scope.sensitivity {
-            crate::federation::SensitivityCeiling::AtMost(level) => match level {
-                crate::federation::Sensitivity::Public => 0,
-                crate::federation::Sensitivity::Private => 1,
-                crate::federation::Sensitivity::Sensitive => 2,
-                crate::federation::Sensitivity::Restricted => 3,
-            },
-            crate::federation::SensitivityCeiling::Bottom => {
-                return Err(invalid("unrepresentable evidence sensitivity"));
-            }
-        };
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        let claim = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            Some(crate::claim::decode_claim_body(body, true)?)
-        } else {
-            None
-        };
-        sources.push(Source {
-            kind: header.entity_type,
-            claim,
-            position,
-            sensitivity,
-        });
+        sources.push(Source::of_row(header.entity_type, &raw, &scope)?);
     }
     Ok((*hasher.finalize().as_bytes(), sources))
 }
@@ -292,7 +304,7 @@ pub fn backfill_standing_answer(
         expected_version,
         actor,
         input,
-        None,
+        Measured::Bare,
         &[],
         now,
     )
@@ -407,10 +419,64 @@ pub(super) fn backfill_graph_answer(
         reference.version,
         actor,
         input,
-        Some((versions, prediction.cost_per_thousand)),
+        Measured::Graph(versions, prediction.cost_per_thousand),
         proposals,
         now,
     )
+}
+
+/// [`backfill_graph_answer`] for a full ladder decision: its band, readings,
+/// clock and owner-ask reason stay its own, over the engine's source, image
+/// and audio versions.
+pub(super) fn backfill_graph_decision(
+    vault: &Vault,
+    principal: EntityId,
+    reference: super::GraphQuestionRef,
+    actor: WriteActor,
+    context: super::GraphUnitContext,
+    frontier: [u8; 32],
+    images: &[crate::llm::decision::DecisionImage],
+    audio: &[crate::llm::decision::DecisionAudio],
+    decision: TypedDecision,
+    proposals: &[AnswerRecord],
+    now: u64,
+) -> Result<AnswerRecord> {
+    let decision = super::graph_ask::decided(&context, images, audio, decision);
+    let input = StandingAnswer {
+        unit: context.unit,
+        answer: decision.answer.clone(),
+        probability: decision.probability,
+        evidence: context
+            .sources
+            .iter()
+            .skip(1)
+            .map(|source| source.id)
+            .collect(),
+        providers: decision.receipt.providers.clone(),
+        paired: decision.receipt.paired.clone(),
+        source_frontier: frontier,
+    };
+    backfill_answer(
+        vault,
+        principal,
+        reference.id,
+        reference.version,
+        actor,
+        input,
+        Measured::Decided(Box::new(decision)),
+        proposals,
+        now,
+    )
+}
+
+/// What the engine pins beside a standing answer's providers.
+enum Measured {
+    /// Nothing more: a host's own backfill.
+    Bare,
+    /// A graph prediction's source versions and cost.
+    Graph(Vec<crate::llm::decision::EvidenceVersion>, f64),
+    /// A full ladder decision, its evidence versions already the engine's.
+    Decided(Box<TypedDecision>),
 }
 
 fn backfill_answer(
@@ -420,7 +486,7 @@ fn backfill_answer(
     expected_version: u32,
     actor: WriteActor,
     input: StandingAnswer,
-    measurement: Option<(Vec<crate::llm::decision::EvidenceVersion>, f64)>,
+    measurement: Measured,
     proposals: &[AnswerRecord],
     now: u64,
 ) -> Result<AnswerRecord> {
@@ -523,7 +589,7 @@ fn backfill_answer(
             }
             return Ok(answer);
         }
-        let answer = AnswerRecord {
+        let mut answer = AnswerRecord {
             claim: EntityId::now(),
             unit: input.unit,
             decision: TypedDecision {
@@ -540,13 +606,12 @@ fn backfill_answer(
                     providers: input.providers,
                     band: record.definition.dial.band,
                     band_version: 0,
-                    evidence_versions: measurement
-                        .as_ref()
-                        .map_or_else(Vec::new, |(versions, _)| versions.clone()),
-                    cost_per_thousand: measurement.as_ref().map(|(_, cost)| *cost),
+                    evidence_versions: Vec::new(),
+                    cost_per_thousand: None,
                     paired: input.paired,
                     person: Vec::new(),
                     time: None,
+                    images: Vec::new(),
                 },
                 human_ask: None,
             },
@@ -554,6 +619,24 @@ fn backfill_answer(
             source_kind: sources[0].kind,
             answered_at: now,
         };
+        match &measurement {
+            Measured::Bare => {}
+            Measured::Graph(versions, cost) => {
+                answer.decision.receipt.evidence_versions = versions.clone();
+                answer.decision.receipt.cost_per_thousand = Some(*cost);
+            }
+            Measured::Decided(decided) => {
+                let receipt = &mut answer.decision.receipt;
+                receipt.band = decided.receipt.band;
+                receipt.band_version = decided.receipt.band_version;
+                receipt.evidence_versions = decided.receipt.evidence_versions.clone();
+                receipt.cost_per_thousand = decided.receipt.cost_per_thousand;
+                receipt.person = decided.receipt.person.clone();
+                receipt.time = decided.receipt.time.clone();
+                answer.decision.in_band = decided.in_band;
+                answer.decision.human_ask = decided.human_ask;
+            }
+        }
         let encoded = encode(&answer)?;
         let value = rmpv::decode::read_value(&mut encoded.as_slice())
             .map_err(|_| Error::CorruptedIndex("standing answer encoding"))?;
@@ -605,6 +688,13 @@ fn backfill_answer(
             },
             &answer,
         )?;
+        super::arrival::watch_sources(
+            &vault.store,
+            txn,
+            question,
+            answer.unit,
+            &answer.decision.evidence,
+        )?;
         QUESTION_BACKFILL.put(
             &vault.store,
             txn,
@@ -617,7 +707,10 @@ fn backfill_answer(
     })
 }
 
-fn constrain_sources(
+/// Bounds `candidate` by every source it rests on: their one position, the
+/// highest sensitivity, the claims' scope terms and relationship. Returns the
+/// sources' met taint.
+pub(super) fn constrain_sources(
     candidate: &mut ClaimCandidate,
     sources: &[Source],
     principal: EntityId,

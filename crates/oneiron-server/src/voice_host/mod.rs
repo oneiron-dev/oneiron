@@ -8,13 +8,27 @@
 //! The wake supervisor attaches this host to its existing backend and pass
 //! meter through `oneiron_driver::PassAttachmentSource` (see `attachment`).
 //! Serving still requires an owner-admitted stream and real output seams.
+//! With [`VoiceServeBindings::with_media`] the host also hears and speaks
+//! itself on the vault's live media routes (`media_bridge`), and speaks the
+//! brain's reply past the session's sentence safeguards (`speech`).
 
 mod attachment;
+mod backend;
+mod boot;
+mod brain;
 mod connection;
 mod extraction;
+mod media_bridge;
 mod serve_bindings;
+mod speech;
+mod wire;
 
+pub(crate) use boot::VoiceBoot;
+pub use brain::{ChatBrain, ChatBrainBindings};
+pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
+pub use speech::{PlayoutFrame, VoiceBrainOut, VoicePlayout};
+pub use wire::VoiceWireBindings;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -73,7 +87,9 @@ struct SessionState {
 }
 
 pub struct VoiceHost {
-    state: Mutex<SessionState>,
+    /// Shared only with the playout frames it hands over, which read it
+    /// again at dequeue and never keep it alive.
+    state: Arc<Mutex<SessionState>>,
     extractor: TinyExtractor,
     shutdown: ManagedShutdown,
     /// The vault's call-mode deadline: every speculative fire and finalize
@@ -128,6 +144,7 @@ impl VoiceHost {
             return Err(HostError::Stopped);
         }
         let extractor = TinyExtractor::new(
+            Arc::clone(&vault),
             runtime,
             bindings.backend,
             bindings.budget,
@@ -136,11 +153,11 @@ impl VoiceHost {
         let call_deadline = vault.call_mode_deadline();
         Ok(Self {
             call_deadline,
-            state: Mutex::new(SessionState {
+            state: Arc::new(Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,
                 open: None,
                 next_handle: 0,
-            }),
+            })),
             extractor,
             shutdown: bindings.shutdown,
         })
@@ -250,7 +267,7 @@ impl Drop for VoiceHost {
     fn drop(&mut self) {
         // Memory cleanup even when the owning connection future is dropped.
         // Remote output cancellation still requires the owner's dispatch/ACK.
-        if let Ok(state) = self.state.get_mut() {
+        if let Ok(mut state) = self.state.lock() {
             let _stop = state.core.end();
             state.open = None;
         }

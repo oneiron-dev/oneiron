@@ -1,7 +1,8 @@
 //! Signed host-scheduled T1 runs. Broken/unsigned output is silent, never authority.
 use super::{
-    DeterministicDetector, DiagnosticEvent, DiagnosticWorkingSet, MAX_EVENTS_PER_RUN,
-    decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
+    DeterministicDetector, DiagnosticEvent, DiagnosticEventClass, DiagnosticWorkingSet,
+    MAX_EVENTS_PER_RUN, decode_diagnostic_event_body, diagnostic_event_id,
+    encode_diagnostic_event_body,
 };
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -153,7 +154,8 @@ impl Vault {
         Ok(ids)
     }
     /// Only locally verified scheduled tripwires can feed the future auto arm.
-    /// This is eligibility, not permission to execute a repair.
+    /// This is eligibility, not permission to execute a repair. An
+    /// agent-health event never feeds it, signed or not (OF-568).
     pub fn is_signed_tripwire(&self, id: &EntityId) -> Result<bool> {
         let run = {
             let txn = self.store.env.read_txn()?;
@@ -171,8 +173,10 @@ impl Vault {
             };
             run
         };
-        Ok(self
-            .verified_run(&run)?
-            .is_some_and(|events| events.iter().any(|(event_id, _)| event_id == id)))
+        Ok(self.verified_run(&run)?.is_some_and(|events| {
+            events.iter().any(|(event_id, event)| {
+                event_id == id && event.event_class != DiagnosticEventClass::AgentHealth
+            })
+        }))
     }
 }

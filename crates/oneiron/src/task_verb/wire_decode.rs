@@ -55,6 +55,90 @@ pub(crate) fn leader_task_body_in(
     Ok((body.label, body.spec))
 }
 
+/// The placed type stamp and typed brief of a leader's open task promise,
+/// read under the same checks as [`leader_task_body_in`]: what the live
+/// planner reads as the leader's need, care, notes and pins (OF-389).
+pub(crate) fn leader_task_brief_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+    leader: EntityId,
+) -> Result<(
+    crate::task_type::TaskTypeRef,
+    Option<super::brief::QueueTaskBrief>,
+)> {
+    leader_task_body_in(vault, txn, task_ref, leader)?;
+    let body = task_verb_body_in(vault, txn, task_ref)?.ok_or(Error::EntityNotFound)?;
+    Ok((
+        body.resolved_type_ref(),
+        body.brief.map(|stored| stored.brief),
+    ))
+}
+
+/// Whether the TASK reports STUCK (OF-220). The Coach's agent-health review
+/// (OF-568) reads a blocked task as the agent's own honest report, never as
+/// silence.
+pub(crate) fn task_is_blocked_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<bool> {
+    Ok(task_verb_body_in(vault, txn, task_ref)?
+        .is_some_and(|body| matches!(body.state, Some(TaskExecutionState::Blocked { .. }))))
+}
+
+/// The evidence a Done TASK's done-means needs: each `yes_if_all`
+/// criterion's `evidence_ref`. `None` unless the TASK settled Completed under
+/// a typed brief. The Coach's agent-health review (OF-568) reads it for
+/// `unsupported_done`: a ref that no longer resolves is missing evidence.
+pub(crate) fn done_task_evidence_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(body) = task_verb_body_in(vault, txn, task_ref)? else {
+        return Ok(None);
+    };
+    let completed = matches!(
+        body.state.as_ref().and_then(TaskExecutionState::terminal),
+        Some(terminal) if terminal.disposition == TaskTerminalDisposition::Completed
+    );
+    let Some(stored) = body.brief.filter(|_| completed) else {
+        return Ok(None);
+    };
+    Ok(Some(
+        stored
+            .brief
+            .success
+            .yes_if_all
+            .iter()
+            .filter_map(|criterion| criterion.evidence_ref)
+            .collect(),
+    ))
+}
+
+/// What one TASK asks, as text: its label, its spec and its typed brief
+/// (OF-380). The Coach's code-fix replay rebuilds a failed agent's call from
+/// it, and the export's verbatim guard checks an invented example against
+/// it. `None` when the row is no TASK.
+pub(crate) fn task_text_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<String>> {
+    let Some(body) = task_verb_body_in(vault, txn, task_ref)? else {
+        return Ok(None);
+    };
+    let mut parts: Vec<String> = body.label.into_iter().collect();
+    if !body.spec.is_nil() {
+        parts.push(body.spec.to_string());
+    }
+    if let Some(stored) = body.brief {
+        parts.extend(serde_json::to_string(&stored.brief).ok());
+    }
+    Ok(Some(parts.join("\n")))
+}
+
 /// Transaction-scoped body read. The custody seal `get_raw` applies is not
 /// needed here: a non-TASK type byte returns `None` two lines below, so a
 /// SECRET_CUSTODY row can never be decoded through this door.
@@ -226,7 +310,23 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
         brief: task_body_optional(entries, "brief")?
             .map(decode_stored_brief)
             .transpose()?,
+        subproject_ref: task_body_optional(entries, "subproject_ref")?
+            .map(|value| decode_entity_ref(value, "tasks.body.subproject_ref"))
+            .transpose()?,
+        team: task_body_optional(entries, "team")?
+            .map(decode_team_stamp)
+            .transpose()?,
     })
+}
+
+/// Inverse of `wire_encode::team_stamp_value`: a stamp `TeamReceipt` would
+/// refuse is a corrupt body.
+fn decode_team_stamp(value: &Value) -> Result<crate::agent_dispatch::TeamRunStamp> {
+    let bytes = super::wire_encode::canonical_bytes(value);
+    let team: crate::agent_dispatch::TeamRunStamp = rmp_serde::from_slice(&bytes)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.body.team")))?;
+    team.validate()?;
+    Ok(team)
 }
 
 /// Inverse of `wire_encode::task_refusal_record_value`.

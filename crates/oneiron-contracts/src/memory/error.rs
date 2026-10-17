@@ -4,7 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ClaimError, Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError};
+use crate::error::{
+    ClaimError, Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError, VerbHookStop,
+};
 
 /// Stable facade error codes, mirroring the `oneiron-server`
 /// `ApiErrorDetails` code vocabulary (S8).
@@ -24,6 +26,10 @@ pub const MEMORY_CODE_INTERNAL: &str = "INTERNAL_SERVER_ERROR";
 
 /// `recall(Deep)` called without a budget lease (W4/C4 lease rule).
 pub const MEMORY_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
+
+/// An effect named a person through a mention that is not settled yet
+/// (OF-123). The caller settles it with `self.identity.settle`, then acts.
+pub const MEMORY_CODE_IDENTITY_UNSETTLED: &str = "IDENTITY_UNSETTLED";
 
 /// A paid call's budget line cannot cover it: the line the host admitted the
 /// request on is spent, or the vault's budget policy refuses the call. Distinct
@@ -81,6 +87,19 @@ pub const MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER: &str = "VAULT_LOCKED_SINGLE_WR
 /// `replacement` the error carries (EIRI-ARCH-0002 §The contract).
 pub const MEMORY_CODE_WRONG_ROOT: &str = "WRONG_ROOT";
 
+/// A verb hook asked before the verb ran (ARCH-0080 §3): the verb waits on an
+/// open ask, and the refusal's `hook` names the invocation and the ask. A
+/// retry with the same invocation answers the same ask, never a second one.
+/// Distinct from `FORBIDDEN`: nothing was refused, the verb is only waiting,
+/// like a gate's pending write.
+pub const MEMORY_CODE_PENDING_ASK: &str = "PENDING_ASK";
+/// A write named a record ref that does not resolve under its writer's own
+/// scoped read (OF-063): invented, missing and unreadable are this one
+/// refusal. The message names the field pointer, never the ref. The write
+/// never ran, and the refusal was receipted on its own write before this
+/// error left the engine.
+pub const MEMORY_CODE_INVENTED_REFERENCE: &str = "INVENTED_REFERENCE";
+
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
 /// engine→binding error mapping (S8); the HTTP mapping stays server-side.
@@ -136,6 +155,11 @@ pub struct MemoryError {
     /// the same reason `gate_denial` is.
     #[serde(flatten)]
     pub wrong_root: Option<Box<MemoryWrongRoot>>,
+    /// The verb hook's stop behind this refusal (ARCH-0080 §3): skipped,
+    /// pending on an ask, or hidden. Boxed for the same reason `gate_denial`
+    /// is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<Box<VerbHookStop>>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -188,6 +212,7 @@ impl MemoryError {
             read_receipt: None,
             policy_denial: None,
             wrong_root: None,
+            hook: None,
         }
     }
 
@@ -270,6 +295,51 @@ impl MemoryError {
     }
 }
 
+impl MemoryError {
+    /// A verb hook's stop as the refusal a caller reads: a skip is the
+    /// `INVALID_STATE` family with the hook's reason, an ask is
+    /// `PENDING_ASK`, a hidden result is `FORBIDDEN`. A call settlement
+    /// already ran is `INVALID_STATE` at a door that cannot answer with its
+    /// result, and its own code when it failed. The typed stop rides in
+    /// `hook`.
+    fn verb_hook(stop: VerbHookStop) -> Self {
+        if let VerbHookStop::CompletedWithError { code, message, .. } = &stop {
+            return Self {
+                hook: Some(Box::new(stop.clone())),
+                ..Self::new(
+                    code,
+                    message.clone(),
+                    &[
+                        "This invocation already ran once its hook's ask was answered; call again with a new invocation.",
+                    ],
+                )
+            };
+        }
+        let (code, suggestion) = match &stop {
+            VerbHookStop::Skipped { .. } => (
+                MEMORY_CODE_INVALID_STATE,
+                "A verb hook skipped this call for the reason given; change the call, or ask the vault owner about the hook.",
+            ),
+            VerbHookStop::Pending { .. } => (
+                MEMORY_CODE_PENDING_ASK,
+                "Wait for the ask to be answered, then retry with the same invocation id.",
+            ),
+            VerbHookStop::Hidden { .. } => (
+                MEMORY_CODE_FORBIDDEN,
+                "A blocking verb hook failed, so this result stays hidden; retry later or ask the vault owner.",
+            ),
+            VerbHookStop::Completed { .. } | VerbHookStop::CompletedWithError { .. } => (
+                MEMORY_CODE_INVALID_STATE,
+                "This invocation already ran once its hook's ask was answered; its result rides in `hook`.",
+            ),
+        };
+        Self {
+            hook: Some(Box::new(stop.clone())),
+            ..Self::new(code, stop.to_string(), &[suggestion])
+        }
+    }
+}
+
 impl std::fmt::Display for MemoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.code, self.message)
@@ -282,6 +352,9 @@ impl From<Error> for MemoryError {
     fn from(err: Error) -> Self {
         if let Error::Claim(ClaimError::ScopedReadOwnerNotLive(refusal)) = err {
             return *refusal;
+        }
+        if let Error::VerbHook(stop) = err {
+            return Self::verb_hook(*stop);
         }
         let message = err.to_string();
         // ONE-1936: the successor ref travels as a FIELD, not as prose. A
@@ -318,6 +391,14 @@ impl From<Error> for MemoryError {
             );
         }
         match err.kind() {
+            ErrorKind::IdentityUnsettled => Self::new(
+                MEMORY_CODE_IDENTITY_UNSETTLED,
+                message,
+                &[
+                    "Call self.identity.settle with the person's name and this effect, then act again.",
+                    "If it answers needs_person, wait for the person's choice on the card before acting.",
+                ],
+            ),
             ErrorKind::KeyValueWriteRequiresOwnedDoor => Self::new(
                 MEMORY_CODE_INVALID_STATE,
                 message,
@@ -461,7 +542,6 @@ impl From<Error> for MemoryError {
             ),
             ErrorKind::ClaimAlreadyClosed
             | ErrorKind::ClaimSelfSupersession
-            | ErrorKind::CompanionRecordAlreadyExists
             | ErrorKind::ConcurrentWrite
             | ErrorKind::EntityTypeImmutable => Self::new(
                 MEMORY_CODE_INVALID_STATE,

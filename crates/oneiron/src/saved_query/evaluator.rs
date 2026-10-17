@@ -14,6 +14,7 @@ use crate::llm::{
 };
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+use super::decisions::{MembershipDecisions, judge};
 use super::definition::{QueryScope, SavedQueryDefinition};
 use super::evidence::{
     EVIDENCE_HASH_LEN, EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence,
@@ -24,8 +25,8 @@ use super::filter::{MatcherSpec, evaluate_filter, filter_dependencies};
 use super::membership::MembershipCause;
 use super::storage::{load_record, matcher_to_json};
 use super::support::{
-    EVALUATOR_VERSION, MAX_TEXT_BYTES, canonical_json_bytes, cosine_similarity_micros,
-    edge_kind_from_name, hex_lower, invalid, rmpv_to_json, vector_pair_fingerprint,
+    EVALUATOR_VERSION, canonical_json_bytes, cosine_similarity_micros, edge_kind_from_name,
+    hex_lower, invalid, rmpv_to_json, vector_pair_fingerprint,
 };
 
 /// The LLM dependency of a rubric-driven judge.
@@ -33,6 +34,8 @@ use super::support::{
 /// Backend, budget lease, and call envelope travel as ONE binding so no caller
 /// can present a backend without a lease: the admission token is not an
 /// optional decoration on the call, it is half of what makes the call legal.
+/// The verdict is the membership question through the host's ladder, the
+/// backend its first read.
 pub struct SavedQueryJudgeBinding<'a> {
     /// Host-injected backend.
     pub backend: &'a dyn LlmBackend,
@@ -40,6 +43,9 @@ pub struct SavedQueryJudgeBinding<'a> {
     pub lease: &'a BudgetLease,
     /// Host-owned call envelope. Model policy is the host's, not this module's.
     pub envelope: &'a CallEnvelope,
+    /// The host's ladder for the membership question
+    /// ([`MembershipDecisions::shipped`] when it staffs none).
+    pub decisions: &'a MembershipDecisions,
 }
 
 /// Staged evaluator over one vault.
@@ -180,7 +186,8 @@ impl SavedQueryEvaluator<'_> {
             .admits(&collected.evidence.scope_membership)
         {
             if evaluate_filter(&definition.filter, &collected.evidence) {
-                self.run_stage_two(&definition, &collected).await?
+                self.run_stage_two(request.query_ref, &definition, &collected)
+                    .await?
             } else {
                 (no_match("stage-1 filter did not match"), false)
             }
@@ -234,6 +241,7 @@ impl SavedQueryEvaluator<'_> {
     /// Stage 2. Only ever called from the stage-1 success branch.
     async fn run_stage_two(
         &self,
+        query_ref: EntityId,
         definition: &SavedQueryDefinition,
         collected: &CollectedEvidence,
     ) -> Result<(MatchDecision, bool)> {
@@ -258,13 +266,24 @@ impl SavedQueryEvaluator<'_> {
                 false,
             )),
             MatcherSpec::LlmJudge {
-                model_id, rubric, ..
+                model_id,
+                rubric,
+                rubric_version,
             } => {
-                let judge = self.judge.as_ref().ok_or_else(|| {
+                let binding = self.judge.as_ref().ok_or_else(|| {
                     invalid("saved query judge requires an injected backend and budget lease")
                 })?;
-                let request = judge_request(judge.envelope, model_id, rubric, evidence)?;
-                let decision = run_llm_judge(judge.backend, judge.lease, request).await?;
+                let shell = judge_request(binding.envelope, model_id, rubric, evidence)?;
+                let decision = judge(
+                    binding,
+                    definition.owner_actor,
+                    query_ref,
+                    shell,
+                    rubric,
+                    rubric_version,
+                    evidence,
+                )
+                .await?;
                 Ok((decision, true))
             }
         }
@@ -577,60 +596,11 @@ pub(super) fn semantic_decision(
     }
 }
 
-/// Adjudicates one rubric through a host-injected backend.
+/// Builds the judge's request from the host's envelope and the owner's rubric.
 ///
-/// The backend and the lease are both required arguments, so a judged verdict
-/// cannot be produced without budget admission. The response must be a JSON
-/// object naming a closed-set verdict; free prose is a decode failure, not a
-/// coin flip.
-///
-/// # Errors
-///
-/// [`Error::UpstreamToolFailure`] when the backend fails or answers off-schema.
-pub async fn run_llm_judge(
-    backend: &dyn LlmBackend,
-    lease: &BudgetLease,
-    request: LlmRequest,
-) -> Result<MatchDecision> {
-    let response = backend
-        .generate(request, lease)
-        .await
-        .map_err(|error| judge_failure(error.to_string()))?;
-    let text = response
-        .message
-        .content
-        .iter()
-        .find_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .ok_or_else(|| judge_failure("response carried no text part".to_owned()))?;
-    decode_judge_decision(text)
-}
-
-pub(super) fn decode_judge_decision(text: &str) -> Result<MatchDecision> {
-    let parsed = serde_json::from_str::<Value>(text)
-        .map_err(|_| judge_failure("response is not JSON".to_owned()))?;
-    let verdict = parsed
-        .get("verdict")
-        .and_then(Value::as_str)
-        .and_then(MatchVerdict::parse)
-        .ok_or_else(|| judge_failure("verdict is not match/no_match".to_owned()))?;
-    let why = parsed
-        .get("why")
-        .and_then(Value::as_str)
-        .ok_or_else(|| judge_failure("response carried no why".to_owned()))?;
-    Ok(MatchDecision {
-        verdict,
-        why: why.chars().take(MAX_TEXT_BYTES).collect(),
-    })
-}
-
-/// Builds the judge request from the host's envelope and the owner's rubric.
-///
-/// No prompt text is authored here: the system message IS the owner's rubric
-/// and the user message IS the evidence, both as canonical JSON. This module
-/// selects no provider and writes no instructions.
+/// The system message IS the owner's rubric and the user message IS the
+/// evidence, both as canonical JSON; the membership read and its note each add
+/// their own turn after them. This module selects no provider.
 fn judge_request(
     envelope: &CallEnvelope,
     model_id: &str,
@@ -722,7 +692,7 @@ fn derivation_envelope(
 
 /// Every judge rejection names ONE tool, so an operator grepping for judge
 /// failures finds all of them.
-fn judge_failure(code: String) -> Error {
+pub(super) fn judge_failure(code: String) -> Error {
     Error::UpstreamToolFailure {
         tool: "saved_query.judge",
         code,
