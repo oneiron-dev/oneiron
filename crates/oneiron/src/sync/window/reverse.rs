@@ -127,11 +127,6 @@ fn reverse_rematerialize_scan(
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
     super::egress::scrub_local_only_carriers(vault, window_key, doc)?;
     super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
-    // FIX 1794: an erased room's or thread's side rows leave the window as
-    // it opens; a live pass leaves that to export.
-    if committed.is_none() {
-        crate::sync::room_facts::scrub_room_facts(vault, doc)?;
-    }
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let redacted_authors = {
         let rtxn = vault.store.env.read_txn()?;

@@ -24,8 +24,8 @@
 //!   mirrored as that window opens.
 //! - Forward rematerialization and Observer B merge each row into this
 //!   vault's (`workspace_roster::rooms::replica`).
-//! - The window drops every row of a room this vault deleted, or of a thread
-//!   it erased, before it exports.
+//! - Every export, and the erase sweep, drops each row of a room this vault
+//!   deleted or of a thread it erased.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -444,8 +444,16 @@ fn logged(window: &str, key: &str, merge: SideMerge) -> usize {
 
 /// Drops from `doc` every side row of a room this vault deleted, or of a
 /// thread it erased: erase wins over every side row, and an erased room's
-/// rows stop riding its window. Commits what it drops.
-pub(crate) fn scrub_room_facts(vault: &Vault, doc: &LoroDoc) -> Result<bool> {
+/// rows stop riding its window. A row of a room this vault holds no record
+/// of stays. A live doc keeps the old rows in its history, so `pin` names
+/// the window pinned history-free before any row goes, as
+/// `room_turns::scrub_deleted_room_turns` does; the sweep, whose shallow cut
+/// drops that history, passes `None`. Returns whether a row went, committed.
+pub(crate) fn scrub_room_facts(
+    vault: &Vault,
+    doc: &LoroDoc,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
     if !holds_room_fact_map(doc) {
         return Ok(false);
     }
@@ -480,13 +488,17 @@ pub(crate) fn scrub_room_facts(vault: &Vault, doc: &LoroDoc) -> Result<bool> {
         }
         gone
     };
+    if gone.is_empty() {
+        return Ok(false);
+    }
+    if let Some(key) = pin {
+        super::window::require_history_free_window(vault, key)?;
+    }
     for map_key in &gone {
         map_delete(&map, map_key)?;
     }
-    if !gone.is_empty() {
-        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    }
-    Ok(!gone.is_empty())
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    Ok(true)
 }
 
 impl Vault {
