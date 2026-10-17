@@ -19,7 +19,7 @@ use super::constants::{
     DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
     DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
     DREAMER_TASK_REALIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
-    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_WEAVE_LENS_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
@@ -423,6 +423,35 @@ impl<'a> DreamerRunnerStore<'a> {
         )
     }
 
+    /// Enqueues the weave lens's generate step for one published digest
+    /// period (OF-499), in the publication's own commit: one per period
+    /// render.
+    pub(crate) fn enqueue_weave_lens_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        reader: crate::claim::WeaveDigestReader,
+        scheduled_for: u64,
+        rendered_at: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let input = crate::claim::weave_lens_attempt_input(reader, scheduled_for, rendered_at);
+        let dedupe = format!(
+            "{DREAMER_WEAVE_LENS_ATTEMPT_KIND}:{}:{scheduled_for}:{rendered_at}",
+            reader.id().to_hex()
+        );
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_WEAVE_LENS_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_WEAVE_LENS_ATTEMPT_KIND.to_owned(),
+                input,
+                parent_attempt: None,
+            },
+            Some(dedupe),
+            None,
+            rendered_at,
+        )
+    }
+
     /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
     /// take the advisory dedupe floor, and co-commit the private run-tree row
     /// whichever way the queue answered.
@@ -522,6 +551,18 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Marks a leased Dreamer attempt complete through the generic queue.
     pub fn complete(&self, input: CompleteDreamerAttempt) -> Result<CompleteDreamerAttemptOutcome> {
+        self.complete_judged(input, None)
+    }
+
+    /// [`Self::complete`], with the runner's answer to its TASK's "Done means
+    /// met?" ([`crate::task_verb::runner_done_question`]), asked before this
+    /// write. Without one, a TASK with a brief asks up.
+    pub fn complete_judged(
+        &self,
+        input: CompleteDreamerAttempt,
+        judged: Option<crate::task_verb::RunnerDoneAnswer>,
+    ) -> Result<CompleteDreamerAttemptOutcome> {
+        use crate::task_verb::highway_runner::RunnerSettle;
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
         let outcome = self.vault.with_write_txn_grouped(|wtxn| {
@@ -530,7 +571,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 self.vault,
                 wtxn,
                 attempt_id,
-                crate::task_verb::highway_runner::RunnerSettle::Done,
+                judged.map_or(RunnerSettle::Done, RunnerSettle::Judged),
             )?;
             let outcome = crate::ports::JobQueue::port_job_complete(
                 self.vault,
@@ -880,6 +921,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         || kind == DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+        || kind == DREAMER_WEAVE_LENS_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
         || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }

@@ -11,16 +11,21 @@
 //! send, one for a reviewed batch, or none. A payment keeps a person's
 //! press whatever the policy says. Every effect lands a receipt naming the
 //! page it acted on, with a masked screenshot as its evidence when one can
-//! be captured.
+//! be captured. A click at a point takes the press of the row the point
+//! lands on, as a click on that row would.
+//!
+//! A batch's routine steps ask the host's decider, when the host gave the
+//! session one; without one they go up to the planner.
 
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::{
-    BrowserDriver, BrowserError, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
-    EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput,
-    FindOutput, ImageOutput, Observation, ObserveInput, OpenInput, PressMode, Row, ScreenshotInput,
-    ScreenshotOutput, ScreenshotTrigger, SelectInput, SendPolicy, TypeInput, ViewInput,
-    WaitForInput, WaitForOutput, ZoomInput,
+    BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, EFFECT_ACCOUNT,
+    EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EffectReceipt, ExpectInput,
+    ExpectOutput, FindInput, FindOutput, ImageOutput, NoDecider, Observation, ObserveInput,
+    OpenInput, PointInput, PressMode, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
+    ScreenshotTrigger, SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    ZoomInput,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -79,6 +84,7 @@ pub struct BrowserSession {
     policy: SendPolicy,
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
+    decider: Option<Box<dyn RoutineDecider>>,
 }
 
 impl BrowserSession {
@@ -111,7 +117,13 @@ impl BrowserSession {
             policy: config.policy.clone(),
             receipts: Vec::new(),
             receipt_seq: 0,
+            decider: None,
         })
+    }
+
+    /// Gives the session's batches the host's routine decider.
+    pub fn set_decider(&mut self, decider: Box<dyn RoutineDecider>) {
+        self.decider = Some(decider);
     }
 
     /// A browser may only be started through the engine's tier selector.
@@ -277,6 +289,19 @@ impl BrowserDriver for BrowserSession {
         Ok(observation)
     }
 
+    fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
+        let (x, y) = self.live()?.point(&input)?;
+        let row = self.driver.row_at(x, y)?;
+        let class = row.as_ref().and_then(|row| effect_class(&row.name));
+        let press = match (class, &row) {
+            (Some(class), Some(row)) => self.press_for(class, row)?,
+            _ => PressMode::None,
+        };
+        let mut observation = self.driver.click_point(x, y)?;
+        self.receipt("click_at", row.as_ref(), class, press, &mut observation);
+        Ok(observation)
+    }
+
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
         let row = self.live()?.row(&input.target)?;
         let mut observation = self.driver.type_text(input)?;
@@ -319,5 +344,19 @@ impl BrowserDriver for BrowserSession {
 
     fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError> {
         self.live()?.zoom(input)
+    }
+
+    fn image_bytes(&self, image: &str) -> Option<Vec<u8>> {
+        self.driver.image(image).map(<[u8]>::to_vec)
+    }
+
+    fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
+        let mut decider = self.decider.take();
+        let output = match decider.as_deref_mut() {
+            Some(decider) => self.batch_with(input, decider),
+            None => self.batch_with(input, &mut NoDecider),
+        };
+        self.decider = decider;
+        output
     }
 }
