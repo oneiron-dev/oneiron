@@ -2246,7 +2246,7 @@
      "path": "src/authority/federation_activation.rs",
      "purpose": "Grant activation under the folded pact states",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -2897,7 +2897,7 @@
      "path": "src/authority/slip_vault/courtesy.rs",
      "purpose": "The host's signature on a courtesy deletion ask and on its answer (OF-273)",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -18811,7 +18811,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 19,
+      "const": 20,
       "crate-vis": 8,
       "fn": 10,
       "trait": 1
@@ -19006,7 +19006,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 13,
+      "mod": 14,
       "re-export": 5
      }
     },
@@ -19182,6 +19182,23 @@
      "path": "src/dreamer_runner/maintenance/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TypeEvidence",
+      "TypeNamer",
+      "TypeTreeUpkeepReport"
+     ],
+     "path": "src/dreamer_runner/maintenance/type_tree_upkeep.rs",
+     "purpose": "Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): \"Splits, merges and names task types from the…",
+     "surface": {
+      "const": 2,
+      "fn": 3,
+      "struct": 2,
+      "trait": 1
+     }
     },
     {
      "bucket": "m",
@@ -22540,7 +22557,7 @@
      "path": "src/federation/membership_gate.rs",
      "purpose": "Transaction-bound shared-vault membership write authorization",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 1
      }
@@ -22560,7 +22577,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 2,
       "re-export": 15
      }
@@ -22781,17 +22798,18 @@
       "SharedActOutcome",
       "SharedVaultChange",
       "SharedVaultDeletion",
+      "SignedSharedActOutcome",
       "TransferOwnershipPlan"
      ],
      "path": "src/federation/shared_act/mod.rs",
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 10,
+      "fn": 11,
       "re-export": 2,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -22830,9 +22848,9 @@
      "purpose": "Terminal-pact per-world stale stamping (FED-04)",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -28832,7 +28850,7 @@
      "path": "src/llm/run_admission/media.rs",
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 15,
       "struct": 2
      }
@@ -28844,7 +28862,7 @@
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -28913,6 +28931,21 @@
      "purpose": "Local fakes for the research-connector fixture",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WireCallError",
+      "WireSeat"
+     ],
+     "path": "src/llm/run_admission/wire.rs",
+     "purpose": "A media rung whose wire the host drives itself, on its own thread: a local process or a loopback worker…",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -29484,7 +29517,7 @@
      "path": "src/memory/claims/commit.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -29495,7 +29528,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 4,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -42307,7 +42340,7 @@
      "purpose": "One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated…",
      "surface": {
       "const": 8,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3,
       "struct": 1
      }
@@ -44392,7 +44425,7 @@
      "path": "src/sync/federation_burst/mod.rs",
      "purpose": "Peer-relative federation admission with durable, automatically replayable work",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 1,
       "re-export": 2,
@@ -47767,7 +47800,7 @@
      "path": "src/team/run_binding.rs",
      "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -49065,6 +49098,7 @@
      "kind": "src",
      "notable": [
       "HostedBinding",
+      "HostedMediaQueue",
       "HostedProvider",
       "HostedRender",
       "HostedTransport",
@@ -49076,8 +49110,8 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 6,
-      "struct": 3,
+      "fn": 8,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -49111,6 +49145,7 @@
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 4,
       "fn": 18,
       "struct": 7,
@@ -49426,7 +49461,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VoxCpm2Event",
@@ -50825,6 +50860,27 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "OpenedBundleSection",
+      "OpenedKeyPads",
+      "OpenedVaultBundle",
+      "SealedBundleGeneration",
+      "SealedBundleSection",
+      "SealedKeyPads",
+      "SealedVaultBundle",
+      "SealedVaultUpload"
+     ],
+     "path": "src/world_keys/bundle.rs",
+     "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
+     "surface": {
+      "const": 3,
+      "fn": 33,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
       "OpenedSealedContent",
       "SealedContentBinding",
       "SealedContentId",
@@ -50911,7 +50967,7 @@
      "surface": {
       "crate-vis": 11,
       "fn": 3,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 2
      }
     },
@@ -50925,7 +50981,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world delete that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -52492,7 +52548,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52800,7 +52856,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 96,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53479,7 +53535,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53493,9 +53549,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 173,
+   "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3248,
+   "source_files": 3251,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64001,6 +64057,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_host/type_tree_upkeep.rs",
+     "purpose": "The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -68770,9 +68836,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/embedder/admitted.rs",
-     "purpose": "A remote embedder's requests under run admission (ARCH-0053 `#run-admission`)",
+     "purpose": "An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -72284,7 +72350,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72678,7 +72744,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 596,
+   "source_files": 597,
    "test_files": 182
   },
   "oneiron-spawn": {

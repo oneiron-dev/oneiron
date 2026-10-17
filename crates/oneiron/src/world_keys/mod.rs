@@ -16,6 +16,7 @@
 //! replicates is public keys and sealed envelopes (`oneiron-crypto`, purpose
 //! `WorldDek`). An unwrapped key or a seed never replicates.
 
+mod bundle;
 mod content;
 #[cfg(feature = "sync")]
 mod content_window;
@@ -38,6 +39,12 @@ mod wrap;
 #[cfg(test)]
 mod tests;
 
+pub use self::bundle::{
+    OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
+    SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
+    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload,
+    retired_bundle_generations, sealed_bundle_slot,
+};
 pub use self::content::{
     OpenedSealedContent, SEALED_RETENTION_SECS, SealedContentBinding, SealedContentId,
     SealedContentKind, SealedResidenceContent,
