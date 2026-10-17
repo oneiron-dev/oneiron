@@ -24,7 +24,7 @@ export interface FacadeInputs {
   "steer": Facade.SteerRequest;
   "describe": Facade.DescribeRequest;
   "tasks.create": Facade.TaskCreateRequest;
-  "tasks.update": Facade.TaskRequest;
+  "tasks.update": Facade.TaskUpdateRequest;
   "vault.witness": Facade.WitnessTurn;
   "vault.claims.upsert": Facade.ClaimInput;
   "vault.recall": Facade.RecallRequest;
@@ -921,7 +921,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */
       create: (input: Facade.TaskCreateRequest, options?: O): FacadeReturns<"tasks.create">[K] => invoke("tasks.create", input, options),
       /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
-      update: (input: Facade.TaskRequest, options?: O): FacadeReturns<"tasks.update">[K] => invoke("tasks.update", input, options),
+      update: (input: Facade.TaskUpdateRequest, options?: O): FacadeReturns<"tasks.update">[K] => invoke("tasks.update", input, options),
       /** Admits one person's word on an ask; the word is evidence, never approval. */
       answer: (input: Facade.TaskAnswerRequest, options?: O): FacadeReturns<"tasks.answer">[K] => invoke("tasks.answer", input, options),
       /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
