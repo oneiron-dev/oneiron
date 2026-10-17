@@ -304,6 +304,16 @@ impl SyncConnection {
                                     )));
                                 }
                             }
+                            // The vault's sealed bundle: erase's rewrite of every
+                            // kept pad, then the slot's take and upload (FIX 922).
+                            match crate::sync::client::relay_sealed_bundle(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Sealed bundle relay failed: {error}"
+                                    )));
+                                }
+                            }
                             // A window the home refused to retain is asked for
                             // again: a grant may have changed since (OF-534).
                             match crate::sync::client::retry_refused_retains(&manager, &config).await {

@@ -39,14 +39,17 @@ const GENERATIONS: SideTable<String, Vec<u8>, Raw> =
 /// Each kept object's stored parts.
 const PARTS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_PART);
-/// Each staged upload's header and parts.
+/// Each staged upload's header.
 const STAGES: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_STAGE);
+/// Each staged upload's parts.
+const STAGE_PARTS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_STAGE_PART);
 
 /// u64be bundle length ‖ digest ‖ u64be pad object length ‖ digest.
 const ENTRY_LEN: usize = 8 + 32 + 8 + 32;
-/// u64be second ‖ generation ‖ u64be total ‖ digest.
-const STAGE_LEN: usize = 8 + 24 + 8 + 32;
+/// u64be second ‖ generation ‖ u64be total ‖ digest ‖ u64be bytes staged.
+const STAGE_LEN: usize = 8 + 24 + 8 + 32 + 8;
 
 /// One of a generation's two objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -224,17 +227,19 @@ fn part_key(
     format!("{}{offset:016x}", object_prefix(generation, object))
 }
 
-fn encode_stage(at: u64, stage: &SealedBundleStage) -> Vec<u8> {
+fn encode_stage(at: u64, stage: &SealedBundleStage, staged: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(STAGE_LEN);
     out.extend_from_slice(&at.to_be_bytes());
     out.extend_from_slice(&stage.generation.to_bytes());
     out.extend_from_slice(&stage.total.to_be_bytes());
     out.extend_from_slice(&stage.digest);
+    out.extend_from_slice(&staged.to_be_bytes());
     out
 }
 
-/// A stage header's second and binding; `object` comes from its key.
-fn decode_stage(raw: &[u8], object: SealedBundleObject) -> Result<(u64, SealedBundleStage)> {
+/// A stage header's second, binding and bytes staged; `object` comes from its
+/// key.
+fn decode_stage(raw: &[u8], object: SealedBundleObject) -> Result<(u64, SealedBundleStage, u64)> {
     if raw.len() != STAGE_LEN {
         return Err(Error::InvalidKey);
     }
@@ -244,9 +249,17 @@ fn decode_stage(raw: &[u8], object: SealedBundleObject) -> Result<(u64, SealedBu
             generation: SealedBundleGeneration::from_bytes(&raw[8..32])?,
             object,
             total: be_u64(&raw[32..40])?,
-            digest: raw[40..].try_into().map_err(|_| Error::InvalidKey)?,
+            digest: raw[40..72].try_into().map_err(|_| Error::InvalidKey)?,
         },
+        be_u64(&raw[72..])?,
     ))
+}
+
+/// Drops one staged upload, its header and its parts.
+fn drop_stage_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, key: &str) -> Result<()> {
+    STAGES.delete(&vault.store, wtxn, &key.to_owned())?;
+    STAGE_PARTS.delete_from(&vault.store, wtxn, format!("{key}:").as_bytes())?;
+    Ok(())
 }
 
 /// Every kept generation, oldest first.
@@ -343,15 +356,6 @@ pub fn stage_sealed_bundle_part(
             let Ok(row_key) = String::from_utf8(row_key) else {
                 continue;
             };
-            let Some(head) = row_key.get(..key.len()) else {
-                continue;
-            };
-            if row_key.len() != key.len() {
-                if let Some(bytes) = staged.as_mut().filter(|_| head == key) {
-                    *bytes += raw.len() as u64;
-                }
-                continue;
-            }
             let object = match row_key.chars().last() {
                 Some('k') => SealedBundleObject::Pads,
                 _ => SealedBundleObject::Bundle,
@@ -359,12 +363,12 @@ pub fn stage_sealed_bundle_part(
             let header = decode_stage(&raw, object);
             let idle = header
                 .as_ref()
-                .map_or(true, |(at, _)| at.saturating_add(STAGE_IDLE_SECS) < now);
+                .map_or(true, |(at, _, _)| at.saturating_add(STAGE_IDLE_SECS) < now);
             if row_key == key && offset > 0 && !idle {
-                if header.ok().map(|(_, held)| held) != Some(*stage) {
-                    return Err(denied());
-                }
-                staged = Some(0);
+                staged = header
+                    .ok()
+                    .filter(|(_, held, _)| held == stage)
+                    .map(|(_, _, staged)| staged);
             } else if row_key == key || idle {
                 dropped.push(row_key);
             }
@@ -373,10 +377,10 @@ pub fn stage_sealed_bundle_part(
             return Err(denied());
         }
         for head in &dropped {
-            STAGES.delete_from(&vault.store, wtxn, head.as_bytes())?;
+            drop_stage_in(vault, wtxn, head)?;
         }
-        STAGES.put(&vault.store, wtxn, &key, &encode_stage(now, stage))?;
-        STAGES.put(
+        STAGES.put(&vault.store, wtxn, &key, &encode_stage(now, stage, end))?;
+        STAGE_PARTS.put(
             &vault.store,
             wtxn,
             &format!("{key}:{offset:016x}"),
@@ -399,11 +403,11 @@ fn staged_whole(
     let Some(header) = STAGES.get_bytes(&vault.store, txn, &key)? else {
         return Ok(None);
     };
-    let Ok((_, stage)) = decode_stage(&header, object) else {
+    let Ok((_, stage, _)) = decode_stage(&header, object) else {
         return Ok(None);
     };
     let mut bytes = Vec::new();
-    for row in STAGES.iter_raw_from(&vault.store, txn, format!("{key}:").as_bytes())? {
+    for row in STAGE_PARTS.iter_raw_from(&vault.store, txn, format!("{key}:").as_bytes())? {
         let (row_key, part) = row?;
         if row_key != format!("{key}:{:016x}", bytes.len()).into_bytes()
             || bytes.len() as u64 + part.len() as u64 > stage.total
@@ -503,7 +507,7 @@ pub fn commit_sealed_bundle(
             &entry.encode(),
         )?;
         for object in [SealedBundleObject::Bundle, SealedBundleObject::Pads] {
-            STAGES.delete_from(&vault.store, wtxn, stage_key(machine, object).as_bytes())?;
+            drop_stage_in(vault, wtxn, &stage_key(machine, object))?;
         }
         retire_in(vault, wtxn, now_slot)?;
         Ok(entry)
@@ -564,11 +568,7 @@ pub fn replace_sealed_bundle_pads(
             &sealed_generation_hex(&generation),
             &entry.encode(),
         )?;
-        STAGES.delete_from(
-            &vault.store,
-            wtxn,
-            stage_key(machine, SealedBundleObject::Pads).as_bytes(),
-        )?;
+        drop_stage_in(vault, wtxn, &stage_key(machine, SealedBundleObject::Pads))?;
         Ok(entry)
     })
 }

@@ -281,9 +281,11 @@ side_tables! {
     SYNC_RESIDENCE_BUNDLE_PART: SyncState b"rb:p:" Raw;
     /// An upload of a bundle ("b") or pad object ("k") the home stages from parts until its
     /// commit: u64be vault second of its latest part ‖ generation (24) ‖ u64be total ‖ digest
-    /// (32), and beside it each part's bytes. Key: hex32 (the uploading machine) ":" b|k, then
-    /// ":" hex16 (offset) per part.
+    /// (32) ‖ u64be bytes staged. Key: hex32 (the uploading machine) ":" b|k.
     SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw;
+    /// One part of a staged upload. Key: hex32 (the uploading machine) ":" b|k ":" hex16
+    /// (offset).
+    SYNC_RESIDENCE_BUNDLE_STAGE_PART: SyncState b"rb:u:" Raw;
     /// A world erased here whose pads this machine stripped from every pad object the home
     /// keeps (FIX 922): empty, or the u64be slot a pad object that did not open here held it
     /// back in. Key: hex32 (the world).
