@@ -74,6 +74,7 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_TRIPWIRES_FACET => Some(coach::COACH_TRIPWIRES_FACET),
         coach::COACH_TRADEOFF_ESCALATION_FACET => Some(coach::COACH_TRADEOFF_ESCALATION_FACET),
         coach::COACH_TRAINING_OFFER_FACET => Some(coach::COACH_TRAINING_OFFER_FACET),
+        coach::COACH_JUDGE_SWAP_FACET => Some(coach::COACH_JUDGE_SWAP_FACET),
         coach::COACH_OFFER_CHECK_FACET => Some(coach::COACH_OFFER_CHECK_FACET),
         coach::COACH_TRAINING_OFFERS_FACET => Some(coach::COACH_TRAINING_OFFERS_FACET),
         coach::COACH_RESEARCH_SELECT_FACET => Some(coach::COACH_RESEARCH_SELECT_FACET),

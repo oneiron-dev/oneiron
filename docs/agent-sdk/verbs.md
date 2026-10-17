@@ -19,6 +19,9 @@ both bindings and their export-census tests in one change.
 - `self.inbox.concern.move`
 - `vault.people.list`
 - `vault.people.get`
+- `vault.shape.read`
+- `vault.shape.plan`
+- `vault.shape.apply`
 - `self.message`
 - `self.grants.ask`
 - `self.memory.diary.query`

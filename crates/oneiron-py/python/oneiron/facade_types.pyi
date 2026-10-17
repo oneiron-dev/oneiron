@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 219 facade rows, 750 declarations.
-Inputs: 184 of 219 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 174 of 219 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 228 facade rows, 784 declarations.
+Inputs: 193 of 228 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 183 of 228 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 54; unread shapes: 1.
 """
 
@@ -43,6 +43,21 @@ class ReportReceipt(TypedDict):
     duplicate_of: NotRequired[str | None]
     route: ReportRoute
     disclosure: ReportDisclosure
+class ScratchpadRecallRequest(TypedDict):
+    session_id: str
+    query: str
+EntityId = str
+ScratchpadRecallMark = Literal["keep", "scratch"]
+class ScratchpadRecallReplyLine(TypedDict):
+    index: int
+    mark: NotRequired[ScratchpadRecallMark | None]
+    pin: bool
+    text: str
+class ScratchpadRecallReply(TypedDict):
+    pad: NotRequired[EntityId | None]
+    sealed: bool
+    matched: int
+    lines: list[ScratchpadRecallReplyLine]
 class DiaryEntryRequest(TypedDict):
     content: str
     kind: NotRequired[str | None]
@@ -58,7 +73,6 @@ class DiaryEntryReceipt(TypedDict):
     record: NotRequired[RecordRef | None]
 class DiaryReadsRequest(TypedDict):
     limit: NotRequired[int | None]
-EntityId = str
 class DiaryReadRecord(TypedDict):
     read: EntityId
     reader: EntityId
@@ -288,6 +302,122 @@ class PeoplePage(TypedDict):
     more: int
 class PersonRequest(TypedDict):
     pr: str
+class EmptyRequest(TypedDict):
+    ...
+ShapeCeiling = Literal["auto", "proposed"]
+class ShapeTargetWorld(TypedDict):
+    kind: Literal["world"]
+    name: str
+class ShapeTargetPack(TypedDict):
+    kind: Literal["pack"]
+    name: str
+class ShapeTargetActor(TypedDict):
+    kind: Literal["actor"]
+    agent_id: str
+class ShapeTargetSkill(TypedDict):
+    kind: Literal["skill"]
+    skill_id: str
+class ShapeTargetChannel(TypedDict):
+    kind: Literal["channel"]
+    channel: str
+    address: str
+class ShapeTargetGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+class ShapeTargetSync(TypedDict):
+    kind: Literal["sync"]
+    entity_kind: str
+ShapeTarget = ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+class ShapeRowWorld(TypedDict):
+    kind: Literal["world"]
+    name: str
+class ShapeRowPack(TypedDict):
+    kind: Literal["pack"]
+    name: str
+    version: NotRequired[str | None]
+class ShapeRowActor(TypedDict):
+    kind: Literal["actor"]
+    agent_id: str
+    ceiling: ShapeCeiling
+    enabled: NotRequired[bool]
+class ShapeRowSkill(TypedDict):
+    kind: Literal["skill"]
+    skill_id: str
+    version: NotRequired[str | None]
+class ShapeRowChannel(TypedDict):
+    kind: Literal["channel"]
+    channel: str
+    address: str
+class ShapeRowGrant(TypedDict):
+    kind: Literal["grant"]
+    grant_ref: str
+class ShapeRowSync(TypedDict):
+    kind: Literal["sync"]
+    entity_kind: str
+    on_wire: bool
+class ShapeRowRetire(TypedDict):
+    kind: Literal["retire"]
+    target: ShapeTarget
+ShapeRow = ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+class ShapeSeed(TypedDict):
+    rows: list[ShapeRow]
+class StoredShapeSeed(TypedDict):
+    id: str
+    revision: int
+    parent: NotRequired[str | None]
+    author: str
+    written_at: int
+    seed: ShapeSeed
+ShapeChange = Literal["create", "update", "retire"]
+ShapeItemClass = Literal["receipted", "widening", "authority"]
+ShapePlanItem = TypedDict("ShapePlanItem", {"seq": int, "target": ShapeTarget, "change": ShapeChange, "class": ShapeItemClass, "before": NotRequired[ShapeRow | None], "after": NotRequired[ShapeRow | None], "door": NotRequired[str | None]})
+class ShapeItemStatePending(TypedDict):
+    state: Literal["pending"]
+class ShapeItemStateLanded(TypedDict):
+    state: Literal["landed"]
+    at: int
+    receipt: str
+class ShapeItemStateProposed(TypedDict):
+    state: Literal["proposed"]
+class ShapeItemStateCeremony(TypedDict):
+    state: Literal["ceremony"]
+class ShapeItemStateNoDoor(TypedDict):
+    state: Literal["no_door"]
+class ShapeItemStateRefused(TypedDict):
+    state: Literal["refused"]
+    reason: str
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+class ShapeApplyItem(TypedDict):
+    item: ShapePlanItem
+    state: ShapeItemState
+class ShapeApplyReceipt(TypedDict):
+    frontier: str
+    seed_id: str
+    author: str
+    started_at: int
+    items: list[ShapeApplyItem]
+    done: bool
+class ShapeRead(TypedDict):
+    seed: NotRequired[StoredShapeSeed | None]
+    live: ShapeSeed
+    applies: list[ShapeApplyReceipt]
+class ShapePlanRequest(TypedDict):
+    seed: NotRequired[ShapeSeed | None]
+class ShapePlanSummary(TypedDict):
+    changes: int
+    needs_word: int
+    ceremonies: int
+    no_door: int
+class ShapePlan(TypedDict):
+    seed_id: NotRequired[str | None]
+    seed: ShapeSeed
+    frontier: str
+    items: list[ShapePlanItem]
+    undeclared: list[ShapeRow]
+    summary: ShapePlanSummary
+class ShapeApplyRequest(TypedDict):
+    plan: ShapePlan
+    approve: NotRequired[list[int]]
 class MentionProvenance(TypedDict):
     turn: str
     message: str
@@ -1418,7 +1548,12 @@ class SharedVaultChangeMemberLeft(TypedDict):
 SharedVaultChangeOwnerRecoveredBody = TypedDict("SharedVaultChangeOwnerRecoveredBody", {"from": str, "to": str})
 class SharedVaultChangeOwnerRecovered(TypedDict):
     owner_recovered: SharedVaultChangeOwnerRecoveredBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
+class SharedVaultChangeRecordErasedBody(TypedDict):
+    record: str
+    redaction: NotRequired[str | None]
+class SharedVaultChangeRecordErased(TypedDict):
+    record_erased: SharedVaultChangeRecordErasedBody
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered | SharedVaultChangeRecordErased
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
@@ -1452,8 +1587,6 @@ class SharedActOutcome(TypedDict):
     recipient: str
     change: SharedVaultChange
     completed_at: int
-class EmptyRequest(TypedDict):
-    ...
 class SharedVaultDeletion(TypedDict):
     vault_id: int
     act_id: str
@@ -1472,6 +1605,11 @@ class InvitationSlip(TypedDict):
 class SharedMemberInvited(TypedDict):
     receipt: SharedActExecutionReceipt
     credential: NotRequired[InvitationSlip | None]
+class InvitationSlipRequest(TypedDict):
+    vault_id: int
+    member: str
+    invitation: str
+    holder_key: str
 class SharedMemberRoleRequest(TypedDict):
     vault_id: int
     member: str
@@ -1576,6 +1714,44 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+class RecordEraseRequest(TypedDict):
+    record: EntityId
+class EraseShare(TypedDict):
+    grant: str
+    recipient: str
+class EraseHeldBytes(TypedDict):
+    content_hash: str
+    other_holders: list[str]
+class EraseLfsChunk(TypedDict):
+    chunk_hash: str
+    other_owners: list[str]
+class RecordErasePreview(TypedDict):
+    record: str
+    shared_with: list[EraseShare]
+    held_bytes: list[EraseHeldBytes]
+    lfs_chunks: list[EraseLfsChunk]
+    same_bytes: list[str]
+    remote_copies_may_remain: bool
+    preview_digest: str
+class RecordEraseConfirmRequest(TypedDict):
+    record: EntityId
+    preview_digest: str
+    also_same_bytes: NotRequired[bool]
+class DeleteReceipt(TypedDict):
+    existed: bool
+    reason: str
+    receipt_ref: NotRequired[str | None]
+class EraseSameBytesRow(TypedDict):
+    record: str
+    outcome: str
+    receipt: NotRequired[DeleteReceipt | None]
+    reason: NotRequired[str | None]
+    act_id: NotRequired[str | None]
+    error: NotRequired[str | None]
+class RecordEraseOutcome(TypedDict):
+    first: DeleteReceipt
+    first_act: NotRequired[str | None]
+    same_bytes: list[EraseSameBytesRow]
 class AuthorityHandoffAlarmAck(TypedDict):
     by: str
     at: int
@@ -2906,6 +3082,7 @@ class OfferDraft(TypedDict):
     what: str
     artifact_ref: NotRequired[str | None]
     spend_scope: NotRequired[SpendScopeId | None]
+    until: NotRequired[int | None]
     intent_key: str
 class DeclaredMaximum(TypedDict):
     units: int
@@ -2939,6 +3116,8 @@ class OfferCard(TypedDict):
     join_ref: str
     state: OfferState
     created_at: int
+    until: NotRequired[int | None]
+    last_engaged_at: int
 OfferAnswer = Literal["join", "not_now"]
 class OfferAnswerRequest(TypedDict):
     offer_id: str
@@ -2950,6 +3129,13 @@ class OfferSettlement(TypedDict):
     join: NotRequired[JoinOutcome | None]
     turn_ref: NotRequired[str | None]
     diary_ref: NotRequired[str | None]
+class OfferVoteRequest(TypedDict):
+    offer_id: str
+    action: OfferAnswer
+class OfferReopenRequest(TypedDict):
+    offer_id: str
+    expected_last_engaged_at: int
+    until: NotRequired[int | None]
 class OffersRequest(TypedDict):
     room: EntityId
     branch: NotRequired[EntityId | None]
@@ -3297,12 +3483,14 @@ DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "te
 class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
+HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
     select: NotRequired[GraphAskSelection | None]
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
+    posture: NotRequired[HostingPrivacyPosture | None]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
     probability: NotRequired[float | None]
@@ -3346,7 +3534,6 @@ class QuestionCriteria(TypedDict):
     no_if_any: list[str]
     not_a_reason_to_say_no: list[str]
 QuestionAudience = Literal["asker"]
-HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
     audio: NotRequired[bool]
@@ -3415,6 +3602,28 @@ class QuestionReadRequest(TypedDict):
     version: NotRequired[int | None]
 class QuestionAnswersRequest(TypedDict):
     id: EntityId
+class ArtifactAskStandingUnanswered(TypedDict):
+    state: Literal["unanswered"]
+class ArtifactAskStandingWaiting(TypedDict):
+    state: Literal["waiting"]
+class ArtifactAskStandingKept(TypedDict):
+    state: Literal["kept"]
+    version: int
+class ArtifactAskStandingClosed(TypedDict):
+    state: Literal["closed"]
+ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed
+class ArtifactAskRecord(TypedDict):
+    artifact: EntityId
+    question_version: int
+    artifact_version: int
+    asked_at: int
+    proposal_ref: NotRequired[str | None]
+    standing: ArtifactAskStanding
+class QuestionAnswerGraph(AnswerRecord):
+    kind: Literal["graph"]
+class QuestionAnswerArtifact(ArtifactAskRecord):
+    kind: Literal["artifact"]
+QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
 class DecisionAskAnswerRequest(TypedDict):
     seq: int
     answer: DecisionAnswer
@@ -3506,10 +3715,6 @@ SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "po
 class SafeDeleteRequest(TypedDict):
     entity_ref: str
     reason: SafeDeleteReason
-class DeleteReceipt(TypedDict):
-    existed: bool
-    reason: str
-    receipt_ref: NotRequired[str | None]
 class ReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 class PendingWrite(TypedDict):

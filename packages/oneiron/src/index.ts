@@ -144,6 +144,12 @@ export class Oneiron {
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
   readonly self = {
+    focus: {
+      scratchpad: {
+        /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
+        recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
+      },
+    },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
       diary: Object.assign((input: Facade.DiaryEntryRequest): Facade.DiaryEntryReceipt => this.#call(() => this.#client.selfMemoryDiary(input) as Facade.DiaryEntryReceipt), {
@@ -195,6 +201,14 @@ export class Oneiron {
       list: (input: Facade.PeopleListRequest): Facade.PeoplePage => this.#call(() => this.#client.vaultPeopleList(input) as Facade.PeoplePage),
       /** One person the vault knows, by their pr handle. */
       get: (input: Facade.PersonRequest): Facade.PersonRow => this.#call(() => this.#client.vaultPeopleGet(input) as Facade.PersonRow),
+    },
+    shape: {
+      /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+      read: (input: Facade.EmptyRequest = {}): Facade.ShapeRead => this.#call(() => this.#client.vaultShapeRead(input) as Facade.ShapeRead),
+      /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+      plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
+      /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+      apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
     /**
    * Witnesses one conversational turn.
@@ -324,6 +338,8 @@ export class Oneiron {
     members: {
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
       add: (input: Facade.SharedMemberAddRequest): Facade.SharedMemberInvited => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedMemberInvited),
+      /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
+      invitation_slip: (input: Facade.InvitationSlipRequest): Facade.InvitationSlip => this.#call(() => this.#client.vaultMembersInvitationSlip(input) as Facade.InvitationSlip),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
       /** An Admin removes one member from a shared vault. */
@@ -343,6 +359,12 @@ export class Oneiron {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
+    },
+    records: {
+      /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
+      erase_preview: (input: Facade.RecordEraseRequest): Facade.RecordErasePreview => this.#call(() => this.#client.vaultRecordsErasePreview(input) as Facade.RecordErasePreview),
+      /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
+      erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.RecordEraseOutcome => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.RecordEraseOutcome),
     },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
@@ -506,10 +528,14 @@ export class Oneiron {
       join: (input: Facade.JoinRequest): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsJoin(input) as Facade.JoinOutcome),
       /** One party's answer to a join that waits on it, after which the join is decided again. */
       consent: (input: Facade.ConsentAnswer): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsConsent(input) as Facade.JoinOutcome),
-      /** Publishes an agent's offer card to join a room or one of its threads. */
+      /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
       offer: Object.assign((input: Facade.OfferDraft): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOffer(input) as Facade.OfferCard), {
         /** The room's host answers an offer card: join, or not now. */
         answer: (input: Facade.OfferAnswerRequest): Facade.OfferSettlement => this.#call(() => this.#client.vaultRoomsOfferAnswer(input) as Facade.OfferSettlement),
+        /** Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits. */
+        vote: (input: Facade.OfferVoteRequest): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOfferVote(input) as Facade.OfferCard),
+        /** The room's owner or delegated host reopens its aged-out room-wide offer card. */
+        reopen: (input: Facade.OfferReopenRequest): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOfferReopen(input) as Facade.OfferCard),
       }),
       /** One page of the current offer cards in a room or one of its threads. */
       offers: (input: Facade.OffersRequest): Facade.OffersPage => this.#call(() => this.#client.vaultRoomsOffers(input) as Facade.OffersPage),
@@ -589,7 +615,7 @@ export class Oneiron {
       edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
-      answers: (input: Facade.QuestionAnswersRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.AnswerRecord[]),
+      answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
     },
     decisions: {
       asks: {

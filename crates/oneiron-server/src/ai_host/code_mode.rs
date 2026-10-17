@@ -100,10 +100,11 @@ pub(super) async fn bind(
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
-        guard,
+        guard: guard.clone(),
     });
-    // A reader child's calls take the same admission, on its own child
-    // scope's guard in place of code mode's.
+    // A reader child's calls take the same admission: on its own child
+    // scope's guard when its run spends under a scope, else on code mode's
+    // own, lent below as the host's meter.
     let reader_meter: crate::mcp::ReaderMeter = {
         let vault = Arc::clone(server.vault());
         let models = Arc::clone(runtime);
@@ -131,6 +132,7 @@ pub(super) async fn bind(
         Ok(provider) => provider
             .with_clock_from_first_start()
             .with_reader_meter(reader_meter)
+            .with_host_meter(guard)
             .with_reader_window_tokens(
                 super::dreamer::dream_windows(models)
                     .get(&seat.model)

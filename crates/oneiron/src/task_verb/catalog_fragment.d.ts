@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 276 code-mode rows (258 host rows, 18 run rows), 851 declarations.
-// Replies: 221 fully typed, 43 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 285 code-mode rows (267 host rows, 18 run rows), 885 declarations.
+// Replies: 230 fully typed, 43 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 60; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -22,11 +22,15 @@ declare namespace Sdk {
   type BoardVerbOutput = unknown;
   type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts";
   type BoardSubscriptionRequest = { scopes: SubscriptionScope[] };
+  type ScratchpadRecallRequest = { session_id: string; query: string };
+  type EntityId = string;
+  type ScratchpadRecallMark = "keep" | "scratch";
+  type ScratchpadRecallReplyLine = { index: number; mark?: ScratchpadRecallMark | null; pin: boolean; text: string };
+  type ScratchpadRecallReply = { pad?: EntityId | null; sealed: boolean; matched: number; lines: ScratchpadRecallReplyLine[] };
   type DiaryEntryRequest = { content: string; kind?: string | null };
   type RecordRef = { kind: string; id: string; short_id?: string | null; label: string };
   type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null };
   type DiaryReadsRequest = { limit?: number | null };
-  type EntityId = string;
   type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null };
   type DiaryReviewState = "pending" | "approved" | "declined" | "used";
   type DiaryReadRequest = { request: EntityId; reader: EntityId; reader_class: string; reason: string; asked_at: number; state: DiaryReviewState; answered_at?: number | null; read?: EntityId | null };
@@ -78,6 +82,23 @@ declare namespace Sdk {
   type PersonRow = { person: EntityId; actors: EntityId[]; handle: string; name: string; kind: PersonKind; role: string; about?: string | null };
   type PeoplePage = { vault: string; page: number; people: PersonRow[]; more: number };
   type PersonRequest = { pr: string };
+  type EmptyRequest = Record<string, never>;
+  type ShapeCeiling = "auto" | "proposed";
+  type ShapeTarget = { kind: "world"; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string };
+  type ShapeRow = { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
+  type ShapeSeed = { rows: ShapeRow[] };
+  type StoredShapeSeed = { id: string; revision: number; parent?: string | null; author: string; written_at: number; seed: ShapeSeed };
+  type ShapeChange = "create" | "update" | "retire";
+  type ShapeItemClass = "receipted" | "widening" | "authority";
+  type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null };
+  type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
+  type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState };
+  type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean };
+  type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
+  type ShapePlanRequest = { seed?: ShapeSeed | null };
+  type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
+  type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary };
+  type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
   type MentionProvenance = { turn: string; message: string; start: number; end: number };
   type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null };
   type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[] };
@@ -278,18 +299,18 @@ declare namespace Sdk {
   type SharedTransferRequest = { vault_id: number; to: string; from_keeps?: FederationGrantRole | null };
   type SharedRemoveOwnerRequest = { vault_id: number; target: string; successor?: string | null; target_keeps?: FederationGrantRole | null; export_first: boolean };
   type SharedActRequest = { act_id: string };
-  type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } };
+  type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
   type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] };
   type SharedActExecutionReceipt = { id: string; vault_id: number; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; completed_at: number };
   type SharedActExecuted = { receipt: SharedActExecutionReceipt; export?: MemoryExport | null };
   type SharedReceiptRequest = { receipt_id: string };
   type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: number; recipient: string; change: SharedVaultChange; completed_at: number };
-  type EmptyRequest = Record<string, never>;
   type SharedVaultDeletion = { vault_id: number; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number };
   type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null; holder_key?: string | null };
   type InvitationSlip = { slip_id: string; slip: string; expires_at: number };
   type SharedMemberInvited = { receipt: SharedActExecutionReceipt; credential?: InvitationSlip | null };
+  type InvitationSlipRequest = { vault_id: number; member: string; invitation: string; holder_key: string };
   type SharedMemberRoleRequest = { vault_id: number; member: string; role: FederationGrantRole };
   type SharedMemberRequest = { vault_id: number; member: string };
   type SharedInvitationState = "pending" | { accepted: { at: number } } | { declined: { at: number } } | { withdrawn: { by: string; at: number } };
@@ -312,6 +333,15 @@ declare namespace Sdk {
   type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
+  type RecordEraseRequest = { record: EntityId };
+  type EraseShare = { grant: string; recipient: string };
+  type EraseHeldBytes = { content_hash: string; other_holders: string[] };
+  type EraseLfsChunk = { chunk_hash: string; other_owners: string[] };
+  type RecordErasePreview = { record: string; shared_with: EraseShare[]; held_bytes: EraseHeldBytes[]; lfs_chunks: EraseLfsChunk[]; same_bytes: string[]; remote_copies_may_remain: boolean; preview_digest: string };
+  type RecordEraseConfirmRequest = { record: EntityId; preview_digest: string; also_same_bytes?: boolean };
+  type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
+  type EraseSameBytesRow = { record: string; outcome: string; receipt?: DeleteReceipt | null; reason?: string | null; act_id?: string | null; error?: string | null };
+  type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
   type AuthorityHandoffAlarmAck = { by: string; at: number };
   type AuthorityHandoffAlarm = { signer: string; refused: string; handoffs: string[]; raised_at: number; acknowledged?: AuthorityHandoffAlarmAck | null; seen: string[] };
   type HandoffAlarmRequest = { signer: string };
@@ -585,13 +615,15 @@ declare namespace Sdk {
   type JoinDecisionView = { state: JoinDecision; consents: ConsentSet; participation?: JoinParticipation | null };
   type JoinOutcome = { join_ref: string; decision: JoinDecisionView; receipt_ref?: string | null };
   type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null };
-  type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; intent_key: string };
+  type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string };
   type DeclaredMaximum = { units: number; unit: LeaseUnit };
   type OfferState = { kind: "open"; needs: ConsentNeed[] } | { kind: "joined"; turn: EntityId; receipt_ref: string } | { kind: "not_now"; diary_ref?: EntityId | null } | { kind: "superseded"; by: string } | { kind: "aged_out" };
-  type OfferCard = { offer_id: string; room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; lease_cap?: DeclaredMaximum | null; payer?: EntityId | null; spend_scope?: SpendScopeId | null; join_ref: string; state: OfferState; created_at: number };
+  type OfferCard = { offer_id: string; room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; lease_cap?: DeclaredMaximum | null; payer?: EntityId | null; spend_scope?: SpendScopeId | null; join_ref: string; state: OfferState; created_at: number; until?: number | null; last_engaged_at: number };
   type OfferAnswer = "join" | "not_now";
   type OfferAnswerRequest = { offer_id: string; action: OfferAnswer; intent_key: string };
   type OfferSettlement = { offer_id: string; state: OfferState; join?: JoinOutcome | null; turn_ref?: string | null; diary_ref?: string | null };
+  type OfferVoteRequest = { offer_id: string; action: OfferAnswer };
+  type OfferReopenRequest = { offer_id: string; expected_last_engaged_at: number; until?: number | null };
   type OffersRequest = { room: EntityId; branch?: EntityId | null; after?: string | null; limit?: number | null };
   type OffersPage = { rows: OfferCard[]; next_after?: string | null };
   type ProjectGoalDismissRequest = { project_ref: string; expected_goal_ref: string; question_digest: string };
@@ -665,7 +697,8 @@ declare namespace Sdk {
   type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
   type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type GraphAskSelection = { entity_type: number; limit: number };
-  type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null };
+  type HostingPrivacyPosture = "managed" | "relay" | "self-host";
+  type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null };
   type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
@@ -675,7 +708,6 @@ declare namespace Sdk {
   type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null };
   type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] };
   type QuestionAudience = "asker";
-  type HostingPrivacyPosture = "managed" | "relay" | "self-host";
   type QuestionMedia = { images?: boolean; audio?: boolean };
   type FolderItemInput = { artifact_ref: string; row: number };
   type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
@@ -688,6 +720,9 @@ declare namespace Sdk {
   type QuestionPaused = { id: EntityId; paused: boolean };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
   type QuestionAnswersRequest = { id: EntityId };
+  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding };
+  type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer };
   type AskPrior = { answer: DecisionAnswer; probability?: number | null; provider: ProviderPin; paired?: PairedReading | null; person?: PairedReading | null };
   type AskRole = { role: "responsible"; actor: string; project?: string | null } | { role: "board"; project: string } | { role: "owner" };
@@ -754,7 +789,6 @@ declare namespace Sdk {
   type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
-  type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
   type ReceiptsRequest = { limit?: number | null };
   type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null };
   type HydrateRequest = { refs: string[] };
@@ -994,6 +1028,10 @@ declare namespace self {
   const focus: {
     /** Re-renders the run's context board as one frame, at the frame epoch the caller last saw. */
     refresh(input: Sdk.BoardRefreshRequest): Promise<Sdk.Reply<Sdk.BoardVerbOutput>>;
+    scratchpad: {
+      /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
+      recall(input: Sdk.ScratchpadRecallRequest): Promise<Sdk.Reply<Sdk.ScratchpadRecallReply>>;
+    };
     /** Subscribes the run's board stream to the named scopes. */
     subscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.Reply<Sdk.BoardVerbOutput>>;
     /** Unsubscribes the run's board stream from the named scopes. */
@@ -1299,6 +1337,8 @@ declare const vault: {
     change(input: Sdk.SharedMemberRoleRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
     /** The invitee declines their own invitation; nothing is granted. */
     decline(input: Sdk.SharedInvitationRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
+    invitation_slip(input: Sdk.InvitationSlipRequest): Promise<Sdk.Reply<Sdk.InvitationSlip>>;
     /** The caller's own pending invitations into a shared vault. */
     invitations(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.SharedInvitation[]>>;
     /** A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead. */
@@ -1363,7 +1403,7 @@ declare const vault: {
     route_tradeoff(input: Sdk.ProjectTradeoffRouteRequest): Promise<Sdk.Reply<Sdk.TaskAskReceipt>>;
   };
   questions: {
-    answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.Reply<Sdk.AnswerRecord[]>>;
+    answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.Reply<Sdk.QuestionAnswer[]>>;
     create(input: Sdk.QuestionCreateRequest): Promise<Sdk.Reply<Sdk.QuestionRecord>>;
     edit(input: Sdk.QuestionEditRequest): Promise<Sdk.Reply<Sdk.QuestionRecord>>;
     pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.Reply<Sdk.QuestionPaused>>;
@@ -1375,6 +1415,12 @@ declare const vault: {
   receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.Reply<Sdk.MemoryReceipt[]>>) & {
     /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
     get(input: Sdk.CallReceiptRequest): Promise<Sdk.Reply<Sdk.CallReceipt | null>>;
+  };
+  records: {
+    /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
+    erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.Reply<Sdk.RecordEraseOutcome>>;
+    /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
+    erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.Reply<Sdk.RecordErasePreview>>;
   };
   refs: {
     /** A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
@@ -1406,10 +1452,14 @@ declare const vault: {
     list(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.RoomEntry[]>>;
     /** One page of the turns in a room this reader may read. */
     messages(input: Sdk.RoomRequest): Promise<Sdk.Reply<Sdk.RoomPage>>;
-    /** Publishes an agent's offer card to join a room or one of its threads. */
+    /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
     offer: ((input: Sdk.OfferDraft) => Promise<Sdk.Reply<Sdk.OfferCard>>) & {
       /** The room's host answers an offer card: join, or not now. */
       answer(input: Sdk.OfferAnswerRequest): Promise<Sdk.Reply<Sdk.OfferSettlement>>;
+      /** The room's owner or delegated host reopens its aged-out room-wide offer card. */
+      reopen(input: Sdk.OfferReopenRequest): Promise<Sdk.Reply<Sdk.OfferCard>>;
+      /** Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits. */
+      vote(input: Sdk.OfferVoteRequest): Promise<Sdk.Reply<Sdk.OfferCard>>;
     };
     /** One page of the current offer cards in a room or one of its threads. */
     offers(input: Sdk.OffersRequest): Promise<Sdk.Reply<Sdk.OffersPage>>;
@@ -1447,6 +1497,14 @@ declare const vault: {
       /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
       set(input: Sdk.WakePolicySetRequest): Promise<Sdk.Reply<Sdk.PolicyActionOutcome>>;
     };
+  };
+  shape: {
+    /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+    apply(input: Sdk.ShapeApplyRequest): Promise<Sdk.Reply<Sdk.ShapeApplyReceipt>>;
+    /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+    plan(input: Sdk.ShapePlanRequest): Promise<Sdk.Reply<Sdk.ShapePlan>>;
+    /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+    read(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.ShapeRead>>;
   };
   shared: {
     /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */

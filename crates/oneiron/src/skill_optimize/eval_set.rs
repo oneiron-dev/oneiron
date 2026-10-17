@@ -48,6 +48,7 @@ use serde::{Deserialize, Serialize};
 
 use super::invalid;
 use crate::Vault;
+use crate::batch::secret_scan::admit_typed;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -60,6 +61,8 @@ pub use sufficiency::{
 pub(super) const FAMILY_PREFIX: &[u8] = b"skill_optimize:eval_family:v1:";
 pub(super) const ROOT_PREFIX: &[u8] = b"skill_optimize:eval_root:v1:";
 pub(super) const CASE_PREFIX: &[u8] = b"skill_optimize:eval_case:v1:";
+/// Where the side-row wall says it found a secret in a case (OF-067).
+const CASE_PLACE: &str = "side:SKILL_OPTIMIZE_EVAL_CASE";
 const LABEL: &str = "eval set row";
 
 const MAX_ROOTS: usize = 256;
@@ -274,16 +277,17 @@ pub(super) fn case_in_txn(
         .transpose()
 }
 
+/// Writes `case` as the side-row wall keeps it (OF-067), and `case` takes its
+/// handles. A case is authored and lives outside the declared catalog, so it
+/// meets the wall here, as a declared authored row would.
 pub(super) fn put_case_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    case: &EvalCase,
+    case: &mut EvalCase,
 ) -> Result<()> {
-    vault.store.vault_meta.put(
-        txn,
-        &[CASE_PREFIX, case.id.as_bytes()].concat(),
-        &encode(case)?,
-    )?;
+    let key = [CASE_PREFIX, case.id.as_bytes()].concat();
+    admit_typed(vault, txn, (CASE_PLACE, key.as_slice()), case)?;
+    vault.store.vault_meta.put(txn, &key, &encode(case)?)?;
     Ok(())
 }
 
@@ -437,7 +441,7 @@ impl Vault {
                 return Err(invalid("an eval case's lineage spans more than one family"));
             }
             let family = families.pop_first().ok_or(Error::CorruptedIndex(LABEL))?;
-            let case = EvalCase {
+            let mut case = EvalCase {
                 id: self.store.clock.entity_id()?,
                 family,
                 seat: draft.seat.clone(),
@@ -450,7 +454,7 @@ impl Vault {
                 recorded_at: at,
                 labels: Vec::new(),
             };
-            put_case_in_txn(self, txn, &case)?;
+            put_case_in_txn(self, txn, &mut case)?;
             Ok(case)
         })
     }
@@ -538,6 +542,6 @@ pub(super) fn append_label_in_txn(
         return Ok(row);
     }
     row.labels.push(label);
-    put_case_in_txn(vault, txn, &row)?;
+    put_case_in_txn(vault, txn, &mut row)?;
     Ok(row)
 }
