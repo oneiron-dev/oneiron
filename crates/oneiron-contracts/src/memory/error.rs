@@ -27,6 +27,10 @@ pub const MEMORY_CODE_INTERNAL: &str = "INTERNAL_SERVER_ERROR";
 /// `recall(Deep)` called without a budget lease (W4/C4 lease rule).
 pub const MEMORY_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
 
+/// An effect named a person through a mention that is not settled yet
+/// (OF-123). The caller settles it with `self.identity.settle`, then acts.
+pub const MEMORY_CODE_IDENTITY_UNSETTLED: &str = "IDENTITY_UNSETTLED";
+
 /// A paid call's budget line cannot cover it: the line the host admitted the
 /// request on is spent, or the vault's budget policy refuses the call. Distinct
 /// from `LEASE_REQUIRED`: the caller held a lease, and the line ran out.
@@ -369,6 +373,14 @@ impl From<Error> for MemoryError {
             );
         }
         match err.kind() {
+            ErrorKind::IdentityUnsettled => Self::new(
+                MEMORY_CODE_IDENTITY_UNSETTLED,
+                message,
+                &[
+                    "Call self.identity.settle with the person's name and this effect, then act again.",
+                    "If it answers needs_person, wait for the person's choice on the card before acting.",
+                ],
+            ),
             ErrorKind::KeyValueWriteRequiresOwnedDoor => Self::new(
                 MEMORY_CODE_INVALID_STATE,
                 message,
