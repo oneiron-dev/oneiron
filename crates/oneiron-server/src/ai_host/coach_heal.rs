@@ -2,7 +2,9 @@
 //! queue, where each failure-ladder case the escalation hands to the Coach
 //! and each Issues wake a blocked report raises wait, and runs the engine's
 //! propose-only door for each on the host's decision ladder. What lands is a
-//! proposed heal in the owner's run tray; nothing is repaired here. The
+//! proposed heal in the owner's run tray; nothing is repaired here. A case
+//! routed to `skill_edit` asks the Coach's skill author for a revision of its
+//! skill, which the heal carries as a gated candidate. The
 //! code-fix run a filed heal wakes (OF-380) and the answer to an agent-health
 //! card's ask (OF-568) ride the same queue. Each code-fix run also replays
 //! the publisher's pinned candidates the worker started with, and after it
@@ -22,6 +24,7 @@ use oneiron::dreamer_runner::{
 };
 use oneiron::llm::decision::DecisionRung;
 
+use super::skill_author::CoachSkillAuthor;
 use crate::server::SyncServer;
 
 /// The host's wording of the route question; the state carries the case or
@@ -41,6 +44,8 @@ const BUDGET_UNITS: u64 = 1 << 20;
 const ROUND: usize = 8;
 /// One question's budget.
 const DECIDE_BUDGET: Duration = Duration::from_secs(20);
+/// What one skill-repair draft's model calls may spend.
+const DRAFT_BUDGET_UNITS: u64 = 1 << 20;
 
 /// Starts the worker. Each round runs on a blocking thread: the ladder's
 /// model rungs block on the server's runtime. `publisher` is
@@ -110,7 +115,7 @@ fn catch_up_step(
     }
 }
 
-fn round(server: &SyncServer, publisher: &[PublisherCandidate]) -> oneiron::Result<()> {
+fn round(server: &Arc<SyncServer>, publisher: &[PublisherCandidate]) -> oneiron::Result<()> {
     let vault = server.vault();
     let store = DreamerRunnerStore::new(vault);
     for _ in 0..ROUND {
@@ -133,7 +138,7 @@ fn round(server: &SyncServer, publisher: &[PublisherCandidate]) -> oneiron::Resu
 }
 
 fn run_one(
-    server: &SyncServer,
+    server: &Arc<SyncServer>,
     admitted: &DreamerAdmittedAttempt,
     publisher: &[PublisherCandidate],
     now: u64,
@@ -165,7 +170,12 @@ fn run_one(
             "the Coach read the blocked reports"
         );
     } else {
-        vault.run_coach_heal(admitted, &decisions, now)?;
+        let author = CoachSkillAuthor::new(
+            Arc::downgrade(server),
+            tokio::runtime::Handle::current(),
+            DRAFT_BUDGET_UNITS,
+        );
+        vault.run_coach_heal(admitted, &decisions, &author, now)?;
     }
     Ok(())
 }
