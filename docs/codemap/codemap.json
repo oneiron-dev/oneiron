@@ -56932,13 +56932,14 @@
      "kind": "src",
      "notable": [
       "ConsolidationExecutorFactory",
-      "PassExecutorFactory"
+      "PassExecutorFactory",
+      "SkillOptimizerLoan"
      ],
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 11,
-      "struct": 1,
+      "fn": 12,
+      "struct": 2,
       "trait": 1,
       "type": 1
      }
@@ -61941,13 +61942,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/code_fix.rs",
      "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -62064,6 +62065,16 @@
      "purpose": "The host's scheduled T2/T3 detector pass (ARCH-0066 #tiers, OF-418)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/skill_author.rs",
+     "purpose": "The Coach's skill-edit author (OF-214)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69750,7 +69761,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70095,7 +70106,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 551,
+   "source_files": 552,
    "test_files": 182
   },
   "oneiron-spawn": {
