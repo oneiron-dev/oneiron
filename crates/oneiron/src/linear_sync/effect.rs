@@ -259,6 +259,33 @@ impl Vault {
         })?;
         admitted.ok_or(LinearSyncError::AuthorizationDenied)
     }
+
+    /// The live recheck before a retried send through the recorded outbound
+    /// door (OF-427). That door admits both actors once, inside its own
+    /// admission, and its replay does not run the writer again. So an
+    /// operation whose frozen binding is already stored rechecks that binding
+    /// and both actors' live grants here, charging nothing. An operation not
+    /// yet admitted passes: its first admission runs inside the door.
+    ///
+    /// # Errors
+    /// As [`Self::authorize_linear_effect`], for an admitted operation.
+    pub fn recheck_admitted_linear_effect(
+        &self,
+        request: &LinearEffectRequest,
+    ) -> LinearSyncResult<()> {
+        let mut key = EFFECT_AUTH_KEY.to_vec();
+        key.extend_from_slice(&request.operation_id);
+        let admitted = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            self.store.vault_meta.get(&txn, &key)?.is_some()
+        };
+        // The binding row is never removed, so this admission observes it
+        // too and charges no budget.
+        if admitted {
+            self.authorize_linear_effect(request)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
