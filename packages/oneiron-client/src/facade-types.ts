@@ -2009,7 +2009,7 @@ export type ResolveRecordRefRequest = { reference: string }
 /** `oneiron::lens::record_ref::RecordRefPreview` */
 export type RecordRefPreview = { record: RecordRef; revision?: string | null; snippet?: string | null }
 /** `oneiron::lens::record_ref::RecordLinksRequest` */
-export type RecordLinksRequest = { text?: string | null; turn_ref?: string | null; after?: string | null; limit?: number | null }
+export type RecordLinksRequest = { text?: string | null; texts?: string[] | null; turn_ref?: string | null; after?: string | null; limit?: number | null }
 /** `oneiron::lens::record_ref::ProseSpan` */
 export type ProseSpan = { kind: "plain"; start: number; end: number; start_utf16: number; end_utf16: number; text: string } | { kind: "link"; start: number; end: number; start_utf16: number; end_utf16: number; label: string; record: RecordRef; narrowing: ScopedReadReceipt }
 /** `oneiron::lens::record_ref::LinkedText` */

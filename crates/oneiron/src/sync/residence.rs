@@ -24,6 +24,7 @@ pub use bundle::{
     sealed_generation_hex, stage_sealed_bundle_part,
 };
 pub use bundle_payload::SealedBundleTake;
+pub use bundle_payload::SealedKitRestore;
 pub use discover::discover_local_window_keys;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,

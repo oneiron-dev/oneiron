@@ -530,7 +530,7 @@
      "path": "src/agent_def/portable.rs",
      "purpose": "Canonical, inert AGENT_PACK facets derived from real definitions and selected rows",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -988,7 +988,7 @@
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 7,
       "struct": 3,
@@ -16171,7 +16171,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/policy.rs",
@@ -17926,7 +17926,7 @@
      "purpose": "PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2,
       "struct": 1
      }
@@ -23832,13 +23832,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -24568,18 +24568,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfferAnswerIntent",
-      "OfferCardPayload"
+      "OfferCardIntent",
+      "OfferCardOutcome",
+      "OfferCardPayload",
+      "OfferCardPhase",
+      "OfferReopenIntent",
+      "OfferVoteIntent"
      ],
      "path": "src/genui/offer_card.rs",
-     "purpose": "The offer card's render-neutral payload and its write-free answer intent (OF-530)",
+     "purpose": "The offer card's render-neutral payload and its write-free intents (OF-530): the host's answer, a room…",
      "surface": {
-      "const": 2,
-      "fn": 7,
-      "struct": 2
+      "const": 5,
+      "enum": 3,
+      "fn": 15,
+      "struct": 4
      }
     },
     {
@@ -26431,7 +26437,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 4,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -26446,6 +26452,20 @@
      "surface": {
       "crate-vis": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PdfTextError"
+     ],
+     "path": "src/ingest/pdf.rs",
+     "purpose": "A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: \"The first adapter reads a…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -27337,7 +27357,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LinkedText",
@@ -27352,6 +27372,7 @@
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
       "const": 5,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "struct": 6
@@ -31124,7 +31145,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 3,
       "fn": 4,
       "re-export": 10,
@@ -31352,9 +31373,9 @@
      "purpose": "A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 5
      }
     },
@@ -45344,7 +45365,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 2
      }
@@ -45450,7 +45471,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 6
      }
     },
@@ -46772,7 +46793,7 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -46847,6 +46868,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/lifecycle_receipt.rs",
+     "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -46867,7 +46898,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 2,
       "re-export": 24
      }
@@ -46970,7 +47001,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -47042,7 +47073,7 @@
      "path": "src/task_verb/room_thread.rs",
      "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -50112,7 +50143,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 17
      }
     },
@@ -50808,7 +50839,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 10
      }
     },
@@ -50869,7 +50900,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "enum": 2,
       "fn": 6,
       "re-export": 9,
@@ -53042,7 +53073,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53086,7 +53117,7 @@
     "lens": {
      "files": 50,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
     },
@@ -53665,7 +53696,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53826,9 +53857,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 177,
+   "over_bar": 179,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3266,
+   "source_files": 3268,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68179,7 +68210,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import/notes/folder.rs",
-     "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes that stays attached to the…",
+     "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes and PDFs that stays attached…",
      "surface": {
       "crate-vis": 4
      }
