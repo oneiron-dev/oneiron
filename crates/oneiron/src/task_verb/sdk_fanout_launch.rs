@@ -1,10 +1,11 @@
 //! The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or
 //! launched fan-out, `vault.fanout.resume` is the owner's ruling on a held
-//! launch, and `vault.fanout.ack` the owner's answer to the width check of a
-//! fan-out that already went out. A ruling names the plan digest the owner
-//! saw, as lower hex. The two rulings are host doors: a server passes the
-//! owner proof its request carried (`*_as`), an embedded handle its own
-//! embedded owner.
+//! launch, `vault.fanout.resume_as` a live lead or board holder's ruling on
+//! one bound to its project, and `vault.fanout.ack` the owner's answer to the
+//! width check of a fan-out that already went out. A ruling names the plan
+//! digest its approver saw, as lower hex. The rulings are host doors: a
+//! server passes the owner proof its request carried (`*_as`), or the holder
+//! its slip names; an embedded handle its own embedded owner, or its actor.
 use serde::{Deserialize, Serialize};
 
 use super::{ConsultFanOutChoice, FanoutCheckChoice, FanoutLaunchReceipt};
@@ -94,8 +95,8 @@ impl From<FanoutLaunchReceipt> for FanoutLaunchView {
     }
 }
 
-/// `vault.fanout.launch`: one launch, for its own actor or the vault's
-/// owner; anything else reads as none.
+/// `vault.fanout.launch`: one launch, for its own actor, the vault's owner or
+/// a live lead or board holder of its project; anything else reads as none.
 pub fn read_fanout_launch(
     memory: &Memory<'_>,
     input: FanoutLaunchRequest,
@@ -124,20 +125,55 @@ pub fn resume_fanout_launch_as(
     owner: &AuthenticatedOwner,
     input: FanoutResumeRequest,
 ) -> MemoryResult<FanoutLaunchView> {
-    let choice = match input.ruling {
-        FanoutLaunchRuling::ApproveOnce => ConsultFanOutChoice::ApproveOnce,
-        FanoutLaunchRuling::ApproveAndRemember => ConsultFanOutChoice::ApproveAndRemember,
-        FanoutLaunchRuling::Deny => ConsultFanOutChoice::Deny,
-    };
     Ok(memory
         .resume_task_fanout(
             input.launch_ref,
             plan_digest(&input.plan_digest)?,
-            choice,
+            launch_choice(input.ruling),
             owner,
             input.remembered_cap,
         )?
         .into())
+}
+
+/// `vault.fanout.resume_as` as the handle's own actor.
+pub fn resume_fanout_launch_holder(
+    memory: &Memory<'_>,
+    input: FanoutResumeRequest,
+) -> MemoryResult<FanoutLaunchView> {
+    resume_fanout_launch_as_holder(
+        memory,
+        &crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        input,
+    )
+}
+
+/// `vault.fanout.resume_as` as `holder`, a live holder of the launch's bound
+/// lead or board role: approve once or deny. Only the owner remembers, so an
+/// approve-and-remember or a cap is refused.
+pub fn resume_fanout_launch_as_holder(
+    memory: &Memory<'_>,
+    holder: &crate::WriteActor,
+    input: FanoutResumeRequest,
+) -> MemoryResult<FanoutLaunchView> {
+    Ok(memory
+        .resume_task_fanout_as(
+            input.launch_ref,
+            plan_digest(&input.plan_digest)?,
+            launch_choice(input.ruling),
+            holder,
+            input.remembered_cap,
+        )?
+        .into())
+}
+
+/// The engine's choice for a ruling.
+const fn launch_choice(ruling: FanoutLaunchRuling) -> ConsultFanOutChoice {
+    match ruling {
+        FanoutLaunchRuling::ApproveOnce => ConsultFanOutChoice::ApproveOnce,
+        FanoutLaunchRuling::ApproveAndRemember => ConsultFanOutChoice::ApproveAndRemember,
+        FanoutLaunchRuling::Deny => ConsultFanOutChoice::Deny,
+    }
 }
 
 /// `vault.fanout.ack` as the vault's embedded owner.

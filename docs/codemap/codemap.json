@@ -14519,7 +14519,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/context_board/fanout.rs",
-     "purpose": "The fan-out launches that wait on the owner, as TASKS lead rows (OF-393): a held launch's pause row with the…",
+     "purpose": "The fan-out launches that wait on an approver, as TASKS lead rows (OF-393): a held launch's pause row with…",
      "surface": {
       "fn": 1
      }
@@ -46264,7 +46264,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "FanoutCheckChoice",
@@ -46275,7 +46275,7 @@
      "surface": {
       "crate-vis": 22,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -46835,7 +46835,7 @@
      "purpose": "The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out…",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -46847,7 +46847,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 315
+      "fn": 316
      }
     },
     {
@@ -49541,7 +49541,7 @@
      "path": "src/workspace_roster/project/asks.rs",
      "purpose": "A project's asks queue (ARCH-0067 tasks and asks)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -55338,7 +55338,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "DesktopGuest",
@@ -55511,7 +55511,7 @@
     "desktop": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
@@ -61192,7 +61192,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 269
+      "fn": 270
      }
     },
     {
@@ -62209,7 +62209,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 270
+      "fn": 271
      }
     },
     {
@@ -64979,7 +64979,7 @@
      "path": "src/api/facade/fanout_doors.rs",
      "purpose": "The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
