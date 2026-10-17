@@ -24,6 +24,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_TRANSITION, SECRET_CUSTODY),
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
+    (&t::SECRET_FOUND_KEY, LIVE),
+    (&t::SECRET_FOUND_KEY_DUE, LIVE),
     (&t::SECRET_LEASE, LIVE),
     (&t::SECRET_MATERIALIZATION_RECEIPT, LIVE),
     (&t::SECRET_LIFT_PROPOSAL, CONTENT),
@@ -204,6 +206,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_REPORT_JOURNAL, CONTENT),
     (&t::TASK_SYMBOL_LEASE, CONTENT),
     (&t::TASK_ASK_WAIT, CONTENT),
+    // An approved, denied or launched hold never rewinds to waiting.
+    (&t::TASK_FANOUT_LAUNCH, LIVE),
     (&t::TASK_FANOUT_RUN, CONTENT),
     (&t::TASK_FANOUT_POLICY, CONTENT),
     (&t::TEAM_DELIVERABLE, CONTENT),

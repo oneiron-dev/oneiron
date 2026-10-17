@@ -1,5 +1,5 @@
 //! One cancellable quiet sleep per tick source, driven by the vault's row policy.
-use super::{NowMillis, Tick, TickSource, sleep_until_due};
+use super::{ArmedLane, NowMillis, Tick, TickSource, sleep_until_due};
 use oneiron::{
     Vault,
     dreamer_wake::{WakeIdleState, WakePolicyDecision, WakePolicyTimerLease},
@@ -41,6 +41,15 @@ impl<'a, T: TickSource> WakePolicyTicks<'a, T> {
             _timer_lease: vault.claim_dreamer_wake_timer()?,
         })
     }
+
+    /// Records the quiet timer `decision` arms as the policy lane's.
+    fn note_policy(&mut self, decision: &WakePolicyDecision) {
+        let at_ms = match decision {
+            WakePolicyDecision::ArmIdle { due_at } => Some(due_at.saturating_mul(1_000)),
+            WakePolicyDecision::Silent | WakePolicyDecision::Enqueue { .. } => None,
+        };
+        self.inner.note_armed(ArmedLane::Policy, at_ms);
+    }
 }
 impl<T: TickSource> TickSource for WakePolicyTicks<'_, T> {
     async fn next_tick(&mut self) -> Option<Tick> {
@@ -57,6 +66,7 @@ impl<T: TickSource> TickSource for WakePolicyTicks<'_, T> {
                     return self.inner.next_tick().await;
                 }
             };
+            self.note_policy(&decision);
             match decision {
                 WakePolicyDecision::Silent | WakePolicyDecision::Enqueue { .. } => {
                     return self.inner.next_tick().await;
@@ -87,5 +97,8 @@ impl<T: TickSource> TickSource for WakePolicyTicks<'_, T> {
     }
     fn take_delivered_session_hint_carrier(&mut self) -> Option<super::SessionHintCarrier> {
         self.inner.take_delivered_session_hint_carrier()
+    }
+    fn note_armed(&mut self, lane: ArmedLane, at_ms: Option<u64>) {
+        self.inner.note_armed(lane, at_ms);
     }
 }

@@ -682,6 +682,9 @@ fn mcp_agent_verb_input(
             Ok(Value::Object(map))
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
+        "vault.fanout.launch" => a.spec.clone().ok_or_else(invalid),
+        "vault.fanout.resume" => a.spec.clone().ok_or_else(invalid),
+        "vault.fanout.ack" => a.spec.clone().ok_or_else(invalid),
         "tasks.update" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
             let map = input.as_object_mut().ok_or_else(invalid)?;
@@ -1152,6 +1155,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "tasks.wave" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.fanout.launch" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.fanout.resume" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.fanout.ack" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.update" => {
@@ -2343,6 +2355,30 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::tasks_wave(server, auth, input)
                 .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.fanout.launch" => {
+            let input: oneiron::task_verb::sdk::FanoutLaunchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_fanout_launch(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.fanout.resume" => {
+            let input: oneiron::task_verb::sdk::FanoutResumeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_fanout_resume(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.fanout.ack" => {
+            let input: oneiron::task_verb::sdk::FanoutAckRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_fanout_ack(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
