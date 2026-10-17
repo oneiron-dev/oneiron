@@ -588,6 +588,14 @@ pub(crate) fn unix_seconds_now() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
+pub(crate) fn unix_millis_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {
     crate::store::decode_vector_row(bytes, dimensions)
 }

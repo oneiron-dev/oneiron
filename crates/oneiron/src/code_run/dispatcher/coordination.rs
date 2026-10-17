@@ -285,6 +285,9 @@ impl<'a> HostSelfDispatcher<'a> {
         let effect = call.effect();
         self.storage.answered(|| {
             self.enforce_off_record_effect_policy(effect)?;
+            if let Some(refused) = self.reader_child_refusal(effect) {
+                return Ok(Err(refused));
+            }
             if let Some(refused) = self.refusal_past_an_unmet_write(site, Some(call))? {
                 return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
                     effect,

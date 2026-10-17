@@ -78,7 +78,7 @@ pub use self::types::{
     SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub(crate) use self::reader::{
-    READER_KEY_MAX_BYTES, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
+    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
     reduce_task_wait_set, valid_reader_key, vault_ref,
 };
 pub use self::reader::{

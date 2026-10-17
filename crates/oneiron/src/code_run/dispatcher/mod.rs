@@ -6,6 +6,7 @@ mod fold_verbs;
 mod human_speech;
 mod leader;
 mod memory_verbs;
+mod reader_spawn;
 mod verb_hooks;
 mod wake_policy;
 
@@ -33,6 +34,7 @@ pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
 use self::human_speech::HumanWaitDispatchTarget;
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
+pub(crate) use self::reader_spawn::ReaderChildBinding;
 
 /// Host-bound dispatcher for one first-party code run.
 ///
@@ -78,6 +80,11 @@ pub struct HostSelfDispatcher<'a> {
     /// with the invocation each ask waits under.
     pub(super) parked_hooks:
         RefCell<Vec<(verb_hooks::ParkedCall, crate::runtime_hooks::InvocationId)>>,
+    /// The seat the host lent the run to spawn reader children under, if
+    /// any (ARCH-0079 #reader-forks).
+    pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,
+    /// The reader child's job this run is, when it is one.
+    pub(super) reader_child: Option<ReaderChildBinding>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -193,6 +200,8 @@ impl<'a> HostSelfDispatcher<'a> {
             agent_verbs: None,
             hook_view: RefCell::new(None),
             parked_hooks: RefCell::new(Vec::new()),
+            reader_spawn: None,
+            reader_child: None,
         })
     }
 
@@ -359,6 +368,11 @@ impl<'a> HostSelfDispatcher<'a> {
         // participant left the room hears `NotInRoom`, never their verdict.
         self.storage.answered(|| {
             self.enforce_off_record_effect_policy(call.effect())?;
+            // A reader child reads its source and reports; it makes no other
+            // call.
+            if let Some(refused) = self.reader_child_refusal(call.effect()) {
+                return Ok(refused);
+            }
             // A step that can no longer close commits nothing more.
             if let Some(site) = site
                 && let Some(refused) = self.refusal_past_an_unmet_write(site, Some(&call))?
@@ -445,6 +459,9 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
             SelfCall::Fold(call) => self.dispatch_fold(&call, site),
+            SelfCall::ReaderSpawn(call) => self.dispatch_reader_spawn(*call, site),
+            SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),
+            SelfCall::TasksWaitSet(call) => self.dispatch_task_wait_set(call, site),
         }
     }
 }

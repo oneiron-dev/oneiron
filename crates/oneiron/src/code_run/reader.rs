@@ -478,11 +478,11 @@ pub(crate) fn reduce_task_wait_set(
             (ReaderJobState::Queued | ReaderJobState::Active, _) => result.pending.push(*task),
             (ReaderJobState::Done, Some(found)) => result.ready.push(finding(*task, found, None)),
             (ReaderJobState::Partial { reason }, Some(found)) => {
-                result.partial.push(finding(*task, found, Some(reason)));
+                result.partial.push(finding(*task, found, Some(reason.as_str())));
             }
             (ReaderJobState::Done, None) => result.failed.push(failed("no_finding")),
             (ReaderJobState::Partial { reason } | ReaderJobState::Failed { reason }, _) => {
-                result.failed.push(failed(reason));
+                result.failed.push(failed(reason.as_str()));
             }
         }
     }
