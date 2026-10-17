@@ -90,6 +90,12 @@ pub enum EngineLimit {
     /// continuation parts included. Past it the folder is read and imported
     /// whole.
     ImportFolderNotes,
+    /// Messages one history import, or one session serve's queue lands,
+    /// holds decoded until it lands them all. Past it the import lands whole.
+    ImportDecodedMessages,
+    /// Bytes those decoded messages hold, ids and titles included. Past it
+    /// the import lands whole.
+    ImportDecodedBytes,
     /// Bytes one signature image decode (`POST /sign/image`) may allocate,
     /// its decoded raster included: the decoder's own alloc bound is set from
     /// it. An image whose header declares a raster past it asks whether
@@ -99,7 +105,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -119,6 +125,8 @@ impl EngineLimit {
         Self::LinePushMonthly,
         Self::ImportFolderTextBytes,
         Self::ImportFolderNotes,
+        Self::ImportDecodedMessages,
+        Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
     ];
 
@@ -144,6 +152,8 @@ impl EngineLimit {
             Self::LinePushMonthly => "line.monthly_push_allowance",
             Self::ImportFolderTextBytes => "limits.import_folder_text_bytes",
             Self::ImportFolderNotes => "limits.import_folder_notes",
+            Self::ImportDecodedMessages => "limits.import_decoded_messages",
+            Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
         }
     }
@@ -171,6 +181,8 @@ impl EngineLimit {
             Self::LinePushMonthly => 200,
             Self::ImportFolderTextBytes => 256 << 20,
             Self::ImportFolderNotes => 100_000,
+            Self::ImportDecodedMessages => 1_000_000,
+            Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
         }
     }

@@ -160,6 +160,8 @@ impl LimitRow {
         Self::Engine(EngineLimit::LinePushMonthly),
         Self::Engine(EngineLimit::ImportFolderTextBytes),
         Self::Engine(EngineLimit::ImportFolderNotes),
+        Self::Engine(EngineLimit::ImportDecodedMessages),
+        Self::Engine(EngineLimit::ImportDecodedBytes),
         Self::Engine(EngineLimit::SignatureDecodeBytes),
     ];
     /// The config key that sets the row, or, for the memory the embedder

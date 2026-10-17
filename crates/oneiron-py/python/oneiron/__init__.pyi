@@ -440,6 +440,8 @@ class Oneiron:
         @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
+        def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
+        @property
         def records(self) -> "Oneiron._VaultRecordsVerbs": ...
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
@@ -707,6 +709,15 @@ class Oneiron:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+    class _VaultResidenceVerbs:
+        def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeChanged:
+            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
+        def open(self, spec: Facade.ResidenceOpenRequest) -> Facade.ResidenceOpened:
+            """Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."""
+        def index(self, spec: Facade.ResidenceMachineRequest) -> Facade.ResidenceIndex:
+            """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
+        def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruned:
+            """Drops the opened-item caches one of the owner's machines last touched before a time."""
     class _VaultRecordsVerbs:
         def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
@@ -1127,6 +1138,8 @@ class Oneiron:
             """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+        def call_status(self, spec: Facade.ConnectorCallStatusRequest) -> Facade.ConnectorCallStatus:
+            """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs": ...
     class _ConnectorOutboundVerbs:

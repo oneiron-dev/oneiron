@@ -338,6 +338,18 @@ impl OneironClient {
                 "vault.guests.mint_slip" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GuestSlipMinted,
                 >(client, verb, &input),
+                "vault.residence.mode" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ResidenceModeChanged,
+                >(client, verb, &input),
+                "vault.residence.open" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ResidenceOpened,
+                >(client, verb, &input),
+                "vault.residence.index" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ResidenceIndex,
+                >(client, verb, &input),
+                "vault.residence.prune" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ResidencePruned,
+                >(client, verb, &input),
                 "vault.records.erase_preview" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RecordErasePreview,
                 >(client, verb, &input),
@@ -805,6 +817,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "connector.schema" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorSchemaReply,
+                >(client, verb, &input),
+                "connector.call_status" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorCallStatus,
                 >(client, verb, &input),
                 "vault.commit" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
                     client, verb, &input,
@@ -2228,6 +2243,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.guests.mint_slip", value)
+    }
+    pub fn vault_residence_mode(
+        &self,
+        input: &oneiron::task_verb::sdk::ResidenceModeRequest,
+    ) -> Result<oneiron::task_verb::sdk::ResidenceModeChanged, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.residence.mode", value)
+    }
+    pub fn vault_residence_open(
+        &self,
+        input: &oneiron::task_verb::sdk::ResidenceOpenRequest,
+    ) -> Result<oneiron::task_verb::sdk::ResidenceOpened, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.residence.open", value)
+    }
+    pub fn vault_residence_index(
+        &self,
+        input: &oneiron::task_verb::sdk::ResidenceMachineRequest,
+    ) -> Result<oneiron::task_verb::sdk::ResidenceIndex, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.residence.index", value)
+    }
+    pub fn vault_residence_prune(
+        &self,
+        input: &oneiron::task_verb::sdk::ResidencePruneRequest,
+    ) -> Result<oneiron::task_verb::sdk::ResidencePruned, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.residence.prune", value)
     }
     pub fn vault_records_erase_preview(
         &self,
@@ -4102,6 +4165,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("connector.schema", value)
+    }
+    pub fn connector_call_status(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorCallStatusRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorCallStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("connector.call_status", value)
     }
     pub fn vault_commit(
         &self,

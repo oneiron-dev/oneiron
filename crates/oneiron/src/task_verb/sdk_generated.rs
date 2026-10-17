@@ -502,6 +502,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.residence.mode",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceModeRequest,
+                >(),
+            ),
+            (
+                "vault.residence.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceOpenRequest,
+                >(),
+            ),
+            (
+                "vault.residence.index",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceMachineRequest,
+                >(),
+            ),
+            (
+                "vault.residence.prune",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidencePruneRequest,
+                >(),
+            ),
+            (
                 "vault.records.erase_preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RecordEraseRequest,
@@ -1304,6 +1328,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "connector.schema",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorSchemaRequest,
+                >(),
+            ),
+            (
+                "connector.call_status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectorCallStatusRequest,
                 >(),
             ),
             (
@@ -2555,6 +2585,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.residence.mode" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.residence.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.residence.index" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.residence.prune" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.records.erase_preview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3613,6 +3671,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "connector.call_status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.commit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4327,6 +4392,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.guests.mint_slip" => {
             let _input: crate::task_verb::sdk::GuestSlipMintRequest = decode(value.clone())?;
         }
+        "vault.residence.mode" => {
+            let _input: crate::task_verb::sdk::ResidenceModeRequest = decode(value.clone())?;
+        }
+        "vault.residence.open" => {
+            let _input: crate::task_verb::sdk::ResidenceOpenRequest = decode(value.clone())?;
+        }
+        "vault.residence.index" => {
+            let _input: crate::task_verb::sdk::ResidenceMachineRequest = decode(value.clone())?;
+        }
+        "vault.residence.prune" => {
+            let _input: crate::task_verb::sdk::ResidencePruneRequest = decode(value.clone())?;
+        }
         "vault.records.erase_preview" => {
             let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
         }
@@ -4807,6 +4884,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "connector.schema" => {
             let _input: crate::task_verb::sdk::ConnectorSchemaRequest = decode(value.clone())?;
         }
+        "connector.call_status" => {
+            let _input: crate::task_verb::sdk::ConnectorCallStatusRequest = decode(value.clone())?;
+        }
         "self.browser.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
         }
@@ -5262,6 +5342,10 @@ pub fn invoke(
         }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
+        "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
+        "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
+        "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
+        "vault.residence.prune" => encode(vault_residence_prune(memory, decode(value)?)?),
         "vault.records.erase_preview" => {
             encode(vault_records_erase_preview(memory, decode(value)?)?)
         }
@@ -5517,6 +5601,7 @@ pub fn invoke(
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
         "connector.call" => encode(connector_call(memory, decode(value)?)?),
         "connector.schema" => encode(connector_schema(memory, decode(value)?)?),
+        "connector.call_status" => encode(connector_call_status(memory, decode(value)?)?),
         "vault.commit" => encode(vault_commit(memory, decode(value)?)?),
         "vault.remember" => encode(vault_remember(memory, decode(value)?)?),
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
@@ -5848,15 +5933,7 @@ pub fn self_memory_diary(
     memory: &Memory<'_>,
     input: DiaryEntryRequest,
 ) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
-    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
-        memory,
-        "self.memory.diary",
-        &input,
-        &["/content"],
-    )?;
-    let landed = crate::task_verb::sdk::self_memory_diary_write(memory, input)?;
-    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
-    Ok(landed)
+    crate::task_verb::sdk::self_memory_diary_write(memory, input)
 }
 pub fn self_memory_diary_reads(
     memory: &Memory<'_>,
@@ -6175,15 +6252,7 @@ pub fn vault_kv_put(
     memory: &Memory<'_>,
     input: crate::memory::KeyValuePut,
 ) -> MemoryResult<crate::memory::KeyValuePutReceipt> {
-    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
-        memory,
-        "vault.kv.put",
-        &input,
-        &["/value"],
-    )?;
-    let landed = memory.key_value_put(&input)?;
-    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
-    Ok(landed)
+    memory.key_value_put(&input)
 }
 pub fn vault_kv_delete(
     memory: &Memory<'_>,
@@ -6593,6 +6662,30 @@ pub fn vault_guests_mint_slip(
     input: crate::task_verb::sdk::GuestSlipMintRequest,
 ) -> MemoryResult<crate::task_verb::sdk::GuestSlipMinted> {
     crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)
+}
+pub fn vault_residence_mode(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceModeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ResidenceModeChanged> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.mode", &input)
+}
+pub fn vault_residence_open(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceOpenRequest,
+) -> MemoryResult<crate::task_verb::sdk::ResidenceOpened> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.open", &input)
+}
+pub fn vault_residence_index(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceMachineRequest,
+) -> MemoryResult<crate::task_verb::sdk::ResidenceIndex> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.index", &input)
+}
+pub fn vault_residence_prune(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidencePruneRequest,
+) -> MemoryResult<crate::task_verb::sdk::ResidencePruned> {
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune", &input)
 }
 pub fn vault_records_erase_preview(
     memory: &Memory<'_>,
@@ -7763,6 +7856,12 @@ pub fn connector_schema(
     input: crate::task_verb::sdk::ConnectorSchemaRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ConnectorSchemaReply> {
     crate::task_verb::sdk::connector_schema_read(memory, input)
+}
+pub fn connector_call_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectorCallStatusRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorCallStatus> {
+    crate::task_verb::sdk::connector_call_status_read(memory, input)
 }
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,

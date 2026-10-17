@@ -256,6 +256,8 @@ impl LimitsConfig {
             ask_wait_identities,
             import_folder_text_bytes,
             import_folder_notes,
+            import_decoded_messages,
+            import_decoded_bytes,
             signature_decode_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
@@ -314,6 +316,8 @@ impl LimitsConfig {
             (EngineLimit::AskWaitIdentities, ask_wait_identities),
             (EngineLimit::ImportFolderTextBytes, import_folder_text_bytes),
             (EngineLimit::ImportFolderNotes, import_folder_notes),
+            (EngineLimit::ImportDecodedMessages, import_decoded_messages),
+            (EngineLimit::ImportDecodedBytes, import_decoded_bytes),
             (EngineLimit::SignatureDecodeBytes, signature_decode_bytes),
         ] {
             if let Some(bound) = bound {
@@ -442,5 +446,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) ask_wait_identities: Option<u64>,
     pub(super) import_folder_text_bytes: Option<u64>,
     pub(super) import_folder_notes: Option<u64>,
+    pub(super) import_decoded_messages: Option<u64>,
+    pub(super) import_decoded_bytes: Option<u64>,
     pub(super) signature_decode_bytes: Option<u64>,
 }
