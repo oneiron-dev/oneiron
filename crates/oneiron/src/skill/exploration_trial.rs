@@ -8,20 +8,27 @@
 //! Coach ─▶ offline preflight passed ─▶ trial opens (bound = host pull cap)
 //! load door ─▶ requested ACTIVE incumbent whose proposal is on trial
 //!        ├─ proposal still open on it, same bodies, same goal revision
-//!        ├─ an agent-dispatch attempt of the goal's own project
+//!        ├─ an agent-dispatch attempt of the goal's project or one below it
 //!        ├─ a launch estimate in the goal budget's unit
 //!        ├─ inside the goal claim's slice ─▶ reserve, route, load the PROPOSAL
 //!        └─ past it ─▶ the incumbent loads; the trial asks about that charge
 //! spend scope settles ─▶ the reservation becomes what the run spent
+//! unmetered launch ─▶ the estimate is the run's final charge at its route
 //! bound reached · live report kept · verdict recorded ─▶ trial closes
 //! ```
 //!
 //! The slice belongs to one goal claim: a goal revision is a new claim and a
 //! fresh slice. A run's charge is its whole attempt's launch estimate,
 //! reserved in the transaction that loads the proposal. An attempt with no
-//! estimate, an estimate in another unit, no agent dispatch, or another
-//! project loads the incumbent: never a free trial. Admission stays the
-//! gate's; a trial only gathers the live runs the bandit slice measures.
+//! estimate, an estimate in another unit, no agent dispatch, or a project
+//! outside the goal's loads the incumbent: never a free trial. A run in a
+//! project below the goal's (through any of its parents) is the goal's work
+//! and charges the goal's slice, even when that project has a goal of its
+//! own: the skill joined this goal, and the trial was bound to it. Admission
+//! stays the gate's; a trial only gathers the live runs the bandit slice
+//! measures.
+
+use std::collections::{BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
@@ -51,9 +58,10 @@ const SLICES: SideTable<EntityId, SliceLedger, Named> =
 
 /// Retry lineages are walked to this depth, as the spend lease walks them.
 const MAX_LINEAGE: usize = 1024;
+/// A run's project is walked up to the goal's through at most this many
+/// distinct projects, as the project lineage walk bounds it.
+const MAX_PROJECT_LINEAGE: usize = 256;
 
-/// The engine's own versioned queue identity for an overrun ask: the cost
-/// comparison is deterministic, so no model read precedes it.
 /// Hours an unanswered overrun ask waits on the role it went to before it
 /// climbs to the next role up its chain: the ask's reminder. At the chain's
 /// top it waits on.
@@ -65,6 +73,8 @@ pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSp
         seed: 24.0,
     };
 
+/// The engine's own versioned queue identity for an overrun ask: the cost
+/// comparison is deterministic, so no model read precedes it.
 const OVERRUN_QUEUE: &str = "skill.exploration_slice";
 const OVERRUN_QUEUE_VERSION: &str = "v1";
 
@@ -174,7 +184,8 @@ struct TrialRoute {
     unit: LeaseUnit,
     /// The attempt's launch estimate, reserved when the proposal loaded.
     reserved: u64,
-    /// What the attempt's spend scope settled at, once it did.
+    /// The run's final charge: what its spend scope settled at, once it did,
+    /// or its launch estimate from the route on when it launched unmetered.
     settled: Option<u64>,
     at: u64,
 }
@@ -284,8 +295,44 @@ fn lineage_route_in_txn(
     Ok(None)
 }
 
+/// Whether `project` is `goal_project` or sits below it through its
+/// effective parents. A project the read fold does not serve, a parent that
+/// does not parse, or a walk past the bound proves nothing.
+fn within_project_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    goal_project: EntityId,
+    project: EntityId,
+) -> bool {
+    let mut pending = VecDeque::from([project]);
+    let mut seen = BTreeSet::new();
+    while let Some(id) = pending.pop_front() {
+        if id == goal_project {
+            return true;
+        }
+        // A diamond reaches one ancestor twice.
+        if !seen.insert(id) {
+            continue;
+        }
+        if seen.len() > MAX_PROJECT_LINEAGE {
+            return false;
+        }
+        let Ok(Some((_, effective))) = vault.effective_project_in_txn(txn, id) else {
+            continue;
+        };
+        pending.extend(
+            effective
+                .parents
+                .iter()
+                .filter_map(|parent| EntityId::from_hex(parent).ok()),
+        );
+    }
+    false
+}
+
 /// The whole attempt's launch estimate, when it is an agent dispatch for
-/// `project` whose estimate is a nonzero amount of `unit`. `None` is no trial.
+/// `project` or a project below it whose estimate is a nonzero amount of
+/// `unit`. `None` is no trial.
 fn dispatch_charge_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -308,13 +355,17 @@ fn dispatch_charge_in_txn(
     let Ok(input) = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input) else {
         return Ok(None);
     };
-    if input.project_ref != Some(project) {
-        return Ok(None);
-    }
-    Ok(input
+    let Some(charge) = input
         .launch
         .filter(|launch| launch.unit == *unit && launch.expected.units > 0)
-        .map(|launch| launch.expected.units))
+        .map(|launch| launch.expected.units)
+    else {
+        return Ok(None);
+    };
+    Ok(input
+        .project_ref
+        .filter(|own| within_project_in_txn(vault, txn, project, *own))
+        .map(|_| charge))
 }
 
 /// The trial state an answer to an overrun ask leaves: a yes covers
@@ -490,6 +541,12 @@ pub(super) fn route_in_txn(
     if trial.routed >= trial.exposure_bound {
         trial.state = TrialState::Closed(ExplorationTrialClose::BoundReached);
     }
+    // An unmetered launch has no spend scope to settle: its estimate is its
+    // final charge.
+    let settled = crate::agent_dispatch::AgentDispatcher::new(vault)
+        .attempt_spend_scope_in_txn(txn, attempt)?
+        .is_none()
+        .then_some(charge);
     ROUTES.put(
         &vault.store,
         txn,
@@ -499,7 +556,7 @@ pub(super) fn route_in_txn(
             goal_claim: trial.goal_claim,
             unit: trial.unit.clone(),
             reserved: charge,
-            settled: None,
+            settled,
             at,
         },
     )?;
@@ -514,7 +571,8 @@ pub(super) fn route_in_txn(
 /// Settles the slice charge of a run a trial routed when `attempt`'s spend
 /// scope settles: its reservation becomes what the run spent, when the scope
 /// spends in the trial's unit. A run that never settles keeps its
-/// reservation as its charge. No routed try in the lineage: nothing to do.
+/// reservation as its charge; an unmetered run's was final at its route.
+/// No routed try in the lineage: nothing to do.
 /// # Errors
 /// An unreadable row, or storage errors.
 pub(crate) fn settle_exploration_route_in_txn(
