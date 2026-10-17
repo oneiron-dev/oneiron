@@ -857,7 +857,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def audit(self, spec):
-            """One page of the dated authority log audit: grants, revokes and confirms, for the owner."""
+            """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
             return json.loads(_translate(lambda: self._client.vault_authority_audit(json.dumps(spec))))
         @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs":

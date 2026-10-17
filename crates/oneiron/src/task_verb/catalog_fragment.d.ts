@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 364 code-mode rows (344 host rows, 20 run rows), 1283 declarations.
+// Census: 364 code-mode rows (344 host rows, 20 run rows), 1284 declarations.
 // Replies: 312 fully typed, 48 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
@@ -438,7 +438,8 @@ declare namespace Sdk {
   type AuthorityAuditQuery = { after?: EntityId | null; limit?: number | null; kinds?: AuthorityAuditEventKind[] };
   type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
   type AuthorityAuditOrder = "entry_ref_ascending";
-  type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number };
+  type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean };
+  type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
   type MeshPathReceiptsRequest = { limit?: number | null };
   type MeshPathDirection = "inbound" | "outbound";
   type MeshPathOutcome = "admitted" | "refused" | "failed";
@@ -1630,7 +1631,7 @@ declare const vault: Sdk.VaultHost & {
     waits(input: Sdk.ArtifactRefRequest): Promise<Sdk.OrganWaitView[] | StoredResult>;
   };
   authority: {
-    /** One page of the dated authority log audit: grants, revokes and confirms, for the owner. */
+    /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
     audit(input: Sdk.AuthorityAuditQuery): Promise<Sdk.AuthorityAuditPage | StoredResult>;
     /** Every saved authority handoff fork alarm, for the owner. */
     handoff_alarms: ((input: Sdk.EmptyRequest) => Promise<Sdk.AuthorityHandoffAlarm[] | StoredResult>) & {

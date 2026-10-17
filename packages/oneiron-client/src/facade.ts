@@ -702,7 +702,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.packs.setup.get": { description: "A pack's guided setup as it stands, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.packs.setup.answer": { description: "The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.setup.verify": { description: "Checks one pack connection with the engine's fixed read-only provider call for its declared check.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.authority.audit": { description: "One page of the dated authority log audit: grants, revokes and confirms, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.authority.audit": { description: "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.mesh.path_receipts": { description: "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.inspection.resolve": { description: "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.shared.propose_delete": { description: "Starts a shared vault's delete_vault act, returned as a typed pending act.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1200,7 +1200,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
       },
       authority: {
-        /** One page of the dated authority log audit: grants, revokes and confirms, for the owner. */
+        /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
         audit: (input: Facade.AuthorityAuditQuery, options?: O): FacadeReturns<"vault.authority.audit">[K] => invoke("vault.authority.audit", input, options, newInvocation()),
         /** Every saved authority handoff fork alarm, for the owner. */
         handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.authority.handoff_alarms">[K] => invoke("vault.authority.handoff_alarms", input, options, newInvocation()), {
