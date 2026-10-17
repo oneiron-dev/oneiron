@@ -34,6 +34,12 @@ side_tables! {
     /// Birth-position scope stamp (kind, birth facet, worlds/facets/bands/audience/sensitivity) for
     /// one stored record, used by scoped read/export/delete. Key: id16.
     SCOPE_RECORD: VaultMeta b"scope:record:v2:" LegacyJson;
+    /// Active scope-summary projection and its last observed input hash. Key: hash32.
+    SCOPE_SUMMARY_PROJECTION: VaultMeta b"scope_summary:projection:v1:" Named;
+    /// Owner-approved summary-purpose descriptor. Key: string (descriptor id).
+    SCOPE_SUMMARY_PURPOSE: VaultMeta b"scope_summary:purpose:v1:" Named;
+    /// Atomic summary/landing result of one queued declaration. Key: AttemptId.
+    SCOPE_SUMMARY_RESULT: VaultMeta b"scope_summary:result:v1:" Named;
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw;

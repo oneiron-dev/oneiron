@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 264 code-mode rows (247 host rows, 17 run rows), 785 declarations.
-// Replies: 195 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
-// Opaque serde_json::Value leaves: 52; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 268 code-mode rows (251 host rows, 17 run rows), 801 declarations.
+// Replies: 199 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Opaque serde_json::Value leaves: 53; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) & { budget?: BudgetLegibilityEnvelope };
@@ -120,7 +120,9 @@ declare namespace Sdk {
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
   type RecallScope = { world_ref?: string | null; facet?: string | null; kinds?: string[] | null };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null };
+  type MediaQueryKind = "text" | "image" | "audio";
+  type ContextPackMediaQuery = { space: string; mime: string; bytes_b64: string; kinds?: MediaQueryKind[] };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
   type CitedMessage = { short_id: string; value_text: string };
   type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
@@ -410,6 +412,16 @@ declare namespace Sdk {
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[] };
   type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
+  type CodeStateRequest = { repo: string; path: string; revision_ref?: string | null };
+  type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
+  type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
+  type CodeUnitVersionView = { content_hash: string; text: string; start_line: number; end_line: number };
+  type CodeOperationView = { operation_ref: string; sequence: number; session_ref: string; actor_ref: string; actor_class: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
+  type CodeChangeView = { path: string; symbol: string; before?: CodeUnitVersionView | null; after?: CodeUnitVersionView | null; inserted_by: CodeOperationView[]; deleted_by: CodeOperationView[] };
+  type CodeDiffView = { before: CodeStateView; after: CodeStateView; changes: CodeChangeView[]; rendered: string };
+  type CodeSpanView = { start: number; end: number; op?: CodeOperationView | null };
+  type CodeUnitBlameView = { path: string; symbol: string; version: CodeUnitVersionView; spans: CodeSpanView[] };
+  type CodeBlameView = { at: CodeStateView; units: CodeUnitBlameView[] };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type BornFromRequest = { task_ref?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; agent_run?: string | null };
@@ -575,6 +587,9 @@ declare namespace Sdk {
   type TurnActionRequest = { turn_id: string };
   type TurnAction = "continue" | "retry";
   type TurnActionReceipt = { action: TurnAction; turn_id: string; message_id: string; attempt_id: string };
+  type MessageReactionExternal = { connector: string; id: string; origin?: string | null };
+  type MessageReactionRequest = { message: string; by: string; glyph: string; occurred_at?: number | null; remove?: boolean; external?: MessageReactionExternal | null };
+  type MessageReactionReceipt = { id: string; event: string };
   type RoomHostRequest = { room_ref: string; session_ref?: string | null };
   type HostPinKind = "pinned" | "handed_off";
   type HostPin = { agent: EntityId; by: EntityId; kind: HostPinKind; at: number };
@@ -748,6 +763,7 @@ declare namespace Sdk {
   type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string; record?: RecordRef | null };
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
+  type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
   type BlobArtifactInput = { id?: string | null; name: string; media_type: string; occurred_at: number; learned_at?: number | null };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
   type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null };
@@ -1008,6 +1024,8 @@ declare const vault: {
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.Reply<Sdk.BlobVersionView>>;
     /** What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made. */
     born_from(input: Sdk.BornFromRequest): Promise<Sdk.Reply<Sdk.BornFromView>>;
+    /** Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run. */
+    create(input: Sdk.ArtifactCreateRequest): Promise<Sdk.Reply<Sdk.ArtifactView | null>>;
     /** Drops one waiting artifact proposal, once. */
     discard(input: Sdk.ProposalSettleRequest): Promise<Sdk.Reply<Sdk.DiscardedProposal>>;
     /** One artifact version's export file, with the born-with text the caller chose and a share receipt listing it. */
@@ -1059,6 +1077,12 @@ declare const vault: {
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.Reply<unknown>>;
     /** Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate. */
     upsert(input: Sdk.ClaimInput): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
+  };
+  code: {
+    /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
+    blame(input: Sdk.CodeStateRequest): Promise<Sdk.Reply<Sdk.CodeBlameView | null>>;
+    /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
+    diff(input: Sdk.CodeDiffRequest): Promise<Sdk.Reply<Sdk.CodeDiffView | null>>;
   };
   /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
   commit(input: Sdk.CommitRequest): Promise<Sdk.Reply<Sdk.CommitReceipt[]>>;
@@ -1214,6 +1238,10 @@ declare const vault: {
     remove(input: Sdk.SharedMemberRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
     /** An Admin with the add_member power takes back a pending invitation. */
     withdraw_invitation(input: Sdk.SharedInvitationWithdrawRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+  };
+  messages: {
+    /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
+    react(input: Sdk.MessageReactionRequest): Promise<Sdk.Reply<Sdk.MessageReactionReceipt>>;
   };
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
   neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.NeighborHit[]>>>;
