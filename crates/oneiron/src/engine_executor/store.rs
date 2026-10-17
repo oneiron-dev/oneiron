@@ -444,7 +444,7 @@ pub(super) fn bridge_result_output_path(bridge_seq: u64) -> String {
 
 /// A value a program passed to `store`, named by its digest: the same bytes
 /// stored twice are one output.
-pub(super) fn store_result_output_path(digest: &[u8; 32]) -> String {
+pub(crate) fn store_result_output_path(digest: &[u8; 32]) -> String {
     format!(
         "{SCRIPT_OUTPUT_DIR}/store/{}.result",
         crate::entity_id::bytes_to_hex_lower(digest)

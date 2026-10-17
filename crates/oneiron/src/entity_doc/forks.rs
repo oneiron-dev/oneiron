@@ -3,6 +3,7 @@
 use super::document::decode_frontier;
 use super::side_keys::HexPair;
 use super::{AnchoredEdit, EntityDoc, invalid, storage};
+use crate::batch::secret_scan::secret_scan_mode_in_txn;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, HexId, Named, Raw, SideTable};
@@ -245,7 +246,11 @@ impl Vault {
                 let mut fork = live.fork(&req.base)?;
                 bind_actor(self, txn, &fork, req.actor, at)?;
                 if let Some(text) = &req.rewrite {
-                    crate::batch::secret_scan::scan_metadata_field(text)?;
+                    crate::batch::secret_scan::scan_content_in_txn(
+                        &self.store,
+                        txn,
+                        text.as_bytes(),
+                    )?;
                     fork.edit_as(req.actor, at, |body| {
                         body.delete(0, body.len_unicode())
                             .map_err(|_| invalid("fork rewrite delete"))?;
@@ -254,7 +259,8 @@ impl Vault {
                     })?;
                 } else {
                     for op in &req.edits {
-                        super::verbs::apply(&mut fork, req.entity, op, at)?;
+                        let secrets = secret_scan_mode_in_txn(&self.store, txn)?;
+                        super::verbs::apply(&mut fork, req.entity, op, at, secrets)?;
                     }
                 }
                 let id = EntityId::now();

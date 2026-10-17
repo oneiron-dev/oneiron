@@ -18,7 +18,9 @@
 //!
 //! The vault reads the real failure itself, never from the caller: the
 //! failing agent's instructions, the briefing its dispatch carried and the
-//! task it ran ([`FailureSource`]), and every world those touched.
+//! task it ran ([`FailureSource`]), and every world those touched. A failure
+//! is a failure-ladder case or a blocked report its run filed
+//! ([`CodeFixSource`]).
 
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
@@ -26,12 +28,12 @@ use serde::{Deserialize, Serialize};
 use super::FailureClassV1;
 use super::verbatim::shares_verbatim_span;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::batch::secret_scan::scan_joined_text;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::failure_ladder::{HealerCase, healer_case_in_txn};
+use crate::failure_ladder::{BlockedReportRef, HealerCase, healer_case_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -92,6 +94,30 @@ pub struct FailureSource {
     pub instructions: String,
     pub briefing: Option<String>,
     pub task: Option<String>,
+}
+
+/// What a code fix is for (OF-380): a failure-ladder case, or a blocked
+/// report the Coach filed a heal for with no failed case behind it. Each door
+/// checks that it still stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodeFixSource {
+    /// A durable failed case, by its ref.
+    Case { case_ref: String },
+    /// A blocked report, by its receipt, and the durable run that filed it.
+    /// A pumped agent's run id is its attempt's id.
+    Blocked { receipt: EntityId, run: EntityId },
+}
+
+/// What a code fix's source stands on.
+pub(crate) struct CodeFixSubject {
+    /// The failure-ladder case, for a fix that follows one.
+    pub(crate) case: Option<HealerCase>,
+    /// The failure's blocked reports.
+    pub(crate) reports: Vec<BlockedReportRef>,
+    /// The real failure and every world it touched; `None` when the attempt
+    /// is no agent dispatch this can read, or a world cannot be proved.
+    pub(crate) failure: Option<(FailureSource, Vec<EntityId>)>,
 }
 
 impl FailureSource {
@@ -177,10 +203,14 @@ pub enum ScrubRun {
 /// The host's replay runner, inside the vault's boundary. Every effect of a
 /// replay stays in it: no tool call leaves and nothing is written.
 pub trait CodeFixReplay {
-    /// Replays the invented conversation: does it fail the way `case` did?
-    fn reproduces(&self, case: &HealerCase, example: &InventedExampleDraft) -> Result<ReplayRun>;
-    /// Shadow-replays `candidate_id` against the real failure of `case`.
-    fn shadow_replay(&self, case: &HealerCase, candidate_id: &str) -> Result<ShadowRun>;
+    /// Replays the invented conversation: does it fail the way `failure` did?
+    fn reproduces(
+        &self,
+        failure: &FailureSource,
+        example: &InventedExampleDraft,
+    ) -> Result<ReplayRun>;
+    /// Shadow-replays `candidate_id` against the real `failure`.
+    fn shadow_replay(&self, failure: &FailureSource, candidate_id: &str) -> Result<ShadowRun>;
 }
 
 /// The host's in-vault scrubber. It judges the text and changes none of it.
@@ -193,7 +223,8 @@ pub trait ExportScrubber {
 pub enum CodeFixWithheld {
     /// This deployment does not export.
     NotEligible,
-    /// No durable failed case by that ref.
+    /// No durable failed case, or blocked report its run filed, by that
+    /// source.
     UnknownCase,
     /// The failure touched a private world, or one whose privacy is unknown:
     /// its tier-1 counts are all that leaves.
@@ -241,13 +272,13 @@ fn withheld(reason: CodeFixWithheld) -> Result<CodeFixVerdict> {
 }
 
 impl Vault {
-    /// Seals the Coach's invented example of the failure `case_ref` for
+    /// Seals the Coach's invented example of the failure `source` names for
     /// export. The vault reads the real failure itself; the example may copy
     /// no span of it. Every check runs before the record is queued, and the
     /// first that fails withholds it.
     pub fn prepare_invented_example(
         &self,
-        case_ref: &str,
+        source: &CodeFixSource,
         draft: InventedExampleDraft,
         replay: &dyn CodeFixReplay,
         scrubber: &dyn ExportScrubber,
@@ -261,10 +292,10 @@ impl Vault {
         }
         self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
-        let Some((case, attempt)) = failed_case_in(self, &txn, case_ref)? else {
+        let Some(subject) = code_fix_subject_in(self, &txn, source)? else {
             return withheld(W::UnknownCase);
         };
-        let Some((source, worlds)) = failure_source_in(self, &txn, &case, &attempt)? else {
+        let Some((failure, worlds)) = subject.failure else {
             return withheld(W::PrivateWorld);
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -272,7 +303,7 @@ impl Vault {
             return withheld(W::PrivateWorld);
         }
         drop(txn);
-        let sources = source.texts();
+        let sources = failure.texts();
         if sources.is_empty() {
             return withheld(W::SourceUnavailable);
         }
@@ -295,7 +326,7 @@ impl Vault {
         if scrubber.scrub(&joined)? != ScrubRun::Clean {
             return withheld(W::Scrubber);
         }
-        match replay.reproduces(&case, &draft)? {
+        match replay.reproduces(&failure, &draft)? {
             ReplayRun::Reproduced => {}
             ReplayRun::NotReproduced => return withheld(W::NotReproduced),
             ReplayRun::Unavailable => return withheld(W::ReplayUnavailable),
@@ -305,7 +336,7 @@ impl Vault {
             note,
             conversation,
         } = draft;
-        self.queue_code_fix(case_ref, worlds, |id| {
+        self.queue_code_fix(source, worlds, |id| {
             CodeFixExport::InventedExample(InventedFailureExample {
                 version: CODE_FIX_RECORD_VERSION,
                 example_id: id,
@@ -317,11 +348,11 @@ impl Vault {
     }
 
     /// Seals the fixed or not-fixed result of shadow-replaying one candidate
-    /// against the real failure `case_ref`. A replay the host could not run
-    /// emits nothing, never a `NotFixed`.
+    /// against the real failure `source` names. A replay the host could not
+    /// run emits nothing, never a `NotFixed`.
     pub fn record_candidate_fix_result(
         &self,
-        case_ref: &str,
+        source: &CodeFixSource,
         candidate: CandidateFix,
         replay: &dyn CodeFixReplay,
     ) -> Result<CodeFixVerdict> {
@@ -333,10 +364,10 @@ impl Vault {
             return withheld(W::Malformed);
         }
         let txn = self.store.env.read_txn()?;
-        let Some((case, attempt)) = failed_case_in(self, &txn, case_ref)? else {
+        let Some(subject) = code_fix_subject_in(self, &txn, source)? else {
             return withheld(W::UnknownCase);
         };
-        let Some((_, worlds)) = failure_source_in(self, &txn, &case, &attempt)? else {
+        let Some((failure, worlds)) = subject.failure else {
             return withheld(W::PrivateWorld);
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -344,7 +375,7 @@ impl Vault {
             return withheld(W::PrivateWorld);
         }
         drop(txn);
-        let outcome = match replay.shadow_replay(&case, &candidate.candidate_id)? {
+        let outcome = match replay.shadow_replay(&failure, &candidate.candidate_id)? {
             ShadowRun::Fixed => FixOutcome::Fixed,
             ShadowRun::NotFixed => FixOutcome::NotFixed,
             ShadowRun::Unavailable => return withheld(W::ReplayUnavailable),
@@ -354,7 +385,7 @@ impl Vault {
             example_id,
             failure_class,
         } = candidate;
-        self.queue_code_fix(case_ref, worlds, |id| {
+        self.queue_code_fix(source, worlds, |id| {
             CodeFixExport::FixResult(CandidateFixResult {
                 version: CODE_FIX_RECORD_VERSION,
                 result_id: id,
@@ -420,11 +451,11 @@ impl Vault {
         })
     }
 
-    /// Queues one sealed record under a fresh random id, if its case still
+    /// Queues one sealed record under a fresh random id, if its source still
     /// stands at commit.
     fn queue_code_fix(
         &self,
-        case_ref: &str,
+        source: &CodeFixSource,
         worlds: Vec<EntityId>,
         record: impl FnOnce(String) -> CodeFixExport,
     ) -> Result<CodeFixVerdict> {
@@ -436,7 +467,7 @@ impl Vault {
             record: record(id.clone()),
         };
         self.with_write_txn_grouped(|txn| {
-            if failed_case_in(self, txn, case_ref)?.is_none() {
+            if code_fix_subject_in(self, txn, source)?.is_none() {
                 return withheld(CodeFixWithheld::UnknownCase);
             }
             QUEUE.put(&self.store, txn, &key, &row)?;
@@ -463,14 +494,55 @@ pub(crate) fn failed_case_in(
     Ok(Some((case, attempt)))
 }
 
-/// The real failure, and every world it touched: the failing dispatch's
-/// scope and the task row's world (base reality for a row in none). `None`
-/// when the attempt is no agent dispatch this can read, or a world cannot be
-/// proved. A task row that is gone leaves nothing to read.
-pub(crate) fn failure_source_in(
+/// What `source` stands on, while it stands: a case while its attempt
+/// stands failed; a blocked report while its run's filing of it is on record
+/// and the run's attempt is there, in whatever state. `None` once it does
+/// not.
+pub(crate) fn code_fix_subject_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    case: &HealerCase,
+    source: &CodeFixSource,
+) -> Result<Option<CodeFixSubject>> {
+    match source {
+        CodeFixSource::Case { case_ref } => {
+            let Some((case, attempt)) = failed_case_in(vault, txn, case_ref)? else {
+                return Ok(None);
+            };
+            let failure = failure_source_in(vault, txn, case.task_ref.as_deref(), &attempt)?;
+            Ok(Some(CodeFixSubject {
+                reports: case.blocked_reports.clone(),
+                case: Some(case),
+                failure,
+            }))
+        }
+        CodeFixSource::Blocked { receipt, run } => {
+            if !crate::self_heal::blocked_reports::filed_by_run_in(vault, txn, *run, *receipt)? {
+                return Ok(None);
+            }
+            let id = AttemptId::from_bytes(run.as_bytes())?;
+            let Some(attempt) = AttemptQueue::new(vault).get_in_txn(txn, id)? else {
+                return Ok(None);
+            };
+            let failure = failure_source_in(vault, txn, attempt.task_ref.as_deref(), &attempt)?;
+            Ok(Some(CodeFixSubject {
+                case: None,
+                reports: vec![BlockedReportRef {
+                    receipt_ref: receipt.to_hex(),
+                }],
+                failure,
+            }))
+        }
+    }
+}
+
+/// The real failure, and every world it touched: the failing dispatch's
+/// scope and the world of its task `task_ref` (base reality for a row in
+/// none). `None` when the attempt is no agent dispatch this can read, or a
+/// world cannot be proved. A task row that is gone leaves nothing to read.
+fn failure_source_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: Option<&str>,
     attempt: &AttemptRecord,
 ) -> Result<Option<(FailureSource, Vec<EntityId>)>> {
     use crate::ports::EntityStore;
@@ -480,7 +552,7 @@ pub(crate) fn failure_source_in(
     };
     let mut worlds = vec![input.scope.and_then(|scope| scope.world).unwrap_or(base)];
     let mut task = None;
-    if let Some(raw) = case.task_ref.as_deref() {
+    if let Some(raw) = task_ref {
         let Ok(task_ref) = EntityId::from_hex(raw) else {
             return Ok(None);
         };

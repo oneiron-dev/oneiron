@@ -39,6 +39,10 @@ struct VerbCall {
 struct Store {
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    sources: Vec<String>,
+    #[serde(default)]
+    receipt: Option<crate::engine_executor::StoreReceiptInput>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -293,9 +297,14 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
         }));
     }
     Ok(match args.verb.as_str() {
-        "store" => Some(JsResultCall::Store {
-            name: decode::<Store>(args.input)?.name,
-        }),
+        "store" => {
+            let store = decode::<Store>(args.input)?;
+            Some(JsResultCall::Store {
+                name: store.name,
+                sources: store.sources,
+                receipt: store.receipt,
+            })
+        }
         "describe" => result_ref(args.input).map(JsResultCall::Describe),
         "can" => {
             can_read(args.input)?.map(|(target, child)| JsResultCall::CanRead { target, child })
@@ -608,6 +617,26 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 bound: None,
             }))
         }
+        RunVerb::Summarize => {
+            let args: crate::code_run::SummarizeInput = decode(input)?;
+            SelfCall::Summarize(Box::new(crate::code_run::SelfSummarizeCall {
+                reference: args.r#ref,
+                effort: args.effort.map(|effort| match effort {
+                    crate::code_run::SummarizeInputEffort::Low => {
+                        crate::code_run::SummarizeEffort::Low
+                    }
+                    crate::code_run::SummarizeInputEffort::Medium => {
+                        crate::code_run::SummarizeEffort::Medium
+                    }
+                    crate::code_run::SummarizeInputEffort::High => {
+                        crate::code_run::SummarizeEffort::High
+                    }
+                }),
+                group: args.group,
+                defer: args.defer.unwrap_or(false),
+                bound: None,
+            }))
+        }
         RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
         RunVerb::SelfTeamRecord => {
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
@@ -677,19 +706,40 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
 /// One dispatched call's reply body, before its budget envelope.
 fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
     Ok(match outcome {
-        // A run row's answer is its output, framed as every verb's is.
-        SelfDispatchOutcome::MemoryWrite(value) => json!({"output":{"id":value.id.to_hex()}}),
-        SelfDispatchOutcome::MemoryEdgeWrite(value) => {
-            json!({"output":{"src":value.src.to_hex(),"kind":value.kind.name(),"tgt":value.tgt.to_hex()}})
+        // A row's answer is its output, framed as every verb's is: the type
+        // its row names (`output` in `scripts/sdk/agent-verbs.json`).
+        SelfDispatchOutcome::MemoryWrite(value) => {
+            json!({ "output": crate::code_run::MemoryWriteOutput { id: value.id } })
         }
-        SelfDispatchOutcome::MemorySearch(value) => {
-            json!({"output":{"results":value.results.iter().map(|hit|
-            json!({"id":hit.id.to_hex(),"score":hit.score})).collect::<Vec<_>>()}})
-        }
+        SelfDispatchOutcome::MemoryEdgeWrite(value) => json!({
+            "output": crate::code_run::MemoryEdgeOutput {
+                src: value.src,
+                kind: value.kind.name().to_owned(),
+                tgt: value.tgt,
+            }
+        }),
+        SelfDispatchOutcome::MemorySearch(value) => json!({
+            "output": crate::code_run::MemorySearchOutput {
+                results: value
+                    .results
+                    .iter()
+                    .map(|hit| crate::code_run::MemorySearchHit {
+                        id: hit.id,
+                        score: hit.score,
+                    })
+                    .collect(),
+            }
+        }),
+        // Any call that parks, and every call past a park, answers the wait.
         SelfDispatchOutcome::DurableWait(value) => json!({"waitId":value.wait_id.to_hex()}),
-        SelfDispatchOutcome::TaskRefusal(value) => {
-            json!({"output":{"task":value.task_ref.to_hex(),"level":value.level.as_str(),"outcome":value.outcome_word(),"replay":value.replay}})
-        }
+        SelfDispatchOutcome::TaskRefusal(value) => json!({
+            "output": crate::code_run::TaskRefuseOutput {
+                task: value.task_ref,
+                level: value.level.as_str().to_owned(),
+                outcome: value.outcome_word().to_owned(),
+                replay: value.replay,
+            }
+        }),
         SelfDispatchOutcome::AgentVerb(answer) => json!({"output":answer.output}),
         SelfDispatchOutcome::SkillCall(value) => json!({"output":value.output}),
         SelfDispatchOutcome::Denied(value) => {
@@ -699,28 +749,40 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::AgentDefinitionPut(value) => {
             json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
         }
-        SelfDispatchOutcome::AgentSpawn(value) => match value {
-            crate::code_run::SelfAgentSpawnResult::Queued { attempt_ref } => {
-                json!({"output":{"kind":"agent_spawn","state":"queued","attempt":crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())}})
-            }
-            crate::code_run::SelfAgentSpawnResult::ProposedWiden { proposal_ref } => {
-                json!({"output":{"kind":"agent_spawn","state":"proposed_widen","proposal":proposal_ref}})
-            }
-        },
-        SelfDispatchOutcome::TaskAsk(value) => {
-            json!({"kind":"task_ask","group":value.handle.group_ref.to_hex(),"tasks":value.task_refs.iter().map(crate::entity_id::EntityId::to_hex).collect::<Vec<_>>(),"hold":value.hold.as_ref().map(|_|"no_live_route"),"replay":value.idempotent_replay})
+        SelfDispatchOutcome::AgentSpawn(value) => {
+            use crate::code_run::{AgentSpawnKind, AgentSpawnOutput, SelfAgentSpawnResult};
+            let spawn = match value {
+                SelfAgentSpawnResult::Queued { attempt_ref } => AgentSpawnOutput::Queued {
+                    kind: AgentSpawnKind::AgentSpawn,
+                    attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
+                },
+                SelfAgentSpawnResult::ProposedWiden { proposal_ref } => {
+                    AgentSpawnOutput::ProposedWiden {
+                        kind: AgentSpawnKind::AgentSpawn,
+                        proposal: proposal_ref.clone(),
+                    }
+                }
+            };
+            json!({ "output": spawn })
         }
-        SelfDispatchOutcome::TaskAskStatus(value) => match value {
-            crate::task_verb::TaskAskStatus::Pending { hold } => {
-                json!({"kind":"task_ask_status","state":"pending","hold":hold.as_ref().map(|_|"no_live_route")})
-            }
-            crate::task_verb::TaskAskStatus::Changed { voided, generation } => {
-                json!({"kind":"task_ask_status","state":"changed","voided":voided.iter().map(crate::entity_id::EntityId::to_hex).collect::<Vec<_>>(),"generation":generation})
-            }
-            crate::task_verb::TaskAskStatus::Settled(result) => {
-                json!({"kind":"task_ask_status","state":"settled","result":result})
-            }
-        },
+        // The bare `ask` and `wait` answer their rows' outputs, as their host
+        // doors do. A wait that would stay pending parks instead, so it
+        // answers `waitId`, never `Pending`.
+        SelfDispatchOutcome::TaskAsk(receipt) => json!({ "output": receipt }),
+        SelfDispatchOutcome::TaskAskStatus(value) => {
+            use crate::task_verb::{TaskAskStatus, TaskAskWait};
+            let wait = match value {
+                TaskAskStatus::Pending { .. } => {
+                    return Err(failure("a code-mode wait parks rather than answer pending"));
+                }
+                TaskAskStatus::Changed { voided, generation } => TaskAskWait::Changed {
+                    voided: voided.clone(),
+                    generation: *generation,
+                },
+                TaskAskStatus::Settled(result) => TaskAskWait::Ready(result.clone()),
+            };
+            json!({ "output": wait })
+        }
         SelfDispatchOutcome::Speech(value) => {
             json!({"order":value.order,"isVisible":value.is_visible})
         }
@@ -736,6 +798,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({ "output": receipt }),
         SelfDispatchOutcome::ReaderReport(receipt) => json!({ "output": receipt }),
         SelfDispatchOutcome::TaskWaitSet(result) => json!({ "output": result }),
+        SelfDispatchOutcome::Summarize(reply) => json!({ "output": reply.output() }),
         SelfDispatchOutcome::Leader(json) => {
             let output: Value =
                 serde_json::from_str(json).map_err(|_| failure("leader answer is not JSON"))?;
