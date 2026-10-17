@@ -254,7 +254,7 @@ impl Vault {
     /// re-seal after a committed admission, never a rollback. A sync lane's
     /// upkeep re-seal runs again later; nothing else retries it.
     #[cfg(feature = "sync")]
-    fn reseal_after_machine_admission(&self) -> Result<()> {
+    pub(super) fn reseal_after_machine_admission(&self) -> Result<()> {
         self.reseal_custody_for_roster().map(drop).map_err(|error| {
             crate::error::Error::sync_engine(
                 crate::error::SyncEngineContext::CustodyResealAfterMachineAdmission,

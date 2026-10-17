@@ -2605,7 +2605,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -4646,7 +4646,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 1,
       "re-export": 3
      }
@@ -5234,7 +5234,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -11327,7 +11327,7 @@
      "path": "src/code_run/dispatcher/team_submit_output.rs",
      "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -12169,7 +12169,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/firecracker/launch.rs",
@@ -12203,7 +12203,7 @@
      "path": "src/code_sandbox/firecracker/protocol.rs",
      "purpose": "Bounded guest-agent framing; no host filesystem or credential capabilities",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -12241,7 +12241,7 @@
      "path": "src/code_sandbox/microvm/adapter.rs",
      "purpose": "The SandboxBoundaryAdapter implementation that binds a backend to the boundary contract",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -12263,7 +12263,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContainerBackend"
@@ -21700,6 +21700,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "StepCancellation"
+     ],
+     "path": "src/engine_executor/cancel.rs",
+     "purpose": "The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to…",
+     "surface": {
+      "const": 1,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/engine_executor/code_check.rs",
      "purpose": "Shadow mode: before a generated program runs, it is type-checked against the declarations its prompt teaches",
@@ -21768,7 +21782,7 @@
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
       "crate-vis": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -22768,7 +22782,7 @@
      "path": "src/federation/own_device.rs",
      "purpose": "FIX 3134: an owner's own device holds a member FEDERATION_GRANT at its home, so the device's residence…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -40806,6 +40820,7 @@
      "path": "src/skill/call.rs",
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -40909,6 +40924,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/skill/invocation.rs",
+     "purpose": "The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SkillGovernanceTier",
       "SkillLifecycle"
@@ -40928,7 +40953,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 8
      }
@@ -53240,7 +53265,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53912,7 +53937,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54194,7 +54219,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3290,
+   "source_files": 3292,
    "test_files": 902
   },
   "oneiron-android": {
