@@ -84,6 +84,11 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     }
     strict(snapshot.entity_blobs.iter().map(|row| row.id))?;
     strict(snapshot.retained_claim_worlds.iter().map(|row| row.id))?;
+    strict(snapshot.custody_transitions.iter().map(|row| row.id))?;
+    // Custody transitions ride base windows only (OF-422).
+    if snapshot.window.contains('@') && !snapshot.custody_transitions.is_empty() {
+        return Err(invalid("custody transition in a world window"));
+    }
     strict(
         snapshot
             .base_edges

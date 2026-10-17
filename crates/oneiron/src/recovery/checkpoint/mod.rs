@@ -19,13 +19,15 @@ mod artifact;
 mod authority_plane;
 mod commitment;
 mod decisions;
+mod host_holds;
 mod rebuild;
 mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
-pub use artifact::{ArtifactKind, CheckpointKey};
+pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
+pub use host_holds::HostOrderHolds;
 pub use commitment::CheckpointSigner;
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
@@ -521,6 +523,8 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
+        // The copy holds the source's records, so its host orders hold them too.
+        host_holds::carry(&mut image.databases, live.host_holds())?;
         let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
@@ -677,6 +681,8 @@ impl Vault {
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         // The carried rows hold `current`'s custody binding and retirements.
         authority_plane::carry_current_authority(&mut image.databases, current)?;
+        // And its host orders, which no image carries.
+        host_holds::carry_current(&mut image.databases, current)?;
         // Two live vaults never answer as one machine (wp-keys I7).
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();

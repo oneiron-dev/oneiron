@@ -37,7 +37,9 @@ pub enum RecordError {
     /// An effect's person target came from a mention that is not settled
     /// yet (OF-123 act-now guard): its identity ask is open, or it still
     /// names more than one person.
-    #[error("which person \"{name}\" names is not settled; settle it with self.identity.settle first")]
+    #[error(
+        "which person \"{name}\" names is not settled; settle it with self.identity.settle first"
+    )]
     IdentityUnsettled { name: String },
     /// A project's signed history passed its budget; it serves its last
     /// verified frontier and takes no new authority until the owner acts.

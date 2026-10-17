@@ -23,6 +23,9 @@
 //! names one by its `blake3:` ref reads it from that browser, and a batch's
 //! routine steps are the run's own `ai.verdict` calls through this door,
 //! each with the step's screenshot handed in the same way.
+//!
+//! The vault's replay library (OF-598) rides the run's browser: the session
+//! checks and replays a solved run's program, and the vault files it.
 
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::{mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb};
@@ -31,20 +34,24 @@ use super::{McpCallContext, McpGatewayError};
 use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
+use oneiron::browser_library::{
+    WorkflowRecord, file_workflow, record_workflow_run, site_workflows,
+};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
+use oneiron::llm::decision::{DecisionRung, RoutineOutcome};
 use oneiron::memory::HostWriteOrigin;
 use oneiron::runtime_hooks::InvocationId;
-use oneiron::llm::decision::RoutineOutcome;
 use oneiron::task_verb::sdk::{
     AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
 };
 use oneiron_browser::{
-    BrowserError, BrowserGuest, BrowserSession, EFFECT_CLASSES, PressMode, RoutineAnswer,
-    RoutineAsk, RoutineDecider, RoutineReply, SendPolicy,
+    BrowserError, BrowserGuest, BrowserSession, EFFECT_CLASSES, LibraryCard, PressMode,
+    RoutineAnswer, RoutineAsk, RoutineDecider, RoutineReply, SendPolicy, WorkflowLibrary,
+    WorkflowProgram, WorkflowProof,
 };
 use serde_json::Value;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -131,7 +138,8 @@ impl RoutineDecider for LadderDecider {
             options: ask.options,
             evidence: Vec::new(),
             state: Some(ask.state),
-            ceiling: None,
+            // No model: the ladder stops at its rule rung.
+            ceiling: ask.no_model.then_some(DecisionRung::Rule),
             // A step acts on a live page: at a cut it abstains and goes up.
             reversibility: AiVerdictReversibility::OutboundEffect,
             deadline_ms: None,
@@ -151,9 +159,8 @@ impl RoutineDecider for LadderDecider {
         let actor = self.actor.clone();
         let origin = self.origin.clone();
         self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-            let _ = sender.send(
-                execute_code_mode_verb(&server, &actor, "ai.verdict", input, origin).await,
-            );
+            let _ = sender
+                .send(execute_code_mode_verb(&server, &actor, "ai.verdict", input, origin).await);
         }));
         let (output, _) = receiver
             .recv()
@@ -186,12 +193,73 @@ impl RoutineDecider for LadderDecider {
     }
 }
 
+/// The vault's replay library, as the run's browser files and reads it:
+/// what it files names the run's caller.
+struct VaultLibrary {
+    vault: Arc<oneiron::Vault>,
+    by: oneiron::EntityId,
+}
+
+fn library_failed(error: oneiron::Error) -> BrowserError {
+    BrowserError::Library(error.to_string())
+}
+
+impl WorkflowLibrary for VaultLibrary {
+    fn find(
+        &mut self,
+        site: &str,
+        subgoal: Option<&str>,
+    ) -> Result<Vec<LibraryCard>, BrowserError> {
+        Ok(site_workflows(&self.vault, site, subgoal)
+            .map_err(library_failed)?
+            .iter()
+            .map(WorkflowRecord::card)
+            .collect())
+    }
+
+    fn program(&mut self, workflow: &str) -> Result<Option<WorkflowProgram>, BrowserError> {
+        let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
+            return Ok(None);
+        };
+        Ok(oneiron::browser_library::workflow(&self.vault, id)
+            .map_err(library_failed)?
+            .map(|record| record.program))
+    }
+
+    fn admit(
+        &mut self,
+        site: &str,
+        program: &WorkflowProgram,
+        proof: &WorkflowProof,
+    ) -> Result<String, BrowserError> {
+        file_workflow(
+            &self.vault,
+            self.by,
+            site,
+            program,
+            proof,
+            self.vault.now_recorded_at(),
+        )
+        .map(|id| id.to_hex())
+        .map_err(library_failed)
+    }
+
+    fn record_run(&mut self, workflow: &str, met: bool) -> Result<(), BrowserError> {
+        let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
+            return Ok(());
+        };
+        record_workflow_run(&self.vault, id, met, self.vault.now_recorded_at())
+            .map_err(library_failed)
+    }
+}
+
 impl RunBrowser {
     fn call(
         &self,
         verb: AgentVerb,
         input: Value,
         decider: LadderDecider,
+        library: VaultLibrary,
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
@@ -241,6 +309,7 @@ impl RunBrowser {
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
         driver.set_decider(Box::new(decider));
+        driver.set_library(Box::new(library));
         let result = oneiron::task_verb::sdk::invoke_browser(driver, verb.as_str(), input);
         if driver.abandoned() {
             self.vault
@@ -300,7 +369,12 @@ impl McpCodeModeVerbs {
             return refused(error);
         }
         // The browser runs as its connector pack: no installed pack, no browser.
-        if self.server.vault.require_builtin_channel_pack("browser").is_err() {
+        if self
+            .server
+            .vault
+            .require_builtin_channel_pack("browser")
+            .is_err()
+        {
             return Ok(Err(AgentVerbRefusal {
                 code: "browser_pack_not_installed".to_owned(),
             }));
@@ -342,7 +416,11 @@ impl McpCodeModeVerbs {
             origin: origin.clone(),
             run_id: browser.run_id,
         };
-        let output = match browser.call(call.verb, hooks.args.clone(), decider) {
+        let library = VaultLibrary {
+            vault: Arc::clone(&self.server.vault),
+            by: self.actor.actor_ref,
+        };
+        let output = match browser.call(call.verb, hooks.args.clone(), decider, library) {
             Ok(output) => output,
             Err(error) => return Ok(Err(browser_refused(error))),
         };
