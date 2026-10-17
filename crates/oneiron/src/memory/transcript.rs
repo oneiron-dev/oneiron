@@ -215,6 +215,63 @@ impl Memory<'_> {
         .with_read_receipt(read))
     }
 
+    /// The branch of a DAG conversation that leads to `target`, read as the
+    /// bound actor: the turns on its retained Parent chain, root first, each
+    /// with its visible messages the actor may read, on one page. `None` for
+    /// a conversation that has not adopted the DAG, whose transcript is its
+    /// time order. A sibling branch's turns never join it.
+    ///
+    /// # Errors
+    ///
+    /// `NOT_FOUND` when the actor may not read the conversation;
+    /// `INVALID_STATE` when a turn on the branch moved in time while it was
+    /// read.
+    pub(crate) fn turn_action_branch_transcript(
+        &self,
+        conversation: &EntityId,
+        target: &EntityId,
+    ) -> MemoryResult<Option<TranscriptPage>> {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        if !crate::conversation_dag::keeps_dag_topology(&self.vault.store, &txn, conversation)? {
+            return Ok(None);
+        }
+        let mut turns = Vec::new();
+        for id in
+            crate::conversation_dag::retained_chain(&self.vault.store, &txn, conversation, *target)?
+        {
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, &txn, &id)?;
+            if let Some(header) = raw.as_deref().and_then(EntityMetadataHeader::parse)
+                && header.entity_type == ENTITY_TYPE_TURN
+            {
+                turns.push((header.occurred_start, id));
+            }
+        }
+        drop(txn);
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let ScopedReadResult {
+            value: row,
+            receipt,
+        } = lane.read(&[PointRead::id(*conversation)], None)?.single();
+        if row.is_none_or(|row| row.entity_type != ENTITY_TYPE_CONVERSATION || row.body.is_none()) {
+            return Err(MemoryError::not_found("conversation not found").with_read_receipt(receipt));
+        }
+        let mut read = receipt;
+        let Some((page, _)) = self.transcript_page(&lane, &turns, turns.len().max(1), &mut read)?
+        else {
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "the branch's turns moved while it was read",
+                &["Read the branch again."],
+            )
+            .with_read_receipt(read));
+        };
+        Ok(Some(TranscriptPage {
+            conversation: conversation.to_hex(),
+            turns: page,
+            next: None,
+        }))
+    }
+
     /// Up to `limit` readable turns of `turns`, in order, and the cursor of
     /// the page after them; `None` when a listed turn's time no longer is
     /// what the listing saw. `receipt` takes each read's narrowing.
