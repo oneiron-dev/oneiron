@@ -93,7 +93,7 @@ pub struct ShapeApplyReceipt {
 /// Who applies: the vault's owner, with the host's slip issuer when the
 /// host has one (a member a change lowers or removes loses their slips), or
 /// another actor with the credential it presented, if any.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum ShapeApplier<'a> {
     Owner {
         owner: &'a AuthenticatedOwner,
