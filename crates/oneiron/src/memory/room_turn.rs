@@ -203,6 +203,8 @@ impl<'v> Memory<'v> {
                 invocation: self.invocation,
                 task_host: None,
                 off_record_session: self.off_record_session.clone(),
+                credential: self.credential,
+                rewrite_admit: self.rewrite_admit.clone(),
             },
         })
     }

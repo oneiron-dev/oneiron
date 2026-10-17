@@ -32,6 +32,11 @@ pub const MAX_BIRTH_INPUTS: usize = 1024;
 /// Most hex characters a birth's input hash may carry.
 const MAX_CONTENT_HASH_HEX: usize = 128;
 
+/// Hex characters of a withheld ref's keyed hash in its handle, after `wh_`
+/// (64 bits; an open call in engine-calls-review/CALLS.md, "OF-491 Q26
+/// handles").
+const WITHHELD_HANDLE_HEX: usize = 16;
+
 /// The birth envelope of one row: Rule A's `made_by` plus the derivation
 /// memo-key's input hash (ARCH-0035, `content_hash`: the hash of the exact
 /// input records and claims read).
@@ -82,6 +87,14 @@ impl WithheldKey {
         Self(key)
     }
 
+    /// The key one export masks its births under: fresh, so no two exports
+    /// link their handles (the open call "OF-491 Q26 handles" in
+    /// engine-calls-review/CALLS.md).
+    #[must_use]
+    pub fn for_export() -> Self {
+        Self::fresh()
+    }
+
     /// The stable key for every copy bound for `destination`: the vault's
     /// local withheld secret, made on first use and never shipped, keys a
     /// hash of the destination bytes. One destination reads one ref as one
@@ -118,7 +131,7 @@ impl WithheldKey {
     fn handle(&self, row: &EntityId) -> String {
         format!(
             "wh_{}",
-            &blake3::keyed_hash(&self.0, row.as_bytes()).to_hex()[..16]
+            &blake3::keyed_hash(&self.0, row.as_bytes()).to_hex()[..WITHHELD_HANDLE_HEX]
         )
     }
 }
@@ -247,11 +260,12 @@ impl RowBirth {
             || withheld(WithheldRole::Prompt);
         let handles_ok = self.withheld.len() <= MAX_BIRTH_INPUTS + 1
             && self.withheld.iter().all(|w| {
-                w.handle.len() == 19
-                    && w.handle.strip_prefix("wh_").is_some_and(|hex| {
-                        hex.bytes()
+                w.handle.strip_prefix("wh_").is_some_and(|hex| {
+                    hex.len() == WITHHELD_HANDLE_HEX
+                        && hex
+                            .bytes()
                             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                    })
+                })
             });
         let hash_ok = self.content_hash.len() <= MAX_CONTENT_HASH_HEX
             && self
