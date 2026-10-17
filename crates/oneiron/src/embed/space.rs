@@ -308,6 +308,21 @@ pub(crate) fn embedding_space_in_txn(
     EMBEDDING_SPACE.get(store, txn, &id.to_owned())
 }
 
+/// Refuses a hand binding of a slot an open move carries: the move swaps it in, or is
+/// abandoned first.
+fn refuse_moving_slot_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    kind: InputKind,
+) -> Result<()> {
+    if let Some(candidate) = super::space_move::moving_kind_in_txn(store, txn, kind)? {
+        return Err(Error::InvalidConfig(format!(
+            "the {kind:?} slot is moving to {candidate}; approve or abandon that move first"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn kind_slot_bindings_in_txn(
     store: &impl SideTableDbs,
     txn: &RoTxn<'_>,
@@ -574,6 +589,7 @@ impl Vault {
     /// Binds a kind slot to a declared space that accepts that input. Binding text moves text
     /// documents and text queries off the vault's own index onto that space, so the space also
     /// needs a text query tower ([`Self::bind_one_space_for_all`] binds every slot at once).
+    /// A slot an open move carries is refused until the move ends.
     pub fn bind_kind_slot(&self, kind: InputKind, space_id: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
@@ -582,6 +598,7 @@ impl Vault {
             )));
         };
         space.admit_binding(kind)?;
+        refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
         EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
         wtxn.commit()?;
         Ok(())
@@ -597,7 +614,7 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] when the space is undeclared, does not accept text, or has no
-    /// text query tower.
+    /// text query tower, or an open move carries a slot it would bind.
     pub fn bind_one_space_for_all(&self, space_id: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
@@ -606,6 +623,9 @@ impl Vault {
             )));
         };
         space.admit_binding(InputKind::Text)?;
+        for kind in &space.accepts {
+            refuse_moving_slot_in_txn(&self.store, &wtxn, *kind)?;
+        }
         for kind in InputKind::ALL {
             if space.accepts.contains(&kind) {
                 EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
@@ -616,9 +636,10 @@ impl Vault {
     }
 
     /// Clears a kind slot's binding; its space keeps its rows. An unbound text slot is the
-    /// vault's own index again.
+    /// vault's own index again. A slot an open move carries is refused until the move ends.
     pub fn unbind_kind_slot(&self, kind: InputKind) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
         EMBEDDING_SLOT.delete(&self.store, &mut wtxn, &[kind.byte()])?;
         wtxn.commit()?;
         Ok(())

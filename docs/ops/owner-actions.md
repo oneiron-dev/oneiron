@@ -885,13 +885,15 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
 - `PUT /v1/owner/embedding-spaces` with `{"id", "dimensions", "accepts", "query_towers"}` (and
   optional `"evidence": {"floor", "strong"}`) declares a space. `POST .../bind` with
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
-  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included.
+  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included. Both
+  refuse a slot an open move carries until the move ends.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
   for the preset, apply at each `serve` start. A start declares only spaces the vault does not
-  hold and binds only slots the vault leaves unbound, so a door edit or a model move stays. A
-  listed space the vault holds at another width stops `serve`: a new width needs a new id.
+  hold and binds only slots the vault leaves unbound and no open move carries, so a door edit
+  or a model move stays. A listed space the vault holds at another width stops `serve`: a new
+  width needs a new id.
 - **Moving to a new model version.** `POST .../move` with `{"candidate", "incumbent", "margin"}`
   starts moving every slot the incumbent serves to the candidate. Leave out `incumbent` for the
   text index. The media backfill fills the candidate while the incumbent keeps serving, and

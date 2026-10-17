@@ -216,6 +216,19 @@ pub(crate) fn open_move_names_in_txn(
         }))
 }
 
+/// The candidate of the open move that carries `kind`'s slot, when one does.
+pub(crate) fn moving_kind_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    kind: InputKind,
+) -> Result<Option<String>> {
+    Ok(EMBEDDING_MOVE
+        .scan(store, txn)?
+        .into_iter()
+        .find(|(_, row)| row.state == SpaceMoveState::Open && row.kinds.contains(&kind))
+        .map(|(_, row)| row.candidate))
+}
+
 fn open_move_in_txn(
     store: &impl SideTableDbs,
     txn: &RoTxn<'_>,

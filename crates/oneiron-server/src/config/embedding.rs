@@ -27,7 +27,7 @@
 use std::collections::BTreeSet;
 
 use oneiron::Vault;
-use oneiron::embed::{EmbeddingSpace, InputKind};
+use oneiron::embed::{EmbeddingSpace, InputKind, SpaceMoveState};
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -82,7 +82,8 @@ impl EmbeddingConfig {
     }
 
     /// Declares the listed spaces the vault does not hold, then binds the
-    /// listed slots it binds to nothing. Runs before the listener binds.
+    /// listed slots it binds to nothing and no open move carries. Runs
+    /// before the listener binds.
     pub fn apply_to(&self, vault: &Vault) -> anyhow::Result<()> {
         let held = vault.embedding_spaces()?;
         for space in &self.spaces {
@@ -101,10 +102,17 @@ impl EmbeddingConfig {
             }
         }
         let bound = vault.kind_slot_bindings()?;
+        let moving: BTreeSet<InputKind> = vault
+            .space_moves()?
+            .into_iter()
+            .filter(|moving| moving.state == SpaceMoveState::Open)
+            .flat_map(|moving| moving.kinds)
+            .collect();
         if let Some(space) = &self.one_space {
-            if InputKind::ALL
-                .iter()
-                .all(|kind| bound.space_for(*kind).is_none())
+            if moving.is_empty()
+                && InputKind::ALL
+                    .iter()
+                    .all(|kind| bound.space_for(*kind).is_none())
             {
                 vault.bind_one_space_for_all(space)?;
                 tracing::info!(%space, "one-space preset bound from [embedding]");
@@ -113,6 +121,7 @@ impl EmbeddingConfig {
         }
         for (kind, space) in self.slots.bindings() {
             match bound.space_for(kind) {
+                None if moving.contains(&kind) => {}
                 None => {
                     vault.bind_kind_slot(kind, space)?;
                     tracing::info!(?kind, %space, "kind slot bound from [embedding]");
