@@ -1710,6 +1710,15 @@ admitted and settled on its meter. It never runs on a relay vault. The
 escalation read is metered on `models.raw_budget_units`. A model rung blocks
 on the server's runtime, so a caller runs a ladder call on a blocking thread.
 
+An `ai.verdict` is paid by its caller (rule 5). Every model rung the call
+reaches (Local-vision, System One, the escalation read and Big) admits and
+settles on the asking actor's own line instead of its rung's meter, and that
+line has no limit, so a verdict is never refused for spend. When one
+caller's verdicts spend past 10,000,000 units in a day, the host raises one
+"is everything okay: a bot, or a valid burst?" health check naming that
+caller. The model rungs, or the owner's ask queue, answer it, and the calls
+go on while it is asked.
+
 ### Standing questions over graph units
 
 A standing question (a typed question saved over a set of graph units, with
