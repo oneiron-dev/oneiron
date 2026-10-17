@@ -107,8 +107,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_pack/reader.rs` | src | s | 2 crate-vis | — | The reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the named agent… |
 | `src/api/context_pack/resolve.rs` | src | m | 15 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |
 | `src/api/context_pack/response.rs` | src | m | 30 crate-vis | — | Response DTOs and engine-to-wire mapping functions for context-pack assembly |
-| `src/api/conversation_dag/mod.rs` | src | m | 17 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
-| `src/api/conversation_dag/types.rs` | src | m | 33 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
+| `src/api/conversation_dag/mod.rs` | src | m | 18 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
+| `src/api/conversation_dag/summary.rs` | src | s | 5 crate-vis | — | Scope-summary result polling, retained metadata and explicit re-derivation |
+| `src/api/conversation_dag/types.rs` | src | m | 37 crate-vis | — | Closed wire inputs for conversation topology and merge operations |
 | `src/api/conversation_members.rs` | src | s | 5 crate-vis | — | Room membership routes |
 | `src/api/conversation_transcript.rs` | src | s | 4 crate-vis | — | `GET /v1/core/conversations/{conversation_id}/transcript`: one conversation's turns and their messages in… |
 | `src/api/conversation_transcript/tests.rs` | test | s | — | — | A loopback page reads an imported coding session from the vault alone, with the dev-mode credential a local… |
@@ -132,7 +133,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | s | 1 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/facade.rs` | src | L | 25 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
-| `src/api/facade/action_routes.rs` | src | m | 1 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
+| `src/api/facade/action_routes.rs` | src | m | 5 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/facade/call_context.rs` | src | s | 15 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
 | `src/api/facade/decision_ask_doors.rs` | src | s | 4 crate-vis | — | OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound agent that holds the role a… |
@@ -141,9 +142,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/graph_ask_doors.rs` | src | s | 6 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | m | 34 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 35 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 6 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
+| `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/setting_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear` |
 | `src/api/facade/share_doors.rs` | src | s | 2 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
@@ -651,7 +653,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/live_rows_tests.rs` | test | s | 2 crate-vis | — | Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a… |
 | `src/server/media_embedding.rs` | src | m | 6 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
-| `src/server/mod.rs` | src | s | 3 re-export · 10 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/mod.rs` | src | s | 3 re-export · 9 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/oversight.rs` | src | s | 1 enum · 5 crate-vis | OversightStartError | The healer oversight receipts (ARCH-0066 §8): each vault signs three counts about review work, coverage… |
 | `src/server/presence.rs` | src | s | 6 crate-vis | — | The presence hub's charge on the server's retained-memory line (rule 5, census row 19) |
 | `src/server/read_shape.rs` | src | s | 1 struct · 1 fn · 1 const · 6 crate-vis | RetrievalQueryCheck | One retrieval request's shape (F21(a)): its query against `[limits].retrieval_query_bytes`, and the OF-520… |

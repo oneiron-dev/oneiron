@@ -38,16 +38,17 @@ pub struct LandedHeader {
     pub record: Option<EntityId>,
 }
 
-fn summary_in_txn(vault: &Vault, txn: &RoTxn<'_>, summary: &EntityId) -> Result<ScopeSummaryBody> {
+pub(super) fn summary_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<ScopeSummaryBody> {
     if vault.archive_tombstone_in_txn(txn, summary)?.is_some() {
         return Err(Error::EntityNotFound);
     }
-    let body = decode_scope_summary_body(&require_type(
-        &vault.store,
-        txn,
-        summary,
-        ENTITY_TYPE_SUMMARY,
-    )?)?;
+    let stored = require_type(&vault.store, txn, summary, ENTITY_TYPE_SUMMARY)?;
+    let logical = crate::entity_doc::resolve_record_body(&vault.store, txn, summary, &stored)?;
+    let body = decode_scope_summary_body(&logical)?;
     validate_covers_in_txn(vault, txn, &body)?;
     Ok(body)
 }
@@ -153,6 +154,7 @@ pub(crate) fn validate_summary_put(
     id: &EntityId,
     kind: u8,
     bytes: &[u8],
+    replicated: bool,
 ) -> Result<()> {
     let previous = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?;
     let was_summary = previous.as_ref().is_some_and(|raw| {
@@ -162,7 +164,19 @@ pub(crate) fn validate_summary_put(
                 .is_some_and(super::codec::is_scope_summary)
     });
     if was_summary || kind == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
-        decode_scope_summary_body(bytes)?;
+        let logical = crate::entity_doc::resolve_record_body(store, txn, id, bytes)?;
+        let body = decode_scope_summary_body(&logical)?;
+        let unchanged = previous
+            .as_ref()
+            .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
+            == Some(bytes);
+        if !cfg!(test) && !unchanged {
+            if body.actor != crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex()
+                || (!replicated && !super::producer::admitted(store, *id, bytes))
+            {
+                return Err(invalid("only the Dreamer may mint a scope-summary body"));
+            }
+        }
     }
     Ok(())
 }
@@ -295,9 +309,10 @@ pub(super) fn mint_in_txn(
     for covered in body.covers.iter().take(256) {
         batch = batch.edge(&id, EdgeKind::DerivedFrom, covered, 1.0);
     }
+    let _permit = super::producer::admit(&vault.store, id, &encoded);
     batch.apply(txn)?;
-    for message in &body.messages {
-        crate::ports::record_derived_edge_in_txn(&vault.store, txn, &id, &message.id)?;
+    for source in word_sources(&body) {
+        crate::ports::record_derived_edge_in_txn(&vault.store, txn, &id, source)?;
     }
     Ok(id)
 }
@@ -323,7 +338,11 @@ pub(super) fn standing_composition_in_txn(
             continue;
         }
         // A summary that no longer validates is not reused, whatever failed.
-        if summary_in_txn(vault, txn, &candidate).is_ok_and(|body| body.memo.as_ref() == Some(memo))
+        if let Ok(body) = summary_in_txn(vault, txn, &candidate)
+            && body.memo.as_ref() == Some(memo)
+            && let Ok(meta) = crate::entity_doc::summary_meta_in_txn(vault, txn, &candidate)
+            && blake3::hash(body.text.as_bytes()).as_bytes() == &meta.derivation.generated_text_hash
+            && blake3::hash(meta.keep.as_bytes()).as_bytes() == &meta.derivation.generated_keep_hash
         {
             return Ok(Some(candidate));
         }
@@ -510,7 +529,8 @@ pub(crate) fn body_covers_in_txn(
     // A reader of the body must be able to read every record and MESSAGE
     // its words came from.
     if entity_type == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
-        let body = decode_scope_summary_body(bytes)?;
+        let logical = crate::entity_doc::resolve_record_body(&vault.store, txn, record, bytes)?;
+        let body = decode_scope_summary_body(&logical)?;
         validate_covers_in_txn(vault, txn, &body)?;
         return Ok(Some(word_sources(&body).copied().collect()));
     }
