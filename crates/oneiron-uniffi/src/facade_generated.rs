@@ -123,6 +123,21 @@ export_facade! {
     let output = client.tasks_wave(&input)?;
     crate::codec::lift_record("tasks.wave", &output)
 };
+"vault.fanout.launch" => fn vault_fanout_launch(&self, input: FanoutLaunchRequest) -> Option<FanoutLaunchView> = |client| {
+    let input: oneiron::task_verb::sdk::FanoutLaunchRequest = crate::codec::lower_record("vault.fanout.launch", input)?;
+    let output = client.vault_fanout_launch(&input)?;
+    crate::codec::lift_record("vault.fanout.launch", &output)
+};
+"vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
+    let output = client.vault_fanout_resume(&input)?;
+    crate::codec::lift_record("vault.fanout.resume", &output)
+};
+"vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutAckRequest = crate::codec::lower_record("vault.fanout.ack", input)?;
+    let output = client.vault_fanout_ack(&input)?;
+    crate::codec::lift_record("vault.fanout.ack", &output)
+};
 "tasks.update" => fn tasks_update(&self, input: TaskUpdateRequest) -> TaskUpdateReceipt = |client| {
     let input: oneiron::task_verb::sdk::TaskUpdateRequest = crate::codec::lower_record("tasks.update", input)?;
     let output = client.tasks_update(&input)?;
@@ -495,6 +510,11 @@ export_facade! {
     let output = client.vault_settings_learning_clear(&input)?;
     crate::codec::lift_record("vault.settings.learning.clear", &output)
 };
+"vault.secrets.lift_history" => fn vault_secrets_lift_history(&self, input: SecretLiftRequest) -> SecretLiftStatus = |client| {
+    let input: oneiron::policy_model::SecretLiftRequest = crate::codec::lower_record("vault.secrets.lift_history", input)?;
+    let output = client.vault_secrets_lift_history(&input)?;
+    crate::codec::lift_record("vault.secrets.lift_history", &output)
+};
 "vault.widen_proposals" => fn vault_widen_proposals(&self, input: WidenProposalsRequest) -> WidenProposalsView = |client| {
     let input: oneiron::agent_dispatch::widen_doors::WidenProposalsRequest = crate::codec::lower_record("vault.widen_proposals", input)?;
     let output = client.vault_widen_proposals(&input)?;
@@ -545,10 +565,10 @@ export_facade! {
     let output = client.vault_lenses_list(&input)?;
     crate::codec::lift_record("vault.lenses.list", &output)
 };
-"vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> ScopedReadResultGeneratedLens = |client| {
+"vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> WireJson = |client| {
     let input: oneiron::lens::LensDefaultRequest = crate::codec::lower_record("vault.lenses.default", input)?;
     let output = client.vault_lenses_default(&input)?;
-    crate::codec::lift_record("vault.lenses.default", &output)
+    crate::codec::encode("vault.lenses.default", &output)
 };
 "vault.disclosure.offer" => fn vault_disclosure_offer(&self, input: DisclosureOfferRequest) -> DisclosureOffered = |client| {
     let input: oneiron::task_verb::sdk::DisclosureOfferRequest = crate::codec::lower_record("vault.disclosure.offer", input)?;

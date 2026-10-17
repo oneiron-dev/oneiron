@@ -407,6 +407,9 @@ class Oneiron:
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs":
             return Oneiron._VaultShapeVerbs(self._client)
+        @property
+        def fanout(self) -> "Oneiron._VaultFanoutVerbs":
+            return Oneiron._VaultFanoutVerbs(self._client)
         def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
             """Witnesses one conversational turn.
 
@@ -478,6 +481,9 @@ class Oneiron:
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
+        @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs":
+            return Oneiron._VaultSecretsVerbs(self._client)
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
             return Oneiron._VaultWidenProposalsVerbs(self._client)
@@ -592,6 +598,18 @@ class Oneiron:
         def apply(self, spec):
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
             return json.loads(_translate(lambda: self._client.vault_shape_apply(json.dumps(spec))))
+    class _VaultFanoutVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def launch(self, spec):
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_launch(json.dumps(spec))))
+        def resume(self, spec):
+            """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_resume(json.dumps(spec))))
+        def ack(self, spec):
+            """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_ack(json.dumps(spec))))
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -911,6 +929,12 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def lift_history(self, spec):
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
     class _VaultWidenProposalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -939,7 +963,7 @@ class Oneiron:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def default(self, spec):
-            """Composes the default vault lens from the named sources, read under the caller's own scope."""
+            """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
             return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
     class _VaultDisclosureVerbs:
         def __init__(self, client: _NativeClient) -> None:
