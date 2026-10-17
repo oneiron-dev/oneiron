@@ -1780,6 +1780,15 @@ async fn execute_agent_verb_listing(
         Some(session) => memory.in_off_record_session(session),
         None => memory,
     };
+    // Rule 5: a task-work row takes its one turn here, for MCP and code mode
+    // alike, and holds it through its hooks and its row.
+    let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
+        .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
+    {
+        Some(server.admit_task_work(actor.actor_ref).await)
+    } else {
+        None
+    };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     let (output, source, carrier, epoch) =
         execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
