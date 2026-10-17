@@ -26217,7 +26217,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 10,
+      "fn": 13,
       "struct": 9,
       "trait": 3
      }
@@ -26245,14 +26245,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DecisionAudio",
       "DecisionImage"
      ],
      "path": "src/llm/decision/media.rs",
-     "purpose": "Images a typed decision reads",
+     "purpose": "Images and audio clips a typed decision reads",
      "surface": {
-      "const": 4,
-      "fn": 5,
-      "struct": 1
+      "const": 7,
+      "fn": 10,
+      "struct": 2
      }
     },
     {
@@ -26298,7 +26299,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GraphAnswerer",
@@ -26314,7 +26315,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 5,
       "struct": 7,
@@ -27518,7 +27519,7 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 12,
       "struct": 8
@@ -49841,7 +49842,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 112,
+   "over_bar": 113,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3009,
    "test_files": 903
@@ -56529,7 +56530,7 @@
      "path": "src/lib/wire.rs",
      "purpose": "Chat-completions protocol mapping: request build, response parse, message/tool codecs, usage, status…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     }
@@ -62591,7 +62592,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/big_rung.rs",
@@ -66857,7 +66858,7 @@
     "big_rung": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)"
     },
