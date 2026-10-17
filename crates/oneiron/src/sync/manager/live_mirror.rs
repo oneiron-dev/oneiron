@@ -7,7 +7,13 @@
 //! work off the writer and outside any Loro event: a sync import commits
 //! through the same door from inside Observer B. Observer A then ships what
 //! changed, live or through the queue.
+//!
+//! A row a local write changed replaces the carrier the doc holds, so an
+//! edit reaches peers as well as a new row. A row a sync import wrote
+//! (Observer B, forward rematerialization: [`import_scope`]) is mirrored only
+//! where the doc lacks it: the doc already holds what the import brought.
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
@@ -21,26 +27,66 @@ use crate::entity_id::EntityId;
 /// manager still lives.
 const LIVENESS_POLL: Duration = Duration::from_secs(1);
 
+thread_local! {
+    /// Set while this thread writes the rows a sync import brought.
+    static IMPORTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// While it lives, the rows this thread commits are a sync import's: the
+/// live mirror inserts them where a doc lacks them and never rewrites a
+/// carrier with them.
+pub(crate) struct ImportScope {
+    was: bool,
+}
+
+/// Opens an [`ImportScope`] on this thread.
+pub(crate) fn import_scope() -> ImportScope {
+    ImportScope {
+        was: IMPORTING.with(|importing| importing.replace(true)),
+    }
+}
+
+impl Drop for ImportScope {
+    fn drop(&mut self) {
+        IMPORTING.with(|importing| importing.set(self.was));
+    }
+}
+
+/// Rows committed and not yet mirrored: every one, and those a local write
+/// changed.
+#[derive(Default)]
+struct Pending {
+    rows: BTreeSet<EntityId>,
+    edited: BTreeSet<EntityId>,
+}
+
 /// Rows committed here and not yet mirrored, and the thread that mirrors them.
 #[derive(Default)]
 pub(super) struct LiveMirror {
-    rows: Mutex<BTreeSet<EntityId>>,
+    pending: Mutex<Pending>,
     wake: Condvar,
     started: AtomicBool,
 }
 
 impl WindowManager {
     /// Queues `rows`, just committed here, for the loaded windows that hold
-    /// them, and starts the mirror thread on first use.
-    pub(crate) fn note_committed_rows(self: &Arc<Self>, rows: BTreeSet<EntityId>) {
+    /// them, and starts the mirror thread on first use. `edited` rows came
+    /// from a local write, whose bytes replace the carrier a doc holds.
+    pub(crate) fn note_committed_rows(self: &Arc<Self>, rows: BTreeSet<EntityId>, edited: bool) {
         if rows.is_empty() {
             return;
         }
-        self.live_mirror
-            .rows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend(rows);
+        {
+            let mut pending = self
+                .live_mirror
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if edited {
+                pending.edited.extend(rows.iter().copied());
+            }
+            pending.rows.extend(rows);
+        }
         self.live_mirror.wake.notify_one();
         if !self.live_mirror.started.swap(true, Ordering::AcqRel) {
             let mirror = Arc::clone(&self.live_mirror);
@@ -55,10 +101,10 @@ impl WindowManager {
         }
     }
 
-    /// Mirrors `rows` into every loaded window that holds them. Best effort:
-    /// the rows are durable, and a window that misses them gets them at its
-    /// next cold open.
-    fn mirror_committed_rows(&self, rows: &BTreeSet<EntityId>) {
+    /// Mirrors `rows` into every loaded window that holds them, `edited`
+    /// ones over the carrier a doc holds. Best effort: the rows are durable,
+    /// and a window that misses them gets them at its next cold open.
+    fn mirror_committed_rows(&self, rows: &BTreeSet<EntityId>, edited: &BTreeSet<EntityId>) {
         for key in self.loaded_keys() {
             let Some(window) = self.window(&key) else {
                 continue;
@@ -68,6 +114,7 @@ impl WindowManager {
                 &window.doc,
                 &key,
                 rows,
+                edited,
             ) {
                 Ok(0) => {}
                 Ok(mirrored) => {
@@ -85,19 +132,22 @@ impl WindowManager {
 /// its manager only while it mirrors; ends once the manager is gone.
 fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
     loop {
-        let rows = {
-            let guard = mirror.rows.lock().unwrap_or_else(PoisonError::into_inner);
+        let pending = {
+            let guard = mirror
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             let (mut guard, _) = mirror
                 .wake
-                .wait_timeout_while(guard, LIVENESS_POLL, |rows| rows.is_empty())
+                .wait_timeout_while(guard, LIVENESS_POLL, |pending| pending.rows.is_empty())
                 .unwrap_or_else(PoisonError::into_inner);
             std::mem::take(&mut *guard)
         };
         let Some(manager) = manager.upgrade() else {
             return;
         };
-        if !rows.is_empty() {
-            manager.mirror_committed_rows(&rows);
+        if !pending.rows.is_empty() {
+            manager.mirror_committed_rows(&pending.rows, &pending.edited);
         }
     }
 }
@@ -115,7 +165,8 @@ impl Vault {
             .ok()
             .and_then(|manager| manager.upgrade());
         if let Some(manager) = manager {
-            manager.note_committed_rows(rows);
+            let edited = !IMPORTING.with(Cell::get);
+            manager.note_committed_rows(rows, edited);
         }
     }
 }
