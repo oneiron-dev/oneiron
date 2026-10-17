@@ -7,6 +7,7 @@ pub mod action_mode;
 pub mod agent_health;
 pub mod coach;
 pub mod coach_heal;
+mod coach_repair;
 pub mod code_fix;
 pub mod detectors;
 mod curator;

@@ -7,11 +7,13 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::*;
+use crate::dreamer_consolidation::provenance::{KeptAsk, KeptDecision};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::{
-    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung,
-    GeneratedDecisions, GeneratedRung, GeneratedStep, HeldLadder, ProviderPin, Reversibility,
-    TypedDecision, cut_text, fit_state,
+    AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionBand, DecisionBandPolicy,
+    DecisionDial, DecisionQuestion, DecisionRung, GeneratedDecisions, GeneratedRung, GeneratedStep,
+    HeldLadder, HumanAskReason, ProviderPin, Reversibility, RoleRank, TypedDecision, cut_text,
+    fit_state,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 
@@ -19,6 +21,13 @@ use crate::retrieval_depth::RetrievalDeadline;
 pub(super) const NONE: &str = "none";
 /// The most ids one choice offers beside [`NONE`]; the contract allows 64 options.
 const IDS_PER_QUESTION: usize = 63;
+/// How long work waiting on a role's answer sits before the attempt reads
+/// the ask again (CALLS: Dreamer ask recheck).
+pub(super) const ASK_RECHECK_MS: u64 = 15 * 60 * 1_000;
+/// The highest role a Dreamer verdict's ask climbs to, and what its answer
+/// authorises (CALLS: Dreamer ask route).
+const ASK_CEILING: RoleRank = RoleRank::Owner;
+const ASK_ACT: AskAct = AskAct::Judgment;
 
 /// The host's ladder for the Dreamer's typed questions, the dial and learned bands they
 /// route under, and its wording of each question. The verdict role's generated read sits at
@@ -81,39 +90,115 @@ pub(super) fn id_options(ids: &[EntityId], none: bool) -> Vec<Vec<String>> {
 }
 
 /// The id one set of group answers names: of the ids named, the one read most probable.
-pub(super) fn named_id(decisions: Vec<&TypedDecision>) -> Option<EntityId> {
+pub(super) fn named_id(decisions: Vec<&KeptDecision>) -> Option<EntityId> {
     decisions
         .into_iter()
-        .filter_map(|decision| match (&decision.answer, decision.probability) {
-            (DecisionAnswer::Choice(label), Some(probability)) if label != NONE => {
-                EntityId::from_hex(label).ok().map(|id| (id, probability))
-            }
-            _ => None,
-        })
+        .filter_map(
+            |decision| match (decision.answer(), decision.probability()) {
+                (Some(DecisionAnswer::Choice(label)), Some(probability)) if label != NONE => {
+                    EntityId::from_hex(label).ok().map(|id| (id, probability))
+                }
+                _ => None,
+            },
+        )
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)
 }
 
+/// Whether the ladder put this decision to a role: its last pin is the person rung's.
+fn went_up(decision: &TypedDecision) -> bool {
+    decision
+        .receipt
+        .providers
+        .last()
+        .is_some_and(|pin| pin.rung == DecisionRung::Human)
+}
+
+/// Whether an ask holds the work it decides: an answered one always does,
+/// and an open one unless the ladder only asked because the read ran out of
+/// time; that pass checkpoints, and its resume reads again.
+fn holds(ask: &DecisionAsk) -> bool {
+    ask.answer.is_some() || ask.reason != HumanAskReason::Deadline
+}
+
 impl ConsolidationExecutor<'_> {
+    /// Who a verdict over `project`'s claims asks when it goes up: the
+    /// project's leader as the responsible actor, then its boards and the
+    /// owners; its boards when it has no leader but the Dreamer itself; the
+    /// owners when the vault folds no such project. Never the Dreamer: a
+    /// system actor holds no role.
+    pub(super) fn ask_route(
+        &self,
+        vault: &crate::Vault,
+        project: Option<EntityId>,
+    ) -> Result<AskTo> {
+        let Some(project) = project else {
+            return Ok(AskTo::owner());
+        };
+        let effective = {
+            let txn = vault.store.env.read_txn()?;
+            vault.effective_project_in_txn(&txn, project)?
+        };
+        let Some((_, effective)) = effective else {
+            return Ok(AskTo::owner());
+        };
+        let role = match EntityId::from_hex(&effective.leader)
+            .ok()
+            .filter(|leader| *leader != self.actor.entity_ref())
+        {
+            Some(actor) => AskRole::Responsible {
+                actor,
+                project: Some(project),
+            },
+            None => AskRole::Board { project },
+        };
+        Ok(AskTo {
+            role,
+            ceiling: ASK_CEILING,
+            act: ASK_ACT,
+        })
+    }
+
     /// `questions` over `state` through the host's ladder, the verdict role's generation
-    /// the dial's first read, on the time the pass has left. Each generation that finished
-    /// joins `charges`, even when a later one traps or fails. None when the step trapped:
-    /// the attempt is parked.
+    /// the dial's first read, on the time the pass has left, any ask going to `to`. Each
+    /// generation that finished joins `charges`, even when a later one traps or fails.
+    /// None when the step trapped: the attempt is parked.
+    ///
+    /// A question already put to `to` over this evidence is not put again: an open ask
+    /// still holds its work, and an answered one is the answer, so the read stops below
+    /// the person rung. Each decision keeps its ask, and its receipt names the version
+    /// of every evidence body the branch pinned.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the step, its pass clock and scope join the pack and the charge tally"
+        reason = "the step, its pass clock, branch and route join the pack and the charge tally"
     )]
     pub(super) async fn decide(
         &self,
         step_ctx: &DurableStepContext<'_>,
         pass: &WakePassDeadline,
-        scope: &crate::llm::Scope,
+        resources: &BranchResources<'_>,
+        to: &AskTo,
         questions: &[DecisionQuestion],
         evidence: &[EntityId],
         state: &serde_json::Value,
         charges: &mut StepChargeTally,
-    ) -> DurableStepResult<Option<Vec<TypedDecision>>> {
+    ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = step_ctx.vault;
+        let principal = self.actor.entity_ref();
+        let asked = questions
+            .iter()
+            .map(|question| {
+                Ok(vault
+                    .decision_ask_for(question, principal, evidence, to, None)?
+                    .filter(holds))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut dial = self.decisions.dial;
+        if dial.ceiling == DecisionRung::Human
+            && asked.iter().flatten().any(|ask| ask.answer.is_some())
+        {
+            dial.ceiling = DecisionRung::Big;
+        }
         let call = self.role(DREAMER_VERDICT_ROLE);
         let seal = |request: LlmRequest| -> Result<LlmRequest> {
             let mut request = vault
@@ -133,22 +218,21 @@ impl ConsolidationExecutor<'_> {
                 step: step_ctx,
                 guard: self.guard,
             },
-            request: verdict_shell(&call, scope)?,
+            request: verdict_shell(&call, resources.scope())?,
             seal: &seal,
         };
-        let asked: Vec<&DecisionQuestion> = questions.iter().collect();
+        let pack: Vec<&DecisionQuestion> = questions.iter().collect();
         let mut spent = Vec::new();
-        let decided = self
-            .decisions
-            .ladder
-            .ladder()
+        let mut ladder = self.decisions.ladder.ladder();
+        ladder.ask_to = Some(to);
+        let decided = ladder
             .run_pack_generated_spent(
                 &rung,
-                &asked,
-                self.actor.entity_ref(),
+                &pack,
+                principal,
                 evidence,
                 state,
-                self.decisions.dial,
+                dial,
                 &self.decisions.bands,
                 Reversibility::ReversibleRead,
                 &RetrievalDeadline::hard(
@@ -163,13 +247,40 @@ impl ConsolidationExecutor<'_> {
         for (hash, usage) in &spent {
             charges.record_terminal(vault, step_ctx.attempt_id, *hash, usage)?;
         }
-        match decided? {
-            GeneratedDecisions::Decided { decisions, .. } => Ok(Some(decisions)),
-            GeneratedDecisions::Trapped => Ok(None),
+        let decisions = match decided? {
+            GeneratedDecisions::Decided { decisions, .. } => decisions,
+            GeneratedDecisions::Trapped => return Ok(None),
             GeneratedDecisions::Unread(_) => {
-                Err(invalid_consolidation("a durable decision read came back unread").into())
+                return Err(
+                    invalid_consolidation("a durable decision read came back unread").into(),
+                );
             }
+        };
+        let mut kept = Vec::with_capacity(decisions.len());
+        for ((question, mut decision), asked) in questions.iter().zip(decisions).zip(asked) {
+            decision
+                .receipt
+                .evidence_versions
+                .extend(resources.evidence_versions(&decision.evidence));
+            let ask = match asked {
+                Some(ask) => Some(ask),
+                None if went_up(&decision)
+                    && decision.human_ask != Some(HumanAskReason::Deadline) =>
+                {
+                    vault.decision_ask_for(question, principal, evidence, to, None)?
+                }
+                None => None,
+            };
+            kept.push(KeptDecision {
+                decision,
+                ask: ask.map(|ask| KeptAsk {
+                    seq: ask.seq,
+                    to: ask.to,
+                    answer: ask.answer,
+                }),
+            });
         }
+        Ok(Some(kept))
     }
 }
 
