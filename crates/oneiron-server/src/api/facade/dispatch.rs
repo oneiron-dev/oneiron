@@ -980,6 +980,94 @@ async fn vault_kv_namespaces(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_campaign_program_create(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.campaign.program.create",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_campaign_program_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.campaign.program.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_campaign_program_update(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.campaign.program.update",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_campaign_program_archive(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.campaign.program.archive",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_weave_report(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6009,6 +6097,12 @@ pub(crate) async fn call_verb(
         "vault.kv.delete" => vault_kv_delete(server, call, input).await,
         "vault.kv.search" => vault_kv_search(server, call, input).await,
         "vault.kv.namespaces" => vault_kv_namespaces(server, call, input).await,
+        "vault.campaign.program.create" => vault_campaign_program_create(server, call, input).await,
+        "vault.campaign.program.read" => vault_campaign_program_read(server, call, input).await,
+        "vault.campaign.program.update" => vault_campaign_program_update(server, call, input).await,
+        "vault.campaign.program.archive" => {
+            vault_campaign_program_archive(server, call, input).await
+        }
         "vault.weave.report" => vault_weave_report(server, call, input).await,
         "vault.weave.digest" => vault_weave_digest(server, call, input).await,
         "vault.weave.lens" => vault_weave_lens(server, call, input).await,
@@ -6362,6 +6456,7 @@ pub(crate) async fn call_verb(
         | "self.skills.call"
         | "self.team.start"
         | "self.team.record"
+        | "self.team.submit"
         | "self.spawn"
         | "tasks.wait"
         | "summarize" => Err(context_required(verb, VerbContext::Run)),

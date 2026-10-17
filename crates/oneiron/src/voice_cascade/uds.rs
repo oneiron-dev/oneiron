@@ -28,7 +28,8 @@
 //! enricher or synchronous vault call already running; those need host deadlines.
 //! A connection has bounded frames, requests, errors, idle time and frame time.
 //!
-//! Filesystem binding currently uses Linux descriptor-relative paths; other
+//! Filesystem binding uses Linux descriptor-relative paths; macOS binds by
+//! pathname, checked against the pinned directory before and after; other
 //! Unix targets fail closed with `Unsupported`. The runtime directory must be
 //! host-owned and inaccessible to group/other users. Its owner is trusted not
 //! to race filesystem mutations. Ancestors are opened without following links;

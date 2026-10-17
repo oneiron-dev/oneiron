@@ -506,10 +506,14 @@ pub(crate) fn evaluate_external_effect_policy(
         // budget stage: enforcement reads ONLY the compiled policy, never the
         // charter text. Drift degrades to proposed-only (Pending) until a
         // human re-stamps; a never-list match denies. Neither debits.
+        // A per-grant key's call meets its catalog connector's charter too
+        // (ONE-1794); the first wall wins.
         let mut charter_wall = None;
-        if key.status == ConnectorKeyStatus::Active
-            && let Some(block) = key.charter.as_ref()
-        {
+        let catalog_charter = connector_key::catalog_charter_in_txn(store, &*wtxn, &key)?;
+        for block in key.charter.iter().chain(catalog_charter.iter()) {
+            if key.status != ConnectorKeyStatus::Active || charter_wall.is_some() {
+                break;
+            }
             let effect_verb = hydrated_effect
                 .scoped_mcp_call
                 .as_ref()
