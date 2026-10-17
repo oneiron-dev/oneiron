@@ -51,8 +51,9 @@ impl Vault {
     /// [`Vault::inject_secret_at_door`] on one custody record named by its
     /// id, not by its live name: a handle names the record it was minted
     /// for, so a name re-registered since never reaches its door. A revoked
-    /// or suspended record refuses as the name door does.
-    pub(crate) fn inject_secret_record_at_door(
+    /// or suspended record refuses as the name door does. A host presents
+    /// the record a `self.use` call names through here (OF-560).
+    pub fn inject_secret_record_at_door(
         &self,
         id: &EntityId,
         effector: &str,

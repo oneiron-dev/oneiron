@@ -3677,10 +3677,20 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "self.use" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.use", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SecretUseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                oneiron::task_verb::sdk::self_use(&memory, input).map_err(mcp_facade_error)?;
+            let output = crate::api::facade::host_doors::self_use(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

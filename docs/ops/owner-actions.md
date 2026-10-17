@@ -410,6 +410,9 @@ oneiron api raw POST /v1/owner/secrets/bind \
   --data '{"handle": "sc12", "effector": "connector:slack"}'
 ```
 
+For an agent's `connector.call` with the secret, bind it to the connector the call routes to,
+such as `connector:github`.
+
 Name the secret by `handle` or `name`. `tier_ceiling` is the binding's rung, 0 (doored) by default
 and never above the class's live floor, and `scopes` defaults to `["read"]`. A binding for the same
 effector is replaced. The reply lists the record's bindings and the Gate record that keeps the

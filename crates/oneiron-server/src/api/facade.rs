@@ -42,6 +42,7 @@ mod policy_doors;
 mod reaction_doors;
 pub(super) mod role_picks;
 mod secret_lift_doors;
+mod secret_use_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
@@ -58,6 +59,7 @@ pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::connector_call_as;
 pub(crate) use dispatch::call_verb;
+pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

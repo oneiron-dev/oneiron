@@ -15,13 +15,16 @@
 //! raw bytes before anything durable is written. Foreign mid-call requests
 //! (elicitation, sampling) are not served: `initialize` declares no client
 //! capabilities and any server request on the reply stream is refused.
+//!
+//! A `self.use` call (OF-560) presents the custody record its handle names
+//! in place of the route's own secret, through the same door for the same
+//! effector; the door rechecks the record's binding at each send.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::Vault;
 use oneiron::connector_key::ConnectorCallRoute;
 use oneiron::outbound_consent::{
     CONNECTOR_REPLY_MAX_BYTES, ConnectorCallHost, FrozenToolCallView, OutboundResultSender,
@@ -30,6 +33,7 @@ use oneiron::outbound_consent::{
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
 };
+use oneiron::{EntityId, Vault};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
 
@@ -57,6 +61,9 @@ pub struct ServedConnectorCallHost {
     connectors: BTreeMap<String, ConnectorHostConfig>,
     client: reqwest::blocking::Client,
     reply: Option<UntrustedToolResult>,
+    /// The custody record a `self.use` call presents, in place of the
+    /// route's own secret.
+    credential: Option<EntityId>,
 }
 
 impl ServedConnectorCallHost {
@@ -90,6 +97,7 @@ impl ServedConnectorCallHost {
                 .collect(),
             client,
             reply: None,
+            credential: None,
         })
     }
 
@@ -115,18 +123,24 @@ impl ServedConnectorCallHost {
             Ok(Some(route)) => route,
             _ => return Sent::not_sent(OutboundFailureKind::Rejected, None),
         };
-        let Some(secret_ref) = route.secret_ref.as_deref() else {
-            return exchange.run(None);
-        };
         let effector = format!("connector:{}", route.connector);
         let mut sent = None;
-        let _door =
-            self.vault
-                .inject_secret_at_door(secret_ref, &effector, &mut |value: &[u8]| {
-                    let header = authorization_header(value)?;
-                    sent = Some(exchange.run(Some(header)));
-                    Ok(())
-                });
+        let mut present = |value: &[u8]| -> oneiron::Result<()> {
+            let header = authorization_header(value)?;
+            sent = Some(exchange.run(Some(header)));
+            Ok(())
+        };
+        let _door = match (self.credential, route.secret_ref.as_deref()) {
+            (Some(custody), _) => {
+                self.vault
+                    .inject_secret_record_at_door(&custody, &effector, &mut present)
+            }
+            (None, Some(secret_ref)) => {
+                self.vault
+                    .inject_secret_at_door(secret_ref, &effector, &mut present)
+            }
+            (None, None) => return exchange.run(None),
+        };
         // Once the exchange ran, what the connector said is the delivery
         // fact, whatever the door reports after it.
         sent.unwrap_or_else(|| Sent::not_sent(OutboundFailureKind::TransportNotStarted, None))
@@ -154,6 +168,11 @@ impl ConnectorCallHost for ServedConnectorCallHost {
 
     fn take_result(&mut self) -> Option<UntrustedToolResult> {
         self.reply.take()
+    }
+
+    fn present_credential(&mut self, credential: Option<EntityId>) -> bool {
+        self.credential = credential;
+        true
     }
 }
 
