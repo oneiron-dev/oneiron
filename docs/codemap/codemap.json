@@ -47195,7 +47195,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 328
+      "fn": 332
      }
     },
     {
@@ -47228,6 +47228,12 @@
       "AiVideoJobRequest",
       "AiVideoTicket",
       "AiVoice",
+      "ChannelSubscriptionRequest",
+      "ChannelSubscriptionRevokeRequest",
+      "ChannelSubscriptionRevoked",
+      "ChannelSubscriptionRow",
+      "ChannelSubscriptions",
+      "ChannelSubscriptionsRequest",
       "HookReplayOutcome",
       "HookReplayRow",
       "HooksReplayRequest",
@@ -47235,6 +47241,7 @@
       "PackPutOutcome",
       "PackPutReceipt",
       "PackPutRequest",
+      "PackRemoveRequest",
       "PackSetupAnswerRequest",
       "PackSetupCardActionInput",
       "PackSetupReceipt",
@@ -47243,12 +47250,12 @@
       "PackSetupVerifyRequest"
      ],
      "path": "src/task_verb/sdk_host.rs",
-     "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and…",
+     "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`…",
      "surface": {
       "const": 4,
       "enum": 6,
-      "fn": 16,
-      "struct": 20
+      "fn": 24,
+      "struct": 27
      }
     },
     {
@@ -61720,7 +61727,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 282
+      "fn": 286
      }
     },
     {
@@ -62737,7 +62744,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 283
+      "fn": 287
      }
     },
     {
@@ -65587,7 +65594,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 49
+      "crate-vis": 53
      }
     },
     {
@@ -73207,6 +73214,13 @@
       "Care",
       "CellTypeRef",
       "ChangeKind",
+      "ChannelMessageSubscription",
+      "ChannelSubscriptionRequest",
+      "ChannelSubscriptionRevokeRequest",
+      "ChannelSubscriptionRevoked",
+      "ChannelSubscriptionRow",
+      "ChannelSubscriptions",
+      "ChannelSubscriptionsRequest",
       "ChartKind",
       "ChartSeries",
       "ClaimApprovalStatus",
@@ -73609,6 +73623,7 @@
       "PackPutOutcome",
       "PackPutReceipt",
       "PackPutRequest",
+      "PackRemoveRequest",
       "PackRuntimeRecipe",
       "PackSection",
       "PackSetup",
@@ -74023,7 +74038,7 @@
      "purpose": "—",
      "surface": {
       "enum": 258,
-      "struct": 655
+      "struct": 663
      }
     },
     {
