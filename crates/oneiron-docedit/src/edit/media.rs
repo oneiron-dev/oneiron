@@ -50,23 +50,7 @@ pub(super) fn set_picture(
     else {
         return Err(EditRefusal::Missing("picture bounds"));
     };
-    let compiled = compile_graphic(&GraphicInput {
-        binding: &AssetBinding {
-            handle: record.artifact.clone(),
-            media: record.media,
-        },
-        requested: picture.requested,
-        record,
-        bytes: Some(picture.bytes),
-        bounds: Rect { x, y, cx, cy },
-        limits: picture.limits,
-    })
-    .map_err(EditRefusal::Picture)?;
-    let (extension, content_type) = match compiled.output {
-        Output::Image(image) if image.media == MediaType::Png => ("png", "image/png"),
-        Output::Image(image) if image.media == MediaType::Jpeg => ("jpeg", "image/jpeg"),
-        _ => return Err(EditRefusal::Invalid("set_picture takes a PNG or JPEG")),
-    };
+    let (extension, content_type, _) = admit(picture, Rect { x, y, cx, cy })?;
     let media = xml::next_part(next, "ppt/media/image", &format!(".{extension}"))?;
     let mut allowed = vec![slide.to_owned(), rels_name(slide), media.clone()];
     if !default_names(next, extension, content_type)? {
@@ -108,6 +92,34 @@ pub(super) fn set_picture(
         }],
         fit: None,
     })
+}
+
+/// The admitted raster's extension and content type, and where it sits
+/// inside `bounds` at its own aspect ratio: the ONE-2534 asset checks over
+/// its record and stored bytes.
+pub(super) fn admit(
+    picture: &Picture<'_>,
+    bounds: Rect,
+) -> Result<(&'static str, &'static str, Rect), EditRefusal> {
+    let record = picture.record;
+    let compiled = compile_graphic(&GraphicInput {
+        binding: &AssetBinding {
+            handle: record.artifact.clone(),
+            media: record.media,
+        },
+        requested: picture.requested,
+        record,
+        bytes: Some(picture.bytes),
+        bounds,
+        limits: picture.limits,
+    })
+    .map_err(EditRefusal::Picture)?;
+    let (extension, content_type) = match compiled.output {
+        Output::Image(image) if image.media == MediaType::Png => ("png", "image/png"),
+        Output::Image(image) if image.media == MediaType::Jpeg => ("jpeg", "image/jpeg"),
+        _ => return Err(EditRefusal::Invalid("set_picture takes a PNG or JPEG")),
+    };
+    Ok((extension, content_type, compiled.record.placed))
 }
 
 /// Whether `[Content_Types].xml` already maps the extension to this type, so

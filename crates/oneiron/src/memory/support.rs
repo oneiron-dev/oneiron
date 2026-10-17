@@ -432,6 +432,9 @@ pub struct Memory<'v> {
     /// (`with_transport_invocation`). Only the host sets it, and nothing
     /// clears it: a surface without it is the in-process host's own.
     pub(super) transport_invocation: bool,
+    /// The ask guest's grant a host admitted for this surface's actor
+    /// (`with_task_grant`, OF-220): its task verbs prove the actor by it.
+    pub(super) task_grant: Option<crate::authority::AdmittedTaskGrant>,
     /// The conversation whose request this surface's work answers, when a
     /// host bound one (`with_origin_conversation`, OF-221): context, not
     /// authority.
@@ -445,6 +448,12 @@ pub struct Memory<'v> {
     /// A host bound this surface for a caller its credential admitted
     /// (`for_credential`); only that host verifies the credential again.
     pub(super) credential: bool,
+    /// The exact instrument that credential is, when the host can verify it
+    /// again (`with_credential_instrument`).
+    pub(super) credential_instrument: Option<crate::runtime_hooks::verb::VerbAskInstrument>,
+    /// The door the caller came in by, when its host can run the call again
+    /// through it (`with_credential_door`).
+    pub(super) credential_door: Option<crate::runtime_hooks::verb::VerbAskDoor>,
     /// The door's own admission of a hook's rewritten args
     /// (`with_rewrite_admit`).
     pub(super) rewrite_admit: Option<RewriteAdmit>,
@@ -469,6 +478,10 @@ pub struct HostWriteOrigin {
     /// The running agent attempt the dispatcher bound as the call's TASK
     /// creator (OF-532), read from its live lease, never from the guest.
     task_host: Option<crate::task_verb::HostBinding>,
+    /// The model provider the host's ladder served the calling program's
+    /// turn from (OF-560), read from the served receipt, never from the
+    /// guest. `None` when no ladder stamped the turn.
+    model_provider: Option<String>,
 }
 
 impl HostWriteOrigin {
@@ -476,7 +489,20 @@ impl HostWriteOrigin {
         Self {
             envelope,
             task_host: None,
+            model_provider: None,
         }
+    }
+
+    /// This origin with the provider the run's last turn was served from.
+    pub(crate) fn with_model_provider(mut self, provider: Option<String>) -> Self {
+        self.model_provider = provider;
+        self
+    }
+
+    /// The model provider the host bound, if any.
+    #[must_use]
+    pub fn model_provider(&self) -> Option<&str> {
+        self.model_provider.as_deref()
     }
 
     /// This origin with the run's TASK creator binding, if it has one.
@@ -527,10 +553,13 @@ impl Vault {
             invocation: None,
             invocation_slip: None,
             transport_invocation: false,
+            task_grant: None,
             origin_conversation: None,
             task_host: None,
             off_record_session: None,
             credential: false,
+            credential_instrument: None,
+            credential_door: None,
             rewrite_admit: None,
         }
     }
@@ -567,10 +596,13 @@ impl Vault {
             invocation: None,
             invocation_slip: None,
             transport_invocation: false,
+            task_grant: None,
             origin_conversation: None,
             task_host: None,
             off_record_session: None,
             credential: false,
+            credential_instrument: None,
+            credential_door: None,
             rewrite_admit: None,
         }
     }
@@ -616,10 +648,13 @@ impl<'v> Memory<'v> {
                 invocation: self.invocation,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
+                task_grant: self.task_grant,
                 origin_conversation: self.origin_conversation,
                 task_host: self.task_host.clone(),
                 off_record_session: self.off_record_session.clone(),
                 credential: self.credential,
+                credential_instrument: self.credential_instrument.clone(),
+                credential_door: self.credential_door.clone(),
                 rewrite_admit: self.rewrite_admit.clone(),
             },
         })
@@ -700,9 +735,25 @@ impl Memory<'_> {
     }
 
     /// Whether the in-process host itself holds this surface: no transport
-    /// reached it and no credential is bound to it.
+    /// reached it and no credential (slip, read proof or task grant) is
+    /// bound to it.
     pub(crate) fn native_invocation(&self) -> bool {
-        !self.transport_invocation && self.invocation_slip.is_none() && self.read_proof.is_none()
+        !self.transport_invocation
+            && self.invocation_slip.is_none()
+            && self.read_proof.is_none()
+            && self.task_grant.is_none()
+    }
+
+    /// Binds the ask guest's grant a host admitted for this surface's actor
+    /// ([`Vault::admit_ask_guest_grant`]). Its task verbs then prove the
+    /// actor by that grant, checked again on every verb, so a withdrawn or
+    /// lapsed grant stops them; a grant whose member is not the bound actor
+    /// proves nothing. Like a slip it is a credential: the surface is no
+    /// longer the host's own, and room turns and clones keep it.
+    #[must_use]
+    pub fn with_task_grant(mut self, grant: &crate::authority::AdmittedTaskGrant) -> Self {
+        self.task_grant = Some(*grant);
+        self
     }
 
     /// Binds the conversation whose request started this surface's work
@@ -768,12 +819,76 @@ impl Memory<'_> {
 
     /// Marks this surface as a caller's whose credential this host admitted.
     /// It grants and narrows nothing: a verb hook's ask on its call saves no
-    /// way to run the call without the caller, so only the caller's retry,
-    /// which the host verifies again, resumes it (ARCH-0080 §3 Ask).
+    /// way to run the call without the credential, so the caller's retry,
+    /// which the host verifies again, resumes it, or the host's own check
+    /// when it bound the credential's instrument and door (ARCH-0080 §3 Ask).
     #[must_use]
     pub fn for_credential(mut self) -> Self {
         self.credential = true;
         self
+    }
+
+    /// Binds the exact instrument the caller's credential is, which its host
+    /// verifies again (ARCH-0080 §3 Ask). It grants and narrows nothing: with
+    /// a door bound too ([`Self::with_credential_door`]), a verb hook's ask
+    /// on this surface's call saves a reference to both, so settlement runs
+    /// the call again through that door once the host verified the
+    /// credential again.
+    #[must_use]
+    pub fn with_credential_instrument(
+        mut self,
+        instrument: crate::runtime_hooks::verb::VerbAskInstrument,
+    ) -> Self {
+        self.credential_instrument = Some(instrument);
+        self
+    }
+
+    /// Binds the door the caller came in by, which its host can run the call
+    /// through again. It grants and narrows nothing.
+    #[must_use]
+    pub fn with_credential_door(mut self, door: crate::runtime_hooks::verb::VerbAskDoor) -> Self {
+        self.credential_door = Some(door);
+        self
+    }
+
+    /// The reference a verb hook's ask saves for this credential caller's
+    /// call, with the instrument its request was admitted on as its witness:
+    /// only for a verified slip whose instrument and door a host bound, in
+    /// the room turn that door named, if any, and with nothing else on the
+    /// surface its door could not rebuild (a host origin, a machine signer, a
+    /// TASK host, an off-record session or a thread's turn). `None` resumes
+    /// only on the caller's retry.
+    #[must_use]
+    pub fn verb_ask_credential(&self) -> Option<crate::runtime_hooks::verb::VerbAskCredential> {
+        use crate::runtime_hooks::verb::{VerbAskCredential, VerbAskCredentialRef, VerbAskDoor};
+        let door = self.credential_door.as_ref()?;
+        let room = match door {
+            VerbAskDoor::Facade { room } => *room,
+            VerbAskDoor::Mcp { .. } => None,
+        };
+        let rebuilt = self.credential
+            && self.read_proof.is_some()
+            && self.room_turn.as_ref().map(|turn| turn.room) == room
+            && self
+                .room_turn
+                .as_ref()
+                .is_none_or(|turn| turn.branch.is_none())
+            && self.host_origin.is_none()
+            && self.machine_signer.is_none()
+            && self.task_host.is_none()
+            && self.off_record_session.is_none();
+        if !rebuilt {
+            return None;
+        }
+        let reference = VerbAskCredentialRef {
+            instrument: self.credential_instrument.clone()?,
+            door: door.clone(),
+            on_device: self.locality == crate::claim::CallerLocality::OnDevice,
+        };
+        Some(VerbAskCredential::new(
+            reference,
+            self.invocation_slip.clone()?,
+        ))
     }
 
     /// Binds the door's admission of a hook's rewritten args: a rewrite the
@@ -854,6 +969,17 @@ impl Memory<'_> {
         }
         self.host_origin = Some(origin);
         self
+    }
+
+    /// The model provider the host's origin names for this call (OF-560):
+    /// the one its ladder served the calling program's turn from. `None` for
+    /// a caller no host-run model drives, such as an external HTTP or MCP
+    /// agent.
+    #[must_use]
+    pub fn model_provider(&self) -> Option<&str> {
+        self.host_origin
+            .as_ref()
+            .and_then(HostWriteOrigin::model_provider)
     }
 
     /// Whether a host bound this surface to generated code's origin. Such a

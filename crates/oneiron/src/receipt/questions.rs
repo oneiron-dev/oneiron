@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::llm::decision::questions::{
-    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionDefinition,
+    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria,
+    QuestionDefinition,
 };
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
@@ -74,6 +75,14 @@ pub struct GraphAskRequest {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub posture: Option<crate::config::HostingPrivacyPosture>,
+    /// The lines each unit is judged by, as a standing question's
+    /// `criteria`: `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each
+    /// at most 16 nonempty lines of at most 512 bytes. A yes/no question's
+    /// rungs read them as its rubric; another contract's call carries them
+    /// in its state. None when absent.
+    #[serde(default)]
+    #[schemars(with = "Option<serde_json::Value>")]
+    pub criteria: Option<QuestionCriteria>,
 }
 
 /// A graph ask's type selection: the engine's by-type entry
@@ -133,6 +142,16 @@ impl GraphAskRequest {
             return Err(MemoryError::bad_request_with(
                 format!("select.limit must be between 1 and {GRAPH_ASK_MAX_UNITS}"),
                 &["Select fewer units at once."],
+            ));
+        }
+        if self
+            .criteria
+            .as_ref()
+            .is_some_and(|criteria| criteria.validate().is_err())
+        {
+            return Err(MemoryError::bad_request_with(
+                "the criteria are not valid",
+                &["Give each list at most 16 nonempty lines of at most 512 bytes."],
             ));
         }
         self.question.validate().map_err(|_| {
@@ -271,6 +290,21 @@ pub struct QuestionPauseRequest {
 pub struct QuestionPaused {
     pub id: EntityId,
     pub paused: bool,
+}
+
+/// `vault.questions.backfill`'s input: schedule the caller's standing
+/// question's backfill. From `at` (now when absent) the question pump
+/// answers, once, each covered unit with no answer at `expected_version`.
+/// A later schedule replaces it and an edit retires it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionBackfillRequest {
+    pub id: EntityId,
+    /// The version to backfill; a stale one is refused.
+    pub expected_version: u32,
+    /// When the backfill falls due, in unix seconds.
+    #[serde(default)]
+    pub at: Option<u64>,
 }
 
 /// `vault.questions.read`'s input: one of the caller's standing questions,

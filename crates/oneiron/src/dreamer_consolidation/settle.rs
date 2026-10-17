@@ -36,6 +36,8 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
     DecisionRung, MAX_DECISION_STATE_BYTES, Reversibility,
 };
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 use crate::{ClaimBody, EntityId, TimeRange, Vault};
@@ -398,6 +400,22 @@ pub(crate) fn apply_settlement_in_txn(
         Value::Map(resolution),
     );
     let resolved = EntityId::now();
+    // Rule A: the answer is concluded from the marker it settles and the
+    // members it weighed, the first MAX_BIRTH_INPUTS of them.
+    let birth = {
+        let inputs: Vec<EntityId> = std::iter::once(conflict.marker)
+            .chain(conflict.members.iter().copied())
+            .take(MAX_BIRTH_INPUTS)
+            .collect();
+        RowBirth::written(
+            envelope.actor(),
+            MadeByClass::Concluded,
+            "dreamer.settlement",
+            &inputs,
+            &[],
+            now,
+        )
+    };
     vault
         .batch_in()
         .claim_candidate(
@@ -410,6 +428,7 @@ pub(crate) fn apply_settlement_in_txn(
             },
             now,
         )
+        .made_by(&resolved, birth)
         .apply(txn)?;
     Ok(SettledConflict {
         resolved,

@@ -84,6 +84,17 @@ impl<'de> Deserialize<'de> for Digest {
     }
 }
 
+/// The wire form is the 64-digit hex string.
+impl schemars::JsonSchema for Digest {
+    fn schema_name() -> String {
+        "Digest".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 /// Native-id high-water marks in managed history: new ids go above them,
 /// never only above the ids that survive (ARCH-0077, "Identities").
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,7 +214,7 @@ pub enum StepCell {
     Date(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StepAssetKind {
     Factual,
@@ -212,7 +223,7 @@ pub enum StepAssetKind {
 
 /// A raster asset by its engine identity; the [`Assets`] resolver supplies
 /// the admitted record and bytes, which must hash to `hash`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AssetRef {
     pub artifact: String,
