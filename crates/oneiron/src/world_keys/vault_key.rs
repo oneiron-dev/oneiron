@@ -1047,6 +1047,7 @@ impl Vault {
         let kind = VaultKeyWrapKind::Escrow {
             label: label.to_owned(),
         };
+        self.refuse_retired_escrow_in_txn(txn, &kind)?;
         let envelope = seal_wrap(
             &vault_id,
             &commitment,
@@ -1160,6 +1161,7 @@ impl Vault {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self, txn)?;
             }
+            self.refuse_retired_escrow_in_txn(txn, &kind)?;
             let state = STATE
                 .get(&self.store, txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?;
@@ -1221,6 +1223,87 @@ impl Vault {
         transition.finish()
     }
 
+    /// Retires the escrow recipient `label` once its secret was released (a
+    /// restore by its capsule; CROSS-ARCH-0022 #ov-custody-backend: a
+    /// released recipient is never reused). The vault drops the wrap
+    /// `escrow:<label>` if it still carries it, and records the label as
+    /// retired, so no wrap is sealed to it again; the record is the owner's
+    /// receipt. On an owner's request, rechecked in the transaction. A sealed
+    /// vault's page-seal mirror follows as for any wrap change. Refused for
+    /// the world kit's wrap, which a new kit's confirm replaces, and when the
+    /// wrap is the key's last. A label already retired returns its receipt.
+    pub fn retire_vault_key_escrow_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        label: &str,
+    ) -> Result<EscrowRetirement> {
+        check_name(label)?;
+        if label == super::WORLD_KIT_ESCROW {
+            return Err(refused(
+                "the world kit's escrow wrap is replaced by confirming a new kit, not retired",
+            ));
+        }
+        let label = label.to_owned();
+        let id = VaultKeyWrapKind::Escrow {
+            label: label.clone(),
+        }
+        .id();
+        let transition = self.begin_wrap_transition()?;
+        let retirement = self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            if let Some(retired) = ESCROW_RETIRED.get(&self.store, txn, &label)? {
+                return Ok(retired);
+            }
+            let held = WRAPS.get(&self.store, txn, &id)?.is_some();
+            if held {
+                if WRAPS.scan(&self.store, txn)?.len() <= 1 {
+                    return Err(refused(
+                        "the last vault key wrap stays: add another before retiring this one",
+                    ));
+                }
+                transition.stage(|| self.staged_wraps_in_txn(txn, None))?;
+                WRAPS.delete(&self.store, txn, &id)?;
+                ESCROW_SPOOLED.delete(&self.store, txn, &id)?;
+            }
+            let retirement = EscrowRetirement {
+                receipt_id: self.store.clock.entity_id()?.to_hex(),
+                label: label.clone(),
+                removed_wrap: held,
+                retired_at: self.instant_in_txn(txn)?.secs(),
+            };
+            ESCROW_RETIRED.put(&self.store, txn, &label, &retirement)?;
+            Ok(retirement)
+        })?;
+        transition.finish()?;
+        Ok(retirement)
+    }
+
+    /// Every escrow label retired here, with its receipt.
+    pub fn vault_key_escrow_retirements(&self) -> Result<Vec<EscrowRetirement>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(ESCROW_RETIRED
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(_, retired)| retired)
+            .collect())
+    }
+
+    /// Refuses a wrap of `kind` sealed to a retired escrow label.
+    fn refuse_retired_escrow_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &VaultKeyWrapKind,
+    ) -> Result<()> {
+        if let VaultKeyWrapKind::Escrow { label } = kind
+            && ESCROW_RETIRED.get(&self.store, txn, label)?.is_some()
+        {
+            return Err(refused(
+                "this escrow recipient was released and retired; seal to a new one",
+            ));
+        }
+        Ok(())
+    }
+
     /// The vault key's wraps, public facts only.
     pub fn vault_key_wraps(&self) -> Result<Vec<VaultKeyWrapInfo>> {
         let txn = self.store.env.read_txn()?;
@@ -1247,6 +1330,89 @@ impl Vault {
 /// spool, by the blake3 of its envelope.
 const ESCROW_SPOOLED: SideTable<String, [u8; 32], Named> =
     SideTable::new(&side_table::VAULT_KEY_ESCROW_SPOOLED);
+
+/// The escrow labels retired after their recipients were released, by label.
+const ESCROW_RETIRED: SideTable<String, EscrowRetirement, Named> =
+    SideTable::new(&side_table::VAULT_KEY_ESCROW_RETIRED);
+
+/// One escrow recipient retired after its secret was released, and the
+/// owner's receipt for it ([`Vault::retire_vault_key_escrow_as`]). Ids and
+/// times only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EscrowRetirement {
+    pub receipt_id: String,
+    pub label: String,
+    /// The vault still carried the wrap `escrow:<label>`, and the retirement
+    /// removed it.
+    pub removed_wrap: bool,
+    /// The vault clock, in seconds, when it was retired.
+    pub retired_at: u64,
+}
+
+/// An escrow capsule resealed to a fresh recipient ([`reseal_escrow_capsule`]).
+/// None of it is secret.
+#[derive(Debug, Clone)]
+pub struct ResealedEscrowCapsule {
+    pub wrap_id: String,
+    pub label: String,
+    /// The vault the capsule is bound to.
+    pub vault_id: [u8; 32],
+    /// The commitment an opened key must match.
+    pub commitment: [u8; 32],
+    /// The E0 `VaultDek` envelope sealed to the fresh recipient.
+    pub capsule: Vec<u8>,
+}
+
+/// Reseals an escrow capsule to a fresh recipient without the vault: the
+/// one-pass re-escrow of a released recipient (CROSS-ARCH-0022
+/// #ov-custody-backend). `capsule`, escrow wrap `label` of vault `vault_id`
+/// whose data key `commitment` names, opens with its recipient's released
+/// `secret`; the key it holds is sealed at once as escrow wrap `new_label` to
+/// `recipient`, and only that new capsule leaves. The key never leaves as
+/// bytes and is wiped before this returns. Refused when the capsule opens to
+/// no key the commitment names, and when `new_label` is `label`: a released
+/// recipient is never reused.
+pub fn reseal_escrow_capsule(
+    vault_id: &[u8; 32],
+    commitment: &[u8; 32],
+    label: &str,
+    capsule: &[u8],
+    secret: &HybridSecretKey,
+    new_label: &str,
+    recipient: &HybridPublicKey,
+) -> Result<ResealedEscrowCapsule> {
+    check_name(new_label)?;
+    if new_label == label {
+        return Err(refused(
+            "a released escrow recipient is never sealed to again: name a fresh one",
+        ));
+    }
+    let presented = StoredWrap::presented_escrow(label, capsule)?;
+    let key = open_wrap(
+        vault_id,
+        commitment,
+        &presented,
+        &UnlockSecret::Hybrid(secret),
+    )?;
+    let kind = VaultKeyWrapKind::Escrow {
+        label: new_label.to_owned(),
+    };
+    let capsule = seal_wrap(
+        vault_id,
+        commitment,
+        &kind,
+        &WrapSecret::Hybrid(recipient),
+        &key,
+    )?;
+    Ok(ResealedEscrowCapsule {
+        wrap_id: kind.id(),
+        label: new_label.to_owned(),
+        vault_id: *vault_id,
+        commitment: *commitment,
+        capsule,
+    })
+}
 
 /// One escrow wrap as a registry keeps it (CROSS-ARCH-0022 #ov-custody):
 /// the capsule and what opens and checks it. None of it is secret.

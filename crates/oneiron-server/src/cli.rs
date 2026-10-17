@@ -39,7 +39,7 @@ pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRev
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
-    VaultKeyCommand, VaultKeyNamedArgs,
+    VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
 };
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,

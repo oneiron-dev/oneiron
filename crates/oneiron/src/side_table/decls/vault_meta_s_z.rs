@@ -653,6 +653,10 @@ side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw;
+    /// An escrow label retired after its recipient's secret was released, and the owner's receipt
+    /// (OF-570, CROSS-ARCH-0022 #ov-custody-backend); nothing is sealed to it again. Key: string
+    /// (label).
+    VAULT_KEY_ESCROW_RETIRED: VaultMeta b"vault_key:escrow_retired:v1:" Named;
     /// The blake3 of the escrow capsule each escrow wrap last handed to the host's outbound spool
     /// (OF-570, CROSS-ARCH-0022 invariant 03). Key: string (wrap id).
     VAULT_KEY_ESCROW_SPOOLED: VaultMeta b"vault_key:escrow_spooled:v1:" Named;

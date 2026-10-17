@@ -256,6 +256,31 @@ pub enum VaultKeyCommand {
     /// Remove one wrap by its id (`password`, `passkey:<name>`, ...); the
     /// last one stays.
     Remove(Box<VaultKeyNamedArgs>),
+    /// Retire an escrow recipient whose secret was released, by its label:
+    /// drop its wrap and never seal to that label again.
+    RetireEscrow(Box<VaultKeyNamedArgs>),
+    /// Reseal a registry's escrow capsule to a fresh recipient with the
+    /// released recipient's secret, and print the new capsule's report. No
+    /// vault opens, and the data key never leaves the process.
+    ResealCapsule(Box<VaultKeyResealArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct VaultKeyResealArgs {
+    /// The registry's escrow capsule report (JSON) whose recipient was
+    /// released.
+    pub report: PathBuf,
+
+    /// The fresh recipient's hybrid public key, as the node's operator
+    /// installed it: the file holding its bytes.
+    #[arg(long, value_name = "FILE")]
+    pub recipient_file: PathBuf,
+
+    /// The released recipient's secret: a 32-byte seed, or the key's 96
+    /// bytes of seeds, from stdin, `--secret-file`, or the recovery box that
+    /// keeps its seed.
+    #[command(flatten)]
+    pub secret: SecretSourceArgs,
 }
 
 #[derive(Args, Clone, Debug)]
