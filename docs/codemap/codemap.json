@@ -11551,7 +11551,7 @@
      "path": "src/code_run/vault_read/validate.rs",
      "purpose": "Request-shape validation and short-reference parsing, run before any dispatch",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -55407,6 +55407,7 @@
       "CoreBatchShortIdHydrateRequest",
       "CoreHydrateRequest",
       "CoreMemoryTimelineRequest",
+      "CoreQueryAffect",
       "CoreQueryRequest",
       "CountMode",
       "View"
@@ -55416,7 +55417,7 @@
      "surface": {
       "enum": 2,
       "fn": 3,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -56895,7 +56896,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DocxAnchor",
@@ -56904,15 +56905,18 @@
       "DocxCell",
       "DocxChange",
       "DocxLock",
+      "DocxMark",
       "DocxParagraph",
-      "DocxRevision"
+      "DocxRevision",
+      "DocxRun"
      ],
      "path": "src/docx_body.rs",
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")",
      "surface": {
-      "enum": 4,
-      "fn": 2,
-      "struct": 4
+      "const": 1,
+      "enum": 5,
+      "fn": 7,
+      "struct": 5
      }
     },
     {
@@ -57702,7 +57706,7 @@
     "docx_body": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
@@ -71661,6 +71665,8 @@
       "DocxBodyOp",
       "DocxBodyView",
       "DocxCellView",
+      "DocxMark",
+      "DocxRun",
       "DoneMeans",
       "EditNoteRequest",
       "EmbeddingSpaceBindRequest",
@@ -72264,8 +72270,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 227,
-      "struct": 575
+      "enum": 228,
+      "struct": 576
      }
     },
     {
