@@ -988,7 +988,7 @@
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 7,
       "struct": 3,
@@ -47058,7 +47058,7 @@
      "path": "src/task_verb/room_thread.rs",
      "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -50128,7 +50128,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 17
      }
     },
@@ -50824,7 +50824,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 10
      }
     },
@@ -50885,7 +50885,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "enum": 2,
       "fn": 6,
       "re-export": 9,
