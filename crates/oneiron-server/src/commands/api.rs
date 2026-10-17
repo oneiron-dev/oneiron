@@ -27,8 +27,6 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
 
 use crate::cli::{ApiArgs, ApiCommand};
 
@@ -55,8 +53,8 @@ pub(crate) const CURL_DISABLE_HOST_CONFIG: &str = "-q";
 /// those; `--noproxy *` does, so curl connects to the selected server itself.
 pub(crate) const CURL_NO_PROXY: [&str; 2] = ["--noproxy", "*"];
 
-/// The host's curl. There is no HTTP client dependency in this crate's CLI on
-/// purpose: a second HTTP stack would be a second set of defaults to explain.
+/// The host's curl, for this one-shot command. `oneiron mcp` loops, so it
+/// holds one connection of its own instead of a curl child per request.
 const CURL_PROGRAM: &str = "curl";
 
 const JSON_CONTENT_TYPE: &str = "application/json";
@@ -286,180 +284,6 @@ pub(crate) fn create_pairing_link(
     Ok((base, link))
 }
 
-/// curl's exit status under `--fail-with-body` when the server answered with
-/// an HTTP error status; the server's body still reached stdout.
-pub(super) const CURL_HTTP_ERROR_EXIT: i32 = 22;
-
-/// What curl writes after a captured body: a newline and the HTTP status,
-/// which is `000` when no response arrived.
-const CURL_STATUS_TRAILER: &str = "\\n%{http_code}";
-
-/// A captured request's own curl flags: each body byte is passed on as it
-/// arrives, not held in curl's output buffer, so a stall shows as one, and
-/// the status trailer follows the body.
-const CURL_CAPTURE_FLAGS: [&str; 3] = ["--no-buffer", "--write-out", CURL_STATUS_TRAILER];
-
-/// The trailer's most bytes: the newline and three digits.
-const CURL_STATUS_TRAILER_BYTES: usize = 4;
-
-/// The most of curl's diagnostic a captured request keeps.
-const MAX_CAPTURED_DIAGNOSTIC_BYTES: usize = 4 * 1024;
-
-/// Bounds on one captured request, so a stalled, truncated or oversized
-/// answer ends as an error for that request instead of holding its caller.
-pub(super) struct CaptureBounds {
-    /// The whole exchange, answer included.
-    pub(super) deadline: Duration,
-    /// How long an answer that has started arriving may send nothing more.
-    pub(super) idle: Duration,
-    /// The largest answer body kept.
-    pub(super) max_reply_bytes: usize,
-}
-
-/// Why a captured request ended without a whole answer. curl is killed and
-/// reaped before this is returned.
-pub(super) enum CaptureCut {
-    /// curl could not be run, handed its request or waited for.
-    Curl(anyhow::Error),
-    /// The deadline passed before the answer was whole.
-    Deadline,
-    /// The answer started, then stalled for the idle limit.
-    Idle,
-    /// The answer grew past the reply limit.
-    TooLarge,
-}
-
-/// One signed JSON POST whose reply is captured, body and diagnostic both,
-/// with the HTTP status the body came with. `oneiron mcp` frames each answer
-/// itself, and its stdout is the MCP channel, so nothing curl prints may reach
-/// that stream directly.
-pub(super) fn post_json_captured(
-    url: &str,
-    credential: CurlCredential<'_>,
-    body: Vec<u8>,
-    bounds: &CaptureBounds,
-) -> Result<(Output, Option<u16>), CaptureCut> {
-    let started = Instant::now();
-    let request = CurlRequest {
-        method: "POST".to_owned(),
-        url: url.to_owned(),
-        body: Some(body),
-        content_type: Some(JSON_CONTENT_TYPE.to_owned()),
-    };
-    // `_staged` holds the body's file until curl is done with it.
-    let (mut child, _staged) = spawn_curl(
-        OsStr::new(CURL_PROGRAM),
-        &request,
-        credential,
-        Some(bounds),
-        Stdio::piped(),
-        Stdio::piped(),
-    )
-    .map_err(CaptureCut::Curl)?;
-    let read = read_bounded(&mut child, started, bounds);
-    if read.is_err() {
-        let _ = child.kill();
-    }
-    let status = child
-        .wait()
-        .map_err(|error| CaptureCut::Curl(anyhow::anyhow!("wait for curl: {error}")))?;
-    let (stdout, stderr) = read?;
-    let mut output = Output {
-        status,
-        stdout,
-        stderr,
-    };
-    let split = output.stdout.iter().rposition(|byte| *byte == b'\n');
-    let status = split.and_then(|at| {
-        let status = std::str::from_utf8(&output.stdout[at + 1..])
-            .ok()?
-            .parse()
-            .ok()?;
-        output.stdout.truncate(at);
-        Some(status).filter(|status| *status != 0)
-    });
-    if output.stdout.len() > bounds.max_reply_bytes {
-        return Err(CaptureCut::TooLarge);
-    }
-    Ok((output, status))
-}
-
-/// Reads a spawned curl's stdout and stderr until both close, inside
-/// `bounds`. stderr keeps only its head; a cut leaves curl for the caller to
-/// kill.
-fn read_bounded(
-    child: &mut Child,
-    started: Instant,
-    bounds: &CaptureBounds,
-) -> Result<(Vec<u8>, Vec<u8>), CaptureCut> {
-    enum Chunk {
-        Out(Vec<u8>),
-        Diagnostic(Vec<u8>),
-        Closed,
-    }
-    fn forward(
-        mut pipe: impl Read + Send + 'static,
-        send: mpsc::Sender<Chunk>,
-        wrap: fn(Vec<u8>) -> Chunk,
-    ) {
-        std::thread::spawn(move || {
-            let mut buffer = [0_u8; 8 * 1024];
-            loop {
-                match pipe.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(read) => {
-                        if send.send(wrap(buffer[..read].to_vec())).is_err() {
-                            return;
-                        }
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                    Err(_) => break,
-                }
-            }
-            let _ = send.send(Chunk::Closed);
-        });
-    }
-    let missing = || CaptureCut::Curl(anyhow::anyhow!("curl output channel was not opened"));
-    let (send, chunks) = mpsc::channel();
-    forward(
-        child.stdout.take().ok_or_else(missing)?,
-        send.clone(),
-        Chunk::Out,
-    );
-    forward(
-        child.stderr.take().ok_or_else(missing)?,
-        send,
-        Chunk::Diagnostic,
-    );
-
-    let deadline = started + bounds.deadline;
-    let mut stalls_at: Option<Instant> = None;
-    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let mut open = 2;
-    while open > 0 {
-        let idle_first = stalls_at.is_some_and(|stalls_at| stalls_at < deadline);
-        let until = stalls_at.map_or(deadline, |stalls_at| stalls_at.min(deadline));
-        match chunks.recv_timeout(until.saturating_duration_since(Instant::now())) {
-            Ok(Chunk::Out(bytes)) => {
-                stdout.extend_from_slice(&bytes);
-                if stdout.len() > bounds.max_reply_bytes + CURL_STATUS_TRAILER_BYTES {
-                    return Err(CaptureCut::TooLarge);
-                }
-                stalls_at = Some(Instant::now() + bounds.idle);
-            }
-            Ok(Chunk::Diagnostic(bytes)) => {
-                let room = MAX_CAPTURED_DIAGNOSTIC_BYTES.saturating_sub(stderr.len());
-                stderr.extend_from_slice(&bytes[..bytes.len().min(room)]);
-            }
-            Ok(Chunk::Closed) => open -= 1,
-            Err(mpsc::RecvTimeoutError::Timeout) if idle_first => return Err(CaptureCut::Idle),
-            Err(mpsc::RecvTimeoutError::Timeout) => return Err(CaptureCut::Deadline),
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-    Ok((stdout, stderr))
-}
-
 /// Run one request through the host's curl, streaming the response body to
 /// this process's own stdout untouched.
 pub(crate) fn run_curl(
@@ -512,21 +336,20 @@ fn run_curl_output_inner(
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
     // `_staged` holds the body's file until curl is done with it.
-    let (child, _staged) = spawn_curl(program, request, credential, None, stdout, stderr)?;
+    let (child, _staged) = spawn_curl(program, request, credential, stdout, stderr)?;
     child
         .wait_with_output()
         .map_err(|error| anyhow::anyhow!("wait for curl: {error}"))
 }
 
 /// Starts curl for one request and hands it its config, returning the child
-/// and the staged body file it reads, which must outlive it. A captured
-/// request adds its own flags. The child inherits no variable the credential
+/// and the staged body file it reads, which must outlive it. The child
+/// inherits no variable the credential
 /// could be in, and no proxy setting routes it anywhere but the selected server.
 fn spawn_curl(
     program: &OsStr,
     request: &CurlRequest,
     credential: CurlCredential<'_>,
-    capture: Option<&CaptureBounds>,
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<(Child, Option<TempBody>)> {
@@ -555,9 +378,6 @@ fn spawn_curl(
     }
     if let Some(body) = &body {
         command.arg("--data-binary").arg(body.curl_value());
-    }
-    if capture.is_some() {
-        command.args(CURL_CAPTURE_FLAGS);
     }
     let named = credential.env.iter().map(String::as_str);
     for name in named.chain(CREDENTIAL_ENV) {
