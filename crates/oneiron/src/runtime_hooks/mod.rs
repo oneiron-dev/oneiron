@@ -43,7 +43,9 @@ pub use regen::{
     HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest, HookRegenerator,
 };
 pub use replay::{HookReplayEntry, HookReplayResult};
-pub use runner::{FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassReport};
+pub use runner::{
+    FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassAdmission, HookPassReport,
+};
 pub(crate) use scope::HookScope;
 #[allow(
     unused_imports,
