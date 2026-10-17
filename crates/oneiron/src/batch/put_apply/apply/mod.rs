@@ -20,6 +20,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RecordError, RegistryError, Result};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,
@@ -391,7 +392,7 @@ pub(in crate::batch) fn apply_put(
         && !crate::registry::is_delete_protected_engine_record(entity_type)
         && revision_put.is_none()
         && !crate::dreamer_runner::authority::is_base_agent_actor(&id)?
-        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+        && store.port_deletion_marked(wtxn, DeletionMarker::RowFence, &id)?
     {
         return Err(Error::InvariantViolation(
             "a replicated put cannot restore an entity deleted here",
@@ -730,7 +731,7 @@ pub(in crate::batch) fn apply_put(
     // has its body is fenced by an accepted delete awaiting its retry, and a
     // local edit does not withdraw that delete.
     if !replicated
-        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+        && store.port_deletion_marked(wtxn, DeletionMarker::RowFence, &id)?
         && crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
             .is_none_or(|old| old.len() == ENTITY_METADATA_HEADER_LEN)
     {
