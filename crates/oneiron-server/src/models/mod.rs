@@ -46,6 +46,7 @@ mod http;
 #[cfg(test)]
 mod kept_on_device_tests;
 mod ladder;
+pub(crate) mod launch_price;
 mod media;
 mod offer;
 mod openai;
