@@ -1,23 +1,29 @@
 //! Vault-owned description routing above the raw LLM call seam.
 //!
-//! A generative seat is selected once and persisted; schema verdicts are selected
-//! independently for each call. The host's ladder grades each candidate, so this layer
-//! does not hard-code a model, a prompt, or a quality threshold.
+//! A generative seat is selected once and persisted; typed verdicts are routed
+//! independently for each call and decided through the host's ladder. The ladder grades
+//! each candidate, so this layer does not hard-code a model, a prompt, or a quality
+//! threshold.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use super::decision::{
+    AnswerContract, DecisionDial, DecisionQuestion, GeneratedDecisions, GeneratedRung,
+    GeneratedStep, ProviderPin, Reversibility, TypedDecision,
+};
 use super::registry::ModelWireFormat;
 use super::seat::{DescriptionSource, SeatPolicy};
 use super::{
     BudgetGuard, CallPurpose, ContentPart, DurableStepContext, DurableStepResult, LlmBackend,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
-    ResponseFormat, StepOutcome, call_as_step,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
-    Vault,
+    EntityId, Vault,
     error::{Error, Result},
 };
 
@@ -185,35 +191,46 @@ impl RoutedSeat {
     }
 }
 
-/// One current schema-verdict payload. History belongs in neither field:
-/// system instructions and the current input are supplied explicitly, not
-/// inferred from the roles of a generative session's messages.
-pub struct VerdictPayload {
-    pub instructions: Option<String>,
-    pub input: Vec<ContentPart>,
+/// One typed verdict through decide(): a question built from a registered family
+/// ([`super::decision::catalogue`]), the access-checked evidence it reads, the call's
+/// bounded state, its dial and its clock. History belongs nowhere here: the host's
+/// instructions, when given, are the read's whole system voice, never inferred from the
+/// roles of a generative session's messages, and the state is the read's input.
+pub struct RoutedVerdict<'a> {
+    pub question: &'a DecisionQuestion,
+    pub evidence: &'a [EntityId],
+    pub state: &'a Value,
+    pub instructions: Option<&'a str>,
+    pub dial: DecisionDial,
+    pub reversibility: Reversibility,
+    pub deadline: &'a RetrievalDeadline,
 }
 
-impl VerdictPayload {
-    fn messages(self) -> Result<Vec<LlmMessage>> {
-        if self.input.is_empty() {
-            return Err(invalid("empty verdict payload"));
-        }
-        let mut messages = Vec::new();
-        if let Some(instructions) = self.instructions {
+/// What a routed verdict gave its caller.
+pub enum RoutedVerdictOutcome {
+    /// The question's decision, with its receipt.
+    Decided(TypedDecision),
+    /// The durable step suspended the attempt; it parked, and replays on resume.
+    Trapped,
+}
+
+/// The host's instructions as the verdict read's system turn; the read adds the question
+/// turn after it.
+fn verdict_messages(instructions: Option<&str>) -> Result<Vec<LlmMessage>> {
+    instructions
+        .map(|instructions| {
             if instructions.trim().is_empty() {
                 return Err(invalid("empty verdict instructions"));
             }
-            messages.push(LlmMessage {
+            Ok(LlmMessage {
                 role: LlmMessageRole::System,
-                content: vec![ContentPart::Text { text: instructions }],
-            });
-        }
-        messages.push(LlmMessage {
-            role: LlmMessageRole::User,
-            content: self.input,
-        });
-        Ok(messages)
-    }
+                content: vec![ContentPart::Text {
+                    text: instructions.to_owned(),
+                }],
+            })
+        })
+        .into_iter()
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -662,22 +679,17 @@ impl Vault {
             .get(&self.store, &txn, &())?
             .unwrap_or_default())
     }
-    /// Build the one current verdict request before durable hashing. Generative
-    /// history and provider cache references cannot cross this boundary.
+    /// Build the one current verdict request a typed read goes out on, before durable
+    /// hashing. Generative history and provider cache references cannot cross this
+    /// boundary; the read adds its question turn and its answer format.
     pub fn routed_verdict_request(
         &self,
         task: &str,
         decisions: &DescriptionDecisions<'_>,
         settings: &SeatSettings,
         mut request: LlmRequest,
-        payload: VerdictPayload,
+        instructions: Option<&str>,
     ) -> Result<LlmRequest> {
-        if !matches!(
-            request.envelope.response_format,
-            ResponseFormat::Json { .. }
-        ) {
-            return Err(invalid("schema verdict requires JSON schema"));
-        }
         let policy = self
             .description_policy()?
             .ok_or_else(|| invalid("description policy not configured"))?;
@@ -695,8 +707,8 @@ impl Vault {
         request.envelope.locality = chosen.locality;
         request.envelope.tier.per_seat = None;
         // Provider cache refs and raw system fields can carry an old seat's
-        // prefix even with fresh messages. Only VerdictPayload may supply this
-        // call's instructions. Strip these before the durable step hash.
+        // prefix even with fresh messages. Only the verdict's own instructions may
+        // supply this call's system voice. Strip these before the durable step hash.
         request.params.remove("cachedContent");
         request.params.remove("system");
         for options in request.provider_options.values_mut() {
@@ -712,32 +724,83 @@ impl Vault {
             effort,
             &settings.inference_overrides,
         )?;
-        // Schema verdicts are independent calls: replace the generating
-        // seat's wire pin with this verdict's actual judged effort.
+        // Verdicts are independent calls: replace the generating seat's wire
+        // pin with this verdict's actual judged effort.
         request.envelope.seat_effort = Some(effort);
-        request.messages = payload.messages()?;
+        request.messages = verdict_messages(instructions)?;
         Ok(request)
     }
 
-    /// Route every schema verdict independently without changing a pinned
-    /// generative seat. Native structured output and the step shim stay below.
+    /// A typed verdict through decide(), routed independently without changing a pinned
+    /// generative seat. A noul or a choice is read by the routed model as the dial's
+    /// first rung, a durable step on the caller's guard, and the ladder takes it from
+    /// there; a score goes to the ladder's score-capable seats, since the generated read
+    /// answers labels only.
     pub async fn call_routed_verdict(
         &self,
         task: &str,
         decisions: &DescriptionDecisions<'_>,
         settings: &SeatSettings,
         request: LlmRequest,
-        payload: VerdictPayload,
+        verdict: RoutedVerdict<'_>,
         execution: VerdictExecution<'_>,
-    ) -> DurableStepResult<StepOutcome> {
-        let request = self.routed_verdict_request(task, decisions, settings, request, payload)?;
-        call_as_step(
-            execution.context,
-            execution.backend,
-            execution.guard,
+    ) -> DurableStepResult<RoutedVerdictOutcome> {
+        if let AnswerContract::Score { .. } = verdict.question.contract {
+            let decision = decisions.ladder.run(
+                verdict.question,
+                decisions.principal,
+                verdict.evidence,
+                verdict.state,
+                verdict.dial,
+                &decisions.bands,
+                verdict.reversibility,
+                verdict.deadline,
+            )?;
+            return Ok(RoutedVerdictOutcome::Decided(decision));
+        }
+        let request =
+            self.routed_verdict_request(task, decisions, settings, request, verdict.instructions)?;
+        let seal = |request: LlmRequest| -> Result<LlmRequest> { Ok(request) };
+        let rung = GeneratedRung {
+            pin: ProviderPin {
+                rung: verdict.dial.first,
+                model: request.model.to_string(),
+                version: request.model.to_string(),
+            },
+            backend: execution.backend,
+            step: GeneratedStep::Durable {
+                step: execution.context,
+                guard: execution.guard,
+            },
             request,
-        )
-        .await
+            seal: &seal,
+        };
+        let decided = decisions
+            .ladder
+            .run_pack_generated(
+                &rung,
+                &[verdict.question],
+                decisions.principal,
+                verdict.evidence,
+                verdict.state,
+                verdict.dial,
+                &decisions.bands,
+                verdict.reversibility,
+                verdict.deadline,
+            )
+            .await?;
+        match decided {
+            GeneratedDecisions::Decided { decisions, .. } => decisions
+                .into_iter()
+                .next()
+                .map(RoutedVerdictOutcome::Decided)
+                .ok_or_else(|| Error::InvariantViolation("routed verdict decided nothing").into()),
+            GeneratedDecisions::Trapped => Ok(RoutedVerdictOutcome::Trapped),
+            GeneratedDecisions::Unread(_) => Err(Error::InvariantViolation(
+                "a durable routed verdict came back unread",
+            )
+            .into()),
+        }
     }
 }
 
