@@ -14,9 +14,11 @@ use super::super::txn::{
     rewrite_connector_key_in_txn, suspend_connector_key_in_txn,
     write_connector_key_generation_in_txn,
 };
+use super::tool_grant::is_held;
 
 impl Vault {
-    /// Suspends an Active key (owner op).
+    /// Suspends an Active key (owner op). A catalog key's per-grant keys are
+    /// held with it.
     pub fn suspend_connector_key(
         &self,
         id: &EntityId,
@@ -47,10 +49,13 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
+        self.sync_derived_keys_in_txn(&mut wtxn, &suspended, at)?;
         wtxn.commit()?;
         Ok(suspended)
     }
-    /// Resumes a Suspended key. Deliberately does NOT clear usage rows: the
+    /// Resumes a Suspended key; a catalog key's per-grant keys carry or
+    /// retire with it. A per-grant key its catalog holds is refused here.
+    /// Deliberately does NOT clear usage rows: the
     /// window state is truth — if the window has not rolled, the next send
     /// re-exhausts and re-suspends (correct hard-cap behavior).
     pub fn resume_connector_key(&self, id: &EntityId, at: u64) -> Result<ConnectorKeyRecord> {
@@ -59,6 +64,11 @@ impl Vault {
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
         if record.status != ConnectorKeyStatus::Suspended {
             return Err(invalid_body("illegal status transition"));
+        }
+        if is_held(&record) {
+            return Err(invalid_body(
+                "a per-grant key held by its catalog connector resumes with it",
+            ));
         }
         let resumed = ConnectorKeyRecord {
             status: ConnectorKeyStatus::Active,
@@ -77,6 +87,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
+        self.sync_derived_keys_in_txn(&mut wtxn, &resumed, at)?;
         wtxn.commit()?;
         Ok(resumed)
     }
@@ -99,7 +110,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
-        self.retire_derived_tool_grants_in_txn(&mut wtxn, &revoked, at)?;
+        self.sync_derived_keys_in_txn(&mut wtxn, &revoked, at)?;
         wtxn.commit()?;
         Ok(revoked)
     }
@@ -136,7 +147,7 @@ impl Vault {
             policy.read_frontier_hash()?,
             at,
         )?;
-        self.retire_derived_tool_grants_in_txn(&mut wtxn, &removed, at)?;
+        self.sync_derived_keys_in_txn(&mut wtxn, &removed, at)?;
         wtxn.commit()?;
         Ok(removed)
     }
