@@ -190,6 +190,8 @@ impl<'v> Memory<'v> {
                 // A thread's read writes nothing as the owner in person.
                 owner_authorship: None,
                 invocation: self.invocation,
+                invocation_slip: self.invocation_slip.clone(),
+                transport_invocation: self.transport_invocation,
                 task_host: None,
                 off_record_session: self.off_record_session.clone(),
             },

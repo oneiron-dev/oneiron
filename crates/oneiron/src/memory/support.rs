@@ -394,6 +394,7 @@ pub(super) fn subject_ref_string(subject: &ClaimSubject) -> String {
 /// A facade by pattern, and the module still describes it that way — but the
 /// pattern is an implementation note and the surface is what a caller reaches
 /// for, so the type is named for the thing rather than for the shape.
+#[derive(Clone)]
 pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
@@ -423,6 +424,14 @@ pub struct Memory<'v> {
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
+    /// The signed instrument the caller's request was admitted on, when a
+    /// host bound one (`with_invocation_slip`): work this surface queues
+    /// carries it, and it is verified again when that work runs.
+    pub(super) invocation_slip: Option<crate::authority::InvocationSlipBinding>,
+    /// A transport's caller reaches this surface, slip or none
+    /// (`with_transport_invocation`). Only the host sets it, and nothing
+    /// clears it: a surface without it is the in-process host's own.
+    pub(super) transport_invocation: bool,
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
@@ -499,6 +508,8 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             invocation: None,
+            invocation_slip: None,
+            transport_invocation: false,
             task_host: None,
             off_record_session: None,
         }
@@ -534,6 +545,8 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             invocation: None,
+            invocation_slip: None,
+            transport_invocation: false,
             task_host: None,
             off_record_session: None,
         }
@@ -578,6 +591,8 @@ impl<'v> Memory<'v> {
                 owner_authorship: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
+                invocation_slip: self.invocation_slip.clone(),
+                transport_invocation: self.transport_invocation,
                 task_host: self.task_host.clone(),
                 off_record_session: self.off_record_session.clone(),
             },
@@ -631,6 +646,37 @@ impl Memory<'_> {
     pub fn with_invocation(mut self, invocation: crate::runtime_hooks::InvocationId) -> Self {
         self.invocation = Some(invocation);
         self
+    }
+
+    /// Binds the signed instrument the caller's request was admitted on.
+    /// Work this surface queues carries it, and that work's standing is the
+    /// slip's own when it runs: verified again then, a revoked slip stops it.
+    #[must_use]
+    pub fn with_invocation_slip(
+        mut self,
+        binding: &crate::authority::InvocationSlipBinding,
+    ) -> Self {
+        self.invocation_slip = Some(binding.clone());
+        self
+    }
+
+    /// The signed instrument a host bound, if any.
+    pub(crate) fn invocation_slip(&self) -> Option<&crate::authority::InvocationSlipBinding> {
+        self.invocation_slip.as_ref()
+    }
+
+    /// Marks this surface as a transport caller's, with a slip or without
+    /// one, on loopback as off the device. It only narrows: no call clears it.
+    #[must_use]
+    pub fn with_transport_invocation(mut self) -> Self {
+        self.transport_invocation = true;
+        self
+    }
+
+    /// Whether the in-process host itself holds this surface: no transport
+    /// reached it and no credential is bound to it.
+    pub(crate) fn native_invocation(&self) -> bool {
+        !self.transport_invocation && self.invocation_slip.is_none() && self.read_proof.is_none()
     }
 
     /// Binds the off-record session the host's request names (its

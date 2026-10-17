@@ -41,6 +41,8 @@ pub(crate) fn credential_read_key(
 /// binds the handle's reads to the same credential key, so a narrower
 /// credential stays bounded by it. A caller with no slip keeps the handle's
 /// own lane.
+/// Every handle here is a transport caller's, slip or none, and carries the
+/// slip the request was admitted on into the work it queues.
 pub(crate) fn credential_memory<'a>(
     vault: &'a oneiron::Vault,
     auth: Option<&CoreAuth>,
@@ -48,6 +50,12 @@ pub(crate) fn credential_memory<'a>(
     class: oneiron::EdgeActorClass,
 ) -> oneiron::memory::Memory<'a> {
     let memory = vault.memory(actor, class);
+    let memory = match auth.and_then(CoreAuth::invocation_slip) {
+        Some(binding) => memory
+            .with_transport_invocation()
+            .with_invocation_slip(binding),
+        None => memory.with_transport_invocation(),
+    };
     match auth.and_then(CoreAuth::verified_slip) {
         Some(proof) => memory.with_read_proof(proof),
         None => memory,
