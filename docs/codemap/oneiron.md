@@ -1246,6 +1246,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/topology.rs` | src | m | 18 crate-vis | — | Shared DAG shape, session placement, and prospective Parent validation |
 | `src/conversation_dag/types.rs` | src | s | 7 struct · 2 enum | AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, QuoteSpan, ResolvedScope, ScopePath +1 | Door inputs and snapshot results |
 | `src/conversation_dag/writes.rs` | src | m | 5 fn · 3 crate-vis | — | Atomic append, explicit HEAD moves and canonical-index repair |
+| `src/core_write/batch.rs` | src | s | 4 struct · 1 enum · 2 fn | CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt | `vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes |
+| `src/core_write/conversations.rs` | src | s | 3 struct · 4 fn | ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt | `vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN… |
+| `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 2 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | `vault.conversations.records.append` (OF-181): one DAG record and its topology, the write `POST… |
+| `src/core_write/mod.rs` | src | s | 1 mod · 4 re-export | — | Core entity writes as typed rows (OF-181): the conversation container, a TURN under it, a DAG record and the… |
+| `src/core_write/shape.rs` | src | m | 2 struct · 1 enum · 11 fn · 6 const · 4 crate-vis | CoreWriteRefusal, CoreWriteTextField, CoreWriteTimes | The shape every core entity write shares: its id, its interval, its announcement-normalized body and its… |
 | `src/corpus.rs` | src | s | 1 enum · 2 crate-vis | CorpusScope | Project-axis selection for corpus queries |
 | `src/counterparty_contact/codec.rs` | src | m | 3 fn · 11 crate-vis | — | Counterparty contact MessagePack codecs, claim validators, and normalize helpers |
 | `src/counterparty_contact/doors.rs` | src | m | 6 fn · 5 crate-vis | — | Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply |
@@ -2103,7 +2108,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 15 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | m | 194 mod · 75 re-export · 20 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 195 mod · 75 re-export · 20 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/limits.rs` | src | s | 1 crate-vis | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 2 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -3639,7 +3644,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_diary.rs` | src | s | 2 struct · 1 enum · 3 fn | DiaryQueryEntry, DiaryQueryOutcome, DiaryQueryRequest | `self.memory.diary.query`: the caller reads an agent's private diary, stating a reason the agent sees in its… |
 | `src/task_verb/sdk_disclosure.rs` | src | s | 2 struct · 1 fn | DisclosureOfferRequest, DisclosureOffered | `vault.disclosure.offer`: an agent OFFERS the owner a contact clearance (OF-365, the ILDF2 consent channel) |
 | `src/task_verb/sdk_embedding_space.rs` | src | m | 12 struct · 1 enum · 13 fn | EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest, EmbeddingSpaceMoveChecked, EmbeddingSpaceMoveOutcome, EmbeddingSpaceMoveRequest, EmbeddingSpaceProbe, EmbeddingSpaceProbeDeleteRequest +5 | The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 269 fn · 2 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 273 fn · 2 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 20 struct · 5 enum · 16 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +17 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and… |
 | `src/task_verb/sdk_legal_hold.rs` | src | s | 5 struct · 1 enum · 5 fn | LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest | The inputs and answers of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`… |
