@@ -3296,7 +3296,7 @@ impl AgentVerb {
             }
             Self::AiVideo => "Starts a video render as a provider job and answers with its ticket.",
             Self::AiVideoPoll => {
-                "Where a video job stands; a finished one answers with its clip, once."
+                "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."
             }
             Self::AiVideoCancel => "Stops a video job at its provider.",
             Self::AiVerdict => {
@@ -3474,7 +3474,7 @@ impl AgentVerb {
                 "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history."
             }
             Self::VaultArtifactsBodyCommits => {
-                "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by."
+                "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone."
             }
             Self::VaultArtifactsBodyEdit => {
                 "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."
@@ -3504,7 +3504,7 @@ impl AgentVerb {
                 "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export."
             }
             Self::VaultArtifactsBodyPreview => {
-                "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands."
+                "The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands."
             }
             Self::VaultArtifactsBodyDeckReview => {
                 "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names."

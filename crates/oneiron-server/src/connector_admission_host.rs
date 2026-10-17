@@ -128,6 +128,7 @@ pub(crate) struct ListedTool {
     read_only: bool,
     destructive: bool,
     open_world: bool,
+    idempotent: bool,
     /// The result types the connector declares for the probe suite.
     result_types: BTreeSet<String>,
 }
@@ -173,6 +174,7 @@ impl ListedTool {
             read_only,
             destructive: !read_only && hint("destructiveHint") != Some(false),
             open_world: hint("openWorldHint") != Some(false),
+            idempotent: hint("idempotentHint") == Some(true),
             result_types,
         })
     }
@@ -296,6 +298,8 @@ pub(crate) fn slate_manifest(
                 spends: class.spends,
                 sends_outward: !listed.read_only && listed.open_world,
                 legacy_ask: false,
+                read_only: listed.read_only,
+                idempotent: listed.idempotent,
             })
         })
         .collect()

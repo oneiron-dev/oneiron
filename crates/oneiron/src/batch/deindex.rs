@@ -249,6 +249,8 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     if entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
         crate::agent_def::pin_stored_row_in_txn(store, wtxn, id)?;
     }
+    // A purged epoch summary keeps its place in its session's count (OF-013).
+    crate::compaction::raise_epoch_floor_in_txn(store, wtxn, &entity_record)?;
     if entity_type == ENTITY_TYPE_SKILL {
         let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
         match crate::skill::decode_skill_record(body) {

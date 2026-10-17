@@ -76,7 +76,8 @@ pub use client::{
     SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
 pub use connection::{
-    ConnectionConfig, HomeNodeTopology, LocalUpdate, ResidenceModeChange, SyncConnection,
+    ConnectionConfig, HomeNodeTopology, HomeSearch, LocalUpdate, ResidenceModeChange,
+    SyncConnection,
 };
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,

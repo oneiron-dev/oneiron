@@ -265,6 +265,14 @@ impl Vault {
                 if snapshot.project_id != artifact || snapshot.fork_hash != hash {
                     return Ok(None);
                 }
+                // A file the snapshot's custody report quarantines is served
+                // to no one (OF-067).
+                if self
+                    .codebase_withheld_paths_in_txn(txn, &hash)?
+                    .contains(path)
+                {
+                    return Ok(None);
+                }
                 let bytes =
                     crate::codebase::read_asset_blob_in_txn(self, txn, &entry.content_hash)?;
                 (bytes, None, entry.content_hash)

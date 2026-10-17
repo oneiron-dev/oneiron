@@ -28,6 +28,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_FOUND_KEY_DUE, LIVE),
     (&t::SECRET_LEASE, LIVE),
     (&t::SECRET_MATERIALIZATION_RECEIPT, LIVE),
+    (&t::SECRET_LIFT_MARK, CONTENT),
     (&t::SECRET_LIFT_PROPOSAL, CONTENT),
     (&t::SECRET_LIFT_RECEIPT, LIVE),
     (&t::SECRET_LIFT_RUN, LIVE),
@@ -66,6 +67,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::EDIT_DISTANCE_MINER_K, LIVE),
     (&t::INBOX_REVIEW_DIAL, LIVE),
     (&t::MODEL_OWNER_FALLBACK, LIVE),
+    (&t::MODEL_OWNER_RESPONSES_STORE, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_ENABLED, LIVE),
     (&t::EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT, LIVE),
     (&t::SKILL_RELIABILITY_FLOOR, LIVE),
@@ -251,6 +253,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_CLEANUP_TEST_BLOCKERS_CLOSED, CONTENT),
     (&t::VAULT_IDENTITY_LOCAL, LIVE),
     // A restore never resets how the vault key unlocks.
+    (&t::VAULT_KEY_ESCROW_RETIRED, LIVE),
     (&t::VAULT_KEY_ESCROW_SPOOLED, LIVE),
     (&t::VAULT_KEY_STATE, LIVE),
     (&t::VAULT_KEY_WRAP, LIVE),
