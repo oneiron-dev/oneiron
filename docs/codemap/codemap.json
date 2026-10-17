@@ -26680,7 +26680,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SettingCheck",
@@ -26693,16 +26693,35 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 15,
-      "crate-vis": 6,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 11,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ChoiceRow",
+      "ChoiceValue",
+      "SpawnChoice"
+     ],
+     "path": "src/learning_setting_choice.rs",
+     "purpose": "The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LearningChoiceValue",
       "LearningSettingClear",
       "LearningSettingMode",
       "LearningSettingPut",
@@ -26715,7 +26734,7 @@
      "path": "src/learning_setting_doors.rs",
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "fn": 3,
       "struct": 6
      }
@@ -27448,7 +27467,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 20,
-      "mod": 195,
+      "mod": 196,
       "re-export": 75
      }
     },
@@ -52871,14 +52890,21 @@
     "learning_setting": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
+    },
+    "learning_setting_choice": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's…"
     },
     "learning_setting_doors": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
@@ -53625,9 +53651,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 174,
+   "over_bar": 175,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3256,
+   "source_files": 3257,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73442,6 +73468,7 @@
       "Landing",
       "LandingReceipt",
       "LearningCell",
+      "LearningChoiceValue",
       "LearningPredicate",
       "LearningSettingClear",
       "LearningSettingMode",
@@ -73995,7 +74022,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 257,
+      "enum": 258,
       "struct": 655
      }
     },
