@@ -19,7 +19,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill::{SkillLifecycle, skill_loadable};
 use crate::skill_hub::{HubFile, HubPackage};
-use crate::task_type::{PlacementRequest, TaskTypeRef, TaskTypeTree, ensure_type_ref};
+use crate::task_type::{
+    PlacementDecisions, PlacementRequest, TaskTypeRef, TaskTypeTree, ensure_type_ref,
+};
 use crate::temporal::TimeRange;
 
 use super::team_shape::team_shape_skill;
@@ -79,19 +81,22 @@ pub fn team_shape_skill_in_force(
 }
 
 /// Places a spawn once against `tree`: a requested stamp the tree accepts
-/// is kept, anything else is placed, and unsure is the root.
+/// is kept, anything else is placed through the placement skill's ladder
+/// (the host's `decisions`, else its rule rung alone), and unsure is the
+/// root.
 pub(crate) fn place_in_tree(
     tree: &TaskTypeTree,
     requested: Option<&TaskTypeRef>,
     label: Option<String>,
     text: Option<String>,
     project: Option<EntityId>,
+    decisions: Option<&PlacementDecisions<'_>>,
 ) -> TaskTypeRef {
     let mut request = PlacementRequest::new(label, text);
     if let Some(project) = project {
         request = request.with_project(project.to_hex());
     }
-    ensure_type_ref(tree, requested, &request)
+    ensure_type_ref(tree, requested, &request, decisions)
 }
 
 /// Writes `tree` into `fork`, an open local fork of the team-shape skill,

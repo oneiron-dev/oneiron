@@ -66,14 +66,16 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// OF-541: place a spawn's type once, against the tree in force for
-    /// this agent's project, before it is planned.
+    /// this agent's project, before it is planned; the host's placement
+    /// ladder routes it past the skill's rule rung.
     pub fn place_agent_spawn_type(
         &self,
         need: &str,
         requested: Option<&crate::task_type::TaskTypeRef>,
+        decisions: Option<&crate::task_type::PlacementDecisions<'_>>,
     ) -> Result<crate::task_type::TaskTypeRef> {
         let (vault, leased) = self.leader_attempt()?;
-        AgentDispatcher::new(vault).place_spawn_type(&leased, need, requested)
+        AgentDispatcher::new(vault).place_spawn_type(&leased, need, requested, decisions)
     }
 
     /// OF-389: the CEO's top shapes on the installed vault planner, over
