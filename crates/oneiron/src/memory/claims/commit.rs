@@ -391,8 +391,7 @@ impl Memory<'_> {
             let Some(body) = self.vault.get_claim(&id)? else {
                 continue;
             };
-            if !key.stands(&body)
-                || (beside_stated && body.source == Some(ClaimSource::UserStated))
+            if !key.stands(&body) || (beside_stated && body.source == Some(ClaimSource::UserStated))
             {
                 continue;
             }
