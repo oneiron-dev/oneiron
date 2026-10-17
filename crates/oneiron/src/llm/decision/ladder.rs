@@ -25,6 +25,10 @@ pub struct ProviderDecision {
     pub paired: Option<PairedAnswer>,
     /// The person question's reading ("ask a person?") from that same measurement.
     pub person: Option<PairedAnswer>,
+    /// The model that answered when the provider's pin names a seat rather than one
+    /// model: a seat rung that served the call, its fallback included (FIX 2730). It
+    /// keeps the provider pin's rung and version, and the receipt names it instead.
+    pub served: Option<ProviderPin>,
 }
 
 /// A yes/no reading beside the answer ("does this need more thinking?" or "ask a
@@ -77,6 +81,19 @@ impl ProviderDecision {
             return Err(invalid("invalid provider decision"));
         }
         Ok(())
+    }
+
+    /// The pin this answer's receipt names, of a provider pinned `pin`: the model that
+    /// served it on `pin`'s rung and version, else `pin`.
+    pub(crate) fn answered_pin(&self, pin: &ProviderPin) -> Result<ProviderPin> {
+        let Some(served) = &self.served else {
+            return Ok(pin.clone());
+        };
+        if served.version != pin.version {
+            return Err(invalid("a served pin keeps its provider's version"));
+        }
+        validate_pin(served, pin.rung)?;
+        Ok(served.clone())
     }
 }
 
@@ -1334,13 +1351,15 @@ pub(super) fn take(
     let mut reads = Vec::with_capacity(answers.len());
     for ((question, answer), readings) in pack.questions.iter().zip(answers).zip(readings) {
         answer.validate(question)?;
+        // The model that served the answer measured it (FIX 2730).
+        let pin = answer.answered_pin(pin)?;
         if let Some(reading) = answer.paired {
             readings.paired.push(reading.bind(pin.clone()));
         }
         if let Some(reading) = answer.person {
             readings.person.push(reading.bind(pin.clone()));
         }
-        readings.pins.push(pin.clone());
+        readings.pins.push(pin);
         reads.push(Read::Answer(answer));
     }
     Ok(reads)
@@ -1477,6 +1496,7 @@ fn abstained() -> ProviderDecision {
         probability: None,
         paired: None,
         person: None,
+        served: None,
     }
 }
 

@@ -8,7 +8,8 @@
 //! a call's audio clips when the model its seat routes to is bound as
 //! hearing them. The same rung can be asked of one configured model alone
 //! (OF-184), with no owner's fallback, so the model that answers is the one
-//! named.
+//! named. A seat's answer names the model that served it on its receipt
+//! (FIX 2730), so a held judge is one model the exact path can ask again.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -412,6 +413,7 @@ fn abstained() -> ProviderDecision {
         probability: None,
         paired: None,
         person: None,
+        served: None,
     }
 }
 
@@ -447,23 +449,28 @@ impl DecisionModel for BigModel {
             format!("{PURPOSE}:{}", EntityId::now().to_hex()),
             crate::decision_verdict::rung_meter(&self.meter),
         );
-        let response = self
+        // A seat's answer names the rung model that served it; one model
+        // alone answers or nothing does, so its pin names it already.
+        let (response, served) = self
             .runtime
             .block_on(async {
                 match &self.answerer {
-                    Answerer::Seat(_) => {
-                        ladder
-                            .generate_within(&run, request, None, &|| true, left)
-                            .await
-                    }
-                    Answerer::Model(_) => {
-                        ladder
-                            .generate_exact_within(&run, request, None, &|| true, left)
-                            .await
-                    }
+                    Answerer::Seat(_) => ladder
+                        .generate_served_within(&run, request, None, &|| true, left)
+                        .await
+                        .map(|(response, model)| (response, Some(model))),
+                    Answerer::Model(_) => ladder
+                        .generate_exact_within(&run, request, None, &|| true, left)
+                        .await
+                        .map(|response| (response, None)),
                 }
             })
             .map_err(|error| failed(format!("the seat failed: {error}")))?;
+        let served = served.map(|model| ProviderPin {
+            rung: self.pin.rung,
+            model: model.to_string(),
+            version: self.pin.version.clone(),
+        });
         let text: String = response
             .message
             .content
@@ -474,7 +481,10 @@ impl DecisionModel for BigModel {
             })
             .collect();
         let Some((answer, probability)) = self.reply.read(&text) else {
-            return Ok(abstained());
+            return Ok(ProviderDecision {
+                served,
+                ..abstained()
+            });
         };
         Ok(match typed(&call.question.contract, &answer) {
             Some(answer) => ProviderDecision {
@@ -482,8 +492,12 @@ impl DecisionModel for BigModel {
                 probability: Some(probability),
                 paired: None,
                 person: None,
+                served,
             },
-            None => abstained(),
+            None => ProviderDecision {
+                served,
+                ..abstained()
+            },
         })
     }
 }

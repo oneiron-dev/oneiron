@@ -437,6 +437,7 @@ fn answers(
                     probability: None,
                     paired,
                     person: None,
+                    served: None,
                 };
             };
             let mut top = 0;
@@ -456,6 +457,7 @@ fn answers(
                 probability: Some((weight / total).clamp(0.0, 1.0)),
                 paired,
                 person: None,
+                served: None,
             }
         })
         .collect())

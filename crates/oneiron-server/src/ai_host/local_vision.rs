@@ -196,6 +196,7 @@ impl DecisionModel for LocalVisionModel {
                 probability: None,
                 paired: None,
                 person: None,
+                served: None,
             });
         };
         let request = self.request(call, schema)?;
@@ -325,6 +326,7 @@ fn choice_answer(text: &str, options: &[String]) -> Option<ProviderDecision> {
         probability: Some(unit(value.get("confidence"))?),
         paired: None,
         person: None,
+        served: None,
     })
 }
 
@@ -336,6 +338,7 @@ fn noul_answer(text: &str) -> Option<ProviderDecision> {
         probability: Some(p_yes),
         paired: None,
         person: None,
+        served: None,
     })
 }
 
@@ -398,6 +401,7 @@ fn box_answer(text: &str) -> Option<ProviderDecision> {
         probability: Some(confidence),
         paired: None,
         person: None,
+        served: None,
     })
 }
 

@@ -91,6 +91,7 @@ impl HostRule {
             probability: Some(probability),
             paired: None,
             person: None,
+            served: None,
         }
     }
 }
@@ -276,6 +277,7 @@ impl DecisionProvider for HostRuleProvider {
                 probability: None,
                 paired: None,
                 person: None,
+                served: None,
             },
         })
     }

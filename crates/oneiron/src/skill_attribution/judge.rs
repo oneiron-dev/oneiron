@@ -403,6 +403,7 @@ impl DecisionProvider for AttributionRules {
             probability: verdict.map(|_| 1.0),
             paired: None,
             person: None,
+            served: None,
         })
     }
 }

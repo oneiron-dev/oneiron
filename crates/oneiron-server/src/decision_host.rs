@@ -1268,6 +1268,7 @@ impl DecisionProvider for SystemOneRung {
             probability: (!abstained).then_some(answer.probability),
             paired: None,
             person: None,
+            served: None,
         })
     }
 }

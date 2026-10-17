@@ -228,6 +228,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                     probability: Some(probability),
                     paired,
                     person: None,
+                    served: None,
                 }
             })
             .collect())

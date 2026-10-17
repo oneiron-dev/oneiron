@@ -691,7 +691,7 @@ fn settle_parked(
     now_secs: u64,
 ) -> Option<oneiron::EntityId> {
     let vault = server.vault();
-    match crate::decision_graph::at_home(vault, now_secs) {
+    match crate::decision_graph::at_home(server, now_secs) {
         Ok(true) => {}
         Ok(false) => return after,
         Err(error) => {
