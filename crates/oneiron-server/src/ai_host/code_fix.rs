@@ -1,7 +1,8 @@
 //! The host Coach's code fixes (DEC-0005 FIX6, OF-380). For each
 //! `coach.code_fix` attempt the Coach's heal worker leases, the generative
 //! seat drafts the invented example and the candidate fix, and replays the
-//! failing agent with no tools. The engine asks every judgment on the
+//! failing agent with no tools, under the Coach's fix and under each of the
+//! publisher's pinned candidates. The engine asks every judgment on the
 //! decision ladder and decides what may leave. The Coach pays for the calls,
 //! on one budget per case.
 use std::collections::BTreeMap;
@@ -10,10 +11,11 @@ use std::time::Duration;
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach_heal::HealRoute;
 use oneiron::dreamer_runner::maintenance::code_fix::{
-    CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob,
+    CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, PublisherCandidate,
 };
 use oneiron::failure_signals::{InventedMessage, InventedRole};
 use oneiron::llm::decision::DecisionRung;
+use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
@@ -22,6 +24,7 @@ use oneiron::{
 use serde::Deserialize;
 
 use super::CHAT_ROLE;
+use super::coach_health::coach_role;
 use crate::models::ModelRuntime;
 use crate::server::SyncServer;
 
@@ -53,6 +56,7 @@ pub(super) fn run(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     principal: EntityId,
+    publisher: &[PublisherCandidate],
     now: u64,
 ) -> oneiron::Result<()> {
     let vault = server.vault();
@@ -68,14 +72,41 @@ pub(super) fn run(
         "coach-code-fix:{}",
         EntityId::from_bytes(*admitted.status.attempt.id.as_bytes())?.to_hex()
     );
-    let models = HostModels::open(server, run_id, PURPOSE, BUDGET_UNITS)?;
+    let models = CodeFixModels {
+        models: HostModels::open(server, run_id, PURPOSE, BUDGET_UNITS)?,
+        publisher,
+    };
     let settled = vault.run_coach_code_fix(admitted, &decisions, &models, now)?;
     tracing::debug!(
         example = ?settled.example,
-        candidate = ?settled.candidate.as_ref().map(|run| run.outcome),
+        candidates = ?settled.candidates.iter().map(|run| run.outcome).collect::<Vec<_>>(),
         "the Coach's code-fix run settled"
     );
     Ok(())
+}
+
+/// The seat, with the publisher's pinned candidates beside the Coach's own.
+struct CodeFixModels<'a> {
+    models: HostModels<'a>,
+    publisher: &'a [PublisherCandidate],
+}
+
+impl CodeFixHost for CodeFixModels<'_> {
+    fn draft(&self, job: &CodeFixJob) -> oneiron::Result<Option<CodeFixDraft>> {
+        self.models.draft(job)
+    }
+
+    fn reply(
+        &self,
+        system: &str,
+        conversation: &[InventedMessage],
+    ) -> oneiron::Result<Option<String>> {
+        self.models.reply(system, conversation)
+    }
+
+    fn publisher_candidates(&self) -> &[PublisherCandidate] {
+        self.publisher
+    }
 }
 
 /// The generative seat, for the Coach's drafts and the failing agent's
@@ -115,10 +146,19 @@ impl<'a> HostModels<'a> {
         })
     }
 
-    /// One tool-less call's text; `Ok(None)` when no seat serves it or the
-    /// seat refused it.
-    pub(super) fn generate(&self, messages: Vec<LlmMessage>) -> oneiron::Result<Option<String>> {
-        let Some(seat) = self.runtime.seat(CHAT_ROLE) else {
+    /// The Coach's own seat, for its drafts and distill (`coach_role`).
+    pub(super) fn coach(&self) -> ModelRole {
+        coach_role(self.runtime)
+    }
+
+    /// One tool-less call's text on `role`'s seat; `Ok(None)` when no seat
+    /// serves it or the seat refused it.
+    pub(super) fn generate(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+    ) -> oneiron::Result<Option<String>> {
+        let Some(seat) = self.runtime.seat(role) else {
             return Ok(None);
         };
         let purpose = CallPurpose::Other {
@@ -140,7 +180,7 @@ impl<'a> HostModels<'a> {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
         };
-        let Ok(call) = self.runtime.admit_role(self.vault, CHAT_ROLE, request) else {
+        let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
             return Ok(None);
         };
         let response = self
@@ -173,10 +213,13 @@ impl CodeFixHost for HostModels<'_> {
             "briefing": source.briefing.as_deref().map(|text| clip(text, SOURCE_BYTES)),
             "task": source.task.as_deref().map(|text| clip(text, SOURCE_BYTES)),
         });
-        let Some(text) = self.generate(vec![
-            message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),
-            message(LlmMessageRole::User, data.to_string()),
-        ])?
+        let Some(text) = self.generate(
+            self.coach(),
+            vec![
+                message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),
+                message(LlmMessageRole::User, data.to_string()),
+            ],
+        )?
         else {
             return Ok(None);
         };
@@ -203,7 +246,8 @@ impl CodeFixHost for HostModels<'_> {
                 }
             });
         }
-        self.generate(messages)
+        // The failing agent's replay stays on the agent's chat seat.
+        self.generate(CHAT_ROLE, messages)
     }
 }
 
