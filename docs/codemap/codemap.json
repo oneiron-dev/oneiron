@@ -15576,8 +15576,8 @@
      "path": "src/counterparty_contact/doors.rs",
      "purpose": "Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply",
      "surface": {
-      "crate-vis": 6,
-      "fn": 7
+      "crate-vis": 5,
+      "fn": 6
      }
     },
     {
@@ -27098,7 +27098,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnswerProposal",
@@ -27119,10 +27119,10 @@
      "path": "src/llm/decision/questions/records.rs",
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 1,
       "enum": 4,
-      "fn": 5,
+      "fn": 11,
       "struct": 10
      }
     },
@@ -68059,14 +68059,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SyncServer"
+      "SyncServer",
+      "TaskWorkTurn"
      ],
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 17,
-      "fn": 17,
-      "struct": 1
+      "fn": 18,
+      "struct": 2
      }
     },
     {
