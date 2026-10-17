@@ -8743,7 +8743,7 @@
      "path": "src/channel_identity/mod.rs",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 14
      }
     },
@@ -8768,7 +8768,7 @@
      "path": "src/channel_identity/sender.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "type": 1
      }
@@ -30003,9 +30003,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/shape_doors.rs",
-     "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `vault.shape.read` and `vault.shape.plan`…",
+     "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -48653,6 +48653,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ShapeCard"
+     ],
+     "path": "src/vault_shape/card.rs",
+     "purpose": "`describe(vault)`'s card (ARCH-0070 doors): the arrangement at a glance and what its actors can send, a free…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ShapeChannelBinding",
       "ShapeChannelCustody",
       "ShapeChannelFulfillment",
@@ -48735,8 +48748,8 @@
      "surface": {
       "const": 2,
       "enum": 3,
-      "fn": 3,
-      "re-export": 7,
+      "fn": 4,
+      "re-export": 9,
       "struct": 3
      }
     },
@@ -48755,6 +48768,25 @@
      "surface": {
       "enum": 2,
       "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ShapePlanReach",
+      "ShapeReach",
+      "ShapeReachFact",
+      "ShapeReachVerdict"
+     ],
+     "path": "src/vault_shape/reach.rs",
+     "purpose": "The reach line (ARCH-0070 `shape:reach-line`, OSH p3): what each actor can send, read as a set join over…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 1,
       "struct": 3
      }
     },
@@ -53192,7 +53224,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 10,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53257,7 +53289,7 @@
    },
    "over_bar": 169,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3230,
+   "source_files": 3232,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73143,6 +73175,7 @@
       "ShapeApplyItem",
       "ShapeApplyReceipt",
       "ShapeApplyRequest",
+      "ShapeCard",
       "ShapeCeiling",
       "ShapeChange",
       "ShapeChannelBinding",
@@ -73156,11 +73189,15 @@
       "ShapeMemberRole",
       "ShapePlan",
       "ShapePlanItem",
+      "ShapePlanReach",
       "ShapePlanRequest",
       "ShapePlanSummary",
       "ShapePreset",
       "ShapePresetMember",
       "ShapePresetPick",
+      "ShapeReach",
+      "ShapeReachFact",
+      "ShapeReachVerdict",
       "ShapeRead",
       "ShapeRow",
       "ShapeSeed",
@@ -73343,8 +73380,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 244,
-      "struct": 607
+      "enum": 245,
+      "struct": 611
      }
     },
     {
