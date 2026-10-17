@@ -547,8 +547,10 @@ pub(crate) fn capture_canonical_window_within(
             "head_move_receipts",
             "note_forks",
             "note_proposals",
+            "row_births",
             "custody",
             "room_turns",
+            "withdrawn_cutoffs",
         ]
         .contains(&name.as_str())
     }) {
