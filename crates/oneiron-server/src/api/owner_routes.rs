@@ -55,6 +55,7 @@ mod history_routes;
 mod inbox_routes;
 mod learning_setting_routes;
 mod legal_hold_routes;
+mod model_setting_routes;
 mod pack_routes;
 mod pad_routes;
 mod peer_confidence_routes;
@@ -119,6 +120,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(inbox_routes::routes())
         .merge(concern_routes::routes())
         .merge(learning_setting_routes::routes())
+        .merge(model_setting_routes::routes())
         .merge(widen_proposal_routes::routes())
         .merge(pad_routes::routes())
         .merge(legal_hold_routes::routes())

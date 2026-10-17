@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 328 code-mode rows (309 host rows, 19 run rows), 1117 declarations.
+// Census: 328 code-mode rows (309 host rows, 19 run rows), 1120 declarations.
 // Replies: 267 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -272,7 +272,7 @@ declare namespace Sdk {
   type CallReceiptRequest = { receipt_ref: string };
   type CallTransport = "http_facade" | "mcp" | "ws";
   type CallOutcome = "ok" | { refused: { code: string } };
-  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; served: string[]; served_records?: RecordRef[] };
+  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; served: string[]; served_records?: RecordRef[] };
   type KeyValueAddress = { namespace: string[]; key: string };
   type KeyValueItem = { namespace: string[]; key: string; value: unknown; created_at: number; updated_at: number; revision: string };
   type KeyValuePut = { namespace: string[]; key: string; value: unknown; request_id: string; source?: string };
@@ -997,7 +997,10 @@ declare namespace Sdk {
   type DeckNodeView = { id: NodeId; kind: NodeKind; parent?: NodeId | null; name?: string | null; imported: boolean; geometry: GeometryProps; placeholder?: [string, number] | null; preset?: Preset | null; payload?: NodePayload | null; text?: TextBody | null; made_by?: string | null };
   type DeckBodyView = { frontier: number[]; version: number; nodes: DeckNodeView[] };
   type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView } | { format: "pptx"; body: DeckBodyView };
+  type OfficeBodyCommitsRequest = { artifact_ref: string; actor_ref?: string | null };
   type TextCommitReceipt = { document: string; peer: number; start: number; end: number; made_by: MadeBy };
+  type OfficeBodyCommitGap = "receipt_missing";
+  type OfficeBodyCommitView = { actor?: string | null; receipt?: TextCommitReceipt | null; reason?: OfficeBodyCommitGap | null };
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
   type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
@@ -1370,8 +1373,8 @@ declare const vault: Sdk.VaultHost & {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.BlobVersionView | StoredResult>;
     body: {
-      /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
-      commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.TextCommitReceipt[] | StoredResult>;
+      /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone. */
+      commits(input: Sdk.OfficeBodyCommitsRequest): Promise<Sdk.OfficeBodyCommitView[] | StoredResult>;
       deck: {
         /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep. */
         export(input: Sdk.DeckExportRequest): Promise<Sdk.DeckExportView | StoredResult>;

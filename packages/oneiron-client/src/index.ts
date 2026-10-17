@@ -6,7 +6,9 @@
  * GENERATED from that table (`./facade.ts`, `./facade-types.ts`): every verb
  * a typed method at its SDK path, its input and result typed from the Rust
  * types its row names, its row metadata in `FACADE_CATALOG`. What is written
- * by hand is this file: the HTTP transport.
+ * by hand is this file: the HTTP transport, and the few routes that are no
+ * verb row (`discover`, `searchText`, `getEntity`, `callVerb`, and a lens
+ * card's `lensFrameEvent` / `closeLensFrame`).
  *
  * Every public method hands back the ORIGINAL `Response`: nothing here parses
  * a body, clones a response, throws on an HTTP status, buffers a stream,
@@ -33,6 +35,7 @@
 
 import { facadeTree } from "./facade.js";
 import type { FacadeErrorEnvelope, FacadeInput, FacadePending, FacadeVerb } from "./facade.js";
+import type * as Facade from "./facade-types.js";
 export { FACADE_CATALOG, FACADE_VERBS, facadeRetry, facadeTree, newInvocation } from "./facade.js";
 export type {
   FacadeErrorEnvelope,
@@ -72,6 +75,41 @@ export interface CallVerbRequest {
   readonly verb: string;
   readonly body: unknown;
   readonly idempotencyKey?: string;
+}
+
+/**
+ * One lens-card event's body (OF-181): the client's event, and the key a
+ * deterministic action's dispatch replays under. The key is required in the
+ * body, not a header.
+ */
+export interface LensFrameEventRequest {
+  readonly event: Facade.GeneratedUiActionEvent;
+  readonly idempotencyKey: string;
+}
+
+/**
+ * What a lens-card event's 2xx body reads as. There is no discriminator: a
+ * local action answers the card's new `$state`, a deterministic tool its
+ * outcome and the scoped read of its entity arguments.
+ */
+export type LensFrameEventReply =
+  | { readonly $state: Facade.GeneratedUiStateSnapshot }
+  | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt };
+
+/** What a lens-card close's 2xx body reads as: whether the server held its frame. */
+export interface CloseLensFrameReply {
+  readonly closed: boolean;
+}
+
+/**
+ * A lens card's id as ONE path segment. An id a URL would resolve away
+ * (empty, `.` or `..`) throws before any request exists.
+ */
+function cardSegment(cardId: string): string {
+  if (cardId === "" || cardId === "." || cardId === "..") {
+    throw new TypeError(`a card id cannot be ${JSON.stringify(cardId)}`);
+  }
+  return encodeURIComponent(cardId);
 }
 
 /**
@@ -348,6 +386,45 @@ export class HttpBaseClient {
       method: "POST",
       headers,
       body: JSON.stringify(request.body),
+    });
+  }
+
+  /**
+   * `POST /v1/core/lens-frames/{cardId}/events` — one event on a lens card
+   * this server rendered (OF-181), under the credential that rendered it.
+   * `request.event.cardId` must name the same card. `LensFrameEventReply`
+   * types the 2xx body; a card the server no longer holds answers
+   * `404 NOT_FOUND` (render the lens again).
+   */
+  lensFrameEvent(
+    cardId: string,
+    request: LensFrameEventRequest,
+    init: RequestInit = {},
+  ): Promise<Response> {
+    const path = `/v1/core/lens-frames/${cardSegment(cardId)}/events`;
+    const headers = new Headers(init.headers ?? {});
+    if (!headers.has("content-type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    return this.request(path, {
+      ...init,
+      method: "POST",
+      headers,
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * `DELETE /v1/core/lens-frames/{cardId}` — closes a lens card this server
+   * rendered and frees its frame (OF-181). It sends no body.
+   * `CloseLensFrameReply` types the 2xx body; a card the server does not
+   * hold answers `{ closed: false }`.
+   */
+  closeLensFrame(cardId: string, init: RequestInit = {}): Promise<Response> {
+    return this.request(`/v1/core/lens-frames/${cardSegment(cardId)}`, {
+      ...init,
+      method: "DELETE",
+      body: null,
     });
   }
 }
