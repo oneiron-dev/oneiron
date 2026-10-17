@@ -41809,24 +41809,29 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "JudgeIncumbent",
       "JudgeShadowAnswer",
       "JudgeShadowCase",
       "JudgeShadowHost",
+      "JudgeSwapDisagreement",
+      "JudgeSwapPick",
+      "JudgeSwapPolicy",
       "JudgeSwapReceipt",
-      "JudgeSwapReport"
+      "JudgeSwapReport",
+      "JudgeSwapSettledBy",
+      "JudgeTieBreaker"
      ],
      "path": "src/skill_optimize/judge_swap.rs",
-     "purpose": "The judge-swap shadow ladder (ARCH-0053, OF-184)",
+     "purpose": "The judge-swap shadow ladder (ARCH-0053, ARCH-0079 #model-swaps, OF-184)",
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 2,
-      "struct": 4,
+      "enum": 3,
+      "fn": 5,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -52832,7 +52837,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 159,
+   "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3198,
    "test_files": 903
