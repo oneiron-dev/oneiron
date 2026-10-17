@@ -129,6 +129,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
         thread_audience,
         messages,
         occurred_at: ts_to_engine(turn.occurred_at, "occurred_at")?,
+        assertions: Default::default(),
     })
 }
 

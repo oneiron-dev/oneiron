@@ -201,6 +201,20 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
         .map_err(|_| refused())
 }
 
+/// The owner door for a route that runs one SDK row: the proof, and the
+/// owner's actor its verb hooks run as (`crate::owner::hooked_row`).
+pub(crate) fn hooked_owner(
+    auth: &CoreAuth,
+    server: &SyncServer,
+) -> Result<(AuthenticatedOwner, oneiron::EntityId), ApiError> {
+    let proof = owner(auth, server)?;
+    let actor = auth
+        .principal_ref()
+        .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+        .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
+    Ok((proof, actor))
+}
+
 fn host(server: &SyncServer) -> Result<Arc<OwnerHost>, ApiError> {
     server.owner_host.clone().ok_or_else(|| {
         ApiError::new(

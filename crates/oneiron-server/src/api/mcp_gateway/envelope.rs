@@ -189,6 +189,11 @@ pub(crate) struct McpCallContext {
     /// surface: inside an anonymous one a reference refusal writes no
     /// receipt, as the call writes none (OF-063, OF-538).
     pub(crate) off_record_session: Option<String>,
+    /// The room the request's room turn names (`x-oneiron-room-turn`), as
+    /// the facade reads it: the room the caller's board renders as ROOM and
+    /// reads its MEMORIES in, once the caller's own read admits it (FIX
+    /// 1051). Never guessed from anything else.
+    pub(crate) room_turn: Option<oneiron::EntityId>,
     /// The drain's permit, on a call settlement runs again (ARCH-0080 §3
     /// Ask): its row's pre chain enters as the drain's run of it. Never a
     /// request's.
@@ -683,14 +688,14 @@ pub(crate) async fn handle_mcp_request(
             // OF-568: what the call reads, captured before it runs.
             let inputs =
                 crate::api::call_receipt::action_inputs(server, &tool, request.params.as_ref());
-            // OF-063: only a caller whose credential's principal is verified
-            // in the session keeps no record, judged on arrival and again
-            // before the receipt is written; a credential naming no
-            // principal (the configured root) keeps the unchecked rule.
-            let principal = actor
-                .auth
-                .as_ref()
-                .and_then(crate::api::call_receipt::request_principal);
+            // OF-063: only a caller whose principal is verified in the
+            // session keeps no record, judged on arrival and again before the
+            // receipt is written. The configured root maps to the actor it
+            // acts through (FIX 2271), the one its rows' surfaces bind.
+            let principal = crate::api::call_receipt::mcp_session_principal(
+                actor.auth.as_ref(),
+                actor.actor_ref,
+            );
             let anonymous =
                 crate::api::call_receipt::in_anonymous_session(server, headers, principal);
             let called: Result<Value, McpGatewayError> = async {
