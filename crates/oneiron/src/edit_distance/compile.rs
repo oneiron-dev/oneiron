@@ -421,7 +421,6 @@ pub fn accepted_acting_revisions(
 /// # Errors
 ///
 /// Storage errors.
-#[allow(dead_code, reason = "L09's apply_agent_acting_revision door calls it")]
 pub(crate) fn acting_revision_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -440,7 +439,6 @@ pub(crate) fn acting_revision_in_txn(
 /// [`Error::EntityNotFound`] for an unknown revision;
 /// [`Error::InvalidClaimBody`] for a revision that is not accepted, or that
 /// another apply already marked; storage errors.
-#[allow(dead_code, reason = "L09's apply_agent_acting_revision door calls it")]
 pub(crate) fn mark_acting_revision_applied_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
