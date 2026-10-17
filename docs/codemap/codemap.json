@@ -19064,6 +19064,7 @@
      "kind": "src",
      "notable": [
       "DigestCleanup",
+      "DigestNoteTombstones",
       "DigestOffer",
       "DigestProposal",
       "ProactivityCadence",
@@ -19076,10 +19077,10 @@
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "const": 5,
+      "const": 7,
       "crate-vis": 3,
       "fn": 14,
-      "struct": 9
+      "struct": 10
      }
     },
     {
