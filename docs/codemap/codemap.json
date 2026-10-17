@@ -68675,7 +68675,7 @@
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
