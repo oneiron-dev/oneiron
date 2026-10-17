@@ -37641,7 +37641,8 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 9,
+      "fn": 1
      }
     },
     {
