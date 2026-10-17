@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_core::Stream;
-use oneiron::{LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, ModelId};
+use oneiron::{
+    LlmCatalogEntry, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, ModelId,
+};
 use oneiron_mesh_transport::{
     MachineId, MeshConnection, MeshError, MeshFuture, MeshService, MeshStream,
 };
@@ -34,6 +36,11 @@ pub trait LlmMeshHandler: Send + Sync + 'static {
     /// # Errors
     /// The call was refused before it started.
     fn stream(&self, peer: MachineId, request: LlmRequest) -> LlmResult<LlmStream<'static>>;
+    /// The models this node offers the owner's other nodes, so they can
+    /// route to them: its own models only ([`super::advertises`]).
+    fn catalog(&self) -> Vec<LlmCatalogEntry> {
+        Vec::new()
+    }
 }
 
 /// Serves `oneiron/llm/1`: the owner's other nodes use this node's models.
@@ -139,6 +146,18 @@ impl LlmMeshService {
             Request::Cancel { stream: id } => {
                 lock(&session.streams).remove(&id);
                 Reply::Cancelled
+            }
+            Request::Catalog => {
+                let offered: Vec<LlmCatalogEntry> = self
+                    .handler
+                    .catalog()
+                    .into_iter()
+                    .filter(|entry| super::advertises(entry.locality))
+                    .collect();
+                match serde_json::to_vec(&offered) {
+                    Ok(bytes) => Reply::Catalog(session.staging.offer(bytes)),
+                    Err(err) => Reply::Refused(err.to_string()),
+                }
             }
         };
         stream.send(&seal(&reply)?).await

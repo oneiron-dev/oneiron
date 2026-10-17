@@ -2,7 +2,8 @@
 //! [`mesh`] is the transport to a model on another of the owner's nodes (OF-575 MESH).
 pub mod mesh;
 pub use mesh::{
-    LLM_ALPN, LlmMeshHandler, LlmMeshService, LlmNodes, MeshLlmTransport, VaultLlmNodes,
+    COST_DECLARED, CatalogRefresh, LLM_ALPN, LlmMeshHandler, LlmMeshService, LlmNodes, MESH_PEER,
+    MeshLlmTransport, VaultLlmNodes, advertises,
 };
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmGenerateFuture,
@@ -10,27 +11,59 @@ use oneiron::{
 };
 pub use oneiron_remote::llm::{OwnServerTransport, RemoteLlmClient};
 use std::collections::BTreeMap;
+use std::sync::{PoisonError, RwLock};
 pub struct OwnServerBackend<T> {
     transport: T,
-    models: BTreeMap<ModelId, LlmCatalogEntry>,
+    /// The vault's own-server rows, as last read.
+    models: RwLock<BTreeMap<ModelId, LlmCatalogEntry>>,
+}
+fn own_server_models(
+    vault: &oneiron::Vault,
+) -> oneiron::Result<BTreeMap<ModelId, LlmCatalogEntry>> {
+    Ok(vault
+        .model_catalog_entries(oneiron::llm::registry::ModelWireFormat::OwnServer)?
+        .into_iter()
+        .map(|m| (m.model.clone(), m))
+        .collect())
 }
 impl<T: OwnServerTransport> OwnServerBackend<T> {
     pub fn from_registry(vault: &oneiron::Vault, transport: T) -> oneiron::Result<Self> {
-        let models = vault
-            .model_catalog_entries(oneiron::llm::registry::ModelWireFormat::OwnServer)?
-            .into_iter()
-            .map(|m| (m.model.clone(), m))
-            .collect();
-        Ok(Self { transport, models })
+        Ok(Self {
+            transport,
+            models: RwLock::new(own_server_models(vault)?),
+        })
+    }
+    /// Reads the vault's own-server rows again, after a row was written.
+    pub fn reload(&self, vault: &oneiron::Vault) -> oneiron::Result<()> {
+        *self.models.write().unwrap_or_else(PoisonError::into_inner) = own_server_models(vault)?;
+        Ok(())
     }
     fn admit(&self, request: &LlmRequest, stream: bool) -> oneiron::LlmResult<()> {
         if request.envelope.locality != ModelLocality::OwnServer {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         self.models
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
             .get(&request.model)
             .ok_or(FatalLlmError::InvalidRequest)?
             .admit(request, stream)
+    }
+}
+impl OwnServerBackend<MeshLlmTransport> {
+    /// Learns the models the owner's other nodes offer, writes their rows
+    /// ([`MeshLlmTransport::refresh_catalog`]) and reads the rows again. The
+    /// host runs it when the backend starts and when the mesh changes.
+    ///
+    /// # Errors
+    /// A row could not be read or written.
+    pub async fn refresh_from_mesh(
+        &self,
+        vault: &oneiron::Vault,
+    ) -> oneiron::Result<CatalogRefresh> {
+        let refresh = self.transport.refresh_catalog(vault).await?;
+        self.reload(vault)?;
+        Ok(refresh)
     }
 }
 /// One request to the own server per call, when the transport sends once.
@@ -45,6 +78,8 @@ impl<T: OwnServerTransport + oneiron::llm::SingleSend> oneiron::llm::SingleRoute
 impl<T: OwnServerTransport> LlmBackend for OwnServerBackend<T> {
     fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
         self.models
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
             .get(model)
             .is_some_and(|e| e.supports(&capability))
     }
