@@ -176,17 +176,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/validate/cancel_receipt_landing.rs` | src | m | 7 crate-vis | — | Cancel-receipt shape table, landing validators, and receipt/event append mutators |
 | `src/attempt_queue/validate/field_validators.rs` | src | m | 78 crate-vis | — | Length caps, error literals, and per-field validators plus lease/manifest mutators |
 | `src/attempt_queue/validate/mod.rs` | src | s | 4 crate-vis | — | Input validators and in-place record mutators guarding the attempt-queue doors |
+| `src/authority/adopted_build.rs` | src | s | 1 crate-vis | — | A later checkpoint image on a vault that adopted one (OF-469, slice D; identity.md, "Resumable checkpoints… |
 | `src/authority/adopted_evidence.rs` | src | s | 8 crate-vis | — | What an adopted checkpoint image gives the store doors in place of the raw history it covers (OF-469, slice C) |
-| `src/authority/adopted_fold.rs` | src | m | 3 crate-vis | — | The authority fold past an adopted checkpoint image (OF-469, slice C; identity.md, "Resumable checkpoints… |
+| `src/authority/adopted_fold.rs` | src | m | 5 crate-vis | — | The authority fold past an adopted checkpoint image (OF-469, slice C; identity.md, "Resumable checkpoints… |
 | `src/authority/ancestor_index.rs` | src | s | 1 crate-vis | — | Claimed authority-entry ancestry index for deterministic fold scheduling |
 | `src/authority/ancestry_evaluator.rs` | src | s | 3 crate-vis | — | Shared stalled-revocation ancestry evaluation for ordinary and proof folds |
 | `src/authority/anchor_fold.rs` | src | s | 1 crate-vis | — | The owner anchor's entries (world privacy P6b, contract §4 and E2(b)): a root record, which its own anchor… |
 | `src/authority/anchor_marks.rs` | src | s | 4 crate-vis | — | An owner anchor's writes (world privacy P6b, contract §4 and E2(b)): its root's record, and its… |
 | `src/authority/causal_write.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | CausalWriteDisposition | Causal authorization across actor revoke/regrant windows |
-| `src/authority/checkpoint.rs` | src | s | 4 fn · 4 crate-vis | — | The checkpoint v2 images this vault built and keeps (OF-469): each image's canonical bytes keyed by its id… |
-| `src/authority/checkpoint_adopt.rs` | src | m | 3 struct · 11 fn · 4 crate-vis | AuthorityCheckpointBundle, AuthorityCheckpointExpectation, VerifiedAuthorityCheckpoint | Checkpoint v2 adoption (OF-469): the one image a vault trusts in place of replaying the history it covers |
-| `src/authority/checkpoint_attest.rs` | src | m | 3 struct · 13 fn · 1 const · 5 crate-vis | AuthorityCheckpointAttestation, AuthorityCheckpointKeyBinding, AuthorityCheckpointPin | Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two… |
-| `src/authority/checkpoint_image.rs` | src | m | 4 struct · 5 fn · 4 const · 8 crate-vis | AuthorityArchiveManifest, AuthorityCheckpointRow, AuthorityCheckpointUnresolved, AuthorityCheckpointV2 | The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history… |
+| `src/authority/checkpoint.rs` | src | m | 1 enum · 4 fn · 3 const · 6 crate-vis | AuthorityCheckpointUpkeep | The checkpoint v2 images this vault built and keeps (OF-469): each image's canonical bytes keyed by its id… |
+| `src/authority/checkpoint_adopt.rs` | src | m | 3 struct · 11 fn · 3 crate-vis | AuthorityCheckpointBundle, AuthorityCheckpointExpectation, VerifiedAuthorityCheckpoint | Checkpoint v2 adoption (OF-469): the one image a vault trusts in place of replaying the history it covers |
+| `src/authority/checkpoint_attest.rs` | src | m | 3 struct · 13 fn · 1 const · 6 crate-vis | AuthorityCheckpointAttestation, AuthorityCheckpointKeyBinding, AuthorityCheckpointPin | Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two… |
+| `src/authority/checkpoint_image.rs` | src | L | 6 struct · 6 fn · 5 const · 10 crate-vis | AuthorityArchiveContent, AuthorityArchiveCustodian, AuthorityArchiveManifest, AuthorityCheckpointRow, AuthorityCheckpointUnresolved, AuthorityCheckpointV2 | The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history… |
 | `src/authority/checkpoint_policy.rs` | src | s | 2 struct · 1 enum · 6 fn · 3 const | CheckpointPosture, CheckpointRoot, CheckpointRootPolicy | Who may attest a portable authority checkpoint (OF-469, checkpoint v2): the eligible roots and the quorum… |
 | `src/authority/claim_write.rs` | src | s | 1 fn · 3 crate-vis | — | Claim write-window admission and read-time quarantine share one causal predicate |
 | `src/authority/engine_machine.rs` | src | s | 3 fn · 2 crate-vis | — | Host-provisioned software identities for the engine's own MACHINE writers |
@@ -196,13 +197,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/fold_engine.rs` | src | m | 1 re-export · 7 crate-vis | — | Top-level fold orchestration |
 | `src/authority/fold_engine/entry_points.rs` | src | s | 4 fn · 8 crate-vis | — | The fold's entry points: the reference, seen-time, posture, peer and local-observation variants over… |
 | `src/authority/fold_project.rs` | src | s | 4 crate-vis | — | The fold's projection: from the raw merge of the surviving rows' states to the folded authority |
-| `src/authority/fold_resume.rs` | src | L | 25 crate-vis | — | A resumed fold: the stored log's reference fold carried over a chain of new rows off its one main head… |
+| `src/authority/fold_resume.rs` | src | L | 26 crate-vis | — | A resumed fold: the stored log's reference fold carried over a chain of new rows off its one main head… |
 | `src/authority/fold_schedule.rs` | src | s | 2 crate-vis | — | The fold's per-entry scheduler |
 | `src/authority/fold_state.rs` | src | m | 3 struct · 3 enum · 3 fn · 6 crate-vis | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFold, AuthorityFoldIssue, FoldedActorBinding | Folded-state data model and the two-state merge |
 | `src/authority/guest_revoke.rs` | src | m | 2 fn · 2 crate-vis | — | OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one ask guest's… |
 | `src/authority/handoff_equivocation.rs` | src | m | 3 struct · 4 fn · 1 const · 4 crate-vis | AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation | Evidence that a retired key signed beside the handoff that retired it: the first record of OF-166, ahead of… |
-| `src/authority/history_coverage.rs` | src | s | 2 struct · 4 fn · 3 crate-vis | AuthorityHistoryCoverage, AuthorityHistoryRequest | What authority history this vault holds, and exactly what it lacks (OF-469) |
-| `src/authority/history_fetch.rs` | src | m | 3 struct · 4 fn · 1 const | AuthorityHistoryFetch, AuthorityHistoryPage, AuthorityHistoryVerificationCoverage | Exact-hash authority history fetch, and the coverage an asker verifies itself (OF-469) |
+| `src/authority/history_coverage.rs` | src | s | 3 struct · 4 fn · 4 crate-vis | AuthorityArchiveCoverage, AuthorityHistoryCoverage, AuthorityHistoryRequest | What authority history this vault holds, and exactly what it lacks (OF-469) |
+| `src/authority/history_fetch.rs` | src | m | 3 struct · 1 enum · 6 fn · 3 const | AuthorityHistoryFetch, AuthorityHistoryPage, AuthorityHistorySelection, AuthorityHistoryVerificationCoverage | Authority history fetch, by exact hash or by checkpoint coverage, and the coverage an asker verifies itself… |
 | `src/authority/history_repair.rs` | src | s | 1 enum · 2 fn · 2 crate-vis | AuthorityRepairOutcome | Staged repair of missing authority history (OF-469) |
 | `src/authority/history_transfer.rs` | src | m | 1 struct · 7 fn · 7 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/host_actor.rs` | src | s | 1 crate-vis | — | The owner a self-hosted root binds (H149) |
@@ -212,7 +213,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/install_fold.rs` | src | m | 8 crate-vis | — | The strict fold as this install reads it, once its handoffs settle: its own sequence floors, the… |
 | `src/authority/invitee_slip.rs` | src | s | 2 crate-vis | — | FIX 1925: an invitee's own credential |
 | `src/authority/invocation_slip.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | InvocationSlipBinding | The signed instrument a request was admitted on, kept with the work it queued, so that work's standing is… |
-| `src/authority/left_notices.rs` | src | s | 2 fn | — | A removed person's own notices of losing a shared vault (OF-158 client leave) |
+| `src/authority/left_notices.rs` | src | s | 3 fn | — | A removed person's own notices of losing a shared vault (OF-158 client leave) |
 | `src/authority/log_budget.rs` | src | m | 1 struct · 3 fn · 7 const · 18 crate-vis | AuthorityLogCheck | The authority log's fold bounds, and the store-door checks that keep a stored log inside them (H72) |
 | `src/authority/log_structure.rs` | src | m | 17 crate-vis | — | The authority log's consent structure, read from its signed rows alone, so the fold's bounds and the store… |
 | `src/authority/machine_claims.rs` | src | s | 8 crate-vis | — | The fold's machine key claims, indexed once per view: P1's poison per admitter (a key two machines claim, a… |
@@ -223,7 +224,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_write.rs` | src | m | 4 fn · 9 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
 | `src/authority/mesh_machine.rs` | src | L | 2 struct · 10 fn · 1 const | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
-| `src/authority/mod.rs` | src | s | 35 re-export · 20 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mod.rs` | src | s | 36 re-export · 21 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 8 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
 | `src/authority/owner_project_slip.rs` | src | s | 1 fn | — | The host's owner-project slip (OF-497): the host-held project.write slip an [`OwnerProjectSigner`] signs the… |
@@ -1406,7 +1407,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/parallel.rs` | src | s | 1 crate-vis | — | Read-only neighbourhood fan-out, followed by one parent-owned merge |
 | `src/dreamer_consolidation/partition.rs` | src | m | 3 struct · 7 fn · 9 crate-vis | ConsolidationCursor, ConsolidationPartitionKey, ConsolidationPartitionPlan | — |
 | `src/dreamer_consolidation/persistence.rs` | src | s | 1 fn · 5 crate-vis | — | Persistent contradiction markers and prior-head context for consolidation |
-| `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 3 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
+| `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 4 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
 | `src/dreamer_consolidation/provenance.rs` | src | L | 7 struct · 1 enum · 2 trait · 10 fn · 8 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, KeptAsk, KeptDecision, PeerAnswerLineage, PeerTrustDigestLine +2 | — |
 | `src/dreamer_consolidation/redirty.rs` | src | m | 15 crate-vis | — | The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again… |
 | `src/dreamer_consolidation/resident_dream.rs` | src | m | 2 struct · 3 fn · 1 const · 3 crate-vis | ResidentDreamModel, ResidentDreamProgress | A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams under its own stamp, on its own… |
@@ -1785,7 +1786,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/shared_act/erase_ask.rs` | src | s | 1 struct · 2 enum · 3 fn · 1 const | EraseAskKind, EraseAskStatus, SharedEraseAsk | Erase asks (ARCH-0043 "Who may archive, delete and erase", 2026-10-09): in a shared vault a Member requests… |
 | `src/federation/shared_act/membership.rs` | src | m | 7 fn · 1 re-export · 5 crate-vis | — | Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's… |
 | `src/federation/shared_act/membership/invitation.rs` | src | m | 1 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | SharedInvitation, SharedInvitationState | Invitee acceptance (CROSS-ARCH-0024: "Only an accepted, vault-specific invitation" grants membership) |
-| `src/federation/shared_act/mod.rs` | src | L | 10 struct · 2 enum · 11 fn · 3 const · 2 re-export · 4 crate-vis | DeleteVaultPlan, RemovalExportCopy, RemoveOwnerPlan, SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind, SharedActOutcome +4 | Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never… |
+| `src/federation/shared_act/mod.rs` | src | L | 11 struct · 2 enum · 11 fn · 3 const · 2 re-export · 5 crate-vis | DeleteVaultPlan, RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind +5 | Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never… |
 | `src/federation/shared_creation.rs` | src | s | 2 struct · 1 enum · 3 fn · 2 crate-vis | InitialSharedMember, SharedVaultCreation, SharedVaultPreset | Creation-time membership defaults, materialized once as explicit grant/policy rows |
 | `src/federation/shared_creation_tests.rs` | test | m | — | — | — |
 | `src/federation/stale.rs` | src | m | 1 struct · 1 enum · 9 fn · 3 const · 9 crate-vis | FederationStaleReason, WorldStaleStamp | Terminal-pact per-world stale stamping (FED-04) |

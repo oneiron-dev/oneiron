@@ -2063,6 +2063,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/adopted_build.rs",
+     "purpose": "A later checkpoint image on a vault that adopted one (OF-469, slice D; identity.md, \"Resumable checkpoints…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/adopted_evidence.rs",
      "purpose": "What an adopted checkpoint image gives the store doors in place of the raw history it covers (OF-469, slice C)",
      "surface": {
@@ -2076,7 +2086,7 @@
      "path": "src/authority/adopted_fold.rs",
      "purpose": "The authority fold past an adopted checkpoint image (OF-469, slice C; identity.md, \"Resumable checkpoints…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -2134,13 +2144,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "AuthorityCheckpointUpkeep"
+     ],
      "path": "src/authority/checkpoint.rs",
      "purpose": "The checkpoint v2 images this vault built and keeps (OF-469): each image's canonical bytes keyed by its id…",
      "surface": {
-      "crate-vis": 4,
+      "const": 3,
+      "crate-vis": 6,
+      "enum": 1,
       "fn": 4
      }
     },
@@ -2155,7 +2169,7 @@
      "path": "src/authority/checkpoint_adopt.rs",
      "purpose": "Checkpoint v2 adoption (OF-469): the one image a vault trusts in place of replaying the history it covers",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "fn": 11,
       "struct": 3
      }
@@ -2172,15 +2186,17 @@
      "purpose": "Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 13,
       "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "AuthorityArchiveContent",
+      "AuthorityArchiveCustodian",
       "AuthorityArchiveManifest",
       "AuthorityCheckpointRow",
       "AuthorityCheckpointUnresolved",
@@ -2189,10 +2205,10 @@
      "path": "src/authority/checkpoint_image.rs",
      "purpose": "The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history…",
      "surface": {
-      "const": 4,
-      "crate-vis": 8,
-      "fn": 5,
-      "struct": 4
+      "const": 5,
+      "crate-vis": 10,
+      "fn": 6,
+      "struct": 6
      }
     },
     {
@@ -2303,7 +2319,7 @@
      "path": "src/authority/fold_resume.rs",
      "purpose": "A resumed fold: the stored log's reference fold carried over a chain of new rows off its one main head…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -2368,15 +2384,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AuthorityArchiveCoverage",
       "AuthorityHistoryCoverage",
       "AuthorityHistoryRequest"
      ],
      "path": "src/authority/history_coverage.rs",
      "purpose": "What authority history this vault holds, and exactly what it lacks (OF-469)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -2385,13 +2402,15 @@
      "notable": [
       "AuthorityHistoryFetch",
       "AuthorityHistoryPage",
+      "AuthorityHistorySelection",
       "AuthorityHistoryVerificationCoverage"
      ],
      "path": "src/authority/history_fetch.rs",
-     "purpose": "Exact-hash authority history fetch, and the coverage an asker verifies itself (OF-469)",
+     "purpose": "Authority history fetch, by exact hash or by checkpoint coverage, and the coverage an asker verifies itself…",
      "surface": {
-      "const": 1,
-      "fn": 4,
+      "const": 3,
+      "enum": 1,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -2514,7 +2533,7 @@
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -2655,8 +2674,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 20,
-      "re-export": 35
+      "crate-vis": 21,
+      "re-export": 36
      }
     },
     {
@@ -17905,7 +17924,7 @@
      "purpose": "PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -22859,6 +22878,7 @@
      "notable": [
       "DeleteVaultPlan",
       "RemovalExportCopy",
+      "RemovalExportDelivery",
       "RemoveOwnerPlan",
       "SharedActExecution",
       "SharedActExecutionReceipt",
@@ -22874,11 +22894,11 @@
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 11,
       "re-export": 2,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -52324,7 +52344,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 138,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53773,9 +53793,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 176,
+   "over_bar": 177,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3264,
+   "source_files": 3265,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71718,7 +71738,7 @@
      "path": "src/server/housekeeping.rs",
      "purpose": "The host's half of the engine's housekeeping",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -73888,6 +73908,7 @@
       "RefreshPolicy",
       "RelationshipChange",
       "ReleasedWait",
+      "RemovalExportDelivery",
       "RenderPair",
       "RenderSide",
       "ReplyStripsPage",
@@ -74199,7 +74220,7 @@
      "purpose": "—",
      "surface": {
       "enum": 258,
-      "struct": 663
+      "struct": 664
      }
     },
     {
