@@ -92,10 +92,14 @@ impl Vault {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
         // A key a handoff retired signs nothing new here (engine-crates-03).
-        let local = if entries.is_empty() {
-            None
+        // An adopted checkpoint image answers for the history it covers.
+        let (local, evidence) = if entries.is_empty() {
+            (None, None)
         } else {
-            Some(self.authority_fold_readonly_in_txn(wtxn)?)
+            (
+                Some(self.authority_fold_readonly_in_txn(wtxn)?),
+                super::adopted_evidence::adopted_evidence_in_txn(&self.store, wtxn)?,
+            )
         };
         // Rows of this batch, for an ancestry that runs through one.
         let mut batch = BTreeMap::new();
@@ -115,9 +119,12 @@ impl Vault {
                     entry,
                     &mut |hash| match batch.get(hash) {
                         Some(row) => Ok(Some(row.clone())),
-                        None => {
-                            super::retired_signers::stored_authority_row(&self.store, wtxn, hash)
-                        }
+                        None => super::retired_signers::door_ancestor_row(
+                            &self.store,
+                            wtxn,
+                            evidence.as_deref(),
+                            hash,
+                        ),
                     },
                 )?
             {

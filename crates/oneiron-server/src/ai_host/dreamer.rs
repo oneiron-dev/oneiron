@@ -661,12 +661,13 @@ impl PassExecutorFactory for ObservedFactory {
     }
 }
 
-/// Asks the ladder to settle the parked conflicts the Dreamer's own review
-/// Grant covers (OF-023), on the home node only: `pump_due`'s home gate is
-/// its own. With no Grant the listing is empty and nothing is asked; a
-/// conflict the ladder leaves stays for the owner, and the next pass starts
-/// after the last one asked: the cursor this returns. A failure logs by kind
-/// only, since its text can quote the vault.
+/// Asks the ladder to settle the parked conflicts (OF-023), on the home node
+/// only: `pump_due`'s home gate is its own. The Dreamer's review stands from
+/// birth; each settlement applies at once and the owner reverts it, and a
+/// conflict the owner holds or reverted is left out. A conflict the ladder
+/// leaves stays for the owner, and the next pass starts after the last one
+/// asked: the cursor this returns. A failure logs by kind only, since its
+/// text can quote the vault.
 fn settle_parked(
     server: &crate::server::SyncServer,
     dreamer: WriteActor,
