@@ -8,14 +8,18 @@
 //! the archive every part the slide reaches that the package root no longer
 //! does: the slide, its notes slide and comments, and media, charts or
 //! embeddings only it used. A part another survivor still relates to stays.
+//! The app properties lose the slide from their counts and titles, and the
+//! content types lose each extension default no part uses any more. An
+//! emptied section stays, as PowerPoint keeps one.
 
 use super::super::super::check::declared_type;
+use super::super::super::media::related;
 use super::super::super::xml::{self, A, P, R};
 use super::super::Plan;
 use super::{Lists, P14, SLIDE_CREATION_EXT, SLIDE_IDS, copy_with, custom_shows, mint_creation_id};
 use crate::deck::DeckView;
 use crate::edit::{EditRefusal, Effect};
-use crate::ooxml::Node;
+use crate::ooxml::{Node, XmlTree};
 use crate::retained_opc::Package;
 
 const SLIDE_TYPE: &str = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
@@ -237,6 +241,16 @@ pub(in super::super) fn delete(
         .attr_ns(R, "id")
         .ok_or(EditRefusal::Invalid("a slide id entry"))?
         .to_owned();
+    let index = lists
+        .slides
+        .iter()
+        .position(|&(at, _)| at == entry)
+        .ok_or(EditRefusal::Invalid("a slide id entry"))?;
+    let hidden = input
+        .part(slide)?
+        .and_then(|bytes| XmlTree::parse(&bytes, input.limits().xml).ok())
+        .is_some_and(|tree| matches!(tree.nodes[0].attr("show"), Some("0" | "false")));
+    let notes = related(&input, slide, "notesSlide").is_ok_and(|notes| notes.is_some());
     let mut edits = vec![(lists.tree.nodes[entry].span.clone(), Vec::new())];
     edits.extend(
         lists
@@ -248,8 +262,13 @@ pub(in super::super) fn delete(
     );
     next.replace_xml_part(&lists.part, xml::splice(&lists.bytes, edits)?)?;
     next.unrelate(&lists.part, &link)?;
-    for part in released(next, slide)? {
-        next.remove_part(&part)?;
+    let released = released(next, slide)?;
+    for part in &released {
+        next.remove_part(part)?;
+    }
+    super::app_props::slide_removed(next, index, lists.slides.len(), hidden, notes)?;
+    if !released.is_empty() {
+        next.prune_defaults()?;
     }
     Ok((
         Plan::Arranged,

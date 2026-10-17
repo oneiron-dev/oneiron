@@ -359,6 +359,17 @@ pub(super) fn verify(
                 allowed.push(TYPES.to_owned());
             }
             allowed.extend(removed.iter().cloned());
+            // The app properties count one slide fewer when they changed.
+            if let Some(props) = related(input, "", "extended-properties")?
+                && changed.contains(&props)
+            {
+                if super::slides::slide_count(&candidate)?
+                    != super::slides::slide_count(input)?.map(|count| count.saturating_sub(1))
+                {
+                    return Err(fault("the app properties do not count the slide out"));
+                }
+                allowed.push(props);
+            }
             let rest: Vec<&SlideView> = before.slides.iter().filter(|s| s.part != slide).collect();
             if after.slides.len() != rest.len()
                 || !after.slides.iter().zip(rest).all(|(a, b)| same(a, b))

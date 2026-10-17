@@ -15,6 +15,7 @@
 //! A reorder is a permutation of the slide ids. It rewrites the order of
 //! `p:sldIdLst` and of each section's list, and refuses an order that splits
 //! a section or moves sections past each other.
+mod app_props;
 mod check;
 mod lifecycle;
 #[cfg(test)]
@@ -29,6 +30,7 @@ use crate::edit::{EditRefusal, Effect};
 use crate::ooxml::{Node, PACKAGE_RELATIONSHIPS, XmlTree};
 use crate::retained_opc::{Package, Relationship, rels_name};
 
+pub(super) use app_props::slide_count;
 pub(super) use check::{duplicated, reordered};
 pub(super) use lifecycle::{add_blank, delete};
 
