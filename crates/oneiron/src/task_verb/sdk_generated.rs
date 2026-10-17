@@ -813,6 +813,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.rooms.offer.vote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::OfferVoteRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.offer.reopen",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::OfferReopenRequest,
+                >(),
+            ),
+            (
                 "vault.rooms.offers",
                 crate::code_run::vault_read::request_schema::<crate::workspace_roster::OffersRequest>(
                 ),
@@ -2441,6 +2453,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.rooms.offer.vote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.offer.reopen" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.offers" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3418,6 +3444,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.offer.answer" => {
             let _input: crate::workspace_roster::OfferAnswerRequest = decode(value.clone())?;
         }
+        "vault.rooms.offer.vote" => {
+            let _input: crate::workspace_roster::OfferVoteRequest = decode(value.clone())?;
+        }
+        "vault.rooms.offer.reopen" => {
+            let _input: crate::workspace_roster::OfferReopenRequest = decode(value.clone())?;
+        }
         "vault.rooms.offers" => {
             let _input: crate::workspace_roster::OffersRequest = decode(value.clone())?;
         }
@@ -3997,6 +4029,8 @@ pub fn invoke(
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
         "vault.rooms.offer" => encode(vault_rooms_offer(memory, decode(value)?)?),
         "vault.rooms.offer.answer" => encode(vault_rooms_offer_answer(memory, decode(value)?)?),
+        "vault.rooms.offer.vote" => encode(vault_rooms_offer_vote(memory, decode(value)?)?),
+        "vault.rooms.offer.reopen" => encode(vault_rooms_offer_reopen(memory, decode(value)?)?),
         "vault.rooms.offers" => encode(vault_rooms_offers(memory, decode(value)?)?),
         "vault.projects.goal.revisions" => {
             encode(vault_projects_goal_revisions(memory, decode(value)?)?)
@@ -5571,6 +5605,18 @@ pub fn vault_rooms_offer_answer(
     input: crate::workspace_roster::OfferAnswerRequest,
 ) -> MemoryResult<crate::workspace_roster::OfferSettlement> {
     memory.rooms_offer_answer(&input)
+}
+pub fn vault_rooms_offer_vote(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::OfferVoteRequest,
+) -> MemoryResult<crate::workspace_roster::OfferCard> {
+    memory.rooms_offer_vote(&input)
+}
+pub fn vault_rooms_offer_reopen(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::OfferReopenRequest,
+) -> MemoryResult<crate::workspace_roster::OfferCard> {
+    memory.rooms_offer_reopen(&input)
 }
 pub fn vault_rooms_offers(
     memory: &Memory<'_>,

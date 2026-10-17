@@ -3470,6 +3470,50 @@ async fn vault_rooms_offer_answer(
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_offer_vote(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.offer.vote",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_offer_reopen(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.offer.reopen",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_rooms_offers(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -5103,6 +5147,8 @@ pub(crate) async fn call_verb(
         "vault.rooms.consent" => vault_rooms_consent(server, call, input).await,
         "vault.rooms.offer" => vault_rooms_offer(server, call, input).await,
         "vault.rooms.offer.answer" => vault_rooms_offer_answer(server, call, input).await,
+        "vault.rooms.offer.vote" => vault_rooms_offer_vote(server, call, input).await,
+        "vault.rooms.offer.reopen" => vault_rooms_offer_reopen(server, call, input).await,
         "vault.rooms.offers" => vault_rooms_offers(server, call, input).await,
         "vault.projects.goal.revisions" => vault_projects_goal_revisions(server, call, input).await,
         "vault.projects.goal.dismiss" => vault_projects_goal_dismiss(server, call, input).await,
