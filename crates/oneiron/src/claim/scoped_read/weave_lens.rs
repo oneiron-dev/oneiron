@@ -42,6 +42,9 @@ pub const WEAVE_LENS_READ_RATE_AXIS: &str = "read_rate";
 pub const WEAVE_LENS_CORRECTIONS_AXIS: &str = "corrections";
 /// The verb a link's wrong control calls.
 const WRONG_LINK_VERB: &str = "vault.weave.link.wrong";
+/// The verb a health card's wrong control calls: it settles the card
+/// dismissed (OF-568).
+const CONCERN_OUTCOME_VERB: &str = "self.inbox.concern.outcome";
 /// The skill file whose body is the instruction.
 const SKILL_FILE: &str = "SKILL.md";
 /// The most sections a plan holds, and summary lines per section.
@@ -339,6 +342,17 @@ fn cells(item: &WeaveItem, line: &str) -> Result<Vec<LedgerCell>> {
             cells.push(cell("dreamed_at", dreamed_at.to_string())?);
             cells.push(cell("entries", entries.to_string())?);
         }
+        WeaveItem::AgentHealth { card } => {
+            cells.push(cell("card_ref", card.card_ref())?);
+            cells.push(cell("subject_ref", card.subject.to_hex())?);
+            cells.push(cell("signal", card.signal.as_str().to_owned())?);
+            cells.push(cell("tone", card.tone.as_str().to_owned())?);
+            cells.push(cell("window_from", card.window_from.to_string())?);
+            cells.push(cell("window_to", card.window_to.to_string())?);
+            if let Some(task) = card.task {
+                cells.push(cell("task_ref", task.to_hex())?);
+            }
+        }
     }
     Ok(cells)
 }
@@ -348,7 +362,9 @@ fn item_sources(item: &WeaveItem) -> Option<EntityId> {
     match item {
         WeaveItem::Claim { id, .. } | WeaveItem::Project { id, .. } => Some(*id),
         WeaveItem::Budget { project, .. } => Some(*project),
-        WeaveItem::Link { .. } | WeaveItem::DreamProgress { .. } => None,
+        WeaveItem::Link { .. }
+        | WeaveItem::DreamProgress { .. }
+        | WeaveItem::AgentHealth { .. } => None,
     }
 }
 
@@ -446,6 +462,30 @@ pub(super) fn compose_weave_lens(
                                 SelfUiValue::Text(LensText::new(kind.name().to_owned())?),
                                 SelfUiValue::Text(LensText::new(target.to_hex())?),
                             ],
+                        },
+                    })),
+                ));
+            }
+            // A card's wrong settles it dismissed through the concern door,
+            // never as a link correction. The door takes one JSON input.
+            if let WeaveItem::AgentHealth { card } = item {
+                let input = serde_json::to_string(
+                    &crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest {
+                        card: card.card_ref(),
+                        outcome:
+                            crate::dreamer_runner::maintenance::agent_health::ConcernOutcome::Dismissed,
+                    },
+                )
+                .map_err(|_| Error::InvalidConfig("weave card outcome input".into()))?;
+                let control = format!("{id}-wrong");
+                row.children.push(LensNode::new(
+                    LensAtomId::new(control.clone())?,
+                    LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
+                        id: SelfUiControlId::new(control)?,
+                        label: required_text(&plan.wrong_label, "wrong label")?,
+                        action: SelfUiAction {
+                            command: SelfUiActionId::new(CONCERN_OUTCOME_VERB)?,
+                            args: vec![SelfUiValue::Text(LensText::new(input)?)],
                         },
                     })),
                 ));

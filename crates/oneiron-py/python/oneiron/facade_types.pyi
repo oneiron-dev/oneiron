@@ -713,7 +713,11 @@ class WeaveItemViewDreamProgress(TypedDict):
     resident_ref: str
     dreamed_at: int
     entries: int
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress
+class WeaveItemViewAgentHealth(TypedDict):
+    item: Literal["agent_health"]
+    card_ref: str
+    card: AgentHealthCard
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth
 class WeaveSectionView(TypedDict):
     kind: WeaveSectionKind
     items: list[WeaveItemView]
