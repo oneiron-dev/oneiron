@@ -158,6 +158,8 @@ impl BatchBuilder<'_> {
         let births = std::mem::take(&mut self.births);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
+        #[cfg(feature = "sync")]
+        let rows = super::super::vad_postcommit::ops_written_rows(&ops);
         let stale_sweep = crate::federation::StaleSweepWatch::begin(vault);
         let committed = vault.store.group_write(Some(announced), |wtxn| {
             if let Err(err) = target_guard(wtxn) {
@@ -235,6 +237,8 @@ impl BatchBuilder<'_> {
             vault.store.notify_proactivity_changes();
         }
         vault.store.notify_task_updates(tasks);
+        #[cfg(feature = "sync")]
+        vault.note_committed_rows(rows);
         stale_sweep.finish()?;
         while vault.collect_lfs_garbage(32)? != 0 {}
         // A delete in this batch released the result bodies it owned.

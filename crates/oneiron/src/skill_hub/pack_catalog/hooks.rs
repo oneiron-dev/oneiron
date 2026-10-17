@@ -130,7 +130,8 @@ pub struct HookSelector {
     pub verbs: Vec<String>,
     /// Empty selects every class.
     pub actors: Vec<HookActorClass>,
-    /// A world, facet, room or project; a scope only narrows.
+    /// A world, facet, room or project as `<axis>:<32 hex id>`; a scope
+    /// only narrows.
     pub scope: Option<String>,
     pub phase: HookPhase,
     /// Higher runs first; ties break on the content hash.
@@ -299,9 +300,15 @@ impl PackHook {
             return Err(invalid("only a fact hook may declare the generative class"));
         }
         let actors: Vec<HookActorClass> = json_list(&fields, "actors")?;
+        // A world, facet, room or project id; no other grammar.
         let scope = scalar("scope")?;
-        if scope.as_ref().is_some_and(|scope| scope.len() > 256) {
-            return Err(invalid("hook scope exceeds its bound"));
+        if scope
+            .as_deref()
+            .is_some_and(|scope| crate::runtime_hooks::HookScope::parse(scope).is_none())
+        {
+            return Err(invalid(
+                "hook scope is world, facet, room or project:<32 lowercase hex id>",
+            ));
         }
         let priority = scalar("priority")?
             .map(|value| value.parse::<i32>())
@@ -519,7 +526,8 @@ impl PackHookBinding {
         enabled: bool,
     ) -> Result<(EntityId, Self)> {
         let material: [&[u8]; 3] = [pack.as_bytes(), hook.name.as_bytes(), &hook.body_hash];
-        let code = crate::codebase::entity_id_from_hash_material(b"oneiron.pack-hook.v1", &material)?;
+        let code =
+            crate::codebase::entity_id_from_hash_material(b"oneiron.pack-hook.v1", &material)?;
         let id = crate::codebase::entity_id_from_hash_material(
             b"oneiron.pack-hook-binding.v1",
             &material,
@@ -629,6 +637,46 @@ fn bindings_in_txn(
         }
     }
     Ok(result)
+}
+
+/// The owner's dial on the binding claim at `id`, read from the raw claim so
+/// a row [`bindings_in_txn`] skips as malformed still keeps its off choice.
+/// `None` when no live, approved binding claim stands there; `Some(false)`
+/// when one stands but its `enabled` flag cannot be read.
+fn prior_enabled_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<bool>> {
+    #[derive(Deserialize)]
+    struct Dial {
+        enabled: bool,
+    }
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if body.predicate != PREDICATE
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || !matches!(
+            body.approval,
+            ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+        )
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        body.value
+            .as_str()
+            .and_then(|text| serde_json::from_str::<Dial>(text).ok())
+            .is_some_and(|dial| dial.enabled),
+    ))
 }
 
 fn binding_candidate(row: &PackHookBinding) -> Result<ClaimCandidate> {
@@ -886,13 +934,18 @@ impl Vault {
                 PackHookBinding::for_hook(pack, source_id, owner_id, author.clone(), hook, true)?;
             row.enabled = match prior.iter().find(|(prior_id, _)| *prior_id == id) {
                 Some((_, kept)) => kept.enabled,
-                None => {
-                    let mut same = prior
-                        .iter()
-                        .filter(|(_, kept)| kept.pack == pack && kept.hook == hook.name)
-                        .peekable();
-                    same.peek().is_none() || same.any(|(_, kept)| kept.enabled)
-                }
+                // A claim at this id the reader skipped as malformed keeps
+                // the owner's dial.
+                None => match prior_enabled_in_txn(&self.store, txn, &id)? {
+                    Some(enabled) => enabled,
+                    None => {
+                        let mut same = prior
+                            .iter()
+                            .filter(|(_, kept)| kept.pack == pack && kept.hook == hook.name)
+                            .peekable();
+                        same.peek().is_none() || same.any(|(_, kept)| kept.enabled)
+                    }
+                },
             };
             let code = row.code;
             if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &code)?.is_none() {
