@@ -187,6 +187,7 @@ pub use rooms::{
 };
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
+pub(crate) use rooms::erase_room_side_rows;
 pub(crate) use rooms::project_room_audience_in;
 
 pub(crate) use rooms::{
