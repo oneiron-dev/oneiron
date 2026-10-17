@@ -45738,18 +45738,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SharedLeaveKind",
-      "SharedLeaveReceipt"
+      "SharedLeaveReceipt",
+      "VerifiedLeaveNotice"
      ],
      "path": "src/sync/shared_leave.rs",
      "purpose": "Leaving a shared vault, the device side (OF-158)",
      "surface": {
       "enum": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 7,
+      "struct": 2
      }
     },
     {
