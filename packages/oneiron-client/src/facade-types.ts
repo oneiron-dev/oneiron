@@ -445,7 +445,7 @@ export type WitnessAuthor = "user" | "companion" | "system"
 /** `oneiron::memory::witness::types::WitnessMessage` */
 export type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number }
 /** `oneiron::memory::witness::types::WitnessTurn` */
-export type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; messages: WitnessMessage[]; occurred_at: number }
+export type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number }
 /** `oneiron::memory::claims::ClaimInput` */
 export type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null }
 /** `oneiron::memory::claims::CommitReceipt` */
@@ -1783,7 +1783,7 @@ export type CoreDagAddressMode = "broadcast" | "direct"
 /** `oneiron::core_write::dag::CoreDagQuoteInput` */
 export type CoreDagQuoteInput = { message: string; start: number; end: number }
 /** `oneiron::core_write::dag::DagRecordAppendInput` */
-export type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null }
+export type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null; thread_audience?: string[] | null }
 /** `oneiron::core_write::dag::DagRecordAppendReceipt` */
 export type DagRecordAppendReceipt = { id: string; head?: string | null; parent?: string | null }
 /** `oneiron::core_write::batch::CoreBatchEntityInput` */

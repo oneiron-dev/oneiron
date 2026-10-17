@@ -1256,7 +1256,7 @@ class Oneiron:
             """Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."""
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
-            """Speaks one turn into the current room turn's room, through the normal witness gate."""
+            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
         def join(self, spec):
             """Files and decides a request to take part in a room or one of its threads."""

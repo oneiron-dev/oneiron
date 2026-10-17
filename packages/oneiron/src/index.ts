@@ -684,7 +684,7 @@ export class Oneiron {
       reply_strips: (input: Facade.ReplyStripsRequest): Facade.ReplyStripsPage => this.#call(() => this.#client.vaultRoomsReplyStrips(input) as Facade.ReplyStripsPage),
       /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
       claim: (roomRef: string, turnRef: string): Facade.RoomClaimOutcome => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as Facade.RoomClaimOutcome),
-      /** Speaks one turn into the current room turn's room, through the normal witness gate. */
+      /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later. */
       speak: (input: Facade.WitnessTurn): Facade.WitnessReceipt => this.#call(() => this.#client.vaultRoomsSpeak(input) as Facade.WitnessReceipt),
       /** Files and decides a request to take part in a room or one of its threads. */
       join: (input: Facade.JoinRequest): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsJoin(input) as Facade.JoinOutcome),

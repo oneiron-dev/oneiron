@@ -243,7 +243,7 @@ declare namespace Sdk {
   type QuoteSpan = { message: EntityId; start: number; end: number };
   type WitnessAuthor = "user" | "companion" | "system";
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number };
-  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; messages: WitnessMessage[]; occurred_at: number };
+  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number };
   type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
@@ -958,7 +958,7 @@ declare namespace Sdk {
   type ConversationTurnCreateInput = { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreDagAddressMode = "broadcast" | "direct";
   type CoreDagQuoteInput = { message: string; start: number; end: number };
-  type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null };
+  type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null; thread_audience?: string[] | null };
   type DagRecordAppendReceipt = { id: string; head?: string | null; parent?: string | null };
   type CoreBatchEntityInput = { id?: string | null; entity_type: number; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreBatchWriteInput = { entities: CoreBatchEntityInput[] };
@@ -1815,7 +1815,7 @@ declare const vault: Sdk.VaultHost & {
     reply_strips(input: Sdk.ReplyStripsRequest): Promise<Sdk.ReplyStripsPage | StoredResult>;
     /** A room's effective sharing scope and why it is clamped, for a member of the room. */
     sharing(input: Sdk.RoomRefRequest): Promise<Sdk.RoomSharingView | StoredResult>;
-    /** Speaks one turn into the current room turn's room, through the normal witness gate. */
+    /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later. */
     speak(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;

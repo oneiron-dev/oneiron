@@ -731,7 +731,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.rooms.trunk": { description: "One trunk turn of a room, with the completed TASK result headers that hang under it.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.rooms.reply_strips": { description: "One page of a thread's quote replies, grouped by the message they quote, in reply order.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.rooms.claim": { description: "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "vault.rooms.speak": { description: "Speaks one turn into the current room turn's room, through the normal witness gate.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.rooms.speak": { description: "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.projects.propose": { description: "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.projects.proposals": { description: "The project cards shown in a conversation, each with its state.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.projects.dismiss_card": { description: "The card's person dismisses a project card so it never mints; false when it was dismissed already.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -1360,7 +1360,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         reply_strips: (input: Facade.ReplyStripsRequest, options?: O): FacadeReturns<"vault.rooms.reply_strips">[K] => invoke("vault.rooms.reply_strips", input, options, newInvocation()),
         /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
         claim: (input: Facade.RoomClaimRequest, options?: O): FacadeReturns<"vault.rooms.claim">[K] => invoke("vault.rooms.claim", input, options, newInvocation()),
-        /** Speaks one turn into the current room turn's room, through the normal witness gate. */
+        /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later. */
         speak: (input: Facade.WitnessTurn, options?: O): FacadeReturns<"vault.rooms.speak">[K] => invoke("vault.rooms.speak", input, options, newInvocation()),
         /** Files and decides a request to take part in a room or one of its threads. */
         join: (input: Facade.JoinRequest, options?: O): FacadeReturns<"vault.rooms.join">[K] => invoke("vault.rooms.join", input, options, newInvocation()),
