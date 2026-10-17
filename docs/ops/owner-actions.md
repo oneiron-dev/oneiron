@@ -526,6 +526,8 @@ every one as rejected. Either way one receipt represents the run. Routes: `GET
 /v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…` (or `?run_ref=…`), `POST /v1/owner/runs/approve` or
 `/decline` with `{"run_id": "…", "bundle_id": "…"}` (or `"run_ref"` in place of `"run_id"`).
 
+The SDK verbs `vault.fanout.resume` (approve a held fan-out once, approve and remember it under a cap, or deny it) and `vault.fanout.ack` (acknowledge the width check of one that already went out) take the plan digest you saw from `vault.fanout.launch` and run under the owner's credential, over the facade and MCP.
+
 ## Settle an open contradiction
 
 When two claims disagree and nothing settled them, the vault keeps a `conflict.open` marker
