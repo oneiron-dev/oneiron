@@ -207,30 +207,38 @@ impl Vault {
     /// A stream whose admitted text withholds a secret it may still have been
     /// writing takes it into custody whole as it ends (OF-067). Its seed
     /// checkpoints the closed text first, so the seed and the final MESSAGE
-    /// hold the same handles.
+    /// hold the same handles. A stream whose seed the lift sweep stored again
+    /// admits its text and axes again here too, in its own write.
     fn close_withheld(&self, state: &mut State) -> MessageStreamResult<()> {
-        if !state.withheld {
+        if !state.withheld && !state.relift {
             return Ok(());
         }
         let mut lifted = state.lifted.clone();
-        let pending = self.try_with_write_txn_grouped(|txn| -> MessageStreamResult<String> {
-            let (pending, _) = crate::batch::secret_scan::admit_stream_text_in_txn(
-                self,
-                txn,
-                state.seed.message_id,
-                admission::CONTENT,
-                &state.raw,
-                false,
-                &mut lifted,
-            )?;
-            let row = state.checkpoint(pending.clone());
-            admission::authorize(self, txn, &row, &format!("{}{}", state.base, pending))?;
-            storage::checkpoint(self, txn, &row)?;
-            Ok(pending)
-        })?;
+        let (pending, metadata) =
+            self.try_with_write_txn_grouped(|txn| -> MessageStreamResult<_> {
+                let (pending, _) = crate::batch::secret_scan::admit_stream_text_in_txn(
+                    self,
+                    txn,
+                    state.seed.message_id,
+                    admission::CONTENT,
+                    &state.raw,
+                    false,
+                    &mut lifted,
+                )?;
+                let mut row = state.checkpoint(pending.clone());
+                if state.relift {
+                    admission::admit_axes_in_txn(self, txn, &mut row, &mut lifted)?;
+                }
+                admission::authorize(self, txn, &row, &format!("{}{}", state.base, pending))?;
+                storage::checkpoint(self, txn, &row)?;
+                Ok((pending, row.metadata))
+            })?;
         state.pending = pending;
         state.lifted = lifted;
         state.withheld = false;
+        if std::mem::take(&mut state.relift) {
+            state.seed.metadata = metadata;
+        }
         Ok(())
     }
     /// Open-time recovery after all read-only compatibility gates passed.
@@ -285,6 +293,7 @@ impl Vault {
                     pending,
                     lifted: Lifted::default(),
                     withheld: false,
+                    relift: false,
                     seed,
                     base: String::new(),
                     sequence: 0,
