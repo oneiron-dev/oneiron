@@ -5,10 +5,13 @@
 //! proposed heal in the owner's run tray; nothing is repaired here. The
 //! code-fix run a filed heal wakes (OF-380) and the answer to an agent-health
 //! card's ask (OF-568) ride the same queue. Each code-fix run also replays
-//! the publisher's pinned candidates the worker started with.
+//! the publisher's pinned candidates the worker started with, and after it
+//! starts the worker works through past code-fix work, a few failures a
+//! round, so a candidate pinned since is tried on those once.
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::EntityId;
 use oneiron::dreamer_runner::maintenance::agent_health::COACH_AGENT_HEALTH_ASK_FACET;
 use oneiron::dreamer_runner::maintenance::coach::{COACH_CODE_FIX_FACET, COACH_ISSUES_FACET};
 use oneiron::dreamer_runner::maintenance::coach_heal::HealDecisions;
@@ -52,6 +55,8 @@ pub(crate) fn spawn(
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The past-work catch-up's next step; `None` once it is done.
+        let mut catch_up = Some(None);
         loop {
             tick.tick().await;
             let Some(server) = weak.upgrade() else {
@@ -61,21 +66,48 @@ pub(crate) fn spawn(
                 continue;
             };
             let publisher = Arc::clone(&publisher);
+            let step = catch_up;
             match tokio::task::spawn_blocking(move || {
                 let _pass = pass;
-                round(&server, &publisher)
+                let step = catch_up_step(&server, &publisher, step);
+                (step, round(&server, &publisher))
             })
             .await
             {
                 // By kind only: an engine error can quote the vault.
-                Ok(Err(error)) => {
+                Ok((step, Err(error))) => {
+                    catch_up = step;
                     tracing::warn!(kind = ?error.kind(), "the Coach's heal queue waits for the next round");
                 }
                 Err(error) => tracing::warn!(%error, "the Coach's heal round stopped"),
-                Ok(Ok(())) => {}
+                Ok((step, Ok(()))) => catch_up = step,
             }
         }
     })
+}
+
+/// One step of the catch-up that queues a top-up run for past code-fix work
+/// with no run of some pinned candidate, ahead of the round that runs it.
+/// Returns the next step, `None` once the work is all read. A failed step is
+/// tried again next round.
+fn catch_up_step(
+    server: &SyncServer,
+    publisher: &[PublisherCandidate],
+    step: Option<Option<EntityId>>,
+) -> Option<Option<EntityId>> {
+    let after = step?;
+    let vault = server.vault();
+    let pinned: Vec<&str> = publisher
+        .iter()
+        .map(|candidate| candidate.id.as_str())
+        .collect();
+    match vault.queue_code_fix_top_ups(after, &pinned, vault.now_recorded_at()) {
+        Ok(next) => next.map(Some),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "past code-fix work waits for the next round");
+            Some(after)
+        }
+    }
 }
 
 fn round(server: &SyncServer, publisher: &[PublisherCandidate]) -> oneiron::Result<()> {
