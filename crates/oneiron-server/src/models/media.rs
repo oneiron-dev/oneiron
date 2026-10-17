@@ -288,6 +288,28 @@ pub struct MediaRuntime {
     live_asr: BTreeMap<String, Arc<SonioxRung>>,
 }
 
+/// A runtime that keeps its jobs hands each running job's permit off as it
+/// stops, charging nothing: the job runs on at its provider, and the runtime
+/// that takes it up from its kept row pays its end, once. A job in a poll
+/// that holds it is left to its own permit.
+impl Drop for MediaRuntime {
+    fn drop(&mut self) {
+        if self.store.is_none() {
+            return;
+        }
+        for job in self.lock_jobs().values() {
+            let Ok(mut job) = job.try_lock() else {
+                continue;
+            };
+            if let Some(permit) = job.permit.take()
+                && let Err(denied) = permit.hand_off_media()
+            {
+                tracing::error!(%denied, "a kept media job's permit was not handed off");
+            }
+        }
+    }
+}
+
 impl MediaRuntime {
     pub(super) fn empty() -> Self {
         Self {
