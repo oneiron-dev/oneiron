@@ -5,10 +5,11 @@
 //! made, and the spend their lease scopes settled. A value the host cannot
 //! measure in full is `None`, never a guess or a zero: a member with no seal,
 //! a run with no replay record, an open or unmetered scope. A member that
-//! retried is measured on its newest try, which holds its seal, replay
-//! record and scope. The leader's own calls and spend are shared with
-//! whatever else it runs, so they stay out; the cap is the hard cap the
-//! leader runs under.
+//! retried is measured on its newest try, which holds its seal and replay
+//! record; it spends under the scope of the launch it retried. Every measure
+//! reads one snapshot, so a member settling mid-read can't split them. The
+//! leader's own calls and spend are shared with whatever else it runs, so
+//! they stay out; the cap is the hard cap the leader runs under.
 
 use std::collections::BTreeSet;
 
@@ -50,11 +51,12 @@ pub fn team_run_observations(
     leader: AttemptId,
     members: &[AttemptId],
 ) -> Result<TeamRunObservations> {
-    let members = &newest_tries(vault, members)?;
+    let txn = vault.store.env.read_txn()?;
+    let members = &newest_tries(vault, &txn, members)?;
     let mut sealed = 0_u32;
     let mut flawed = 0_u32;
     for member in members {
-        if let Some(seal) = vault.sealed_attempt_receipt(*member)? {
+        if let Some(seal) = vault.sealed_attempt_receipt_in_txn(&txn, *member)? {
             sealed += 1;
             if seal
                 .confession
@@ -71,7 +73,7 @@ pub fn team_run_observations(
     let mut calls = Some(0_u64);
     for member in members {
         let run = EntityId::from_bytes(*member.as_bytes())?;
-        calls = match (calls, vault.get_code_run_replay_record(&run)?) {
+        calls = match (calls, vault.get_code_run_replay_record_in_txn(&txn, &run)?) {
             (Some(sum), Some(record)) => Some(
                 sum.saturating_add(u64::try_from(record.bridge_calls.len()).unwrap_or(u64::MAX)),
             ),
@@ -79,15 +81,15 @@ pub fn team_run_observations(
         };
     }
     let dispatcher = AgentDispatcher::new(vault);
-    let cap = match dispatcher.spend_scope_for_attempt(leader)? {
+    let cap = match dispatcher.attempt_spend_scope_in_txn(&txn, leader)? {
         Some(scope) => {
-            let read = dispatcher.spend_read(&scope)?;
+            let read = dispatcher.spend_read_at_in_txn(&txn, &scope.scope)?;
             Some((read.unit, read.cap_units))
         }
         None => None,
     };
     let spend = match &cap {
-        Some((unit, _)) => member_spend(&dispatcher, members, unit)?,
+        Some((unit, _)) => member_spend(&dispatcher, &txn, members, unit)?,
         None => None,
     };
     #[allow(clippy::cast_precision_loss)]
@@ -104,16 +106,19 @@ pub fn team_run_observations(
     })
 }
 
-/// Each member's newest try along its retry lineage, in one snapshot; a
-/// member the queue no longer holds stands for itself.
-fn newest_tries(vault: &Vault, members: &[AttemptId]) -> Result<Vec<AttemptId>> {
-    let txn = vault.store.env.read_txn()?;
+/// Each member's newest try along its retry lineage; a member the queue no
+/// longer holds stands for itself.
+fn newest_tries(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    members: &[AttemptId],
+) -> Result<Vec<AttemptId>> {
     let queue = AttemptQueue::new(vault);
     members
         .iter()
         .map(|member| {
-            Ok(match queue.get_in_txn(&txn, *member)? {
-                Some(_) => queue.retry_tip_in_txn(&txn, *member)?.id,
+            Ok(match queue.get_in_txn(txn, *member)? {
+                Some(_) => queue.retry_tip_in_txn(txn, *member)?.id,
                 None => *member,
             })
         })
@@ -124,21 +129,19 @@ fn newest_tries(vault: &Vault, members: &[AttemptId]) -> Result<Vec<AttemptId>> 
 /// a member is unmetered, still open, or metered in another unit.
 fn member_spend(
     dispatcher: &AgentDispatcher<'_>,
+    txn: &heed::RoTxn<'_>,
     members: &[AttemptId],
     unit: &LeaseUnit,
 ) -> Result<Option<u64>> {
     let mut seen = BTreeSet::new();
     let mut total = 0_u64;
     for member in members {
-        let Some(id) = dispatcher.spend_scope_for_attempt(*member)? else {
+        let Some(scope) = dispatcher.attempt_spend_scope_in_txn(txn, *member)? else {
             return Ok(None);
         };
-        if !seen.insert(id.clone()) {
+        if !seen.insert(scope.scope.clone()) {
             continue;
         }
-        let Some(scope) = dispatcher.read_spend_scope(&id)? else {
-            return Ok(None);
-        };
         if scope.closed_at.is_none() || scope.unit != *unit {
             return Ok(None);
         }
