@@ -1,25 +1,30 @@
 //! The served host's connection checks: the engine's provider checks, plus
-//! `browser.session`, which is local readiness rather than a provider call.
-//! It starts this host's `[browser]` guest through the engine's sandbox
-//! selector, attaches the driver to a blank page, and closes the session.
-//! The check guest has no egress at all: it visits no site.
+//! two that need this host's own config. `browser.session` is local
+//! readiness rather than a provider call: it starts this host's `[browser]`
+//! guest through the engine's sandbox selector, attaches the driver to a
+//! blank page, and closes the session. The check guest has no egress at all:
+//! it visits no site. `native_mail.jmap` connects to the `[native_mail]`
+//! server with the stored credential, as the native mail host does, and
+//! reads its domain; it sends no mail and changes no DNS.
 
 use std::io;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
 use oneiron::Vault;
+use oneiron::channel_identity_provider::stalwart::StalwartClient;
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::microvm::select_backend_for_session;
 use oneiron::connector_key::{
-    BROWSER_SESSION_CHECK, PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier,
-    ProviderConnectionChecks,
+    BROWSER_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK, PackConnectionCheck, PackConnectionEvidence,
+    PackConnectionVerifier, ProviderConnectionChecks,
 };
 use oneiron_browser::{BrowserGuest, BrowserSession};
 use oneiron_container::{
     EgressRelay, GuestSeccomp, GuestSpec, HttpRequest, HttpResponse, ImageRef, SessionManifest,
 };
 
+use crate::config::NativeMailConfig;
 use crate::server::SyncServer;
 
 /// The guest binary the browser image runs, as a code run starts it.
@@ -29,6 +34,7 @@ const BROWSER_GUEST_COMMAND: &str = "/usr/local/bin/oneiron-browser-guest";
 pub(crate) struct HostConnectionChecks {
     provider: ProviderConnectionChecks,
     browser: Option<BrowserGuest>,
+    native_mail: Option<NativeMailConfig>,
 }
 
 impl HostConnectionChecks {
@@ -36,6 +42,7 @@ impl HostConnectionChecks {
         Ok(Self {
             provider: ProviderConnectionChecks::new()?,
             browser: server.browser_guest().cloned(),
+            native_mail: server.config.native_mail.clone(),
         })
     }
 }
@@ -46,15 +53,79 @@ impl PackConnectionVerifier for HostConnectionChecks {
         vault: &Vault,
         check: &PackConnectionCheck<'_>,
     ) -> Result<PackConnectionEvidence, String> {
-        if check.check != BROWSER_SESSION_CHECK {
-            return self.provider.verify(vault, check);
+        match check.check {
+            BROWSER_SESSION_CHECK => {
+                let guest = self
+                    .browser
+                    .as_ref()
+                    .ok_or_else(|| "this host has no [browser] guest configured".to_owned())?;
+                browser_session_ready(guest)
+            }
+            NATIVE_MAIL_JMAP_CHECK => {
+                let server = self
+                    .native_mail
+                    .as_ref()
+                    .ok_or_else(|| "this host has no [native_mail] server configured".to_owned())?;
+                native_mail_ready(vault, check, server)
+            }
+            _ => self.provider.verify(vault, check),
         }
-        let guest = self
-            .browser
-            .as_ref()
-            .ok_or_else(|| "this host has no [browser] guest configured".to_owned())?;
-        browser_session_ready(guest)
     }
+}
+
+/// Connects to the host's mail server with the connection's first credential
+/// and reads its domain, through the engine's Stalwart client. The stored
+/// value is the whole `Authorization` header (`Basic ...` or `Bearer ...`)
+/// or a bare bearer token; it never leaves the credential door's closure.
+fn native_mail_ready(
+    vault: &Vault,
+    check: &PackConnectionCheck<'_>,
+    server: &NativeMailConfig,
+) -> Result<PackConnectionEvidence, String> {
+    let placement = server
+        .stalwart()
+        .map_err(|error| format!("the [native_mail] server is misconfigured: {error}"))?;
+    let secret = check
+        .secrets
+        .first()
+        .ok_or_else(|| "the connection names no credential to check".to_owned())?;
+    let mut connected = None;
+    vault
+        .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
+            let value = std::str::from_utf8(value)
+                .map_err(|_| {
+                    oneiron::Error::InvalidConfig("the stored credential is not text".to_owned())
+                })?
+                .trim();
+            let header = if value.starts_with("Basic ") || value.starts_with("Bearer ") {
+                value.to_owned()
+            } else {
+                format!("Bearer {value}")
+            };
+            let header = reqwest::header::HeaderValue::from_str(&header).map_err(|_| {
+                oneiron::Error::InvalidConfig(
+                    "the stored credential is not a header value".to_owned(),
+                )
+            })?;
+            connected = Some(
+                StalwartClient::connect(placement.clone(), header)
+                    .map(|_| ())
+                    .map_err(|error| format!("the mail server refused the check: {error}")),
+            );
+            Ok(())
+        })
+        .map_err(|error| format!("the stored credential could not be read: {error}"))?;
+    connected.unwrap_or_else(|| Err("the mail server was not reached".to_owned()))?;
+    let proof = format!(
+        "{}\n{}\n{}",
+        server.session_url, server.domain, server.domain_id
+    );
+    Ok(PackConnectionEvidence {
+        account: format!("{} on {}", placement.domain(), placement.instance_ref()),
+        provider_account: Some(placement.domain().to_owned()),
+        scopes: Vec::new(),
+        evidence: blake3::hash(proof.as_bytes()).to_hex().to_string(),
+    })
 }
 
 /// Starts one browser session the way a code run does, and closes it. The

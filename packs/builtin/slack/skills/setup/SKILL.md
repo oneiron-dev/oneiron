@@ -34,6 +34,9 @@ own qualification passes.
    Information page, through the owner secrets form, under the names the card
    shows, each bound for read to connector:slack. Never ask for any value in
    chat, never repeat one back, and never write one into a note or a card.
+   Slack checks the Request URL when the app is made, and the host answers that
+   check once the Signing Secret is stored: if Slack showed the URL as
+   unverified, press Retry beside it on the app's Event Subscriptions page now.
 4. Install the app. `POST /v1/owner/packs/slack/install` returns a link; the
    owner opens it in the browser signed in to the workspace and approves. Slack
    sends them back to the host, which stores the bot token and checks the
@@ -42,10 +45,9 @@ own qualification passes.
    only when Slack names the workspace and the scopes match what the owner
    allowed, no more and no less. The install page says whether it passed; the
    owner can check again from the setup.
-6. Once the check passes, the host answers Slack's events within a minute. If
-   Slack showed the Request URL as unverified when the app was made, press
-   Retry on the app's Event Subscriptions page. Each event is verified with the
-   Signing Secret before it is kept.
+6. Once the check passes, the host answers Slack's events, and presses on the
+   buttons of the app's messages, within a minute. Each delivery is verified
+   with the Signing Secret before it is kept.
 
 ## When the check fails
 

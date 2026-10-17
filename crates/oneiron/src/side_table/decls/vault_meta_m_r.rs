@@ -254,6 +254,9 @@ side_tables! {
     SKILL_HUB_PACK_SETUP: VaultMeta b"pack.setup.v1/" Named;
     /// Alias minted for one skill from a pack. Key: id16 + blake3(JSON hub ref).
     SKILL_HUB_PACK_SKILL_ALIAS: VaultMeta b"pack.skill-alias.v1/" Raw;
+    /// A bundled skill the owner's pack removal retired, and the pack that removed it; the pack's
+    /// next install brings it back (OF-519). Key: id16.
+    SKILL_HUB_PACK_SKILL_REMOVED: VaultMeta b"pack.skill-removed.v1/" Raw;
     /// Configured publisher provenance for a staged pack. Key: id16 + blake3(JSON hub ref).
     SKILL_HUB_PACK_SOURCE_ALIAS: VaultMeta b"pack.source-alias.v1/" LegacyJson;
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;

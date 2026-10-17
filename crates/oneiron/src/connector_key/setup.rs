@@ -40,6 +40,9 @@ pub const LINKEDIN_SESSION_CHECK: &str = "linkedin.session";
 /// Local readiness, not a provider call: the host's browser guest starts a
 /// session and closes it. Only a served host with a `[browser]` guest runs it.
 pub const BROWSER_SESSION_CHECK: &str = "browser.session";
+/// Authenticated JMAP discovery and a domain read on the host's own mail
+/// server. Only a served host with a `[native_mail]` server runs it.
+pub const NATIVE_MAIL_JMAP_CHECK: &str = "native_mail.jmap";
 const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 const MAX_CHECK_REPLY_BYTES: u64 = 64 * 1024;
 const MAX_CHECK_TEXT_BYTES: usize = 512;
@@ -675,6 +678,12 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
             BROWSER_SESSION_CHECK => {
                 return Err(
                     "this host runs no browser guest; a served host with a [browser] guest checks it"
+                        .to_owned(),
+                );
+            }
+            NATIVE_MAIL_JMAP_CHECK => {
+                return Err(
+                    "this host names no mail server; a served host with a [native_mail] server checks it"
                         .to_owned(),
                 );
             }

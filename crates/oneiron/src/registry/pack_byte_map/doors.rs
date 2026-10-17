@@ -82,6 +82,32 @@ impl Vault {
         })
     }
 
+    /// Disables new instance writes for each of `names` inside the caller's
+    /// write transaction, as a pack's removal does; a name with no active row
+    /// is skipped, and every handle stays while rows refer to it.
+    pub(crate) fn uninstall_pack_kinds_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        names: &[String],
+    ) -> Result<()> {
+        let Some(mut map) = read(&self.store, txn)? else {
+            return Ok(());
+        };
+        let mut changed = false;
+        for name in names {
+            if let Some(row) = map.registrations.get_mut(name)
+                && row.active
+            {
+                row.active = false;
+                changed = true;
+            }
+        }
+        if changed {
+            persist(self, txn, &mut map)?;
+        }
+        Ok(())
+    }
+
     /// Return an inactive slot only after all active-store references are gone.
     /// Soft-deleted shells count. Historic sync bodies remain name-bearing and
     /// can never be decoded as the later occupant of a recycled slot.

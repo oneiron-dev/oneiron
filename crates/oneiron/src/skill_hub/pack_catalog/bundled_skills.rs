@@ -14,6 +14,9 @@ use std::collections::BTreeMap;
 /// A bundled skill's provenance alias names the pack that minted it.
 const PACK_SKILL_ALIAS: SideTable<(EntityId, [u8; 32]), String, Raw> =
     SideTable::new(&side_table::SKILL_HUB_PACK_SKILL_ALIAS);
+/// A bundled skill the owner's removal of a pack retired, by that pack.
+const PACK_SKILL_REMOVED: SideTable<EntityId, String, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_PACK_SKILL_REMOVED);
 
 /// Exact per-skill source held until the pack install verdict commits.
 pub(super) struct ImportedPackSkillSource {
@@ -68,6 +71,7 @@ impl Vault {
                 TimeRange { start: at, end: at },
                 at,
             )?;
+            self.revive_removed_pack_skill_in_txn(txn, &id, &source.manifest.name, at)?;
             // The final install/Candidate decision follows later in this same
             // transaction. Do not publish an intermediate Candidate receipt.
             skill_sources.push(ImportedPackSkillSource {
@@ -108,64 +112,7 @@ impl Vault {
             if successor == Some(&old_id) || old.lifecycle_status != SkillLifecycle::Active {
                 continue;
             }
-            // Only aliases minted by this pack are its historical revisions.
-            // Standalone and other-hub aliases are separate active owners.
-            let mut shared = false;
-            for (_, body, _) in self.active_claims_for_predicate_in_txn(
-                txn,
-                &old_id,
-                crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE,
-            )? {
-                let value = crate::skill_hub::support::map_value(&body.value, "hubRef")
-                    .ok_or_else(|| invalid("bundled skill provenance missing hub ref"))?;
-                let reference = HubRef::from_value(value)?;
-                let marker = pack_skill_alias_key(&old_id, &reference)?;
-                match PACK_SKILL_ALIAS
-                    .get(&self.store, txn, &marker)
-                    .map_err(|error| {
-                        if error.kind() == crate::error::ErrorKind::SideTableRow {
-                            invalid("pack skill alias owner corrupt")
-                        } else {
-                            error
-                        }
-                    })? {
-                    // A standalone or unmarked alias is a separate holder.
-                    None => shared = true,
-                    Some(owner) => {
-                        // This marker describes where the alias was minted,
-                        // not who owns the SKILL today. Only a live receipt
-                        // still listing the old ID keeps the revision Active.
-                        if owner != prior.pack_name
-                            && self
-                                .mounted_pack_in_txn(txn, &owner)?
-                                .is_some_and(|pack| pack.skills.contains(old_hex))
-                        {
-                            shared = true;
-                        }
-                    }
-                }
-            }
-            for entry in PACK_INSTALL.iter_raw_from(&self.store, txn, &[])? {
-                let (key, bytes) = entry?;
-                if key == prior.pack_name.as_bytes() {
-                    continue;
-                }
-                let other = PACK_INSTALL.decode_value(&bytes).map_err(|error| {
-                    if error.kind() == crate::error::ErrorKind::SideTableRow {
-                        invalid("pack install catalog corrupt")
-                    } else {
-                        error
-                    }
-                })?;
-                if self
-                    .mounted_pack_in_txn(txn, &other.pack_name)?
-                    .is_some_and(|pack| pack.skills.contains(old_hex))
-                {
-                    shared = true;
-                    break;
-                }
-            }
-            if !shared {
+            if !self.pack_skill_shared_in_txn(txn, &prior.pack_name, &old_id, old_hex)? {
                 let next_id = successor.ok_or_else(|| {
                     invalid("dropping an active bundled skill requires an explicit retirement")
                 })?;
@@ -179,6 +126,141 @@ impl Vault {
             }
         }
         Ok(())
+    }
+
+    /// Whether a holder other than `pack_name` keeps the bundled skill
+    /// `old_id` Active: a standalone or unmarked alias, or another mounted
+    /// pack whose receipt still lists it.
+    fn pack_skill_shared_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pack_name: &str,
+        old_id: &EntityId,
+        old_hex: &str,
+    ) -> Result<bool> {
+        // Only aliases minted by this pack are its historical revisions.
+        // Standalone and other-hub aliases are separate active owners.
+        let mut shared = false;
+        for (_, body, _) in self.active_claims_for_predicate_in_txn(
+            txn,
+            old_id,
+            crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE,
+        )? {
+            let value = crate::skill_hub::support::map_value(&body.value, "hubRef")
+                .ok_or_else(|| invalid("bundled skill provenance missing hub ref"))?;
+            let reference = HubRef::from_value(value)?;
+            let marker = pack_skill_alias_key(old_id, &reference)?;
+            match PACK_SKILL_ALIAS
+                .get(&self.store, txn, &marker)
+                .map_err(|error| {
+                    if error.kind() == crate::error::ErrorKind::SideTableRow {
+                        invalid("pack skill alias owner corrupt")
+                    } else {
+                        error
+                    }
+                })? {
+                // A standalone or unmarked alias is a separate holder.
+                None => shared = true,
+                Some(owner) => {
+                    // This marker describes where the alias was minted,
+                    // not who owns the SKILL today. Only a live receipt
+                    // still listing the old ID keeps the revision Active.
+                    if owner != pack_name
+                        && self
+                            .mounted_pack_in_txn(txn, &owner)?
+                            .is_some_and(|pack| pack.skills.iter().any(|skill| skill == old_hex))
+                    {
+                        shared = true;
+                    }
+                }
+            }
+        }
+        for entry in PACK_INSTALL.iter_raw_from(&self.store, txn, &[])? {
+            let (key, bytes) = entry?;
+            if key == pack_name.as_bytes() {
+                continue;
+            }
+            let other = PACK_INSTALL.decode_value(&bytes).map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    invalid("pack install catalog corrupt")
+                } else {
+                    error
+                }
+            })?;
+            if self
+                .mounted_pack_in_txn(txn, &other.pack_name)?
+                .is_some_and(|pack| pack.skills.iter().any(|skill| skill == old_hex))
+            {
+                shared = true;
+                break;
+            }
+        }
+        Ok(shared)
+    }
+
+    /// Retires the bundled skills of the removed pack `removed` that no other
+    /// holder keeps: each leaves Active for Quarantined, ratified by the
+    /// owner's removal, and is marked as this pack's, so its next install of
+    /// the same skill brings it back. Its revisions and evidence stay.
+    pub(super) fn retire_pack_skills_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        removed: &PackInstallReceipt,
+        at: u64,
+    ) -> Result<()> {
+        for hex in &removed.skills {
+            let id = EntityId::from_hex(hex)?;
+            let prior = self.read_skill_record_in_txn(txn, &id)?;
+            if prior.lifecycle_status != SkillLifecycle::Active
+                || self.pack_skill_shared_in_txn(txn, &removed.pack_name, &id, hex)?
+            {
+                continue;
+            }
+            let mut retired = prior.clone();
+            retired.lifecycle_status = SkillLifecycle::Quarantined;
+            retired.approval_status = crate::claim::ClaimApprovalStatus::Approved;
+            self.write_pack_skill_state_in_txn(txn, &id, &prior, &retired, at)?;
+            PACK_SKILL_REMOVED.put(&self.store, txn, &id, &removed.pack_name)?;
+        }
+        Ok(())
+    }
+
+    /// Brings back a skill `pack`'s own removal retired, as that pack installs
+    /// it again. A skill another act quarantined stays as it is: arrival
+    /// never revives a local decision.
+    fn revive_removed_pack_skill_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        pack: &str,
+        at: u64,
+    ) -> Result<()> {
+        if PACK_SKILL_REMOVED.get(&self.store, txn, id)?.as_deref() != Some(pack) {
+            return Ok(());
+        }
+        PACK_SKILL_REMOVED.delete(&self.store, txn, id)?;
+        let prior = self.read_skill_record_in_txn(txn, id)?;
+        if prior.lifecycle_status != SkillLifecycle::Quarantined {
+            return Ok(());
+        }
+        let mut revived = prior.clone();
+        revived.lifecycle_status = SkillLifecycle::Active;
+        self.write_pack_skill_state_in_txn(txn, id, &prior, &revived, at)
+    }
+
+    /// One lifecycle step of a bundled skill, through the ordinary update
+    /// gate; its content never changes.
+    fn write_pack_skill_state_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        prior: &crate::skill::SkillRecord,
+        next: &crate::skill::SkillRecord,
+        at: u64,
+    ) -> Result<()> {
+        crate::skill::validate_skill_update(prior, next)?;
+        let data = crate::skill::encode_skill_record(next)?;
+        self.apply_skill_record_body(txn, id, TimeRange { start: at, end: at }, at, data, false)
     }
 }
 
