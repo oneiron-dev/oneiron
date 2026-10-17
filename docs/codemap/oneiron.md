@@ -3318,9 +3318,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/handle.rs` | src | L | 4 struct · 28 crate-vis | RawDatabases, Store, StoreCore, StoreOwner | The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]… |
 | `src/store/key_encoding.rs` | src | s | 3 fn · 4 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and… |
 | `src/store/legal_hold/events.rs` | src | s | 5 crate-vis | — | The two hold logs (C2, C3): the owner-visible one and the host-only one |
-| `src/store/legal_hold/mod.rs` | src | m | 36 crate-vis | — | The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold) |
+| `src/store/legal_hold/mod.rs` | src | L | 37 crate-vis | — | The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold) |
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
-| `src/store/local_replica.rs` | src | m | 4 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
+| `src/store/local_replica.rs` | src | m | 5 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
+| `src/store/local_replica/left_env.rs` | src | m | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
 | `src/store/mod.rs` | src | s | 1 mod · 13 re-export · 13 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 19 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |

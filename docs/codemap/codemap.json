@@ -41776,13 +41776,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -41802,7 +41802,17 @@
      "path": "src/store/local_replica.rs",
      "purpose": "Local-only removal of one canonical window's replica (OF-534 demotion)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/local_replica/left_env.rs",
+     "purpose": "Local purge of a left shared vault's dedicated environment (OF-158)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -51708,7 +51718,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51925,9 +51935,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 146,
+   "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3138,
+   "source_files": 3139,
    "test_files": 903
   },
   "oneiron-android": {
