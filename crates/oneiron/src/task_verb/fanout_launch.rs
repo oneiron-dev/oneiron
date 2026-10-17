@@ -1169,3 +1169,31 @@ impl Memory<'_> {
         settle_held_attempts_in(self.vault(), txn, launch, owner_actor, now)
     }
 }
+
+impl Memory<'_> {
+    /// Every fan-out launch that waits on the owner, as the board shows it
+    /// (OF-393): a held launch, denied or not, and a launched one whose width
+    /// check is not yet answered. The vault's owner reads all of them; any
+    /// other actor reads only its own, as [`Self::task_fanout_launch`] does.
+    pub fn pending_task_fanout_launches(&self) -> MemoryResult<Vec<FanoutLaunchReceipt>> {
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        Ok(FANOUT_LAUNCHES
+            .scan(&vault.store, &txn)?
+            .into_iter()
+            .map(|(_, launch)| launch)
+            .filter(|launch| {
+                owner
+                    || (launch.actor == self.actor()
+                        && launch.actor_class == self.actor_class() as u8)
+            })
+            .map(|launch| launch.receipt())
+            .filter(|receipt| {
+                receipt.paused.is_some()
+                    || (receipt.check_row_ref.is_some() && receipt.choice_receipt_ref.is_none())
+            })
+            .collect())
+    }
+}

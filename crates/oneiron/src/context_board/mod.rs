@@ -9,7 +9,9 @@ pub use children::{
     ChildState, ForkState, child_states_for_actor, fork_states_for_actor, render_you_line,
 };
 mod explain;
+mod fanout;
 pub use explain::{GateExplanation, MemoryExplanation};
+pub use fanout::fanout_action_rows;
 mod people;
 pub(crate) use people::ensure_agent_person;
 pub use people::{
