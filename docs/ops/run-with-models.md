@@ -1130,12 +1130,24 @@ A speech call can name its voice: `"voice": {"kind": "stock", "name":
 "voice_id": "...", "include_generated": false}` for a banked identity. A
 banked voice lives in the vault's reference bank. A provider sees only the id
 of the clone recorded for its target, and the target is the rung's provider
-name in `[models.providers]`. The call renders on the first rung of its
-ladder whose target holds a current clone, and on that rung alone. With no
-such rung the call answers `409 voice_not_provisioned`. If the voice is
-withdrawn or its clone re-recorded while the call renders, it answers `409
-voice_withdrawn` and the audio is not returned. A call that names a voice
-names no `voice` param, and only a speech call names one.
+name in `[models.providers]`. The call binds the voice on every rung of its
+ladder whose target already holds a current clone (or, on a rung that
+renders from the bank's refs, the identity's fenced clip) under consent still
+in force. It goes only to those rungs, in ladder order, each in its own
+binding. When one is down, rate-limited or out of quota, the call moves to the
+next rung that holds the voice, never to one that does not. No voice is cloned
+and no consent is asked mid-call, and the owner's fallback (`use_fallback`)
+takes no voiced call. When no rung that holds the voice answers within the
+vault's longest wait, the call ends with the provider's failure (`502
+provider_unavailable` here), and a repeat call after recovery renders. With no
+rung holding the voice, the call answers `409 voice_not_provisioned`. Each
+rung's binding is checked again before the call goes out on it. If the voice
+is withdrawn or its clone re-recorded while the call renders, or everywhere
+while it waits, it answers `409 voice_withdrawn` and no audio is returned. A
+stock voice (or a raw `voice` param) is one provider's name: it stays on the
+first rung whose row serves the call. A call that names a voice names no
+`voice` param, and only a speech call names one. Each receipt lists a rung
+it skipped for the voice as `voice_not_held`.
 
 The speech seat also takes the hosted voice tiers, which are not
 OpenAI-compatible. A `cartesia` provider speaks Cartesia's `POST /tts/bytes`

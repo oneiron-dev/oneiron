@@ -35,6 +35,10 @@ pub(super) enum Passed {
     /// A fallback to it would take the work off the device, and the call's
     /// world stays on it.
     KeptOnDevice,
+    /// It does not hold the call's voice (FIX 1746): its target held no live
+    /// binding of the banked voice when the call was admitted, or holds it
+    /// no more, or the call's stock or raw voice is another rung's.
+    VoiceNotHeld,
     /// It is on probation after its provider was down, and its one
     /// probation request is out (OF-305), seen at health version `seen`.
     ProbeInFlight { seen: u64 },
@@ -135,6 +139,7 @@ impl Walk {
                         row["cooldown_until"] = json!(rest.until);
                     }
                     Passed::KeptOnDevice => row["passed"] = json!("kept_on_device"),
+                    Passed::VoiceNotHeld => row["passed"] = json!("voice_not_held"),
                     Passed::ProbeInFlight { .. } => row["passed"] = json!("probation_busy"),
                 }
                 row
@@ -159,9 +164,10 @@ impl Walk {
 
     /// Each rung of `rungs` with the rest it was last found in, when every
     /// one is parked: resting, or refused for a limit and resting since. A
-    /// rung the call kept the work from counts as neither; one it never
-    /// reached, or one that failed another way, means not every rung
-    /// parked. `None` too when none rests.
+    /// rung the call kept the work from, or one that does not hold its
+    /// voice, counts as neither; one it never reached, or one that failed
+    /// another way, means not every rung parked. `None` too when none
+    /// rests.
     pub(super) fn parked(&self, rungs: usize) -> Option<Vec<(usize, Rest)>> {
         let latest = self.latest();
         let mut parked = Vec::new();
@@ -174,7 +180,7 @@ impl Walk {
                     rest: Some(rest), ..
                 }
                 | Passed::Resting { rest } => parked.push((index, *rest)),
-                Passed::KeptOnDevice => {}
+                Passed::KeptOnDevice | Passed::VoiceNotHeld => {}
                 Passed::Refused { rest: None, .. }
                 | Passed::Down { rest: None, .. }
                 | Passed::Failed { .. }
@@ -251,11 +257,13 @@ impl Passed {
     }
 
     /// Whether a rung passed unsent as `found` is as the call last found
-    /// it: kept from the work, or resting until the same end. A rung that
+    /// it: kept from the work, without the call's voice, or resting until
+    /// the same end. A rung that
     /// was sent is always news.
     fn same_state(&self, found: &Self) -> bool {
         match found {
             Self::KeptOnDevice => matches!(self, Self::KeptOnDevice),
+            Self::VoiceNotHeld => matches!(self, Self::VoiceNotHeld),
             Self::ProbeInFlight { .. } => matches!(self, Self::ProbeInFlight { .. }),
             Self::Resting { rest } => self.back() == Some(rest.until),
             Self::Refused { .. } | Self::Down { .. } | Self::Failed { .. } => false,

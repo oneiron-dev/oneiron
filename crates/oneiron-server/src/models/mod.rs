@@ -79,6 +79,7 @@ pub use hosted_speech::HostedCloner;
 pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
+pub(crate) use media::RungVoices;
 pub use offer::ServedOffer;
 pub(crate) use raw::{InjectedRuns, RawInference};
 pub(crate) use receipts::ServerReceipts;
