@@ -6,8 +6,9 @@
 //! exactly once, under the id the claim derives, the way a stamped post
 //! settles: the approved (amended) value is what lands, the proposer is the
 //! envelope's immutable producer, and the birth world and facet are the
-//! proposal's own. A refusal fails the approval, so the proposal stays
-//! pending.
+//! proposal's own. An agent TASK lands under the creator the proposal
+//! witnessed, if any (OF-532). A refusal fails the approval, so the proposal
+//! stays pending.
 
 use rmpv::Value;
 
@@ -20,6 +21,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::write_envelope::WriteActor;
 
 use super::consts::{TASK_CREATE_PROPOSAL_PREDICATE, TASK_SETTLE_ID_DOMAIN};
+use super::create_origin::{TaskCreateOrigin, proposal_origin_in};
 use super::create_spec::TaskCreateSpec;
 use super::create_validation::validate_task_create_in;
 use super::highway_post::{
@@ -127,6 +129,8 @@ pub(super) fn settle_create_in_txn(
         "tasks.proposal.actor_class",
     )))?;
     let spec = decode_task_create_proposal(&claim.value).map_err(settle_refusal)?;
+    // The creator the proposal witnessed, never its approver.
+    let origin = proposal_origin_in(vault, wtxn, claim_id).map_err(settle_refusal)?;
     // A parked proposal was born where its writer's TASK would be; the TASK
     // is born there too.
     let facet =
@@ -137,21 +141,23 @@ pub(super) fn settle_create_in_txn(
             world: claim.world,
             facet,
         })
-        .land_settled_create_in_txn(wtxn, task_ref, claim_id, &spec, now)
+        .land_settled_create_in_txn(wtxn, task_ref, claim_id, &spec, origin.as_ref(), now)
         .map_err(settle_refusal)
 }
 
 impl Memory<'_> {
     /// The landing half of [`settle_create_in_txn`], as the proposer: the
     /// spec validated at approval time, the TASK minted with the stored
-    /// owner or else the proposer, routed in the same transaction, and an
-    /// addressed standard task's Assigned fact.
+    /// owner or else the proposer, routed in the same transaction under the
+    /// creator the proposal witnessed, and an addressed standard task's
+    /// Assigned fact.
     fn land_settled_create_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         task_ref: EntityId,
         claim_id: EntityId,
         spec: &TaskCreateSpec,
+        origin: Option<&TaskCreateOrigin>,
         now: u64,
     ) -> MemoryResult<()> {
         let validated = validate_task_create_in(self.vault(), &*wtxn, spec, now)?;
@@ -172,7 +178,7 @@ impl Memory<'_> {
             &provenance,
             now,
         )?;
-        self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
+        self.route_created_task_with_origin_in_txn(wtxn, task_ref, &validated, origin, now)?;
         if validated.kind == TaskKind::Standard
             && let Some(assignee) = validated.assignee
         {

@@ -119,6 +119,10 @@ pub enum SharedVaultChange {
     MemberLeft {
         member: String,
     },
+    OwnerRecovered {
+        from: String,
+        to: String,
+    },
 }
 
 /// The durable receipt of one executed shared act or membership change. An
