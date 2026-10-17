@@ -2,7 +2,8 @@
 //!
 //! The engine proposes questions, not answers. Only an authenticated human
 //! pick over a delivered ask writes a label. A digest delivers each ask once;
-//! the owner's funded minutes balance defaults to zero (fail closed).
+//! the owner's funded minutes balance defaults to zero (fail closed). Eval
+//! label asks draw on the same balance, after the judge asks.
 
 use serde::{Deserialize, Serialize};
 
@@ -239,8 +240,9 @@ fn propose_in_txn(
 }
 
 /// Set the remaining minutes of new judge questions for this human. Each ask
-/// costs the resolved manifest's `ask_minutes` at delivery. The balance is not reset on
-/// cadence; zero disables delivery until an authenticated owner replenishes it.
+/// costs the resolved manifest's `ask_minutes` at delivery, and each eval label
+/// ask the minutes it was asked at. The balance is not reset on cadence; zero
+/// disables delivery until an authenticated owner replenishes it.
 pub fn set_judge_digest_minutes(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -315,6 +317,42 @@ pub fn judge_label_anchor(
         }
     }
     Ok(labels)
+}
+
+/// Every label in one skill's anchor, whatever campaign asked it: the human
+/// picks the skill-edit gate measures the judge against. Order is stable by
+/// ask identity.
+pub(crate) fn skill_label_anchor(vault: &Vault, skill: EntityId) -> Result<Vec<JudgeLabel>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut labels = Vec::new();
+    for row in LABELS.iter_from(&vault.store, &txn, &[])? {
+        let (key, label) = row?;
+        if key != label.ask.id {
+            return Err(Error::CorruptedIndex("judge label identity"));
+        }
+        if label.ask.skill == skill {
+            labels.push(label);
+        }
+    }
+    Ok(labels)
+}
+
+/// How many labels the whole anchor gained after `since`, by pick time: the
+/// fresh human picks a judge rubric revision counts.
+pub(crate) fn anchor_labels_since_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    since: u64,
+) -> Result<u64> {
+    let mut fresh = 0_u64;
+    for row in LABELS.iter_from(&vault.store, txn, &[])? {
+        let (key, label) = row?;
+        if key != label.ask.id {
+            return Err(Error::CorruptedIndex("judge label identity"));
+        }
+        fresh += u64::from(label.picked_at > since);
+    }
+    Ok(fresh)
 }
 
 /// Ingest an authenticated human's A/B pick, at most once for an ask. A
@@ -457,6 +495,32 @@ pub(crate) fn take_digest_asks_in_txn(
         for ask in &selected {
             ASKS.put(&vault.store, txn, &ask.id, ask)?;
         }
+    }
+    Ok(selected)
+}
+
+/// The digest's second draw on the same balance, after
+/// [`take_digest_asks_in_txn`]: the owner's pending eval label asks, each
+/// debited the minutes it was asked at, while what remains covers them. A zero
+/// balance carries none; marks and debit share the digest's transaction.
+pub(crate) fn take_digest_eval_asks_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+    at: u64,
+) -> Result<Vec<super::EvalLabelAsk>> {
+    let minutes = MINUTES
+        .get(&vault.store, &*txn, &owner)?
+        .map_or(0, |balance| balance.0);
+    if minutes == 0 {
+        return Ok(Vec::new());
+    }
+    let (selected, spent) = vault.take_eval_label_asks_in_txn(txn, owner, at, minutes)?;
+    if !selected.is_empty() {
+        let remaining = minutes
+            .checked_sub(spent)
+            .ok_or(Error::ArithmeticOverflow("judge ask minutes"))?;
+        MINUTES.put(&vault.store, txn, &owner, &JudgeMinutes(remaining))?;
     }
     Ok(selected)
 }

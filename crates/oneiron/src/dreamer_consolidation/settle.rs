@@ -3,8 +3,9 @@
 //! A `conflict.open` marker stays open until a standing `conflict.resolved`
 //! names it. The Dreamer's own correction closes the markers its replacement
 //! answers (`dreamer_promotion/corrections.rs`); every other marker waits here
-//! for an authorised responder: the vault's root owner, or a person or agent
-//! the owner delegated `memory.conflict_review` on the conflict's subject
+//! for an authorised responder: the vault's root owner, the Dreamer, whose
+//! review stands from birth, or a person or agent the owner delegated
+//! `memory.conflict_review` on the conflict's subject
 //! (`Memory::settle_conflict`).
 //!
 //! A responder keeps one member, holds them all, or dismisses the marker.
@@ -15,9 +16,10 @@
 //! it stays as audit evidence beside the claim that answers it.
 //!
 //! The Dreamer asks its host's decision ladder ([`ConflictSettleDecisions`])
-//! and settles only what its own delegation covers. A ladder answer is never
-//! the authority: an abstention, an escalation or a missing Grant leaves the
-//! marker parked for the owner.
+//! and applies the answer at once; the owner reverts it
+//! (`Memory::revert_conflict_settlement`), and a reverted conflict, or one
+//! under the owner's hold, is the owner's to answer. An abstention or an
+//! escalation leaves the marker parked for the owner.
 
 use std::collections::BTreeSet;
 
@@ -95,6 +97,9 @@ pub struct OpenConflict {
     pub predicates: Vec<String>,
     /// The marker itself, still Proposed while it waits in its own review.
     pub body: ClaimBody,
+    /// A retracted answer names the marker: a settlement was reverted, so it
+    /// waits for the owner and the Dreamer leaves it.
+    pub reverted: bool,
 }
 
 /// What a settlement wrote: the answering `conflict.resolved` and each member
@@ -113,6 +118,40 @@ pub struct ConflictSettleReceipt {
     pub settlement: ConflictSettlement,
     pub resolved: EntityId,
     pub superseded: Vec<EntityId>,
+    pub receipt_ref: String,
+}
+
+/// What reverting one settlement did (OF-023, owner ruling 10-18): the marker
+/// it reopened, the members standing again in place, the Dreamer's fresh
+/// copies of its own MACHINE members as (member, copy), and the members a
+/// later write closed, left as they are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevertedSettlement {
+    pub marker: EntityId,
+    pub restored: Vec<EntityId>,
+    pub copied: Vec<(EntityId, EntityId)>,
+    pub left_closed: Vec<EntityId>,
+}
+
+/// One standing settlement an owner may revert: its answer, the marker it
+/// answers, the settlement, what it kept and superseded, and whether the
+/// Dreamer made it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledAnswer {
+    pub resolved: EntityId,
+    pub marker: EntityId,
+    pub subject: EntityId,
+    pub settlement: String,
+    pub kept: Option<EntityId>,
+    pub superseded: Vec<EntityId>,
+    pub by_dreamer: bool,
+}
+
+/// A revert's durable outcome, with the Gate receipt that recorded it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictRevertReceipt {
+    pub resolved: EntityId,
+    pub reverted: RevertedSettlement,
     pub receipt_ref: String,
 }
 
@@ -203,6 +242,7 @@ fn open_conflict_from(
     txn: &heed::RoTxn<'_>,
     marker: EntityId,
     body: ClaimBody,
+    reverted: bool,
 ) -> Result<Option<OpenConflict>> {
     let ClaimSubject::Entity(subject) = body.subject else {
         return Ok(None);
@@ -222,7 +262,15 @@ fn open_conflict_from(
         members,
         predicates: contested_predicates(&body),
         body,
+        reverted,
     }))
+}
+
+/// Whether `body` is an answer to an open marker that was taken back: a
+/// retracted `conflict.resolved`, the trace a reverted settlement leaves.
+fn reverted_answer(body: &ClaimBody) -> bool {
+    body.predicate == PREDICATE_CONFLICT_RESOLVED
+        && body.lifecycle == ClaimLifecycleStatus::Retracted
 }
 
 /// Every open conflict, on `subject` alone when one is named, oldest marker
@@ -235,10 +283,13 @@ pub(crate) fn open_conflicts_in_txn(
 ) -> Result<Vec<OpenConflict>> {
     let mut markers = Vec::new();
     let mut answered = BTreeSet::new();
+    let mut reverted = BTreeSet::new();
     let mut sort = |id: EntityId, body: ClaimBody| {
         if body.predicate == PREDICATE_CONFLICT_RESOLVED {
             if claim_surfaceable(&body) {
                 answered.extend(marker_ids(&body.value, "open_marker"));
+            } else if reverted_answer(&body) {
+                reverted.extend(marker_ids(&body.value, "open_marker"));
             }
         } else if open_marker_body(&body) {
             markers.push((id, body));
@@ -271,7 +322,8 @@ pub(crate) fn open_conflicts_in_txn(
         if answered.contains(&id) {
             continue;
         }
-        if let Some(conflict) = open_conflict_from(vault, txn, id, body)? {
+        let was_reverted = reverted.contains(&id);
+        if let Some(conflict) = open_conflict_from(vault, txn, id, body, was_reverted)? {
             open.push(conflict);
         }
     }
@@ -294,18 +346,23 @@ pub(crate) fn open_conflict_in_txn(
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation("conflict subject"));
     };
+    let mut reverted = false;
     for id in vault.claims_for_subject_in_txn(txn, &subject)? {
         let Some(answer) = vault.get_claim_in_txn(txn, &id)? else {
             continue;
         };
-        if answer.predicate == PREDICATE_CONFLICT_RESOLVED
-            && claim_surfaceable(&answer)
-            && marker_ids(&answer.value, "open_marker").any(|named| named == marker)
+        if answer.predicate != PREDICATE_CONFLICT_RESOLVED
+            || !marker_ids(&answer.value, "open_marker").any(|named| named == marker)
         {
+            continue;
+        }
+        if claim_surfaceable(&answer) {
             return Err(invalid_consolidation("the conflict is already settled"));
         }
+        reverted |= reverted_answer(&answer);
     }
-    open_conflict_from(vault, txn, marker, body)?.ok_or(invalid_consolidation("conflict subject"))
+    open_conflict_from(vault, txn, marker, body, reverted)?
+        .ok_or(invalid_consolidation("conflict subject"))
 }
 
 /// Writes `settlement` for `conflict` in the caller's transaction, after the
@@ -448,6 +505,211 @@ pub(crate) fn apply_settlement_in_txn(
     })
 }
 
+/// The standing settlements, on `subject` alone when one is named, newest
+/// answer first, at most `limit`. A correction's answer is no settlement
+/// and is left out.
+pub(crate) fn settled_answers_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: Option<EntityId>,
+    limit: usize,
+) -> Result<Vec<SettledAnswer>> {
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
+    let mut answers = Vec::new();
+    vault.for_each_readable_claim_with_predicate_in_txn(
+        txn,
+        PREDICATE_CONFLICT_RESOLVED,
+        |id, body| {
+            let ClaimSubject::Entity(on) = body.subject else {
+                return Ok(());
+            };
+            if !claim_surfaceable(&body) || subject.is_some_and(|subject| subject != on) {
+                return Ok(());
+            }
+            let Some(marker) = marker_ids(&body.value, "open_marker").next() else {
+                return Ok(());
+            };
+            let Some(resolution) = string_at(&body.value, "resolution") else {
+                return Ok(());
+            };
+            let Some(settlement) = string_at(resolution, "settlement").and_then(Value::as_str)
+            else {
+                return Ok(());
+            };
+            answers.push(SettledAnswer {
+                resolved: id,
+                marker,
+                subject: on,
+                settlement: settlement.to_owned(),
+                kept: marker_ids(resolution, "kept").next(),
+                superseded: marker_ids(resolution, "superseded").collect(),
+                by_dreamer: crate::memory::claim_author(&body) == Some(dreamer),
+            });
+            Ok(())
+        },
+    )?;
+    answers.sort_by(|a, b| b.resolved.cmp(&a.resolved));
+    answers.truncate(limit);
+    Ok(answers)
+}
+
+/// Reverts the settlement `resolved` answers, in the caller's transaction,
+/// after the caller has checked the owner's authority. The answer is
+/// retracted as `reverter`'s, so its marker is open again and, as a reverted
+/// one, the owner's to answer. Each member the kept one superseded stands
+/// again: in place, its `supersedes` link gone; a Dreamer-born MACHINE
+/// member, whose signed history never reopens, as the Dreamer's fresh copy
+/// born of it. A member some later write closed stays as it is. Nothing is
+/// deleted: the answer and every closed row stay as history.
+pub(crate) fn revert_settlement_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    resolved: EntityId,
+    reverter: WriteActor,
+    now: u64,
+) -> Result<RevertedSettlement> {
+    let answer = vault
+        .get_claim_in_txn(txn, &resolved)?
+        .ok_or(Error::EntityNotFound)?;
+    if answer.predicate != PREDICATE_CONFLICT_RESOLVED || !claim_surfaceable(&answer) {
+        return Err(invalid_consolidation("not a standing conflict answer"));
+    }
+    let marker = marker_ids(&answer.value, "open_marker")
+        .next()
+        .ok_or(invalid_consolidation("the answer names no marker"))?;
+    let resolution = string_at(&answer.value, "resolution")
+        .filter(|resolution| string_at(resolution, "settlement").is_some())
+        .ok_or(invalid_consolidation("not a settlement's answer"))?;
+    let kept = marker_ids(resolution, "kept").next();
+    let superseded: Vec<EntityId> = marker_ids(resolution, "superseded").collect();
+    vault.retract_claim_in_txn_as(txn, &resolved, now, Some(reverter))?;
+    let mut reverted = RevertedSettlement {
+        marker,
+        restored: Vec::new(),
+        copied: Vec::new(),
+        left_closed: Vec::new(),
+    };
+    let Some(kept) = kept else {
+        return Ok(reverted);
+    };
+    for loser in superseded {
+        if vault.restore_superseded_claim_in_txn(txn, &kept, &loser, now)? {
+            reverted.restored.push(loser);
+        } else if let Some(copy) =
+            restore_dreamer_member_in_txn(vault, txn, kept, loser, resolved, now)?
+        {
+            reverted.copied.push((loser, copy));
+        } else {
+            reverted.left_closed.push(loser);
+        }
+    }
+    Ok(reverted)
+}
+
+/// Stands a Dreamer-born MACHINE member `loser` again as the Dreamer's fresh
+/// copy of it, when `kept` superseded it and it is still closed: the copy
+/// carries its predicate, value, confidence, window and axes, and is born of
+/// the member and the reverted answer. `None` for any other member.
+fn restore_dreamer_member_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    kept: EntityId,
+    loser: EntityId,
+    resolved: EntityId,
+    now: u64,
+) -> Result<Option<EntityId>> {
+    use crate::ports::{EdgeDirection, EdgeStoreRead};
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
+    let Some(body) = vault.get_claim_in_txn(txn, &loser)? else {
+        return Ok(None);
+    };
+    if body.lifecycle != ClaimLifecycleStatus::Superseded
+        || crate::memory::claim_author(&body) != Some(dreamer)
+        || !crate::authority::machine_claim_needs_history(&vault.store, txn, &body)?
+    {
+        return Ok(None);
+    }
+    let mut linked = false;
+    let mut seen = 0usize;
+    for entry in vault.port_edges(
+        &*txn,
+        &kept,
+        EdgeDirection::Out,
+        Some(crate::edge::EdgeKind::Supersedes),
+        None,
+    )? {
+        if seen >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+            return Err(Error::IndexOverflow("superseded claims"));
+        }
+        seen += 1;
+        if entry?.target == loser {
+            linked = true;
+            break;
+        }
+    }
+    if !linked {
+        return Ok(None);
+    }
+    let candidate = super::persistence::on_axes_of(
+        crate::write_envelope::ClaimCandidate::new(
+            body.predicate.clone(),
+            body.subject,
+            body.value.clone(),
+            body.confidence,
+        )
+        .with_validity(body.valid_from, None),
+        &body,
+    );
+    let mut envelope = WriteEnvelope::new(
+        WriteActor::new(dreamer, crate::edge::EdgeActorClass::System),
+        body.source.unwrap_or(ClaimSource::Generated),
+        crate::write_envelope::WriteProvenance::new(Value::Map(vec![
+            (
+                Value::from("surface"),
+                Value::from("conflict_settlement_revert"),
+            ),
+            (
+                Value::from("restores"),
+                Value::Binary(loser.as_bytes().to_vec()),
+            ),
+            (
+                Value::from("revertedAnswer"),
+                Value::Binary(resolved.as_bytes().to_vec()),
+            ),
+        ]))?,
+        if body.approval == ClaimApprovalStatus::Proposed {
+            ClaimApprovalStatus::Proposed
+        } else {
+            ClaimApprovalStatus::Auto
+        },
+    );
+    let copy = EntityId::now();
+    let birth = RowBirth::written(
+        envelope.actor(),
+        MadeByClass::Concluded,
+        "dreamer.settlement_revert",
+        &[loser, resolved],
+        &[],
+        now,
+    );
+    vault.sign_retained_machine_claim_in_txn(&*txn, &copy, &candidate, &mut envelope)?;
+    vault
+        .batch_in()
+        .claim_candidate(
+            &copy,
+            candidate,
+            &envelope,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .made_by(&copy, birth)
+        .apply(txn)?;
+    Ok(Some(copy))
+}
+
 /// The dial a settlement ask runs under unless the host picks another. It
 /// ends below Human: the owner's open-conflict list is already the person's
 /// surface, so the ladder queues no second ask.
@@ -565,29 +827,40 @@ impl ConflictSettleDecisions<'_> {
     }
 }
 
-/// One Dreamer pass over the parked conflicts its delegation covers.
+/// One Dreamer pass over the parked conflicts it reviews.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParkedConflictPass {
     pub asked: usize,
     pub settled: Vec<ConflictSettleReceipt>,
     /// Abstained, escalated, refused or failed: each stays for the owner.
     pub left_parked: usize,
+    /// The last marker asked about: the next pass starts after it.
+    pub last: Option<EntityId>,
 }
 
 /// Asks `decisions` about up to `limit` open conflicts `memory`'s actor may
 /// settle and settles each answer through the same authorised door a person
-/// uses. A failure on one conflict is logged by a closed name and leaves it
+/// uses. The pass starts at the first marker after `after` and wraps to the
+/// oldest, so the conflicts a ladder leaves parked never starve newer ones.
+/// A failure on one conflict is logged by a closed name and leaves it
 /// parked; the pass goes on.
 pub fn settle_parked_conflicts(
     memory: &crate::memory::Memory<'_>,
     decisions: &ConflictSettleDecisions<'_>,
+    after: Option<EntityId>,
     limit: usize,
     now: u64,
 ) -> crate::memory::MemoryResult<ParkedConflictPass> {
     let mut pass = ParkedConflictPass::default();
-    for conflict in memory.open_conflicts(None, None, limit)? {
+    let open = memory.open_conflicts(None, None, usize::MAX)?;
+    let start = after.map_or(0, |after| {
+        open.partition_point(|conflict| conflict.marker <= after)
+    });
+    let (older, newer) = open.split_at(start);
+    for conflict in newer.iter().chain(older).take(limit) {
         pass.asked += 1;
-        let settlement = match decisions.rule(memory.vault(), &conflict) {
+        pass.last = Some(conflict.marker);
+        let settlement = match decisions.rule(memory.vault(), conflict) {
             Ok(Some(settlement)) => settlement,
             Ok(None) => {
                 pass.left_parked += 1;

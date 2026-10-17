@@ -181,7 +181,13 @@ impl ConsolidationExecutor<'_> {
                         &response.usage,
                     )?;
                     if failure_policy.is_some() {
-                        return Ok(charges.park("sieve rung requires a model reading"));
+                        return charges.park_on_fallback(
+                            ctx.vault,
+                            attempt.status.attempt.id,
+                            step_hash,
+                            "sieve rung requires a model reading",
+                            &response,
+                        );
                     }
                     response
                 }

@@ -14,9 +14,12 @@
 //! - The comment's agent task pauses while its thread is unattached
 //!   ([`Vault::annotation_thread_task_hold`]); a Keep answering it waits.
 
+use std::collections::HashMap;
+
+use oneiron_docedit::{DocxAnchorBlock, docx_anchor_blocks};
 use serde::{Deserialize, Serialize};
 
-use super::anchor_text::{TextLimits, anchor_text, docx_blocks, find_text, remap_span};
+use super::anchor_text::{TextLimits, anchor_text, find_text, remap_span};
 use super::codec::{ThreadHead, decode_locator, encode_locator};
 use super::model::{AnnotationThread, Locator, ReanchorOutcome, ReanchorSummary};
 use super::threads::thread_from_head;
@@ -80,8 +83,37 @@ pub struct ReattachOffer {
 
 /// The DOCX side of one sweep: both versions' body paragraphs.
 pub(super) struct DocxReanchor {
-    before: Option<Vec<(String, String)>>,
-    after: Option<Vec<(String, String)>>,
+    before: Option<Paragraphs>,
+    after: Option<Paragraphs>,
+    /// Whether the versions share any paraId: a producer that mints new ids
+    /// on save leaves none to follow.
+    shares_ids: bool,
+}
+
+/// One version's body paragraphs, and which of them carry each paraId.
+struct Paragraphs {
+    blocks: Vec<DocxAnchorBlock>,
+    ids: HashMap<String, Vec<usize>>,
+}
+
+impl Paragraphs {
+    fn new(blocks: Vec<DocxAnchorBlock>) -> Self {
+        let mut ids: HashMap<String, Vec<usize>> = HashMap::new();
+        for (at, block) in blocks.iter().enumerate() {
+            if let Some(id) = &block.para_id {
+                ids.entry(id.clone()).or_default().push(at);
+            }
+        }
+        Self { blocks, ids }
+    }
+
+    /// The paragraph that alone carries `id`.
+    fn only(&self, id: &str) -> Option<usize> {
+        match self.ids.get(id).map(Vec::as_slice) {
+            Some([at]) => Some(*at),
+            _ => None,
+        }
+    }
 }
 
 impl DocxReanchor {
@@ -101,21 +133,33 @@ impl DocxReanchor {
             return Ok(None);
         }
         let limits = vault.text_limits_in_txn(txn)?;
-        let read = |version| -> Result<Option<Vec<(String, String)>>> {
+        let read = |version| -> Result<Option<Paragraphs>> {
             Ok(vault
                 .read_blob_artifact_version_in_txn(txn, artifact, version)?
-                .and_then(|bytes| docx_blocks(&bytes, &limits)))
+                .and_then(|bytes| {
+                    oneiron_docedit::preflight_with_limits(&bytes, limits.docx).ok()?;
+                    let document = oneiron_docedit::Document::parse(&bytes).ok()?;
+                    Some(Paragraphs::new(docx_anchor_blocks(&document)))
+                }))
+        };
+        let (before, after) = (read(from)?, read(to)?);
+        let shares_ids = match (&before, &after) {
+            (Some(before), Some(after)) => before.ids.keys().any(|id| after.ids.contains_key(id)),
+            _ => false,
         };
         Ok(Some(Self {
-            before: read(from)?,
-            after: read(to)?,
+            before,
+            after,
+            shares_ids,
         }))
     }
 
-    /// The paragraph keeps its anchor when it survives the edit: unchanged
-    /// paragraphs pair by position around the changed stretch, and inside it
-    /// a paragraph pairs by position when the count held, else by its exact
-    /// unique text. A deleted paragraph, or a span deleted whole, detaches.
+    /// The paragraph keeps its anchor when it survives the edit: one whose
+    /// Word id (`w14:paraId`) both versions carry follows that id, through a
+    /// move and an edit at once. Otherwise unchanged paragraphs pair by
+    /// position around the changed stretch, and inside it a paragraph pairs
+    /// by position when the count held, else by its exact unique text. A
+    /// deleted paragraph, or a span deleted whole, detaches.
     pub(super) fn rebind(&self, locator: &Locator) -> ReanchorOutcome {
         let Locator::Docx {
             para_path,
@@ -128,15 +172,24 @@ impl DocxReanchor {
         let (Some(before), Some(after)) = (&self.before, &self.after) else {
             return ReanchorOutcome::Drifted;
         };
-        let Some(index) = before.iter().position(|(id, _)| id == para_path) else {
+        let Some(index) = before
+            .blocks
+            .iter()
+            .position(|block| block.block_id == *para_path)
+        else {
             return ReanchorOutcome::Drifted;
         };
-        let Some(paired) = pair_paragraph(before, after, index) else {
+        let Some(paired) = pair_paragraph(before, after, index, self.shares_ids) else {
             return ReanchorOutcome::Drifted;
         };
-        let (new_id, new_text) = &after[paired];
-        match remap_span(&before[index].1, new_text, *char_start, *char_end)
-            .and_then(|(start, end)| Locator::docx(new_id.clone(), start, end).ok())
+        let new = &after.blocks[paired];
+        match remap_span(
+            &before.blocks[index].text,
+            &new.text,
+            *char_start,
+            *char_end,
+        )
+        .and_then(|(start, end)| Locator::docx(new.block_id.clone(), start, end).ok())
         {
             Some(locator) => ReanchorOutcome::Mapped(locator),
             None => ReanchorOutcome::Drifted,
@@ -145,22 +198,53 @@ impl DocxReanchor {
 }
 
 fn pair_paragraph(
-    before: &[(String, String)],
-    after: &[(String, String)],
+    before: &Paragraphs,
+    after: &Paragraphs,
+    index: usize,
+    shares_ids: bool,
+) -> Option<usize> {
+    // A paraId one paragraph alone carries on each side is its identity;
+    // gone from the new version, the paragraph was deleted. Two carrying it
+    // there prove nothing, so the text decides.
+    let id = before.blocks[index]
+        .para_id
+        .as_deref()
+        .filter(|id| shares_ids && before.only(id).is_some());
+    if let Some(id) = id {
+        match after.ids.get(id).map_or(0, Vec::len) {
+            0 => return None,
+            1 => return after.only(id),
+            _ => {}
+        }
+    }
+    let found = pair_by_text(&before.blocks, &after.blocks, index)?;
+    // The text never pairs it with a paragraph another one's id follows.
+    let claimed = shares_ids
+        && after.blocks[found]
+            .para_id
+            .as_deref()
+            .and_then(|other| before.only(other))
+            .is_some_and(|owner| owner != index);
+    (!claimed).then_some(found)
+}
+
+fn pair_by_text(
+    before: &[DocxAnchorBlock],
+    after: &[DocxAnchorBlock],
     index: usize,
 ) -> Option<usize> {
     let shared = before.len().min(after.len());
     let prefix = before
         .iter()
         .zip(after)
-        .take_while(|(a, b)| a.1 == b.1)
+        .take_while(|(a, b)| a.text == b.text)
         .count();
     let suffix = before
         .iter()
         .rev()
         .zip(after.iter().rev())
         .take(shared - prefix)
-        .take_while(|(a, b)| a.1 == b.1)
+        .take_while(|(a, b)| a.text == b.text)
         .count();
     let (before_end, after_end) = (before.len() - suffix, after.len() - suffix);
     if index < prefix {
@@ -172,18 +256,18 @@ fn pair_paragraph(
     if before_end - prefix == after_end - prefix {
         return Some(prefix + (index - prefix));
     }
-    let text = &before[index].1;
-    let mut same = (prefix..after_end).filter(|&at| after[at].1 == *text);
+    let text = &before[index].text;
+    let mut same = (prefix..after_end).filter(|&at| after[at].text == *text);
     let found = same.next()?;
     same.next().is_none().then_some(found)
 }
 
 impl Vault {
     pub(super) fn text_limits_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<TextLimits> {
-        // Reading a spot's words is read-only: the shipped package ceilings
-        // bound it, and the vault's live Word archive policy.
+        // Reading a spot's words is bound by the vault's live package and
+        // Word archive policy, as this transaction sees them.
         Ok(TextLimits {
-            package: crate::gate::shipped_docedit_package_limits(),
+            package: self.docedit_package_limits_in_txn(txn)?,
             docx: self.docx_archive_limits_in_txn(txn, None)?,
         })
     }

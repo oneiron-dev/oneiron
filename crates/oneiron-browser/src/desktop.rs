@@ -17,8 +17,11 @@
 //! text with a line break, takes the press of a send. Every effect lands a
 //! receipt naming its window, with a screenshot of the window as evidence,
 //! its password fields blacked out before the image is held. No other
-//! screenshot is taken without a named trigger. A window with no tree says
-//! so (`no_tree`), and the program reads it by its pixels.
+//! screenshot is taken without a named trigger. A click at a point of an
+//! image first reads the window once more and checks the pixels around the
+//! point still look as they did in that image; that read is compared and
+//! dropped, never held or receipted. A window with no tree says so
+//! (`no_tree`), and the program reads it by its pixels.
 
 use crate::driver::{crop_region, encode_png, png_dimensions};
 use crate::mcp::{Mcp, ToolError, ToolReply};
@@ -35,6 +38,7 @@ use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTrans
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The browser's settle values: up to 0.6 s for the window to start
@@ -54,6 +58,12 @@ const MAX_ELEMENTS: u32 = 1000;
 const HISTORY: usize = 8;
 /// Screenshots the session holds for a later image read.
 const MEDIA: usize = 16;
+/// The square a click at a point checks, in screenshot pixels each way from
+/// the point: it must look as it did in the image the point was read from.
+const CLICK_CHECK_RADIUS: u32 = 16;
+/// The share of that square's pixels that may have changed (a blinking
+/// caret) before the image no longer shows the spot.
+const CLICK_CHECK_SLACK: f64 = 0.05;
 /// The longest name or value a row carries.
 const NAME_CHARS: usize = 200;
 /// A zoom without a scale fills this width, at most fourfold.
@@ -125,6 +135,11 @@ const SCOPES: &[&str] = &[
     "scroll pane",
     "layered pane",
 ];
+
+/// The roles of rows that hold typed text, any of which may be secret.
+const TEXT_ROLES: &[&str] = &["textbox", "searchbox", "combobox", "spinbutton"];
+/// What a toolkit shows in place of a concealed field's text.
+const MASK_GLYPHS: &[char] = &['•', '●', '∙', '*'];
 
 /// Words that mark a text field secret beside a password role.
 const SECRET_PHRASES: &[&[&str]] = &[
@@ -289,7 +304,7 @@ fn url_of(app: &str, key: WindowKey) -> String {
 /// which window it shows.
 struct Held {
     image: String,
-    png: Vec<u8>,
+    png: Arc<Vec<u8>>,
     frame: Frame,
 }
 
@@ -305,6 +320,8 @@ struct Frame {
     window: WindowKey,
     bounds: Rect,
     scale: f64,
+    /// The whole window's screenshot the image was cut from, masked as held.
+    source: Arc<Vec<u8>>,
 }
 
 impl Frame {
@@ -687,7 +704,7 @@ impl DesktopSession {
     /// width, height, bytes.
     fn remember(
         &mut self,
-        png: Vec<u8>,
+        png: Arc<Vec<u8>>,
         frame: Frame,
     ) -> Result<(String, u32, u32, u64), BrowserError> {
         let (width, height) = png_dimensions(&png)
@@ -709,7 +726,7 @@ impl DesktopSession {
         self.media
             .iter()
             .find(|held| held.image == image)
-            .map(|held| (held.png.clone(), held.frame.clone()))
+            .map(|held| (held.png.to_vec(), held.frame.clone()))
             .ok_or_else(|| BrowserError::NoImage(image.to_owned()))
     }
 
@@ -785,6 +802,17 @@ fn is_return(key: &str) -> bool {
         .any(|name| key.eq_ignore_ascii_case(name))
 }
 
+/// Whether `key` activates the control it goes to, as a click would.
+fn is_activation(key: &str) -> bool {
+    is_return(key)
+        || key
+            .rsplit('+')
+            .next()
+            .unwrap_or(key)
+            .trim()
+            .eq_ignore_ascii_case("space")
+}
+
 /// A key press as the press refusal names it, when no row takes it.
 fn key_row(key: &str) -> Row {
     Row {
@@ -817,6 +845,31 @@ fn clip(text: &str) -> String {
         Some((end, _)) => format!("{}…", &text[..end]),
         None => text,
     }
+}
+
+/// Whether an element is a secret field: a password role, or a text field
+/// whose label or description names a secret, or whose text or label shows
+/// only mask glyphs (a toolkit concealing what was typed).
+fn secret_field(element: &Value, raw_role: &str, role: &str) -> bool {
+    if raw_role.contains("password") {
+        return true;
+    }
+    if !TEXT_ROLES.contains(&role) {
+        return false;
+    }
+    let text = |name: &str| element.get(name).and_then(Value::as_str).unwrap_or("");
+    let (label, description, value) = (text("label"), text("description"), text("value"));
+    [label, description].iter().any(|words| {
+        SECRET_PHRASES
+            .iter()
+            .any(|phrase| has_phrase(words, phrase))
+    }) || [label, value].iter().any(|shown| masked(shown))
+}
+
+/// Whether `text` is nothing but mask glyphs, as a concealed field shows it.
+fn masked(text: &str) -> bool {
+    let mut glyphs = text.chars().filter(|c| !c.is_whitespace()).peekable();
+    glyphs.peek().is_some() && glyphs.all(|c| MASK_GLYPHS.contains(&c))
 }
 
 /// Whether `name` holds the words of `phrase` in a row, ignoring case.
@@ -863,18 +916,17 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
             .and_then(Value::as_str)
             .map(clip)
             .unwrap_or_default();
-        let password = raw.contains("password");
-        let secret =
-            password || (role == "textbox" && SECRET_PHRASES.iter().any(|p| has_phrase(&label, p)));
+        let secret = secret_field(element, &raw, &role);
         if secret {
             secrets.push(Secret {
                 screen: frame_of(element, "frame"),
                 shot: frame_of(element, "screenshot_frame"),
             });
         }
-        // A password field's own text can stand in for a missing name: it
-        // never leaves the session.
-        let name = if password { String::new() } else { label };
+        // A secret field's own text can stand in for a missing name (the
+        // driver names an unnamed field by its text): it never leaves the
+        // session.
+        let name = if secret { String::new() } else { label };
         let token = element
             .get("element_token")
             .and_then(Value::as_str)
@@ -934,6 +986,40 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
         }
     }
     (out, secrets)
+}
+
+/// Whether the square of [`CLICK_CHECK_RADIUS`] around screenshot pixel
+/// (`across`, `down`) looks in `now` as it did in `then`: an image of the
+/// same size, with at most [`CLICK_CHECK_SLACK`] of the square's pixels
+/// changed. The rest of the window may change (a caret, an animation).
+fn looks_as_it_did(then: &[u8], now: &[u8], across: f64, down: f64) -> Result<bool, BrowserError> {
+    let decode = |png: &[u8]| {
+        image::load_from_memory(png)
+            .map(|image| image.to_rgba8())
+            .map_err(|e| BrowserError::Protocol(e.to_string()))
+    };
+    let (then, now) = (decode(then)?, decode(now)?);
+    let (width, height) = then.dimensions();
+    if (width, height) != now.dimensions() || width == 0 || height == 0 {
+        return Ok(false);
+    }
+    // `across` and `down` are inside the window's pixels, never negative.
+    let (x, y) = (
+        (across as u32).min(width - 1),
+        (down as u32).min(height - 1),
+    );
+    let columns = x.saturating_sub(CLICK_CHECK_RADIUS)..=(x + CLICK_CHECK_RADIUS).min(width - 1);
+    let rows = y.saturating_sub(CLICK_CHECK_RADIUS)..=(y + CLICK_CHECK_RADIUS).min(height - 1);
+    let (mut seen, mut changed) = (0u32, 0u32);
+    for row in rows {
+        for column in columns.clone() {
+            seen += 1;
+            if then.get_pixel(column, row) != now.get_pixel(column, row) {
+                changed += 1;
+            }
+        }
+    }
+    Ok(f64::from(changed) <= f64::from(seen) * CLICK_CHECK_SLACK)
 }
 
 /// Blacks out a window's secret fields in its screenshot, before the image
@@ -1070,8 +1156,9 @@ impl BrowserDriver for DesktopSession {
             ));
         }
         // The image must still show the window as it stands: the same
-        // window, in the same place.
-        let snapshot = self.snapshot(false)?;
+        // window, in the same place. This one read carries the window's
+        // pixels too, for the check below; it is never held.
+        let mut snapshot = self.snapshot(true)?;
         if snapshot.key != frame.window
             || !snapshot
                 .bounds
@@ -1081,12 +1168,6 @@ impl BrowserDriver for DesktopSession {
         }
         let x = frame.left + input.x * frame.width;
         let y = frame.top + input.y * frame.height;
-        let row = snapshot.line_at(x, y).map(|line| line.row.clone());
-        let class = row.as_ref().and_then(|row| effect_class(&row.name));
-        let press = match (class, &row) {
-            (Some(class), Some(row)) => press_for(&mut self.policy, class, row)?,
-            _ => PressMode::None,
-        };
         // The driver's window pixels are its screenshot's, from the
         // window's corner.
         let bounds = frame.bounds;
@@ -1094,6 +1175,24 @@ impl BrowserDriver for DesktopSession {
             ((x - bounds.x) * frame.scale).clamp(0.0, (bounds.w * frame.scale - 1.0).max(0.0));
         let down =
             ((y - bounds.y) * frame.scale).clamp(0.0, (bounds.h * frame.scale - 1.0).max(0.0));
+        // And the spot must still look as it did: a scroll or a redraw in
+        // place leaves the window where it was but moves what is under the
+        // point. The read is masked as the image was, so secret fields match.
+        let (now, scale) = snapshot.shot.take().ok_or_else(|| {
+            BrowserError::Protocol("get_window_state sent no screenshot".to_owned())
+        })?;
+        let now = mask(now, bounds, scale, &snapshot.secrets)?;
+        if (scale - frame.scale).abs() > f64::EPSILON
+            || !looks_as_it_did(&frame.source, &now, across, down)?
+        {
+            return Err(BrowserError::StaleImage(input.image));
+        }
+        let row = snapshot.line_at(x, y).map(|line| line.row.clone());
+        let class = row.as_ref().and_then(|row| effect_class(&row.name));
+        let press = match (class, &row) {
+            (Some(class), Some(row)) => press_for(&mut self.policy, class, row)?,
+            _ => PressMode::None,
+        };
         let key = snapshot.key;
         let mut observation = self.act(&snapshot, |session| {
             session
@@ -1225,7 +1324,7 @@ impl BrowserDriver for DesktopSession {
         })?;
         let bounds = bounds
             .ok_or_else(|| BrowserError::Protocol("the window's place is unknown".to_owned()))?;
-        let png = mask(png, bounds, scale, &secrets)?;
+        let png = Arc::new(mask(png, bounds, scale, &secrets)?);
         let frame = Frame {
             left: bounds.x,
             top: bounds.y,
@@ -1234,6 +1333,7 @@ impl BrowserDriver for DesktopSession {
             window: key,
             bounds,
             scale,
+            source: Arc::clone(&png),
         };
         let (image, width, height, bytes) = self.remember(png, frame)?;
         Ok(ScreenshotOutput {
@@ -1273,7 +1373,7 @@ impl BrowserDriver for DesktopSession {
             input.width,
             input.height,
         );
-        let (image, width, height, bytes) = self.remember(encode_png(&region)?, frame)?;
+        let (image, width, height, bytes) = self.remember(Arc::new(encode_png(&region)?), frame)?;
         Ok(ImageOutput {
             image,
             media_type: "image/png".to_owned(),
@@ -1306,7 +1406,7 @@ impl BrowserDriver for DesktopSession {
         let width = ((input.width as f32 * scale).round() as u32).clamp(1, 4096);
         let height = ((input.height as f32 * scale).round() as u32).clamp(1, 4096);
         let zoomed = region.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
-        let (image, width, height, bytes) = self.remember(encode_png(&zoomed)?, frame)?;
+        let (image, width, height, bytes) = self.remember(Arc::new(encode_png(&zoomed)?), frame)?;
         Ok(ImageOutput {
             image,
             media_type: "image/png".to_owned(),
@@ -1329,7 +1429,13 @@ impl BrowserDriver for DesktopSession {
             .as_deref()
             .map(|target| Self::token(&snapshot, target))
             .transpose()?;
-        let class = is_return(&input.key).then_some(EFFECT_SEND);
+        // An activation key aimed at an effect-named control does what a
+        // click on it does, and takes its class; any other Return sends.
+        let class = aimed
+            .as_ref()
+            .filter(|_| is_activation(&input.key))
+            .and_then(|(line, _)| effect_class(&line.row.name))
+            .or_else(|| is_return(&input.key).then_some(EFFECT_SEND));
         let row = aimed
             .as_ref()
             .map_or_else(|| key_row(&input.key), |(line, _)| line.row.clone());

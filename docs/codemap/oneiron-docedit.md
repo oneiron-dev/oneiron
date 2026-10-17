@@ -64,7 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
-| `src/lib.rs` | src | s | 1 enum · 8 fn · 14 mod · 5 re-export | DoceditError | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
+| `src/lib.rs` | src | s | 1 struct · 1 enum · 9 fn · 14 mod · 5 re-export | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
 | `src/live/deck_export.rs` | src | XL | 7 struct · 1 enum · 10 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
 | `src/live/held.rs` | src | s | 8 crate-vis | — | What a retained element is written as, in live-model terms: a shape's or connector's preset, a connector's… |
 | `src/live/mod.rs` | src | s | 1 enum · 2 mod · 2 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
@@ -83,8 +83,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
 | `src/retained_opc/xml/retained.rs` | src | m | 1 struct · 4 crate-vis | XmlLimits | One authoritative parse |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
-| `src/xlsx_body.rs` | src | L | 6 struct · 4 enum · 10 fn · 2 const | XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxSheet +2 | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
-| `src/xlsx_shift.rs` | src | s | 1 crate-vis | — | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
+| `src/xlsx_body.rs` | src | XL | 7 struct · 4 enum · 11 fn · 2 const · 2 re-export | XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxSheet +3 | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
+| `src/xlsx_shift.rs` | src | m | 1 struct · 2 enum · 7 fn · 1 crate-vis | SheetFate, XlsxAxis, XlsxAxisEdit | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
+| `src/xlsx_styles.rs` | src | m | 5 struct · 2 enum · 1 fn · 1 crate-vis | XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat | Cell formats a body composes from the workbook's own: an imported cell format with its font, fill, border or… |
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
 | `tests/comment_anchors.rs` | test | m | — | — | Native Word comment ranges for the comment-anchor scenarios (owner ask 2026-10-16; the cases come from… |

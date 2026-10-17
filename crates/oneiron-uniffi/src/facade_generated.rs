@@ -143,6 +143,11 @@ export_facade! {
     let output = client.vault_fanout_resume(&input)?;
     crate::codec::lift_record("vault.fanout.resume", &output)
 };
+"vault.fanout.resume_as" => fn vault_fanout_resume_as(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume_as", input)?;
+    let output = client.vault_fanout_resume_as(&input)?;
+    crate::codec::lift_record("vault.fanout.resume_as", &output)
+};
 "vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> FanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutAckRequest = crate::codec::lower_record("vault.fanout.ack", input)?;
     let output = client.vault_fanout_ack(&input)?;
@@ -735,6 +740,11 @@ export_facade! {
     let input: oneiron::blob_artifact::ArtifactAskSubmit = crate::codec::lower_record("vault.artifacts.ask", input)?;
     let output = client.vault_artifacts_ask(&input)?;
     crate::codec::lift_record("vault.artifacts.ask", &output)
+};
+"vault.critic.review" => fn vault_critic_review(&self, input: CriticReviewSubmit) -> CriticReviewOutcome = |client| {
+    let input: oneiron::critic::review::CriticReviewSubmit = crate::codec::lower_record("vault.critic.review", input)?;
+    let output = client.vault_critic_review(&input)?;
+    crate::codec::lift_record("vault.critic.review", &output)
 };
 "vault.artifacts.propose_deck" => fn vault_artifacts_propose_deck(&self, input: DeckProposeRequest) -> DeckProposeOutcome = |client| {
     let input: oneiron::blob_artifact::DeckProposeRequest = crate::codec::lower_record("vault.artifacts.propose_deck", input)?;

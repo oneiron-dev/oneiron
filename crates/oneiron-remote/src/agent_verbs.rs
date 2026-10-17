@@ -130,6 +130,9 @@ impl OneironClient {
                 "vault.fanout.resume" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::FanoutLaunchView,
                 >(client, verb, &input),
+                "vault.fanout.resume_as" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FanoutLaunchView,
+                >(client, verb, &input),
                 "vault.fanout.ack" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::FanoutLaunchView,
                 >(client, verb, &input),
@@ -497,6 +500,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.artifacts.ask" => remote_agent_verb_output::<
                     oneiron::blob_artifact::ArtifactAskOutcome,
+                >(client, verb, &input),
+                "vault.critic.review" => remote_agent_verb_output::<
+                    oneiron::critic::review::CriticReviewOutcome,
                 >(client, verb, &input),
                 "vault.artifacts.propose_deck" => remote_agent_verb_output::<
                     oneiron::blob_artifact::DeckProposeOutcome,
@@ -1278,6 +1284,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.fanout.resume", value)
+    }
+    pub fn vault_fanout_resume_as(
+        &self,
+        input: &oneiron::task_verb::sdk::FanoutResumeRequest,
+    ) -> Result<oneiron::task_verb::sdk::FanoutLaunchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.fanout.resume_as", value)
     }
     pub fn vault_fanout_ack(
         &self,
@@ -2783,6 +2801,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.ask", value)
+    }
+    pub fn vault_critic_review(
+        &self,
+        input: &oneiron::critic::review::CriticReviewSubmit,
+    ) -> Result<oneiron::critic::review::CriticReviewOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.critic.review", value)
     }
     /// Runs one native deck transaction over the head and holds the proposal for Keep.
     pub fn vault_artifacts_propose_deck(

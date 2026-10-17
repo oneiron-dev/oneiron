@@ -56,7 +56,9 @@ use tower::ServiceExt;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
 use crate::actions::SharedActionExecutor;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::server::{HeldLiveRun, LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer};
+use crate::server::{
+    HeldLiveRun, LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer, seated_planner,
+};
 
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -328,23 +330,38 @@ where
     let door: Arc<dyn AgentVerbDoor> =
         Arc::new(FacadeRowDoor::new(server, headers, extensions, key));
     let executor = app()?;
-    // OF-181: the live run's guard, taken before the action and held through
-    // it, with the run's lease read again under it.
+    // OF-181: the live run's guard, waited for briefly while an entry or
+    // another action holds it, taken before the action and held through it,
+    // with the run's lease read again under it.
     let held = match &live_run {
         Some(run) => Some(
             run.hold(&server.live_runs, &server.vault)
+                .await
                 .map_err(engine)?
                 .map_err(refused)?,
         ),
         None => None,
     };
+    let host = Arc::clone(server);
     let vault = Arc::clone(&server.vault);
     tokio::task::spawn_blocking(move || {
+        // OF-181: an action for a live run plans its leader rows as the
+        // run's own entries do, on the host's ladder.
+        let planner = match live_run.as_ref().map(ResolvedLiveRun::planner) {
+            Some((Some(settings), model)) => seated_planner(
+                &vault,
+                settings,
+                model,
+                host.decision_host().host_planner_decisions(actor),
+            )
+            .map_err(oneiron::Error::InvalidConfig)?,
+            _ => None,
+        };
         let binding = ActionHostBinding {
             verb_door: Some(door),
             owner: owner.as_ref(),
             live_run: held.as_ref().map(HeldLiveRun::proof),
-            planner: None,
+            planner,
         };
         run(executor, &vault, WriteActor::new(actor, class), binding)
     })
@@ -372,9 +389,16 @@ async fn attach_live_run(
     })?;
     let run = EntityId::from_hex(&run).map_err(|_| refused(LiveRunRefusal::Invalid))?;
     let caller = live_run_caller(&bound, &auth);
+    // OF-181: the run's guard, waited for briefly while an entry or an
+    // action holds it, then held through the attach.
+    let attaching = server
+        .live_runs
+        .attaching(run, caller)
+        .await
+        .map_err(refused)?;
     let runs = Arc::clone(&server.live_runs);
     let vault = Arc::clone(&server.vault);
-    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, run, caller))
+    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, attaching))
         .await
         .map_err(|_| internal())?
         .map_err(engine)?

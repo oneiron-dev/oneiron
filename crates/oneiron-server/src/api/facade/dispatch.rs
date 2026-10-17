@@ -658,6 +658,26 @@ async fn vault_fanout_resume(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_fanout_resume_as(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.fanout.resume_as")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.fanout.resume_as", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.fanout.resume_as", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_fanout_resume_as(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_fanout_ack(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -3332,6 +3352,26 @@ async fn vault_artifacts_ask(
     let hooks = facade_hooks_pre(server, call, "vault.artifacts.ask", value).await?;
     let output = facade_output(
         super::host_doors::vault_artifacts_ask(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_critic_review(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "vault.critic.review")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.critic.review", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.critic.review", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_critic_review(server, auth, facade_input(hooks.args.clone())?)
             .await?,
     )?;
     Ok(FacadeCallOutput::unlisted(
@@ -6290,6 +6330,7 @@ pub(crate) async fn call_verb(
         "tasks.wave" => tasks_wave(server, call, input).await,
         "vault.fanout.launch" => vault_fanout_launch(server, call, input).await,
         "vault.fanout.resume" => vault_fanout_resume(server, call, input).await,
+        "vault.fanout.resume_as" => vault_fanout_resume_as(server, call, input).await,
         "vault.fanout.ack" => vault_fanout_ack(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
         "vault.witness" => vault_witness(server, call, input).await,
@@ -6446,6 +6487,7 @@ pub(crate) async fn call_verb(
         "vault.artifacts.release_wait" => vault_artifacts_release_wait(server, call, input).await,
         "vault.artifacts.review_slides" => vault_artifacts_review_slides(server, call, input).await,
         "vault.artifacts.ask" => vault_artifacts_ask(server, call, input).await,
+        "vault.critic.review" => vault_critic_review(server, call, input).await,
         "vault.artifacts.propose_deck" => vault_artifacts_propose_deck(server, call, input).await,
         "vault.artifacts.propose_output" => {
             vault_artifacts_propose_output(server, call, input).await

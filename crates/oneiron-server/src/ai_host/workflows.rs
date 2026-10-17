@@ -17,6 +17,14 @@
 //! on the host's decision ladder once the host installed one, so its pack
 //! receipt closes attributed (OF-540).
 //!
+//! A wave cut's fan-out under the vault's `auto` mode is ruled on through the
+//! host's decision ladder once the host installed it (FIX 939).
+//!
+//! A leaf that confessed (OF-544) is sealed with its confession once it has
+//! completed: the seal pins its result and executor and opens a directed
+//! check for each flaw or doubt it names. A leaf that gave none is sealed
+//! with none.
+//!
 //! On the same signal it asks each queued project question (OF-501): a
 //! person's turn queued it by reference, and it runs here, off that turn, on
 //! the host's typed ladder once the host installed one.
@@ -30,12 +38,15 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint};
 use oneiron::failure_ladder::FailureLadderOutcome;
+use oneiron::learning::TypeRef;
 use oneiron::llm::decision::HeldLadder;
+use oneiron::self_heal::audit::AttemptConfession;
 use tokio::sync::{broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
 use super::step::{StepRunner, deliver_hold_notice};
 use super::step_failure::{FailedStep, held_leases, settle};
+use crate::decision_host::DecisionHost;
 
 const LEASE_OWNER: &str = "oneiron-server-workflows";
 /// Project questions lease apart from workflow steps, so a failed step's
@@ -54,10 +65,14 @@ pub(super) struct WorkflowPump {
 }
 
 impl WorkflowPump {
+    /// `decisions` is the host's decision host, shared with the Dreamer: the
+    /// host installs it once it staffs its ladder, and from the next wave cut
+    /// on its fan-out is ruled on through it.
     pub(super) fn spawn(
         vault: Arc<Vault>,
         runner: StepRunner,
         status: Arc<StatusCell>,
+        decisions: Arc<OnceLock<DecisionHost>>,
     ) -> std::io::Result<Self> {
         let (stop, stopped) = watch::channel(false);
         let detection = Arc::new(OnceLock::new());
@@ -84,7 +99,7 @@ impl WorkflowPump {
                     }
                 };
                 pump(
-                    &runtime, &vault, &runner, &status, &questions, &judges, stopped,
+                    &runtime, &vault, &runner, &status, &questions, &judges, &decisions, stopped,
                 );
             })?;
         Ok(Self {
@@ -125,6 +140,10 @@ impl WorkflowPump {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the pump's one thread holds each hook the host installs"
+)]
 fn pump(
     runtime: &tokio::runtime::Runtime,
     vault: &Vault,
@@ -132,6 +151,7 @@ fn pump(
     status: &StatusCell,
     detection: &OnceLock<ProjectDetection>,
     attribution: &OnceLock<HeldLadder>,
+    decisions: &OnceLock<DecisionHost>,
     mut stopped: watch::Receiver<bool>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
@@ -140,7 +160,15 @@ fn pump(
             return;
         }
         ask_project_questions(vault, detection, &stopped);
-        let open = match pump_once(runtime, vault, runner, status, attribution, &stopped) {
+        let open = match pump_once(
+            runtime,
+            vault,
+            runner,
+            status,
+            attribution,
+            decisions.get(),
+            &stopped,
+        ) {
             Ok(open) => open,
             Err(error) => {
                 tracing::error!(%error, "workflow pump pass failed");
@@ -173,6 +201,7 @@ fn pump_once(
     runner: &StepRunner,
     status: &StatusCell,
     attribution: &OnceLock<HeldLadder>,
+    decisions: Option<&DecisionHost>,
     stopped: &watch::Receiver<bool>,
 ) -> oneiron::Result<bool> {
     let held = match vault.release_annotation_holds() {
@@ -183,7 +212,7 @@ fn pump_once(
         }
     };
     if !*stopped.borrow() {
-        super::waves::run_once(runtime, vault, runner, status)?;
+        super::waves::run_once(runtime, vault, runner, status, decisions)?;
     }
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
@@ -197,6 +226,7 @@ fn pump_once(
             let mut claimed: Option<(AttemptId, u32)> = None;
             let mut retryable = false;
             let mut held = None;
+            let mut confession = None;
             let progress = dispatcher.run_workflow_step_output(
                 *root,
                 LEASE_OWNER,
@@ -251,7 +281,19 @@ fn pump_once(
                     // its failure is settled, while the lease still holds.
                     bind_attribution(vault, step.attempt.id, attribution);
                     match ran {
-                        Ok(output) => Ok(output),
+                        Ok(output) => {
+                            // The seal measures the agent that ran, on the
+                            // type the spawn was placed under.
+                            confession = output.confession.and_then(|objectives| {
+                                Some(AttemptConfession {
+                                    attempt: step.attempt.id,
+                                    subject: step.input.target.agent_definition_ref().ok()?,
+                                    type_ref: TypeRef::from(&step.input.type_ref),
+                                    objectives,
+                                })
+                            });
+                            Ok(output.bytes)
+                        }
                         // The meter ran out inside the model call: held as
                         // at the boundary, from the checkpoint before the
                         // call it could not pay for.
@@ -293,6 +335,11 @@ fn pump_once(
                     }
                 }
             });
+            if progress.is_ok()
+                && let Some(confession) = confession
+            {
+                seal(vault, &confession);
+            }
             // The held leaf waits paused; its workflow waits with it until
             // the owner resumes the hold. The notice rides the hold, and
             // goes to the owners now.
@@ -378,6 +425,15 @@ fn ask_project_questions(
                 return;
             }
         }
+    }
+}
+
+/// Seals the leaf that just completed with its confession. A refusal (the
+/// leaf did not settle with a result and an executor, or the confession
+/// does not hold) is logged; the completed work stands.
+fn seal(vault: &Vault, confession: &AttemptConfession) {
+    if let Err(error) = vault.record_attempt_confession(confession, now_secs()) {
+        tracing::warn!(kind = ?error.kind(), attempt = ?confession.attempt, "a workflow leaf's confession was not sealed");
     }
 }
 

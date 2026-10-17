@@ -8,7 +8,9 @@
 //! A packet past one request is put in parts the home stages and then shelves
 //! whole, and every packet is read back in slices. An update whose base this
 //! machine lacks asks the home for a replacement of its window, which another
-//! machine that seals the window puts on its next relay.
+//! machine that seals the window puts on its next relay. An opened-item
+//! machine materializes only the windows it promoted: another window's packet
+//! waits in its mirror until a promotion takes its rows in.
 
 use std::collections::BTreeSet;
 
@@ -121,12 +123,14 @@ impl SyncClient {
 /// [`SyncClient::relay_sealed_windows`] on the window manager and a client
 /// config alone, for a task off the live sync loop.
 pub(crate) async fn relay_sealed_windows(
-    manager: &WindowManager,
+    manager: &std::sync::Arc<WindowManager>,
     config: &SyncClientConfig,
 ) -> Result<SealedRelay, TransportError> {
     let relayer = Relayer {
         vault: manager.vault(),
         manager,
+        opened: config.residence_mode == crate::sync::SyncResidenceMode::Opened
+            && config.federation_peer.is_none(),
     };
     let private = relayer.private_worlds().map_err(storage)?;
     if private.is_empty() {
@@ -156,7 +160,9 @@ pub(crate) async fn relay_sealed_windows(
 
 struct Relayer<'a> {
     vault: &'a Vault,
-    manager: &'a WindowManager,
+    manager: &'a std::sync::Arc<WindowManager>,
+    /// An opened-item machine: it materializes only the windows it promoted.
+    opened: bool,
 }
 
 impl Relayer<'_> {
@@ -289,10 +295,24 @@ impl Relayer<'_> {
         if packet.id().to_hex() != id {
             return Err(refused());
         }
-        match self
-            .manager
-            .import_sealed_residence_content(world, window, &packet)
-        {
+        // An opened-item machine materializes only a window it holds
+        // promoted, judged again once the handle is held; any other window's
+        // packet waits in its mirror for a promotion.
+        let held = if self.opened && self.promoted(window)? {
+            Some(self.manager.open_window(window).map_err(storage)?)
+        } else {
+            None
+        };
+        let materialize = !self.opened || (held.is_some() && self.promoted(window)?);
+        let merged = if materialize {
+            self.manager
+                .import_sealed_residence_content(world, window, &packet)
+        } else {
+            self.manager
+                .merge_sealed_residence_mirror(world, window, &packet)
+        };
+        drop(held);
+        match merged {
             Ok(binding) => Ok(Took::Merged(binding.kind)),
             // It opened here, so this machine reads the world.
             Err(_)
@@ -305,6 +325,15 @@ impl Relayer<'_> {
             }
             Err(_) => Ok(Took::Skipped),
         }
+    }
+
+    /// Whether this opened-item machine holds `window` promoted (`rp:w:`).
+    fn promoted(&self, window: &WindowKey) -> Result<bool, TransportError> {
+        Ok(self
+            .vault
+            .sync_state_get(&format!("rp:w:{window}"))
+            .map_err(storage)?
+            .is_some())
     }
 
     /// Seals and puts each window that changed here since its last put, and a

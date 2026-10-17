@@ -58,6 +58,7 @@ tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
+vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
@@ -176,6 +177,7 @@ vaultArtifactsWaits(requestJson: string): string
 vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
 vaultArtifactsAsk(input: unknown): unknown
+vaultCriticReview(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string

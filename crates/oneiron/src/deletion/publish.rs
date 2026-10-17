@@ -268,7 +268,7 @@ impl Vault {
         // Transient path (window not open): the loaded doc IS the
         // import-merge of `d:w:` + pending `u:` rows. Both reads and the
         // snapshot-mode scrub run before the publish txn opens.
-        let merged_update_keys = self.sync_state_keys_with_prefix(&format!("u:w:{window_key}:"))?;
+        let merged_update_keys = self.window_update_keys(&window_key)?;
         let doc = match load_window_from_state(self, "local", &window_key) {
             Ok(doc) => doc,
             Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
@@ -450,6 +450,11 @@ impl Vault {
                 .and_then(|()| {
                     if value.reason.is_hard() {
                         self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+                        crate::world_keys::reject_held_pad_world_in_txn(
+                            &self.store,
+                            &wtxn,
+                            &[*id],
+                        )?;
                         self.reject_held_redirect_shells_in_txn(&wtxn, id)
                     } else {
                         Ok(())
@@ -529,6 +534,25 @@ impl Vault {
             PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
         }
         Ok(())
+    }
+
+    /// Every persisted update key of `window_key`, under the same 10,000-key
+    /// cap as [`Vault::sync_state_keys_with_prefix`].
+    #[cfg(feature = "sync")]
+    fn window_update_keys(&self, window_key: &crate::sync::WindowKey) -> Result<Vec<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut keys = Vec::new();
+        for key in self.store.port_window_update_keys(
+            &rtxn,
+            Some(WindowAddress::new(window_key.as_str())),
+            |key| key.to_owned(),
+        )? {
+            if keys.len() >= crate::vault::MAX_SYNC_STATE_KEYS {
+                return Err(Error::IndexOverflow("window update keys"));
+            }
+            keys.push(key?);
+        }
+        Ok(keys)
     }
 
     /// Decides history-free versus ordinary snapshot bytes for this window

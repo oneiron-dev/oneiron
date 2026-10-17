@@ -205,6 +205,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_fanout_resume_as(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.fanout.resume_as", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_fanout_ack(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.fanout.ack", input)
@@ -1448,6 +1457,12 @@ impl NativeClient {
     pub fn vault_artifacts_ask(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.artifacts.ask", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_critic_review(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.critic.review", input)
             .map_err(facade_error)
     }
     #[napi]

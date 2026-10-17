@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oneiron::{ModelId, ModelLocality};
+use oneiron::{LlmCatalogEntry, ModelId, ModelLocality};
 
 use super::ladder::OfferLadder;
 
@@ -13,6 +13,11 @@ pub struct ModelRouter {
     /// Each configured chat model served alone by its own id, and the family
     /// its provider's config names for it.
     chat: BTreeMap<ModelId, Option<String>>,
+    /// The owner's aliases (`[models.aliases]`), each for a configured
+    /// model's id.
+    aliases: BTreeMap<String, ModelId>,
+    /// Each chat model's catalog entry, as the owner's other nodes see it.
+    entries: BTreeMap<ModelId, LlmCatalogEntry>,
 }
 
 impl ModelRouter {
@@ -29,6 +34,28 @@ impl ModelRouter {
     /// `family`.
     pub(super) fn chat_model(&mut self, model: ModelId, family: Option<String>) {
         self.chat.insert(model, family);
+    }
+
+    /// Records the catalog entry of a chat model served by its own id.
+    pub(super) fn chat_entry(&mut self, entry: LlmCatalogEntry) {
+        self.entries.insert(entry.model.clone(), entry);
+    }
+
+    /// The catalog entry of every chat model served by its own id, in id
+    /// order.
+    pub fn chat_catalog(&self) -> impl Iterator<Item = &LlmCatalogEntry> {
+        self.entries.values()
+    }
+
+    /// Names the owner's aliases, each for the configured model it calls.
+    pub(super) fn name_aliases(&mut self, aliases: &BTreeMap<String, ModelId>) {
+        self.aliases.clone_from(aliases);
+    }
+
+    /// The configured model an owner alias names, when `[models.aliases]`
+    /// has it.
+    pub fn aliased(&self, alias: &str) -> Option<&ModelId> {
+        self.aliases.get(alias)
     }
 
     /// Every chat model this router serves alone by its own id (no seat, no

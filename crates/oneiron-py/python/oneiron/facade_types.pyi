@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 276 facade rows, 1035 declarations.
-Inputs: 231 of 276 fully typed, 43 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 224 of 276 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
-Opaque serde_json::Value leaves: 72; unread shapes: 2.
+Census: 278 facade rows, 1065 declarations.
+Inputs: 232 of 278 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 226 of 278 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Opaque serde_json::Value leaves: 73; unread shapes: 2.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -494,6 +494,15 @@ class ShapePlanSummary(TypedDict):
     needs_word: int
     ceremonies: int
     no_door: int
+ShapeReachVerdict = Literal["can", "asks"]
+ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "verdict": ShapeReachVerdict})
+class ShapeReach(TypedDict):
+    facts: list[ShapeReachFact]
+class ShapePlanReach(TypedDict):
+    before: ShapeReach
+    after: ShapeReach
+    unresolved: list[str]
+    line: str
 class ShapePlan(TypedDict):
     seed_id: NotRequired[str | None]
     seed: ShapeSeed
@@ -501,6 +510,7 @@ class ShapePlan(TypedDict):
     items: list[ShapePlanItem]
     undeclared: list[ShapeRow]
     summary: ShapePlanSummary
+    reach: NotRequired[ShapePlanReach]
 class ShapeApplyRequest(TypedDict):
     plan: ShapePlan
     approve: NotRequired[list[int]]
@@ -587,6 +597,7 @@ class SteerReceipt(TypedDict):
 class DescribeRequest(TypedDict):
     task_ref: NotRequired[str | None]
     self: NotRequired[bool]
+    vault: NotRequired[bool]
     session_id: NotRequired[str | None]
     key: NotRequired[str | None]
     frame_epoch: NotRequired[int | None]
@@ -621,6 +632,12 @@ class TasksOverflow(TypedDict):
 class TasksSection(TypedDict):
     rows: list[TaskRow]
     overflow: NotRequired[TasksOverflow | None]
+class ShapeCard(TypedDict):
+    seed_id: NotRequired[str | None]
+    counts: dict[str, int]
+    open_applies: int
+    reach: ShapeReach
+    line: str
 class TaskDescriptionSection(TasksSection):
     kind: Literal["tasks_section"]
 class TaskDescriptionCard(TypedDict):
@@ -629,7 +646,10 @@ class TaskDescriptionCard(TypedDict):
 class TaskDescriptionSelfCard(TypedDict):
     kind: Literal["self_card"]
     tail: str
-TaskDescription = TaskDescriptionSection | TaskDescriptionCard | TaskDescriptionSelfCard
+class TaskDescriptionVaultCard(TypedDict):
+    kind: Literal["vault_card"]
+    card: ShapeCard
+TaskDescription = TaskDescriptionSection | TaskDescriptionCard | TaskDescriptionSelfCard | TaskDescriptionVaultCard
 class TaskAssigneeAgentDefBody(TypedDict):
     agent_def_ref: EntityId
 class TaskAssigneeAgentDef(TypedDict):
@@ -2645,11 +2665,16 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
+class SecretLiftClose(TypedDict):
+    proposal: str
+    reason: LiftCloseReason
 class SecretLiftRequest(TypedDict):
     start: NotRequired[bool]
+    close: NotRequired[SecretLiftClose | None]
 SecretScanMode = Literal["on", "off"]
 LiftTrigger = Literal["switch", "owner"]
-LiftFamily = Literal["records", "side_rows", "carriers"]
+LiftFamily = Literal["records", "attempts", "side_rows", "carriers"]
 class LiftCounts(TypedDict):
     family: LiftFamily
     read: int
@@ -2674,23 +2699,33 @@ class SecretLiftReceipt(TypedDict):
     proposals: int
     failed: int
 LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "history"]
+class LiftCauseCount(TypedDict):
+    cause: LiftCause
+    open: int
 class SecretLiftProposal(TypedDict):
     path: str
     detector_reason: str
     suggested_secret_name: str
     project_id: str
 class SecretLiftHistoryProposal(TypedDict):
+    id: NotRequired[str]
     family: LiftFamily
     cause: LiftCause
     proposal: SecretLiftProposal
     run_id: str
     filed_at: int
+    closed_at: NotRequired[int | None]
+    closed_by: NotRequired[str | None]
+    close_reason: NotRequired[LiftCloseReason | None]
+    close_receipt: NotRequired[str | None]
 class SecretLiftStatus(TypedDict):
     mode: SecretScanMode
     paused: bool
     running: NotRequired[SecretLiftProgress | None]
     last: NotRequired[SecretLiftReceipt | None]
     open_proposals: int
+    open_by_cause: list[LiftCauseCount]
+    closed_proposals: int
     proposals: list[SecretLiftHistoryProposal]
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):
@@ -3313,6 +3348,89 @@ class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
+class CriticBinding(TypedDict):
+    lens_id: str
+    lens_ref: str
+    actor_ref: str
+    actor_class: int
+class CriticReviewSubmit(TypedDict):
+    target_ref: str
+    kind: str
+    session_ref: str
+    run_ref: str
+    type_node: str
+    type_tree_version: int
+    axis: str
+    auto_resolve_threshold: float
+    catalog: Any
+    critics: list[CriticBinding]
+CritiqueVerdict = Literal["accept", "revise", "discard"]
+class CritiqueTriageScores(TypedDict):
+    accept: float
+    revise: float
+    discard: float
+CritiqueSeverity = Literal["info", "low", "medium", "high", "blocking"]
+class MergedFinding(TypedDict):
+    key: str
+    verdict: CritiqueVerdict
+    severity: CritiqueSeverity
+    confidence: float
+    artifact_ids: list[str]
+    evidence_refs: list[str]
+    suggested_edit: NotRequired[str | None]
+    auto_resolved: bool
+class CritiqueTriage(TypedDict):
+    verdict: CritiqueVerdict
+    scores: CritiqueTriageScores
+    acted_on_artifact_ids: list[str]
+    hard_veto_artifact_ids: list[str]
+    out_of_scope_artifact_ids: list[str]
+    findings: list[MergedFinding]
+    auto_resolved: bool
+class CritiqueProvenance(TypedDict):
+    critic_ref: str
+    critic_class: int
+    model_id: str
+    model_revision: NotRequired[str | None]
+LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
+class CellTypeRef(TypedDict):
+    node_id: str
+    tree_version: int
+class LearningCell(TypedDict):
+    predicate: LearningPredicate
+    subject: EntityId
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[CellTypeRef | None]
+    axis: NotRequired[str | None]
+    consent_scope: NotRequired[str | None]
+    setting_key: NotRequired[str | None]
+class CriticPrediction(TypedDict):
+    what: str
+    by_when: int
+    how_checked: OutcomeBinding
+class CritiqueArtifact(TypedDict):
+    schema_version: int
+    artifact_id: str
+    run_id: str
+    branch_job: AttemptId
+    candidate_ref: str
+    lens_id: str
+    domain: str
+    provenance: CritiqueProvenance
+    calibration: LearningCell
+    prediction: NotRequired[CriticPrediction | None]
+    verdict: CritiqueVerdict
+    severity: CritiqueSeverity
+    hard_check_passed: NotRequired[bool | None]
+    evidence_refs: list[str]
+    suggested_edit: NotRequired[str | None]
+    out_of_scope: NotRequired[bool]
+    created_at: int
+class CriticReviewOutcome(TypedDict):
+    verdict_claim_ref: str
+    triage: CritiqueTriage
+    artifacts: list[CritiqueArtifact]
+    receipts: list[DecisionReceipt]
 class DeckProposeRequest(TypedDict):
     artifact_ref: str
     transaction: Any
@@ -4720,6 +4838,7 @@ class BodyCell(TypedDict):
     value: XlsxValue
     formula: NotRequired[str | None]
     style: NotRequired[int | None]
+    format: NotRequired[str | None]
     locked: NotRequired[XlsxLock | None]
 class XlsxArea(TypedDict):
     first: tuple[int, int]
@@ -4738,11 +4857,64 @@ class BodyName(TypedDict):
 class XlsxStyle(TypedDict):
     num_fmt: int
     format: NotRequired[str | None]
+class XlsxColorRgb(TypedDict):
+    kind: Literal["rgb"]
+    argb: str
+class XlsxColorTheme(TypedDict):
+    kind: Literal["theme"]
+    theme: int
+    tint: NotRequired[float | None]
+class XlsxColorIndexed(TypedDict):
+    kind: Literal["indexed"]
+    index: int
+class XlsxColorAuto(TypedDict):
+    kind: Literal["auto"]
+XlsxColor = XlsxColorRgb | XlsxColorTheme | XlsxColorIndexed | XlsxColorAuto
+class XlsxFont(TypedDict):
+    name: NotRequired[str | None]
+    size: NotRequired[float | None]
+    bold: NotRequired[bool | None]
+    italic: NotRequired[bool | None]
+    underline: NotRequired[str | None]
+    strike: NotRequired[bool | None]
+    color: NotRequired[XlsxColor | None]
+class XlsxFill(TypedDict):
+    pattern: str
+    fg: NotRequired[XlsxColor | None]
+    bg: NotRequired[XlsxColor | None]
+class XlsxEdge(TypedDict):
+    style: str
+    color: NotRequired[XlsxColor | None]
+class XlsxBorder(TypedDict):
+    left: NotRequired[XlsxEdge | None]
+    right: NotRequired[XlsxEdge | None]
+    top: NotRequired[XlsxEdge | None]
+    bottom: NotRequired[XlsxEdge | None]
+    diagonal: NotRequired[XlsxEdge | None]
+    diagonal_up: NotRequired[bool | None]
+    diagonal_down: NotRequired[bool | None]
+class XlsxNumberFormatBuiltin(TypedDict):
+    kind: Literal["builtin"]
+    id: int
+class XlsxNumberFormatCode(TypedDict):
+    kind: Literal["code"]
+    code: str
+XlsxNumberFormat = XlsxNumberFormatBuiltin | XlsxNumberFormatCode
+class XlsxFormat(TypedDict):
+    base: int
+    font: NotRequired[XlsxFont | None]
+    fill: NotRequired[XlsxFill | None]
+    border: NotRequired[XlsxBorder | None]
+    number_format: NotRequired[XlsxNumberFormat | None]
+class BodyFormat(TypedDict):
+    id: str
+    format: XlsxFormat
 class XlsxBodyView(TypedDict):
     date1904: bool
     sheets: list[XlsxSheetView]
     names: list[BodyName]
     styles: list[XlsxStyle]
+    formats: list[BodyFormat]
 NodeId = int
 NodeKind = Literal["root", "slide", "group", "shape", "picture", "graphic_frame", "connector"]
 class GeometryProps(TypedDict):
@@ -4893,6 +5065,15 @@ class XlsxBodyOpSetStyle(TypedDict):
     sheet: str
     cell: str
     style: NotRequired[int | None]
+class XlsxBodyOpDefineFormat(TypedDict):
+    op: Literal["define_format"]
+    id: str
+    format: XlsxFormat
+class XlsxBodyOpSetFormat(TypedDict):
+    op: Literal["set_format"]
+    sheet: str
+    cell: str
+    format: str
 class XlsxBodyOpClear(TypedDict):
     op: Literal["clear"]
     sheet: str
@@ -4907,7 +5088,42 @@ class XlsxBodyOpDeleteName(TypedDict):
     op: Literal["delete_name"]
     name: str
     sheet: NotRequired[str | None]
-XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName
+class XlsxBodyOpAddSheet(TypedDict):
+    op: Literal["add_sheet"]
+    sheet: str
+    at: NotRequired[int | None]
+class XlsxBodyOpRenameSheet(TypedDict):
+    op: Literal["rename_sheet"]
+    sheet: str
+    name: str
+class XlsxBodyOpMoveSheet(TypedDict):
+    op: Literal["move_sheet"]
+    sheet: str
+    at: int
+class XlsxBodyOpDeleteSheet(TypedDict):
+    op: Literal["delete_sheet"]
+    sheet: str
+class XlsxBodyOpInsertRows(TypedDict):
+    op: Literal["insert_rows"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpDeleteRows(TypedDict):
+    op: Literal["delete_rows"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpInsertColumns(TypedDict):
+    op: Literal["insert_columns"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpDeleteColumns(TypedDict):
+    op: Literal["delete_columns"]
+    sheet: str
+    at: int
+    count: int
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):

@@ -164,6 +164,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.fanout.resume_as",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutResumeRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.ack",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutAckRequest,
@@ -794,6 +800,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.artifacts.ask",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactAskSubmit,
+                >(),
+            ),
+            (
+                "vault.critic.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::critic::review::CriticReviewSubmit,
                 >(),
             ),
             (
@@ -1862,6 +1874,10 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/self")?.clone(),
             );
             properties.insert(
+                "vault".to_owned(),
+                schema.pointer("/properties/vault")?.clone(),
+            );
+            properties.insert(
                 "session_id".to_owned(),
                 schema.pointer("/properties/session_id")?.clone(),
             );
@@ -1902,6 +1918,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.fanout.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.resume_as" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2690,6 +2713,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.critic.review" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3738,6 +3768,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
         }
+        "vault.fanout.resume_as" => {
+            let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
+        }
         "vault.fanout.ack" => {
             let _input: crate::task_verb::sdk::FanoutAckRequest = decode(value.clone())?;
         }
@@ -4126,6 +4159,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.ask" => {
             let _input: crate::blob_artifact::ArtifactAskSubmit = decode(value.clone())?;
+        }
+        "vault.critic.review" => {
+            let _input: crate::critic::review::CriticReviewSubmit = decode(value.clone())?;
         }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
@@ -4705,6 +4741,7 @@ pub fn invoke(
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
+        "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
@@ -4904,6 +4941,7 @@ pub fn invoke(
             encode(vault_artifacts_review_slides(memory, decode(value)?)?)
         }
         "vault.artifacts.ask" => encode(vault_artifacts_ask(memory, decode(value)?)?),
+        "vault.critic.review" => encode(vault_critic_review(memory, decode(value)?)?),
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -5470,6 +5508,8 @@ pub fn describe(
         Err(MemoryError::bad_request(
             "describe(self) requires a bound run session",
         ))?
+    } else if input.vault {
+        memory.describe_vault(&input)?
     } else if input.key.is_some() {
         Err(MemoryError::bad_request(
             "describe(card key) expands a board card, which only a live board session holds",
@@ -5517,6 +5557,12 @@ pub fn vault_fanout_resume(
     input: crate::task_verb::sdk::FanoutResumeRequest,
 ) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
     crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)
+}
+pub fn vault_fanout_resume_as(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutResumeRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)
 }
 pub fn vault_fanout_ack(
     memory: &Memory<'_>,
@@ -6468,6 +6514,12 @@ pub fn vault_artifacts_ask(
     input: crate::blob_artifact::ArtifactAskSubmit,
 ) -> MemoryResult<crate::blob_artifact::ArtifactAskOutcome> {
     memory.artifacts_ask(&input)
+}
+pub fn vault_critic_review(
+    memory: &Memory<'_>,
+    input: crate::critic::review::CriticReviewSubmit,
+) -> MemoryResult<crate::critic::review::CriticReviewOutcome> {
+    crate::task_verb::sdk::host_only(memory, "vault.critic.review", &input)
 }
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,
