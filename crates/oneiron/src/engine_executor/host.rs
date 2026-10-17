@@ -1078,8 +1078,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     ///
     /// With `child`, a readable result is also checked as a spawn's source
     /// would be, writing nothing: the run's own result, then the seat, the
-    /// clock and the scope. The verdict names the children's cutoff and what
-    /// their scope may still spend, or why a spawn would be refused.
+    /// clock and the scope. The verdict names the children's cutoff and the
+    /// meter they spend on (`scope`, with what it may still spend, or
+    /// `host`, the host's own meter, with no figure), or why a spawn would be
+    /// refused.
     fn can_read_result(
         &mut self,
         target: &JsResultTarget,
@@ -1104,12 +1106,16 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                     .gated_write
                     .reader_spawn_seat()
                     .map_or((0, 0), |seat| (seat.window_tokens, seat.memory_bytes));
+                let meter = if available.is_some() { "scope" } else { "host" };
                 verdict["child"] = json!({
                     "cutoff_unix_ms": cutoff,
-                    "spend_available_units": available,
+                    "meter": meter,
                     "window_tokens": window_tokens,
                     "memory_bytes": memory_bytes,
                 });
+                if let Some(available) = available {
+                    verdict["child"]["spend_available_units"] = json!(available);
+                }
             }
             Err(reason) => verdict = json!({"can": false, "reason": reason}),
         }

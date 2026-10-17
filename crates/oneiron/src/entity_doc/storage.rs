@@ -130,7 +130,7 @@ pub(super) fn persist(
         Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
         None => None,
     };
-    crate::batch::secret_scan::scan_metadata_field(&doc.text())?;
+    crate::batch::secret_scan::scan_content_in_txn(store, txn, doc.text().as_bytes())?;
     // A NOTE written on this plane keeps the NOTE door's body bound and its
     // seal (OF-073 stage 1).
     if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {

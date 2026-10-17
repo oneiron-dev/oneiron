@@ -1293,6 +1293,30 @@ async fn vault_members_add(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_members_invitation_slip(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.invitation_slip")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.invitation_slip", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.members.invitation_slip", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_invitation_slip(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_members_change(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -5041,6 +5065,7 @@ pub(crate) async fn call_verb(
         "vault.shared.outcomes" => vault_shared_outcomes(server, call, input).await,
         "vault.shared.deletion" => vault_shared_deletion(server, call, input).await,
         "vault.members.add" => vault_members_add(server, call, input).await,
+        "vault.members.invitation_slip" => vault_members_invitation_slip(server, call, input).await,
         "vault.members.change" => vault_members_change(server, call, input).await,
         "vault.members.remove" => vault_members_remove(server, call, input).await,
         "vault.members.leave" => vault_members_leave(server, call, input).await,

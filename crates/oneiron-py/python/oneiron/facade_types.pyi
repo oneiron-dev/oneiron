@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 223 facade rows, 766 declarations.
-Inputs: 192 of 223 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 180 of 223 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 224 facade rows, 767 declarations.
+Inputs: 193 of 224 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 181 of 224 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
 """
 
@@ -1534,7 +1534,12 @@ class SharedVaultChangeMemberLeft(TypedDict):
 SharedVaultChangeOwnerRecoveredBody = TypedDict("SharedVaultChangeOwnerRecoveredBody", {"from": str, "to": str})
 class SharedVaultChangeOwnerRecovered(TypedDict):
     owner_recovered: SharedVaultChangeOwnerRecoveredBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
+class SharedVaultChangeRecordErasedBody(TypedDict):
+    record: str
+    redaction: NotRequired[str | None]
+class SharedVaultChangeRecordErased(TypedDict):
+    record_erased: SharedVaultChangeRecordErasedBody
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered | SharedVaultChangeRecordErased
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
@@ -1586,6 +1591,11 @@ class InvitationSlip(TypedDict):
 class SharedMemberInvited(TypedDict):
     receipt: SharedActExecutionReceipt
     credential: NotRequired[InvitationSlip | None]
+class InvitationSlipRequest(TypedDict):
+    vault_id: int
+    member: str
+    invitation: str
+    holder_key: str
 class SharedMemberRoleRequest(TypedDict):
     vault_id: int
     member: str
