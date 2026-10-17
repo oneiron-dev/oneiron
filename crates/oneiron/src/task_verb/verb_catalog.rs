@@ -101,6 +101,21 @@ pub enum AgentVerb {
     VaultGuestsMintSlip,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
+    VaultResearchBind,
+    VaultResearchFork,
+    VaultResearchWeave,
+    VaultResearchMeasureSearch,
+    VaultResearchMeasureHeldOut,
+    VaultResearchMarkInvalid,
+    VaultResearchPrune,
+    VaultResearchSelect,
+    VaultResearchPromotionBasis,
+    VaultResearchReserveConfirmation,
+    VaultResearchPromote,
+    VaultResearchReserveWork,
+    VaultResearchSettleWork,
+    VaultResearchRefundWork,
+    VaultResearchRecordBenchmark,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -432,6 +447,21 @@ impl AgentVerb {
         Self::VaultGuestsMintSlip,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
+        Self::VaultResearchBind,
+        Self::VaultResearchFork,
+        Self::VaultResearchWeave,
+        Self::VaultResearchMeasureSearch,
+        Self::VaultResearchMeasureHeldOut,
+        Self::VaultResearchMarkInvalid,
+        Self::VaultResearchPrune,
+        Self::VaultResearchSelect,
+        Self::VaultResearchPromotionBasis,
+        Self::VaultResearchReserveConfirmation,
+        Self::VaultResearchPromote,
+        Self::VaultResearchReserveWork,
+        Self::VaultResearchSettleWork,
+        Self::VaultResearchRefundWork,
+        Self::VaultResearchRecordBenchmark,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -766,6 +796,21 @@ impl AgentVerb {
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
+            Self::VaultResearchBind => "vault.research.bind",
+            Self::VaultResearchFork => "vault.research.fork",
+            Self::VaultResearchWeave => "vault.research.weave",
+            Self::VaultResearchMeasureSearch => "vault.research.measure_search",
+            Self::VaultResearchMeasureHeldOut => "vault.research.measure_held_out",
+            Self::VaultResearchMarkInvalid => "vault.research.mark_invalid",
+            Self::VaultResearchPrune => "vault.research.prune",
+            Self::VaultResearchSelect => "vault.research.select",
+            Self::VaultResearchPromotionBasis => "vault.research.promotion_basis",
+            Self::VaultResearchReserveConfirmation => "vault.research.reserve_confirmation",
+            Self::VaultResearchPromote => "vault.research.promote",
+            Self::VaultResearchReserveWork => "vault.research.reserve_work",
+            Self::VaultResearchSettleWork => "vault.research.settle_work",
+            Self::VaultResearchRefundWork => "vault.research.refund_work",
+            Self::VaultResearchRecordBenchmark => "vault.research.record_benchmark",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -1100,6 +1145,21 @@ impl AgentVerb {
                 | Self::VaultGuestsMintSlip
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultResearchBind
+                | Self::VaultResearchFork
+                | Self::VaultResearchWeave
+                | Self::VaultResearchMeasureSearch
+                | Self::VaultResearchMeasureHeldOut
+                | Self::VaultResearchMarkInvalid
+                | Self::VaultResearchPrune
+                | Self::VaultResearchSelect
+                | Self::VaultResearchPromotionBasis
+                | Self::VaultResearchReserveConfirmation
+                | Self::VaultResearchPromote
+                | Self::VaultResearchReserveWork
+                | Self::VaultResearchSettleWork
+                | Self::VaultResearchRefundWork
+                | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1438,6 +1498,21 @@ impl AgentVerb {
                 | Self::VaultGuestsMintSlip
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultResearchBind
+                | Self::VaultResearchFork
+                | Self::VaultResearchWeave
+                | Self::VaultResearchMeasureSearch
+                | Self::VaultResearchMeasureHeldOut
+                | Self::VaultResearchMarkInvalid
+                | Self::VaultResearchPrune
+                | Self::VaultResearchSelect
+                | Self::VaultResearchPromotionBasis
+                | Self::VaultResearchReserveConfirmation
+                | Self::VaultResearchPromote
+                | Self::VaultResearchReserveWork
+                | Self::VaultResearchSettleWork
+                | Self::VaultResearchRefundWork
+                | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1804,6 +1879,21 @@ impl AgentVerb {
                 | Self::VaultGuestsMintSlip
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultResearchBind
+                | Self::VaultResearchFork
+                | Self::VaultResearchWeave
+                | Self::VaultResearchMeasureSearch
+                | Self::VaultResearchMeasureHeldOut
+                | Self::VaultResearchMarkInvalid
+                | Self::VaultResearchPrune
+                | Self::VaultResearchSelect
+                | Self::VaultResearchPromotionBasis
+                | Self::VaultResearchReserveConfirmation
+                | Self::VaultResearchPromote
+                | Self::VaultResearchReserveWork
+                | Self::VaultResearchSettleWork
+                | Self::VaultResearchRefundWork
+                | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -2091,6 +2181,21 @@ impl AgentVerb {
                 | Self::VaultGuestsMintSlip
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultResearchBind
+                | Self::VaultResearchFork
+                | Self::VaultResearchWeave
+                | Self::VaultResearchMeasureSearch
+                | Self::VaultResearchMeasureHeldOut
+                | Self::VaultResearchMarkInvalid
+                | Self::VaultResearchPrune
+                | Self::VaultResearchSelect
+                | Self::VaultResearchPromotionBasis
+                | Self::VaultResearchReserveConfirmation
+                | Self::VaultResearchPromote
+                | Self::VaultResearchReserveWork
+                | Self::VaultResearchSettleWork
+                | Self::VaultResearchRefundWork
+                | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -2356,6 +2461,21 @@ impl AgentVerb {
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
+            Self::VaultResearchBind => &["spec"],
+            Self::VaultResearchFork => &["spec"],
+            Self::VaultResearchWeave => &["spec"],
+            Self::VaultResearchMeasureSearch => &["spec"],
+            Self::VaultResearchMeasureHeldOut => &["spec"],
+            Self::VaultResearchMarkInvalid => &["spec"],
+            Self::VaultResearchPrune => &["spec"],
+            Self::VaultResearchSelect => &["spec"],
+            Self::VaultResearchPromotionBasis => &["spec"],
+            Self::VaultResearchReserveConfirmation => &["spec"],
+            Self::VaultResearchPromote => &["spec"],
+            Self::VaultResearchReserveWork => &["spec"],
+            Self::VaultResearchSettleWork => &["spec"],
+            Self::VaultResearchRefundWork => &["spec"],
+            Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2688,6 +2808,21 @@ impl AgentVerb {
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
+            Self::VaultResearchBind => &["spec"],
+            Self::VaultResearchFork => &["spec"],
+            Self::VaultResearchWeave => &["spec"],
+            Self::VaultResearchMeasureSearch => &["spec"],
+            Self::VaultResearchMeasureHeldOut => &["spec"],
+            Self::VaultResearchMarkInvalid => &["spec"],
+            Self::VaultResearchPrune => &["spec"],
+            Self::VaultResearchSelect => &["spec"],
+            Self::VaultResearchPromotionBasis => &["spec"],
+            Self::VaultResearchReserveConfirmation => &["spec"],
+            Self::VaultResearchPromote => &["spec"],
+            Self::VaultResearchReserveWork => &["spec"],
+            Self::VaultResearchSettleWork => &["spec"],
+            Self::VaultResearchRefundWork => &["spec"],
+            Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -3198,6 +3333,47 @@ impl AgentVerb {
             }
             Self::VaultRecordsEraseConfirm => {
                 "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."
+            }
+            Self::VaultResearchBind => {
+                "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."
+            }
+            Self::VaultResearchFork => {
+                "Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent."
+            }
+            Self::VaultResearchWeave => {
+                "Records a crossover child of several parents whose candidate landed as a claim through the gate, once a held-out win turned merge crossover on."
+            }
+            Self::VaultResearchMeasureSearch => {
+                "Records a node's search-split evidence, its selection signal, once."
+            }
+            Self::VaultResearchMeasureHeldOut => {
+                "Records a node's held-out evidence, once; only the promotion basis reads it."
+            }
+            Self::VaultResearchMarkInvalid => {
+                "Marks a node buggy: it stays as evidence and takes debug children."
+            }
+            Self::VaultResearchPrune => {
+                "Stops exploring a branch for a stated cause; its attempts, claims and outputs stay. A stop names the caller."
+            }
+            Self::VaultResearchSelect => {
+                "Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met."
+            }
+            Self::VaultResearchPromotionBasis => {
+                "Decides a candidate's held-out promotion basis against the incumbent, once."
+            }
+            Self::VaultResearchReserveConfirmation => {
+                "Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving."
+            }
+            Self::VaultResearchPromote => {
+                "Settles a candidate on the sealed referee's scores of it and the incumbent: a strict win, a not-worse sufficiency card and, for a skill, the gate's accepted verdict make it the incumbent."
+            }
+            Self::VaultResearchReserveWork => {
+                "Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id."
+            }
+            Self::VaultResearchSettleWork => "Settles a work reservation at its actual spend.",
+            Self::VaultResearchRefundWork => "Refunds a work reservation nothing was spent on.",
+            Self::VaultResearchRecordBenchmark => {
+                "Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."
             }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."

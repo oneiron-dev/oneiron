@@ -504,6 +504,38 @@ export class Oneiron {
       /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
       erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.RecordEraseOutcome => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.RecordEraseOutcome),
     },
+    research: {
+      /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
+      bind: (input: Facade.ResearchBindWire): Facade.ResearchBinding => this.#call(() => this.#client.vaultResearchBind(input) as Facade.ResearchBinding),
+      /** Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent. */
+      fork: (input: Facade.ResearchForkWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchFork(input) as Facade.ExperimentNode),
+      /** Records a crossover child of several parents whose candidate landed as a claim through the gate, once a held-out win turned merge crossover on. */
+      weave: (input: Facade.ResearchWeaveWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchWeave(input) as Facade.ExperimentNode),
+      /** Records a node's search-split evidence, its selection signal, once. */
+      measure_search: (input: Facade.ResearchSearchWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMeasureSearch(input) as Facade.ExperimentNode),
+      /** Records a node's held-out evidence, once; only the promotion basis reads it. */
+      measure_held_out: (input: Facade.ResearchHeldOutWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMeasureHeldOut(input) as Facade.ExperimentNode),
+      /** Marks a node buggy: it stays as evidence and takes debug children. */
+      mark_invalid: (input: Facade.ResearchInvalidWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchMarkInvalid(input) as Facade.ExperimentNode),
+      /** Stops exploring a branch for a stated cause; its attempts, claims and outputs stay. A stop names the caller. */
+      prune: (input: Facade.ResearchPruneWire): Facade.ExperimentNode => this.#call(() => this.#client.vaultResearchPrune(input) as Facade.ExperimentNode),
+      /** Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met. */
+      select: (input: Facade.ResearchSelectWire): Facade.SelectionReceipt => this.#call(() => this.#client.vaultResearchSelect(input) as Facade.SelectionReceipt),
+      /** Decides a candidate's held-out promotion basis against the incumbent, once. */
+      promotion_basis: (input: Facade.ResearchBasisWire): Facade.PromotionBasis => this.#call(() => this.#client.vaultResearchPromotionBasis(input) as Facade.PromotionBasis),
+      /** Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving. */
+      reserve_confirmation: (input: Facade.ResearchCandidateWire): Facade.EvalRelease => this.#call(() => this.#client.vaultResearchReserveConfirmation(input) as Facade.EvalRelease),
+      /** Settles a candidate on the sealed referee's scores of it and the incumbent: a strict win, a not-worse sufficiency card and, for a skill, the gate's accepted verdict make it the incumbent. */
+      promote: (input: Facade.ResearchPromoteWire): Facade.CampaignPromotionReceipt => this.#call(() => this.#client.vaultResearchPromote(input) as Facade.CampaignPromotionReceipt),
+      /** Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id. */
+      reserve_work: (input: Facade.ResearchWorkWire): Facade.EntityId => this.#call(() => this.#client.vaultResearchReserveWork(input) as Facade.EntityId),
+      /** Settles a work reservation at its actual spend. */
+      settle_work: (input: Facade.ResearchSettleWire): Facade.ResearchReservation => this.#call(() => this.#client.vaultResearchSettleWork(input) as Facade.ResearchReservation),
+      /** Refunds a work reservation nothing was spent on. */
+      refund_work: (input: Facade.ResearchRefundWire): Facade.ResearchReservation => this.#call(() => this.#client.vaultResearchRefundWork(input) as Facade.ResearchReservation),
+      /** Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents. */
+      record_benchmark: (input: Facade.ResearchBenchmarkWire): Facade.SelectionBenchmark => this.#call(() => this.#client.vaultResearchRecordBenchmark(input) as Facade.SelectionBenchmark),
+    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),

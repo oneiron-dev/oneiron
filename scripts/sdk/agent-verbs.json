@@ -1508,6 +1508,156 @@
       "section": false
     },
     {
+      "name": "vault.research.bind",
+      "description": "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it.",
+      "input": "crate::task_verb::sdk::ResearchBindWire",
+      "output": "crate::autoreason_campaign::research::ResearchBinding",
+      "call": "crate::task_verb::sdk::research_bind(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.fork",
+      "description": "Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent.",
+      "input": "crate::task_verb::sdk::ResearchForkWire",
+      "output": "crate::autoreason_campaign::research::ExperimentNode",
+      "call": "crate::task_verb::sdk::research_fork(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.weave",
+      "description": "Records a crossover child of several parents whose candidate landed as a claim through the gate, once a held-out win turned merge crossover on.",
+      "input": "crate::task_verb::sdk::ResearchWeaveWire",
+      "output": "crate::autoreason_campaign::research::ExperimentNode",
+      "call": "crate::task_verb::sdk::research_weave(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.measure_search",
+      "description": "Records a node's search-split evidence, its selection signal, once.",
+      "input": "crate::task_verb::sdk::ResearchSearchWire",
+      "output": "crate::autoreason_campaign::research::ExperimentNode",
+      "call": "crate::task_verb::sdk::research_measure_search(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.measure_held_out",
+      "description": "Records a node's held-out evidence, once; only the promotion basis reads it.",
+      "input": "crate::task_verb::sdk::ResearchHeldOutWire",
+      "output": "crate::autoreason_campaign::research::ExperimentNode",
+      "call": "crate::task_verb::sdk::research_measure_held_out(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.mark_invalid",
+      "description": "Marks a node buggy: it stays as evidence and takes debug children.",
+      "input": "crate::task_verb::sdk::ResearchInvalidWire",
+      "output": "crate::autoreason_campaign::research::ExperimentNode",
+      "call": "crate::task_verb::sdk::research_mark_invalid(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.prune",
+      "description": "Stops exploring a branch for a stated cause; its attempts, claims and outputs stay. A stop names the caller.",
+      "input": "crate::task_verb::sdk::ResearchPruneWire",
+      "output": "crate::autoreason_campaign::research::ExperimentNode",
+      "call": "crate::task_verb::sdk::research_prune(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.select",
+      "description": "Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met.",
+      "input": "crate::task_verb::sdk::ResearchSelectWire",
+      "output": "crate::autoreason_campaign::research::SelectionReceipt",
+      "call": "crate::task_verb::sdk::research_select(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.promotion_basis",
+      "description": "Decides a candidate's held-out promotion basis against the incumbent, once.",
+      "input": "crate::task_verb::sdk::ResearchBasisWire",
+      "output": "crate::autoreason_campaign::research::PromotionBasis",
+      "call": "crate::task_verb::sdk::research_promotion_basis(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.reserve_confirmation",
+      "description": "Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving.",
+      "input": "crate::task_verb::sdk::ResearchCandidateWire",
+      "output": "crate::skill_optimize::EvalRelease",
+      "call": "crate::task_verb::sdk::research_reserve_confirmation(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.promote",
+      "description": "Settles a candidate on the sealed referee's scores of it and the incumbent: a strict win, a not-worse sufficiency card and, for a skill, the gate's accepted verdict make it the incumbent.",
+      "input": "crate::task_verb::sdk::ResearchPromoteWire",
+      "output": "crate::autoreason_campaign::research::CampaignPromotionReceipt",
+      "call": "crate::task_verb::sdk::research_promote(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.reserve_work",
+      "description": "Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id.",
+      "input": "crate::task_verb::sdk::ResearchWorkWire",
+      "output": "crate::entity_id::EntityId",
+      "call": "crate::task_verb::sdk::research_reserve_work(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.settle_work",
+      "description": "Settles a work reservation at its actual spend.",
+      "input": "crate::task_verb::sdk::ResearchSettleWire",
+      "output": "crate::autoreason_campaign::research::ResearchReservation",
+      "call": "crate::task_verb::sdk::research_settle_work(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.refund_work",
+      "description": "Refunds a work reservation nothing was spent on.",
+      "input": "crate::task_verb::sdk::ResearchRefundWire",
+      "output": "crate::autoreason_campaign::research::ResearchReservation",
+      "call": "crate::task_verb::sdk::research_refund_work(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.research.record_benchmark",
+      "description": "Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents.",
+      "input": "crate::task_verb::sdk::ResearchBenchmarkWire",
+      "output": "crate::autoreason_campaign::research::SelectionBenchmark",
+      "call": "crate::task_verb::sdk::research_record_benchmark(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.authority.handoff_alarms",
       "description": "Every saved authority handoff fork alarm, for the owner.",
       "input": "EmptyRequest",
