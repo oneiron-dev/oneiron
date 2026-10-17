@@ -1575,11 +1575,15 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             properties.insert(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
-            &["task_ref"]
+            &["spec", "task_ref"]
         }
         "vault.witness" => {
             if schema == &serde_json::Value::Bool(false) {

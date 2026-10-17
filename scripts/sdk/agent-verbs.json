@@ -406,7 +406,7 @@
     },
     {
       "name": "tasks.update",
-      "description": "Records the owner's acknowledgement of a failed TASK; any other task stays as it was.",
+      "description": "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK.",
       "refs": ["/task_ref"],
       "input": "TaskUpdateRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
@@ -415,7 +415,8 @@
       "scope": "Write",
       "mcp_scope": "addressed",
       "mcp_fields": {
-        "task_ref": "task_ref"
+        "spec": "$",
+        "task_ref": "=task_ref"
       },
       "admission": {
         "unrestricted_record_scope": true,

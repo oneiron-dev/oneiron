@@ -439,6 +439,9 @@ pub struct Memory<'v> {
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
+    /// The host's decision path for the task surface's questions, when a
+    /// host bound one (`with_task_decisions`, OF-533): advice, not authority.
+    pub(super) task_decisions: Option<std::sync::Arc<crate::task_verb::TaskDecisions<'v>>>,
     /// The off-record session the host's request named
     /// (`in_off_record_session`): context, not authority.
     pub(super) off_record_session: Option<String>,
@@ -529,6 +532,7 @@ impl Vault {
             transport_invocation: false,
             origin_conversation: None,
             task_host: None,
+            task_decisions: None,
             off_record_session: None,
             credential: false,
             rewrite_admit: None,
@@ -569,6 +573,7 @@ impl Vault {
             transport_invocation: false,
             origin_conversation: None,
             task_host: None,
+            task_decisions: None,
             off_record_session: None,
             credential: false,
             rewrite_admit: None,
@@ -618,11 +623,29 @@ impl<'v> Memory<'v> {
                 transport_invocation: self.transport_invocation,
                 origin_conversation: self.origin_conversation,
                 task_host: self.task_host.clone(),
+                task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
                 credential: self.credential,
                 rewrite_admit: self.rewrite_admit.clone(),
             },
         })
+    }
+
+    /// Binds the host's decision path for the task surface's questions
+    /// (OF-533): a post's take question and a report's done and ask-up
+    /// questions then go through its ladder instead of asking up. A model
+    /// rung may block on the host's runtime, so a host binds it only on a
+    /// blocking thread. It grants nothing: decide() advises, and every check
+    /// still runs.
+    #[must_use]
+    pub fn with_task_decisions(mut self, decisions: crate::task_verb::TaskDecisions<'v>) -> Self {
+        self.task_decisions = Some(std::sync::Arc::new(decisions));
+        self
+    }
+
+    /// The task surface's decision path a host bound, if any.
+    pub(crate) fn task_decisions(&self) -> Option<&crate::task_verb::TaskDecisions<'v>> {
+        self.task_decisions.as_deref()
     }
 }
 
