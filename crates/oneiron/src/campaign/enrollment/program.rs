@@ -20,16 +20,6 @@ const PROGRAM: SideTable<EntityId, ProgramRow, LegacyJson> =
 const PROGRAM_STEP: SideTable<(EntityId, EntityId), ProgramStepRow, LegacyJson> =
     SideTable::new(&side_table::CAMPAIGN_PROGRAM_STEP);
 
-/// The most campaign programs that may name one saved query as their audience.
-///
-/// One, because detection history, the membership watermark and the
-/// enrollment dedupe key are all keyed by `(query, entity)` with no campaign
-/// or program: a second program enrolling from the same query would read the
-/// first one's entry as "already entered" and never enroll. A query that
-/// should feed two campaigns is two parameterized query instances, each with
-/// its own membership (ARCH-0059).
-pub const MAX_CAMPAIGN_PROGRAMS_PER_AUDIENCE_QUERY: usize = 1;
-
 // ---------------------------------------------------------------------------
 // Campaign program state (the outward leg's persisted authority)
 // ---------------------------------------------------------------------------
@@ -121,10 +111,10 @@ impl CampaignProgramStep {
 ///
 /// This is the one door that writes programs, so an audience is validated
 /// here: the query and the campaign share an owner, the campaign is active,
-/// the entry step is one of this program's own steps, and no other program
-/// already enrolls from the query
-/// ([`MAX_CAMPAIGN_PROGRAMS_PER_AUDIENCE_QUERY`]). The last check shares the
-/// write's transaction, so two programs cannot both claim one query.
+/// and the entry step is one of this program's own steps. Any number of
+/// programs may enroll from one query; only a second program of the SAME
+/// campaign on the same query is refused (`audience_taken_by`). That check
+/// shares the write's transaction.
 ///
 /// # Errors
 ///
@@ -136,16 +126,14 @@ pub fn put_campaign_program(vault: &Vault, program: &CampaignProgram) -> Result<
         validate_audience(vault, program, audience)?;
     }
     vault.with_write_txn_grouped(|wtxn| {
-        if let Some(audience) = &program.audience {
-            let bound = programs_for_query_in_txn(vault, wtxn, audience.query_ref)?
+        if let Some(audience) = &program.audience
+            && programs_for_query_in_txn(vault, wtxn, audience.query_ref)?
                 .iter()
-                .filter(|other| other.program_ref != program.program_ref)
-                .count();
-            if bound >= MAX_CAMPAIGN_PROGRAMS_PER_AUDIENCE_QUERY {
-                return Err(invalid(
-                    "another campaign program already enrolls from this saved query",
-                ));
-            }
+                .any(|other| audience_taken_by(other, program))
+        {
+            return Err(invalid(
+                "another program of this campaign already enrolls from this saved query",
+            ));
         }
         PROGRAM.put(
             &vault.store,
@@ -171,8 +159,7 @@ pub fn campaign_program(vault: &Vault, program_ref: EntityId) -> Result<Option<C
 }
 
 /// The programs that name `query_ref` as their audience, in program-id
-/// order. [`put_campaign_program`] holds them to
-/// [`MAX_CAMPAIGN_PROGRAMS_PER_AUDIENCE_QUERY`].
+/// order. [`put_campaign_program`] holds them to one program per campaign.
 ///
 /// # Errors
 ///
@@ -201,6 +188,17 @@ fn programs_for_query_in_txn(
         }
     }
     Ok(programs)
+}
+
+/// Whether `other`, a program already enrolling from `program`'s audience
+/// query, takes that audience from `program`: it is another program of the
+/// same campaign. A campaign holds one `campaign.member` claim per person and
+/// one epoch sequence per query, so two of its programs on one query would
+/// race for the same head, and the second's entry would be dropped as stale.
+/// Programs of different campaigns never conflict: each enrolls into its own
+/// campaign.
+fn audience_taken_by(other: &CampaignProgram, program: &CampaignProgram) -> bool {
+    other.program_ref != program.program_ref && other.campaign_ref == program.campaign_ref
 }
 
 /// The audience rules that need no write transaction: the query and the

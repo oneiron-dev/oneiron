@@ -183,7 +183,7 @@ impl OneironClient {
                     Option<oneiron::claim::WeaveDigestView>,
                 >(client, verb, &input),
                 "vault.weave.lens" => {
-                    remote_agent_verb_output::<oneiron::lens::GeneratedLens>(client, verb, &input)
+                    remote_agent_verb_output::<oneiron::lens::LensFrameCard>(client, verb, &input)
                 }
                 "vault.weave.link.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveLinkCorrectionView,
@@ -808,6 +808,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.artifacts.body.deck.oracle" => remote_agent_verb_output::<
                     oneiron::office_body::DeckGateView,
+                >(client, verb, &input),
+                "vault.artifacts.body.deck.preview" => remote_agent_verb_output::<
+                    oneiron::office_body::DeckPreview,
                 >(client, verb, &input),
                 "vault.artifacts.append" => remote_agent_verb_output::<
                     oneiron::memory::BlobVersionView,
@@ -1477,7 +1480,7 @@ impl OneironClient {
     pub fn vault_weave_lens(
         &self,
         input: &oneiron::claim::WeaveReportRequest,
-    ) -> Result<oneiron::lens::GeneratedLens, MemoryError> {
+    ) -> Result<oneiron::lens::LensFrameCard, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4023,6 +4026,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.body.deck.oracle", value)
+    }
+    /// The asked slides of a deck's head, drawn by the host's review renderer (provisional).
+    pub fn vault_artifacts_body_deck_preview(
+        &self,
+        input: &oneiron::office_body::DeckPreviewRequest,
+    ) -> Result<oneiron::office_body::DeckPreview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.body.deck.preview", value)
     }
     pub fn vault_artifacts_append(
         &self,

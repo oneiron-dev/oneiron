@@ -5620,6 +5620,30 @@ async fn vault_artifacts_body_deck_oracle(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_artifacts_body_deck_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.artifacts.body.deck.preview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.artifacts.body.deck.preview", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.artifacts.body.deck.preview", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_artifacts_body_deck_preview(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_artifacts_append(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6233,6 +6257,9 @@ pub(crate) async fn call_verb(
         }
         "vault.artifacts.body.deck.oracle" => {
             vault_artifacts_body_deck_oracle(server, call, input).await
+        }
+        "vault.artifacts.body.deck.preview" => {
+            vault_artifacts_body_deck_preview(server, call, input).await
         }
         "vault.artifacts.append" => vault_artifacts_append(server, call, input).await,
         "vault.artifacts.read" => vault_artifacts_read(server, call, input).await,

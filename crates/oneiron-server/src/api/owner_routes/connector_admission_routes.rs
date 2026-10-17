@@ -11,6 +11,12 @@
 //! Only then can `/v1/owner/connectors/consent` grant tools to an actor.
 //! Each step is its own vault write, so a failed step keeps the earlier
 //! ones and is retried by itself.
+//!
+//! After admission, `/slate/accept` restamps the settings in place, and
+//! `/enabled` switches the connector off and on. `/refresh` lists the tools
+//! again: a change binds a delta slate and puts the key back to Pending at
+//! the revision the connector now answers, for the owner's stamp and a
+//! fresh `/qualify`. A catalog's per-grant keys follow each of these.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -43,10 +49,8 @@ use crate::server::SyncServer;
 /// unbudgeted for sends (ARCH-0054).
 const CATALOG_CALL_CLASS: ConnectorCallClass = ConnectorCallClass::ScopedMcp;
 
-/// A new stamp on an admitted connector would move its slate past the
-/// revision the key accepted, and no door requalifies an admitted key yet.
-const ADMITTED_SLATE_REFUSAL: &str = "the connector is already admitted; its settings change \
-     through a refresh door this host does not have yet";
+/// Why an owner's off switch suspends a connector's key.
+const OWNER_OFF_REASON: &str = "switched off by the owner";
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -54,6 +58,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/connectors/setup", get(setup))
         .route("/connectors/slate/accept", post(accept))
         .route("/connectors/qualify", post(qualify))
+        .route("/connectors/refresh", post(refresh))
+        .route("/connectors/enabled", post(enabled))
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +107,38 @@ struct AcceptRequest {
 struct QualifyRequest {
     connector: String,
     kit: QualificationKit,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefreshRequest {
+    connector: String,
+    /// A new tool's data class and spend, by tool name. A tool left out
+    /// keeps its class, or is personal and spends nothing when new.
+    #[serde(default)]
+    tools: BTreeMap<String, ToolClass>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnabledRequest {
+    connector: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct Refreshed {
+    connector: String,
+    /// The connector's tools or revision changed, and the key is Pending.
+    changed: bool,
+    key: KeyView,
+    slate: SlateView,
+    /// New or expanded rows: the only ones the owner's stamp re-asks.
+    reask: Vec<String>,
+    /// Unchanged or narrowed rows, carried with their settings.
+    carried: Vec<String>,
+    /// Tools the connector no longer lists.
+    dropped: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -391,9 +429,10 @@ async fn setup(
     Ok(Json(reply))
 }
 
-/// `POST /v1/owner/connectors/slate/accept`: the owner's one stamp on the
-/// pending connector's slate, at the revision reviewed. It activates
-/// nothing; qualification does.
+/// `POST /v1/owner/connectors/slate/accept`: the owner's stamp on the
+/// connector's slate, at the revision reviewed. On a pending connector it
+/// activates nothing; qualification does. On an admitted one the key takes
+/// the new settings at once, and its per-grant keys carry or retire.
 async fn accept(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -411,9 +450,11 @@ fn accept_slate(
     request: AcceptRequest,
 ) -> OwnerResult<SlateView> {
     let catalog = catalog(vault, &normalize_name(&request.connector))?;
-    if catalog.record.status != ConnectorKeyStatus::Pending {
-        return Err(OwnerError::Refused(ADMITTED_SLATE_REFUSAL.to_owned()));
-    }
+    let admitted = match catalog.record.status {
+        ConnectorKeyStatus::Pending => false,
+        ConnectorKeyStatus::Active | ConnectorKeyStatus::Suspended => true,
+        ConnectorKeyStatus::Revoked => return Err(removed()),
+    };
     let (id, _) = slate_of(vault, &catalog.record)?;
     let slate = if request.all_manual {
         if !request.rows.is_empty() || request.facets.is_some() {
@@ -440,6 +481,11 @@ fn accept_slate(
         vault.stamp_connector_slate(owner, id, request.revision, &overrides, facets)
     }
     .map_err(engine)?;
+    if admitted {
+        vault
+            .adopt_connector_slate_stamp(&catalog.key, unix_seconds_now())
+            .map_err(engine)?;
+    }
     Ok(SlateView::new(id, &slate))
 }
 
@@ -483,6 +529,14 @@ fn qualify_connector(
                 "the connector is already admitted".to_owned(),
             ));
         }
+    }
+    let record = vault
+        .get_connector_key(&catalog.key)?
+        .ok_or_else(|| OwnerError::NotFound("connector key", catalog.key.to_hex()))?;
+    // After a refresh the suite may find no manifest change, or apply a
+    // proved narrow itself: nothing is left to approve.
+    if record.pending_manifest.is_none() && record.retained_manifest.is_some() {
+        return KeyView::new(catalog.key, record);
     }
     let approved = approve(vault, owner, catalog.key)?;
     KeyView::new(catalog.key, approved)
@@ -554,6 +608,158 @@ fn probe(
             ConnectorQualificationError::Vault(error) => engine(error),
         })?;
     Ok(())
+}
+
+/// `POST /v1/owner/connectors/refresh`: lists the connector's tools again,
+/// at its pinned revision while it still answers that one. Unchanged:
+/// nothing moves. Changed: a delta slate carries the unchanged and narrowed
+/// rows with their settings and drafts the new and expanded ones, and the
+/// key goes back to Pending with its per-grant keys held, for the owner's
+/// stamp (when a row re-asks) and a fresh `/qualify`.
+async fn refresh(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<RefreshRequest>, JsonRejection>,
+) -> OwnerReply<Refreshed> {
+    let _owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || refresh_connector(&server, request)).await?;
+    Ok(Json(reply))
+}
+
+fn refresh_connector(server: &SyncServer, request: RefreshRequest) -> OwnerResult<Refreshed> {
+    let vault = server.vault();
+    let (name, endpoint) = installed(server, &request.connector)?;
+    let catalog = catalog(vault, &name)?;
+    match catalog.record.status {
+        ConnectorKeyStatus::Active | ConnectorKeyStatus::Pending => {}
+        ConnectorKeyStatus::Suspended => {
+            return Err(OwnerError::Refused(
+                "the connector is switched off; switch it on first".to_owned(),
+            ));
+        }
+        ConnectorKeyStatus::Revoked => return Err(removed()),
+    }
+    let pinned =
+        catalog.record.protocol_revision.clone().ok_or_else(|| {
+            OwnerError::Invalid("the connector pins no protocol revision".to_owned())
+        })?;
+    // The pinned revision first: a connector that still answers it keeps it.
+    let discovery =
+        host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
+            let client = host::client()?;
+            host::discover(&client, &endpoint, auth, Some(&pinned))
+                .or_else(|_| host::discover(&client, &endpoint, auth, None))
+        })
+        .map_err(engine)?
+        .map_err(engine)?;
+    if let Some(unknown) = request
+        .tools
+        .keys()
+        .find(|tool| !discovery.tools.iter().any(|listed| &listed.name == *tool))
+    {
+        return Err(OwnerError::Invalid(format!(
+            "the connector lists no tool {unknown}"
+        )));
+    }
+    let screened: Vec<_> = discovery
+        .tools
+        .iter()
+        .map(host::ListedTool::screened)
+        .collect();
+    if let Some(reason) = vault.screen_connector_tools(&screened, &name)? {
+        return Err(OwnerError::Refused(format!(
+            "the connector's tools failed screening: {reason}"
+        )));
+    }
+    let (slate_id, slate) = slate_of(vault, &catalog.record)?;
+    let mut classes: BTreeMap<String, ToolClass> = slate
+        .manifest()
+        .iter()
+        .map(|tool| {
+            (
+                tool.name.clone(),
+                ToolClass {
+                    data_class: tool.data_class,
+                    spends: tool.spends,
+                },
+            )
+        })
+        .collect();
+    classes.extend(request.tools);
+    let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
+    let listed = host::slate_manifest(&resolved, &discovery.tools, &classes);
+    if discovery.revision == pinned && by_name(&listed) == by_name(slate.manifest()) {
+        return Ok(Refreshed {
+            connector: name,
+            changed: false,
+            key: KeyView::new(catalog.key, catalog.record)?,
+            slate: SlateView::new(slate_id, &slate),
+            reask: Vec::new(),
+            carried: Vec::new(),
+            dropped: Vec::new(),
+        });
+    }
+    let delta = vault
+        .draft_connector_delta_slate(slate_id, &listed, None)
+        .map_err(engine)?;
+    let now = unix_seconds_now();
+    let record = if discovery.revision == pinned {
+        vault.revise_connector_slate(&catalog.key, delta.slate_id, now)
+    } else {
+        vault.revise_connector_protocol(&catalog.key, &discovery.revision, delta.slate_id, now)
+    }
+    .map_err(engine)?;
+    let (_, next) = slate_of(vault, &record)?;
+    Ok(Refreshed {
+        connector: name,
+        changed: true,
+        key: KeyView::new(catalog.key, record)?,
+        slate: SlateView::new(delta.slate_id, &next),
+        reask: delta.reask.into_iter().collect(),
+        carried: delta.carried.into_iter().collect(),
+        dropped: delta.dropped.into_iter().collect(),
+    })
+}
+
+/// `POST /v1/owner/connectors/enabled`: the owner's on/off switch for an
+/// admitted connector. Off suspends its key, and its per-grant keys are
+/// held with it; on resumes it, and they carry or retire.
+async fn enabled(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<EnabledRequest>, JsonRejection>,
+) -> OwnerReply<KeyView> {
+    let _owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || switch_connector(server.vault(), &request)).await?;
+    Ok(Json(reply))
+}
+
+fn switch_connector(vault: &Vault, request: &EnabledRequest) -> OwnerResult<KeyView> {
+    let catalog = catalog(vault, &normalize_name(&request.connector))?;
+    let record = match (catalog.record.status, request.enabled) {
+        (ConnectorKeyStatus::Active, true) | (ConnectorKeyStatus::Suspended, false) => {
+            catalog.record
+        }
+        (ConnectorKeyStatus::Active, false) => vault
+            .suspend_connector_key(&catalog.key, OWNER_OFF_REASON, unix_seconds_now())
+            .map_err(engine)?,
+        (ConnectorKeyStatus::Suspended, true) => vault
+            .resume_connector_key(&catalog.key, unix_seconds_now())
+            .map_err(engine)?,
+        (ConnectorKeyStatus::Pending, _) => {
+            return Err(OwnerError::Refused(
+                "the connector is not admitted yet".to_owned(),
+            ));
+        }
+        (ConnectorKeyStatus::Revoked, _) => return Err(removed()),
+    };
+    KeyView::new(catalog.key, record)
+}
+
+fn removed() -> OwnerError {
+    OwnerError::Refused("the connector is removed".to_owned())
 }
 
 fn by_name(manifest: &[SlateToolManifest]) -> BTreeMap<&str, &SlateToolManifest> {
