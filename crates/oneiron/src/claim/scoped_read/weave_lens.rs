@@ -741,8 +741,14 @@ pub(crate) fn settle_weave_lens_axes(
                 now,
             )?;
         }
-        let corrected =
-            corrected_since(vault, txn, id, report_links(report), &cards, render.rendered_at)?;
+        let corrected = corrected_since(
+            vault,
+            txn,
+            id,
+            report_links(report),
+            &cards,
+            render.rendered_at,
+        )?;
         if !corrected && seen != Some(true) {
             return Ok(());
         }
