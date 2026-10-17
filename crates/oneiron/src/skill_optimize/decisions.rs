@@ -158,12 +158,10 @@ impl dyn HeldOutReplayNotes + '_ {
         {
             return comparison.score_case(case);
         }
-        score(
-            self,
-            &format!("axis.{axis}"),
-            &[case.skill],
-            &case_state(self, case)?,
-        )
+        // The axis rides in the state, so a kept judgment says what it scored.
+        let mut state = case_state(self, case)?;
+        state["axis"] = json!(axis);
+        score(self, &format!("axis.{axis}"), &[case.skill], &state)
     }
 
     pub(crate) fn structural_audit(&self, task: &str, instructions: &str) -> Result<f32> {

@@ -2,6 +2,10 @@
 //! its typed-decision journal, records person-time on a run's receipt, and
 //! measures an open skill edit on its goal's axes, live arms included.
 //!
+//! The judge swaps (OF-184): the owner reads the shadow passes and the
+//! incumbent, sets the swap policy, and hand-tests a swap by picking the
+//! judge whose answer is right on a case the two judges disagreed on.
+//!
 //! The goal joins and the learned picks: the owner joins a skill's goal to a
 //! project's goal record, reads the preferences its picks taught, answers the
 //! tradeoff asks that have climbed to them, and reads the preferences the
@@ -16,8 +20,10 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::skill_optimize::{
-    GoalAxisReport, ProjectGoalRevisionProposal, SkillTradeoffAsk, SkillTradeoffPreferences,
-    TradeoffChoice, measure_skill_edit_goal_axes, project_goal_revision_proposals,
+    GoalAxisReport, JudgeIncumbent, JudgeSwapPick, JudgeSwapPolicy, JudgeSwapReceipt,
+    ProjectGoalRevisionProposal, SkillTradeoffAsk, SkillTradeoffPreferences, TradeoffChoice,
+    judge_incumbent, judge_swap_policy, judge_swap_receipts, measure_skill_edit_goal_axes,
+    pick_judge_swap_case, project_goal_revision_proposals, set_judge_swap_policy,
     set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project, skill_tradeoff_asks_for,
     skill_tradeoff_preferences,
 };
@@ -46,6 +52,32 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/skills/judge/tradeoff-asks", get(tradeoff_asks))
         .route("/skills/judge/tradeoff-asks/pick", post(pick))
         .route("/skills/judge/goal-revisions", get(goal_revisions))
+        .route("/skills/judge/swaps", get(swaps))
+        .route("/skills/judge/swaps/pick", post(swap_pick))
+        .route(
+            "/skills/judge/swap-policy",
+            get(swap_policy).post(set_swap_policy),
+        )
+}
+
+#[derive(Debug, Serialize)]
+struct Swaps {
+    /// The judge the kept history reads on; `None` before the first pass.
+    incumbent: Option<JudgeIncumbent>,
+    policy: JudgeSwapPolicy,
+    /// Every shadow pass and re-pin, oldest first.
+    receipts: Vec<JudgeSwapReceipt>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SwapPick {
+    /// The swap receipt, as 32 hex.
+    receipt: String,
+    /// The disagreement's case.
+    case_ref: String,
+    /// The judge whose answer is right, `model@version`.
+    judge: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -340,6 +372,77 @@ async fn goal_revisions(
     })
     .await?;
     Ok(Json(proposals))
+}
+
+/// `GET /v1/owner/skills/judge/swaps`: the incumbent judge, the swap
+/// policy and every swap receipt, each disagreement's ruling included.
+async fn swaps(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Swaps> {
+    owner(&auth, &server)?;
+    let swaps = blocking(move || -> OwnerResult<Swaps> {
+        let vault = server.vault();
+        Ok(Swaps {
+            incumbent: judge_incumbent(vault)?,
+            policy: judge_swap_policy(vault)?,
+            receipts: judge_swap_receipts(vault)?,
+        })
+    })
+    .await?;
+    Ok(Json(swaps))
+}
+
+/// `POST /v1/owner/skills/judge/swaps/pick`: the owner's hand-test pick on
+/// one disagreement. It decides that case in every later pass between the
+/// two judges, and can re-pin a takeover it contradicts.
+async fn swap_pick(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SwapPick>, JsonRejection>,
+) -> OwnerReply<JudgeSwapPick> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let pick = blocking(move || -> OwnerResult<JudgeSwapPick> {
+        Ok(pick_judge_swap_case(
+            server.vault(),
+            &owner,
+            &request.receipt,
+            &request.case_ref,
+            &request.judge,
+            unix_seconds(),
+        )?)
+    })
+    .await?;
+    Ok(Json(pick))
+}
+
+/// `GET /v1/owner/skills/judge/swap-policy`: the tie-breakers, the pinned
+/// divergence rate and the hands-on setting in force.
+async fn swap_policy(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<JudgeSwapPolicy> {
+    owner(&auth, &server)?;
+    let policy = blocking(move || -> OwnerResult<JudgeSwapPolicy> {
+        Ok(judge_swap_policy(server.vault())?)
+    })
+    .await?;
+    Ok(Json(policy))
+}
+
+/// `POST /v1/owner/skills/judge/swap-policy`: replaces the swap policy; a
+/// field left out takes its default.
+async fn set_swap_policy(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<JudgeSwapPolicy>, JsonRejection>,
+) -> OwnerReply<JudgeSwapPolicy> {
+    let owner = owner(&auth, &server)?;
+    let policy = json_payload(payload)?;
+    let policy = blocking(move || -> OwnerResult<JudgeSwapPolicy> {
+        set_judge_swap_policy(server.vault(), &owner, &policy)?;
+        Ok(policy)
+    })
+    .await?;
+    Ok(Json(policy))
 }
 
 /// Unix seconds now, the time a pick is learned at.
