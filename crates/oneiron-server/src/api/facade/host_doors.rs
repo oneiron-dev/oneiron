@@ -62,6 +62,8 @@ pub(crate) use super::wave_doors::*;
 pub(crate) use super::widen_proposal_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::policy_doors::*;
+// The message reaction door (OF-181), likewise.
+pub(crate) use super::reaction_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the

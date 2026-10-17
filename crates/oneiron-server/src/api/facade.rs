@@ -35,8 +35,8 @@ mod graph_ask_doors;
 mod guest_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
-mod widen_proposal_doors;
 mod policy_doors;
+mod reaction_doors;
 pub(super) mod role_picks;
 mod setting_doors;
 mod share_doors;
@@ -46,6 +46,7 @@ mod shared_member_doors;
 pub(super) mod tests;
 mod wave_doors;
 mod weave_doors;
+mod widen_proposal_doors;
 
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
