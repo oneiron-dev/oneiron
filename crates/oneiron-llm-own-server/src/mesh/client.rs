@@ -275,8 +275,9 @@ impl Leg {
         }
     }
 
-    /// Runs the stream on one node, passing its events on. `Err` only when
-    /// the node did not take it, before any event went out.
+    /// Runs the stream on one node, passing its events on. `Err` when the
+    /// node did not take it, or broke before any event went out: the next
+    /// node runs it from the start.
     async fn stream_on(
         &self,
         machine: MachineId,
@@ -301,20 +302,24 @@ impl Leg {
                 _ => return Err("an unexpected reply".into()),
             };
             self.taken();
+            let mut flowed = false;
             loop {
                 if send.is_closed() {
                     let _ = exchange(&*conn, &Request::Cancel { stream: id }).await;
                     return Ok(());
                 }
                 // Once events flow, a broken node ends the stream: its
-                // events cannot be taken back.
-                let cut = || Err(RetryableLlmError::StreamCut.into());
+                // events cannot be taken back. Before, another node can run it.
+                let cut = |flowed: bool| {
+                    if !flowed {
+                        return Err("broke before its first event".to_owned());
+                    }
+                    let _ = send.send(Err(RetryableLlmError::StreamCut.into()));
+                    Ok(())
+                };
                 let (events, end) = match exchange(&*conn, &Request::Next { stream: id }).await {
                     Ok(Reply::Events { events, end }) => (events, end),
-                    _ => {
-                        let _ = send.send(cut());
-                        return Ok(());
-                    }
+                    _ => return cut(flowed),
                 };
                 let batch = match take(&*conn, events)
                     .await
@@ -322,10 +327,7 @@ impl Leg {
                     .and_then(|bytes| rmp_serde::from_slice::<Batch>(&bytes).ok())
                 {
                     Some(batch) => batch,
-                    None => {
-                        let _ = send.send(cut());
-                        return Ok(());
-                    }
+                    None => return cut(flowed),
                 };
                 for event in batch.events {
                     let event = event.and_then(|json| {
@@ -336,6 +338,7 @@ impl Leg {
                     if send.send(event).is_err() || failed {
                         return Ok(());
                     }
+                    flowed = true;
                 }
                 if end {
                     return Ok(());
