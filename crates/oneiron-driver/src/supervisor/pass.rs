@@ -124,6 +124,12 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
         if let Err(error) = vault.serve_due_weave_digests(now, config.local_node_id) {
             tracing::error!(?error, "scheduled weave digests failed");
         }
+        // The host's standing questions due on the home node (OF-506). Their
+        // text can quote the vault, so a failure logs by kind only.
+        drop(executors);
+        if let Err(error) = factory.run_home_timer(vault, now, config.local_node_id) {
+            tracing::error!(kind = ?error.kind(), "standing questions failed");
+        }
     }
     report
 }

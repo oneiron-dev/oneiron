@@ -585,6 +585,20 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 args: args.args,
             })
         }
+        RunVerb::SelfAgentsSpawn => {
+            let args: crate::code_run::AgentSpawnInput = decode(input)?;
+            SelfCall::AgentsSpawn(Box::new(args.into_call()?))
+        }
+        RunVerb::SelfLeaderAdvice => {
+            let args: crate::code_run::LeaderAdviceInput = decode(input)?;
+            SelfCall::Leader(crate::code_run::SelfLeaderCall::Advice { top: args.top })
+        }
+        RunVerb::SelfLeaderPattern => {
+            let args: crate::code_run::LeaderPatternInput = decode(input)?;
+            SelfCall::Leader(crate::code_run::SelfLeaderCall::Pattern {
+                skill: EntityId::from_hex(&args.skill)?,
+            })
+        }
         RunVerb::SelfSpawn => {
             let args: crate::code_run::ReaderSpawnInput = decode(input)?;
             SelfCall::ReaderSpawn(Box::new(crate::code_run::SelfReaderSpawnCall {
@@ -594,9 +608,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 bound: None,
             }))
         }
-        RunVerb::SelfTeamStart => {
-            SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?))
-        }
+        RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
         RunVerb::SelfTeamRecord => {
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
         }
@@ -689,10 +701,10 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         }
         SelfDispatchOutcome::AgentSpawn(value) => match value {
             crate::code_run::SelfAgentSpawnResult::Queued { attempt_ref } => {
-                json!({"kind":"agent_spawn","state":"queued","attempt":crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())})
+                json!({"output":{"kind":"agent_spawn","state":"queued","attempt":crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes())}})
             }
             crate::code_run::SelfAgentSpawnResult::ProposedWiden { proposal_ref } => {
-                json!({"kind":"agent_spawn","state":"proposed_widen","proposal":proposal_ref})
+                json!({"output":{"kind":"agent_spawn","state":"proposed_widen","proposal":proposal_ref}})
             }
         },
         SelfDispatchOutcome::TaskAsk(value) => {
@@ -724,6 +736,11 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({ "output": receipt }),
         SelfDispatchOutcome::ReaderReport(receipt) => json!({ "output": receipt }),
         SelfDispatchOutcome::TaskWaitSet(result) => json!({ "output": result }),
+        SelfDispatchOutcome::Leader(json) => {
+            let output: Value =
+                serde_json::from_str(json).map_err(|_| failure("leader answer is not JSON"))?;
+            json!({ "output": output })
+        }
         SelfDispatchOutcome::Team(answer) => json!({ "output": answer }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));

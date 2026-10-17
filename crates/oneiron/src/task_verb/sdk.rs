@@ -338,10 +338,13 @@ pub struct RecallRequest {
     pub deadline_ms: Option<u64>,
 }
 
-pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
+pub use super::recall_door::{
+    RecallDoor, recall_at_door, recall_at_door_seeded, recall_with_vector,
+};
 pub use super::sdk_connector::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
+pub use super::sdk_embedding_space::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
 pub use super::sdk_legal_hold::*;

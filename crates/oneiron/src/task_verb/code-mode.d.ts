@@ -24,6 +24,9 @@ declare function describe(input: { fold?: string | null; frame_epoch?: number | 
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
+  const agents: {
+    spawn(input: { agent?: string | null; budget?: object | object | null; care?: "light" | "medium" | "high" | "xhigh" | "max" | null; context?: unknown; context_from?: string[] | null; depth?: number | null; intent_key: string; model?: object | object | null; need: string; notes?: string | null; pattern?: object | object | null; project?: string | null; prompt: string; width?: object | object | null }): Promise<unknown>;
+  };
   const browser: {
     batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
@@ -86,6 +89,10 @@ declare namespace self {
       move(input: { card: string; move: "ask_coach" }): Promise<unknown>;
       outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
     };
+  };
+  const leader: {
+    advice(input: { top?: number | null }): Promise<unknown>;
+    pattern(input: { skill: string }): Promise<unknown>;
   };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
@@ -170,6 +177,23 @@ declare const vault: {
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
+  embedding_spaces: {
+    bind(input: { kind: string; space?: string | null }): Promise<unknown>;
+    declare(input: object): Promise<unknown>;
+    list(input: object): Promise<unknown>;
+    move(input: { candidate: string; incumbent?: string | null; margin?: number | null }): Promise<unknown>;
+    move_abandon(input: { candidate: string }): Promise<unknown>;
+    move_approve(input: { candidate: string }): Promise<unknown>;
+    move_check(input: { candidate: string }): Promise<unknown>;
+    move_undo(input: { candidate: string }): Promise<unknown>;
+    one_space(input: { space: string }): Promise<unknown>;
+    probes: {
+      delete(input: { id: string }): Promise<unknown>;
+      list(input: object): Promise<unknown>;
+      put(input: { author: string; family: string; kind: string; query: string; targets?: string[] }): Promise<unknown>;
+    };
+    retire(input: { space: string }): Promise<unknown>;
+  };
   export(input: { format?: string | null }): Promise<unknown>;
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
@@ -177,6 +201,7 @@ declare const vault: {
     ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
   };
   guests: {
+    mint_slip(input: { expires_at: number; grant_ref: string; holder_key: string }): Promise<unknown>;
     revoke(input: { grant_ref: string }): Promise<unknown>;
   };
   habits: {
@@ -295,6 +320,12 @@ declare const vault: {
   };
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
+  };
+  settings: {
+    learning: ((input: { key?: string | null }) => Promise<unknown>) & {
+      clear(input: { key: string; mode: "seed" | "pin"; project?: string | null; task_type?: string | null }): Promise<unknown>;
+      put(input: { key: string; mode: "seed" | "pin"; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null }): Promise<unknown>;
+    };
   };
   shared: {
     deletion(input: object): Promise<unknown>;
