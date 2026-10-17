@@ -713,7 +713,11 @@ class WeaveItemViewDreamProgress(TypedDict):
     resident_ref: str
     dreamed_at: int
     entries: int
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress
+class WeaveItemViewAgentHealth(TypedDict):
+    item: Literal["agent_health"]
+    card_ref: str
+    card: AgentHealthCard
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth
 class WeaveSectionView(TypedDict):
     kind: WeaveSectionKind
     items: list[WeaveItemView]
@@ -1387,6 +1391,7 @@ class SharedActExecutionReceipt(TypedDict):
     grants: list[str]
     revoked_slips: list[str]
     export: NotRequired[SharedActExport | None]
+    authority_entry: NotRequired[str | None]
     completed_at: int
 class SharedActExecuted(TypedDict):
     receipt: SharedActExecutionReceipt
@@ -2133,7 +2138,7 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Team"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Leader", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId

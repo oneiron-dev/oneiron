@@ -1014,6 +1014,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
             (
+                "self.leader.advice",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
+            ),
+            (
+                "self.leader.pattern",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderPatternInput>(
+                ),
+            ),
+            (
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),

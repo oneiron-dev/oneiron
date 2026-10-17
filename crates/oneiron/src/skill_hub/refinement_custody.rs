@@ -6,12 +6,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{ClaimRefinementMergeReceipt, SharedSkillMergeReceipt, package_codec::invalid};
-use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::{
     Vault,
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     entity_id::EntityId,
     error::{Error, Result},
+    ports::{DeletionMarker, TombstoneStoreRead},
     registry::ENTITY_TYPE_ASSET,
     store::Store,
     temporal::TimeRange,
@@ -34,10 +35,6 @@ const RETIRED_HOLDER: SideTable<EntityId, (), Raw> =
 /// Empty marker that one carrier id is permanently retired.
 const RETIRED_SOURCE: SideTable<EntityId, (), Raw> =
     SideTable::new(&side_table::SKILL_HUB_REFINEMENT_SOURCE_RETIRED);
-/// The ARCH-0023b global local hard-delete marker (owned by
-/// `crate::deletion::tombstone`); read-only here for the retired-holder check.
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 const ERASE_CHUNK: usize = 128;
 
 /// Latest-ruling pointer: the ruling id, then the carrier id (32 bytes).
@@ -179,7 +176,7 @@ pub(crate) fn validate_refinement_carrier_put(
             |control| control.state == super::refinement_admission::RefinementState::Erased,
         )
         || RETIRED_SOURCE.contains(store, txn, id)?
-        || HARD_DELETE_MARKER.contains(store, txn, &HexId(candidate))?
+        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, &candidate)?
     {
         return Err(invalid("retired or misbound refinement carrier"));
     }

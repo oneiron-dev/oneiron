@@ -1303,9 +1303,19 @@ it, so the pump runs with the Dreamer off. The pump sleeps until the next
 question is due, and a committed write wakes it early (a question's create,
 edit or resume, or a claim write). It also re-reads its due work at least
 once a minute, because an arrival on a unit that is not a claim does not wake
-it. It answers each unit as the question's own principal, reading under that
-principal's grants, and climbs the question's own dial. A ceiling of `human`
-is held at Big, so the pump never queues an owner ask. Each unit has its own
+it. It answers each unit for the question's own principal, reading under
+that principal's grants, and climbs the question's own dial. A dial up to
+`human` asks a person by role (OF-516): the ask goes to the question's
+principal as its responsible actor and can climb to the vault's owners. The
+run is written by the first live holder on that chain, so a question whose
+principal is gone runs as an owner. With no live holder up to the owners, the
+question waits and is tried again later. Each pass also moves every open ask
+whose role has no live holder left to the next role that has one. A role
+holder lists the asks at its role at `GET /v1/core/decisions/asks` and
+answers one at `POST /v1/core/decisions/asks/answer` (`{"seq", "answer"}`).
+The holder is checked again when the answer lands. The owner can answer any
+of them at `/v1/owner/decisions/asks`. A one-off graph ask still holds
+`human` at Big. Each unit has its own
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
 names none.
 
@@ -1335,6 +1345,11 @@ names none.
   every source, image and clip it read. Before the answer lands, the pump
   reads the neighbours and every source again. If any changed, nothing in
   that pass lands.
+- **Arrivals.** With `refresh.on_arrival`, a write to a unit queues that
+  unit, and so does a write to anything its newest answer rests on: a
+  neighbour it read, or a source it names as evidence. Each new answer
+  replaces what the one before it rested on. A unit dropped from the
+  definition drops its watchers.
 - **Failures.** A question that fails is held for five minutes and then runs
   again. An edit or a resume lifts the hold. The server logs the error's
   kind only.

@@ -3394,6 +3394,20 @@
       "effect": "TasksRefuse"
     },
     {
+      "name": "self.leader.advice",
+      "input": "crate::code_run::LeaderAdviceInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Leader"
+    },
+    {
+      "name": "self.leader.pattern",
+      "input": "crate::code_run::LeaderPatternInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Leader"
+    },
+    {
       "name": "self.skills.call",
       "input": "crate::code_run::SkillCallInput",
       "scope": "Write",
