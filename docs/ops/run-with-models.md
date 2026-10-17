@@ -1013,8 +1013,13 @@ that runs out of wait ends with the provider's own failure, not
 `rate_limited`.
 
 When an offer's rest ends it is on probation: a failure rests it again with
-one more strike. A stable recovery is three answers in a row over at least
-30 s. It clears the strikes, and the memory work the outage stopped resumes:
+one more strike. On probation it takes one request at a time. The call that
+sends it holds the offer's probation slot until the request ends: a stream's
+last event, or a media job's end. A call that comes meanwhile passes that rung
+to the next one. If no rung is left, it waits for the probation request to end,
+within its wait budget, and is never refused for it. A stable recovery is three
+answers in a row over at least 30 s. It clears the strikes, and the memory
+work the outage stopped resumes:
 
 - the attempts this server's Dreamer parked on an executor error are
   requeued, as a restart requeues them;
@@ -1023,6 +1028,22 @@ one more strike. A stable recovery is three answers in a row over at least
 
 Work parked on a signal (a budget or consent trap, a wait) is never resumed
 by a recovery.
+
+`GET /v1/ai/status` shows each offer's live health. Each built rung under
+`models.seats[].rungs[]` carries `health`:
+
+- `state`: `healthy`, `down` (resting until `until`), or `recovering` (on
+  probation);
+- `strikes`, `successes`, and `probing` (its one probation request is out);
+- any limit `hold` (`until`, `reset`, `spent`), shown apart, since a hold is
+  not an outage.
+
+A seat's `state` follows its rungs:
+
+- `ready` while a healthy rung that no limit holds can serve;
+- otherwise `recovering` while a free rung is on probation;
+- `down` when every built rung rests for its health;
+- `unavailable` when no rung could be built.
 
 On raw `/v1/llm/stream`, a stream that fails after it has started ends with
 one last line carrying the same typed body as a refusal before it:

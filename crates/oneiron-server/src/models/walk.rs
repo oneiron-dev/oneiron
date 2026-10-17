@@ -35,6 +35,9 @@ pub(super) enum Passed {
     /// A fallback to it would take the work off the device, and the call's
     /// world stays on it.
     KeptOnDevice,
+    /// It is on probation after its provider was down, and its one
+    /// probation request is out (OF-305), seen at health version `seen`.
+    ProbeInFlight { seen: u64 },
 }
 
 /// What one call met on the rungs it passed before an answer.
@@ -46,16 +49,17 @@ pub(super) struct Walk {
 
 impl Walk {
     /// Records what the call met on the rung at `index`, unless that is the
-    /// state the rung was last found in. Whether it was news.
+    /// state the rung was last found in, which it then refreshes. Whether it
+    /// was news.
     pub(super) fn note(&mut self, index: usize, passed: Passed) -> bool {
-        let same = self
-            .latest()
-            .get(&index)
-            .is_some_and(|last| last.same_state(&passed));
-        if !same {
-            self.passed.push((index, passed));
+        if let Some((_, last)) = self.passed.iter_mut().rev().find(|(at, _)| *at == index)
+            && last.same_state(&passed)
+        {
+            *last = passed;
+            return false;
         }
-        !same
+        self.passed.push((index, passed));
+        true
     }
 
     /// The state each rung was last found in.
@@ -131,6 +135,7 @@ impl Walk {
                         row["cooldown_until"] = json!(rest.until);
                     }
                     Passed::KeptOnDevice => row["passed"] = json!("kept_on_device"),
+                    Passed::ProbeInFlight { .. } => row["passed"] = json!("probation_busy"),
                 }
                 row
             })
@@ -172,34 +177,50 @@ impl Walk {
                 Passed::KeptOnDevice => {}
                 Passed::Refused { rest: None, .. }
                 | Passed::Down { rest: None, .. }
-                | Passed::Failed { .. } => return None,
+                | Passed::Failed { .. }
+                | Passed::ProbeInFlight { .. } => return None,
             }
         }
         (!parked.is_empty()).then_some(parked)
     }
 
     /// Whether every rung the call last found resting rests for its health
-    /// alone: an outage, not a limit, so the call ends with the provider's
-    /// own failure rather than a rate refusal. False when none rests.
+    /// alone, or is on probation with its request out: an outage, not a
+    /// limit, so the call ends with the provider's own failure rather than a
+    /// rate refusal. False when none rests or probes.
     pub(super) fn outage(&self) -> bool {
-        let rests: Vec<Rest> = self
-            .latest()
-            .into_values()
-            .filter_map(|passed| match passed {
+        let mut any = false;
+        for passed in self.latest().into_values() {
+            let health = match passed {
                 Passed::Down {
                     rest: Some(rest), ..
                 }
                 | Passed::Refused {
                     rest: Some(rest), ..
                 }
-                | Passed::Resting { rest } => Some(*rest),
-                _ => None,
-            })
-            .collect();
-        !rests.is_empty()
-            && rests
-                .iter()
-                .all(|rest| rest.source == ResetSource::Unhealthy)
+                | Passed::Resting { rest } => rest.source == ResetSource::Unhealthy,
+                Passed::ProbeInFlight { .. } => true,
+                _ => continue,
+            };
+            if !health {
+                return false;
+            }
+            any = true;
+        }
+        any
+    }
+
+    /// The first rung the call last found with its probation request out,
+    /// and the earliest health version any such rung was seen at: a wait for
+    /// that request's end starts from there.
+    pub(super) fn probing(&self) -> Option<(usize, u64)> {
+        let latest = self.latest();
+        let mut found = latest.iter().filter_map(|(index, passed)| match passed {
+            Passed::ProbeInFlight { seen } => Some((*index, *seen)),
+            _ => None,
+        });
+        let first = found.next()?;
+        Some(found.fold(first, |(index, low), (_, seen)| (index, low.min(seen))))
     }
 
     /// Whether every rung the call could use rests: none it passed failed
@@ -235,6 +256,7 @@ impl Passed {
     fn same_state(&self, found: &Self) -> bool {
         match found {
             Self::KeptOnDevice => matches!(self, Self::KeptOnDevice),
+            Self::ProbeInFlight { .. } => matches!(self, Self::ProbeInFlight { .. }),
             Self::Resting { rest } => self.back() == Some(rest.until),
             Self::Refused { .. } | Self::Down { .. } | Self::Failed { .. } => false,
         }

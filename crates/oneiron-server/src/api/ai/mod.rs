@@ -78,7 +78,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
     }
     Json(serde_json::json!({
         "ai": server.ai.status(),
-        "models": server.ai.models_status(),
+        "models": server.ai.models_live_status(),
         "quota_questions": server.ai.model_runtime().quota_questions(),
     }))
     .into_response()
