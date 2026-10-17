@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 269 code-mode rows (252 host rows, 17 run rows), 805 declarations.
-// Replies: 200 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
-// Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 273 code-mode rows (256 host rows, 17 run rows), 817 declarations.
+// Replies: 202 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Opaque serde_json::Value leaves: 59; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) & { budget?: BudgetLegibilityEnvelope };
@@ -768,6 +768,18 @@ declare namespace Sdk {
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
+  type CoreWriteTextField = { field: string; value: string };
+  type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
+  type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown };
+  type ConversationTurnCreateInput = { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
+  type CoreDagAddressMode = "broadcast" | "direct";
+  type CoreDagQuoteInput = { message: string; start: number; end: number };
+  type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null };
+  type DagRecordAppendReceipt = { id: string; head?: string | null; parent?: string | null };
+  type CoreBatchEntityInput = { id?: string | null; entity_type: number; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
+  type CoreBatchWriteInput = { entities: CoreBatchEntityInput[] };
+  type CoreBatchEntityReceipt = { id: string; entity_type: number };
+  type CoreBatchWriteReceipt = { count: number; entities: CoreBatchEntityReceipt[] };
   type BlobArtifactInput = { id?: string | null; name: string; media_type: string; occurred_at: number; learned_at?: number | null };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
   type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null };
@@ -1068,6 +1080,8 @@ declare const vault: {
       acknowledge(input: Sdk.HandoffAlarmRequest): Promise<Sdk.Reply<Sdk.AuthorityHandoffAlarm>>;
     };
   };
+  /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
+  batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.Reply<Sdk.CoreBatchWriteReceipt>>;
   claims: {
     /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
     admit(input: Sdk.AdmitImportedClaimInput): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
@@ -1107,11 +1121,21 @@ declare const vault: {
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.Reply<Sdk.DreamerAttemptView | null>>;
   };
   conversations: {
+    /** Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller. */
+    create(input: Sdk.ConversationCreateInput): Promise<Sdk.Reply<Sdk.CoreEntityWriteReceipt>>;
+    records: {
+      /** Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once. */
+      append(input: Sdk.DagRecordAppendInput): Promise<Sdk.Reply<Sdk.DagRecordAppendReceipt>>;
+    };
     turn: {
       /** Queues generation that resumes an incomplete assistant reply from exactly its saved text. */
       continue(input: Sdk.TurnActionRequest): Promise<Sdk.Reply<Sdk.TurnActionReceipt>>;
       /** Queues a new answer to the user turn an assistant turn answered; the old reply stays. */
       retry(input: Sdk.TurnActionRequest): Promise<Sdk.Reply<Sdk.TurnActionReceipt>>;
+    };
+    turns: {
+      /** Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once. */
+      create(input: Sdk.ConversationTurnCreateInput): Promise<Sdk.Reply<Sdk.CoreEntityWriteReceipt>>;
     };
   };
   decisions: {

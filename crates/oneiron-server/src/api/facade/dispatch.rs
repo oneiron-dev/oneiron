@@ -4481,6 +4481,95 @@ async fn vault_artifacts_create(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_conversations_create(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.conversations.create",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_conversations_turns_create(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.conversations.turns.create")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.conversations.turns.create", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.conversations.turns.create", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_conversations_turns_create(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_conversations_records_append(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.conversations.records.append")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.conversations.records.append", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.conversations.records.append", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_conversations_records_append(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_batch(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.batch")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.batch", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.batch", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_batch(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_artifacts_put(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4986,6 +5075,14 @@ pub(crate) async fn call_verb(
         "vault.habits.checkin" => vault_habits_checkin(server, call, input).await,
         "vault.claims.admit" => vault_claims_admit(server, call, input).await,
         "vault.artifacts.create" => vault_artifacts_create(server, call, input).await,
+        "vault.conversations.create" => vault_conversations_create(server, call, input).await,
+        "vault.conversations.turns.create" => {
+            vault_conversations_turns_create(server, call, input).await
+        }
+        "vault.conversations.records.append" => {
+            vault_conversations_records_append(server, call, input).await
+        }
+        "vault.batch" => vault_batch(server, call, input).await,
         "vault.artifacts.put" => vault_artifacts_put(server, call, input).await,
         "vault.artifacts.append" => vault_artifacts_append(server, call, input).await,
         "vault.artifacts.read" => vault_artifacts_read(server, call, input).await,

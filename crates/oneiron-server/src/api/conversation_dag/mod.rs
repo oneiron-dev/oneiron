@@ -8,8 +8,8 @@ mod summary;
 mod types;
 use super::{
     CoreEntityWriteResponse, core_body_for_write, core_engine_error, core_entity_timestamps,
-    core_text_fields, encode_core_body, json_payload, parse_entity_id_param, project_core_entity,
-    query_params,
+    core_text_fields, core_write_text, encode_core_body, json_payload, parse_entity_id_param,
+    project_core_entity, query_params,
 };
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
@@ -21,6 +21,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest, QuoteSpan};
+use oneiron::core_write::{
+    CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt,
+};
 use oneiron::memory::MemoryError;
 use oneiron::reaction::{MessageReactionExternal, MessageReactionReceipt, MessageReactionRequest};
 use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -44,21 +47,31 @@ fn appended_response(
         server.vault(),
         oneiron::dreamer_wake::WakeTurnSubject::Vault,
     );
-    let Json(item) = project_core_entity(&server.vault, &appended.id, View::Full)?;
+    project_appended(server, appended.into())
+}
+
+/// An append's 200 body: the stored TURN, HEAD after it and its parent.
+/// It lands nothing; the write that made the record did.
+fn project_appended(
+    server: &SyncServer,
+    receipt: DagRecordAppendReceipt,
+) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
+    let id = parse_entity_id_param(&receipt.id, "id")?;
+    let Json(item) = project_core_entity(&server.vault, &id, View::Full)?;
     Ok(Json(DagAppendResponse {
         entity: CoreEntityWriteResponse {
-            id: appended.id.to_hex(),
+            id: receipt.id,
             entity_type: ENTITY_TYPE_TURN,
             item,
         },
-        head: appended.head.map(|id| id.to_hex()),
-        parent: appended.parent.map(|id| id.to_hex()),
+        head: receipt.head,
+        parent: receipt.parent,
     }))
 }
 
-/// A DAG write's refusal: the adapter's own, or the caller-bound engine
-/// door's, forwarded whole as the facade forwards it (an invented reference
-/// is a 422).
+/// A DAG or core write's refusal: the adapter's own, or the engine door's,
+/// forwarded whole as the facade forwards it (an invented reference is a
+/// 422).
 pub(crate) enum DagWriteError {
     Core(EnvelopedApiError),
     Memory(super::facade::FacadeApiError),
@@ -147,21 +160,65 @@ pub(crate) async fn append_core_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(conversation_id): Path<String>,
+    headers: HeaderMap,
+    extensions: Extensions,
     payload: Result<Json<DagAppendRequest>, JsonRejection>,
 ) -> Result<Json<DagAppendResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = json_payload(payload)?;
-    let input = append_input(conversation, req, &auth)?;
-    let writer = super::credential_memory(
-        &server.vault,
-        Some(&auth),
-        input.actor.entity_ref(),
-        input.actor.actor_class(),
-    )
-    .at(auth.locality());
-    let appended = server.vault.append_dag_record(&writer, &input)?;
-    Ok(appended_response(&server, appended)?)
+    // The route's own refusals first: the actor its body binds, and its
+    // interval.
+    let actor = req.actor.parse(&auth)?;
+    core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
+    let input = append_row(conversation, req);
+    // OF-181: `vault.conversations.records.append`, as an action when the
+    // credential binds one that writes as this actor, else through the
+    // row's own door as the actor the body bound. Either lands the turn
+    // once.
+    let receipt = match super::facade::action_routes::rest_action_bound(
+        &server, &auth, &headers, &input,
+    )? {
+        Some(bound) if bound.writes_as() == actor => {
+            let row = AgentVerb::VaultConversationsRecordsAppend;
+            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+            let output = super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &input, key,
+            )
+            .await?;
+            serde_json::from_value::<DagRecordAppendReceipt>(output)
+                .map_err(|_| ApiError::internal_server_error("append result encoding failed"))?
+        }
+        _ => super::facade::host_doors::write_dag_record(&server, &auth, actor, &input)?,
+    };
+    Ok(project_appended(&server, receipt)?)
+}
+
+/// The append row's input: the request less its actor, which the route
+/// asserts and the writer bylines.
+fn append_row(conversation: EntityId, req: DagAppendRequest) -> DagRecordAppendInput {
+    DagRecordAppendInput {
+        conversation: conversation.to_hex(),
+        parent: req.parent,
+        reply_to: req.reply_to,
+        addr: req.addr.map(|addr| match addr {
+            DagAddressMode::Broadcast => CoreDagAddressMode::Broadcast,
+            DagAddressMode::Direct => CoreDagAddressMode::Direct,
+        }),
+        to: req.to,
+        advance: req.advance,
+        body: req.body,
+        text: core_write_text(req.text),
+        occurred_start: req.occurred_start,
+        occurred_end: req.occurred_end,
+        learned_at: req.learned_at,
+        session: req.session,
+        quote: req.quote.map(|quote| CoreDagQuoteInput {
+            message: quote.message,
+            start: quote.start,
+            end: quote.end,
+        }),
+    }
 }
 
 #[utoipa::path(get, path = "/v1/core/conversations/{conversation_id}/records",

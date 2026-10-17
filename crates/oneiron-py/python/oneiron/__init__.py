@@ -502,6 +502,9 @@ class Oneiron:
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs":
             return Oneiron._VaultHabitsVerbs(self._client)
+        def batch(self, spec):
+            """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
+            return json.loads(_translate(lambda: self._client.vault_batch(json.dumps(spec))))
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
             return Oneiron._VaultConsolidationVerbs(self._client)
@@ -1047,6 +1050,15 @@ class Oneiron:
         @property
         def turn(self) -> "Oneiron._VaultConversationsTurnVerbs":
             return Oneiron._VaultConversationsTurnVerbs(self._client)
+        def create(self, spec):
+            """Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."""
+            return json.loads(_translate(lambda: self._client.vault_conversations_create(json.dumps(spec))))
+        @property
+        def turns(self) -> "Oneiron._VaultConversationsTurnsVerbs":
+            return Oneiron._VaultConversationsTurnsVerbs(self._client)
+        @property
+        def records(self) -> "Oneiron._VaultConversationsRecordsVerbs":
+            return Oneiron._VaultConversationsRecordsVerbs(self._client)
     class _VaultConversationsTurnVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1056,6 +1068,18 @@ class Oneiron:
         def retry(self, spec):
             """Queues a new answer to the user turn an assistant turn answered; the old reply stays."""
             return json.loads(_translate(lambda: self._client.vault_conversations_turn_retry(json.dumps(spec))))
+    class _VaultConversationsTurnsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once."""
+            return json.loads(_translate(lambda: self._client.vault_conversations_turns_create(json.dumps(spec))))
+    class _VaultConversationsRecordsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def append(self, spec):
+            """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
+            return json.loads(_translate(lambda: self._client.vault_conversations_records_append(json.dumps(spec))))
     class _VaultMessagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
