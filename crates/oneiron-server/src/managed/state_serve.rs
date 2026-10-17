@@ -890,6 +890,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     if !ai.bind_question_timer(&sync_server) {
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
     }
+    // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
+    ladder_workers.push(crate::saved_query_sweep::spawn(&sync_server, admitted()));
     // Uncertain identities are decided, or asked of the person (OF-123).
     ladder_workers.push(crate::ai_host::identity::spawn(&sync_server, admitted()));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
@@ -914,7 +916,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         Arc::clone(&sync_server),
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
-        config.limits.connections().header_read_timeout,
+        config.limits.connections(),
     )
     .await?;
     let artifact_task = artifacts.map(|listener| {
