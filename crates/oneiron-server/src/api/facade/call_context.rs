@@ -47,6 +47,28 @@ fn header<'h>(headers: &'h HeaderMap, name: &str) -> Option<Option<&'h str>> {
     headers.get(name).map(|value| value.to_str().ok())
 }
 
+/// The invocation a request's header names, if it names one (ARCH-0080
+/// §3): its verb hooks fire once for it, and a retry of a pending call names
+/// the same one to find its ask.
+pub(super) fn facade_invocation_id(
+    headers: &HeaderMap,
+) -> Result<Option<InvocationId>, FacadeApiError> {
+    invocation_header(headers).read(invalid_invocation)
+}
+
+fn invocation_header(headers: &HeaderMap) -> Carried<InvocationId> {
+    Carried::spelled(header(headers, INVOCATION_HEADER), InvocationId::parse_hex)
+}
+
+fn invalid_invocation() -> FacadeApiError {
+    FacadeApiError::new(
+        StatusCode::BAD_REQUEST,
+        MEMORY_CODE_BAD_REQUEST,
+        "invalid invocation header",
+        ["Name the invocation as 32 lowercase hex digits."],
+    )
+}
+
 /// One call of a facade verb, as the dispatch admits it.
 pub(crate) struct FacadeCall<'a> {
     auth: &'a CoreAuth,
@@ -70,10 +92,7 @@ impl<'a> FacadeCall<'a> {
             room_turn: Carried::spelled(header(headers, ROOM_TURN_HEADER), |room| {
                 EntityId::from_hex(room).ok()
             }),
-            invocation: Carried::spelled(
-                header(headers, INVOCATION_HEADER),
-                InvocationId::parse_hex,
-            ),
+            invocation: invocation_header(headers),
             session: match request_session(headers) {
                 Ok(None) => Carried::Absent,
                 Ok(Some(session)) => Carried::Named(session),
@@ -115,14 +134,7 @@ impl<'a> FacadeCall<'a> {
     }
 
     pub(super) fn invocation(&self) -> Result<Option<InvocationId>, FacadeApiError> {
-        self.invocation.read(|| {
-            FacadeApiError::new(
-                StatusCode::BAD_REQUEST,
-                MEMORY_CODE_BAD_REQUEST,
-                "invalid invocation header",
-                ["Name the invocation as 32 lowercase hex digits."],
-            )
-        })
+        self.invocation.read(invalid_invocation)
     }
 
     pub(super) fn session(&self) -> Result<Option<EntityId>, FacadeApiError> {

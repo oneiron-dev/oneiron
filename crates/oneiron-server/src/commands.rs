@@ -105,11 +105,12 @@ pub use self::embedder_serve::embedder_serve;
 mod maintain;
 pub use maintain::maintain;
 mod owner;
+pub use owner::embedding_spaces;
 pub use owner::legal_holds;
 pub use owner::learning_settings;
 pub use owner::{
-    backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, restore, runs,
-    secret_scan, secrets, vault_key, whoami,
+    backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
+    restore, runs, secret_scan, secrets, vault_key, whoami,
 };
 pub use owner::{guests, revoke_secret};
 mod msgpack_json;
