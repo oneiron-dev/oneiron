@@ -44,6 +44,7 @@ fn message(role: LlmMessageRole, text: String) -> LlmMessage {
 }
 
 /// What answers the rung's questions.
+#[derive(Clone)]
 enum Answerer {
     /// The seat a role names, routed against the vault's live model policy.
     Seat(ModelRole),
@@ -152,6 +153,20 @@ impl BigModel {
 
     pub(crate) fn pin(&self) -> ProviderPin {
         self.pin.clone()
+    }
+
+    /// This rung, asked as it is, with each call's run on `meter`.
+    fn on_meter(&self, meter: BudgetGuard) -> Self {
+        Self {
+            models: Arc::clone(&self.models),
+            vault: Arc::clone(&self.vault),
+            answerer: self.answerer.clone(),
+            wording: self.wording.clone(),
+            reply: self.reply,
+            meter,
+            runtime: self.runtime.clone(),
+            pin: self.pin.clone(),
+        }
     }
 
     /// Whether the model the seat routes to hears audio: the vault
@@ -418,6 +433,10 @@ fn abstained() -> ProviderDecision {
 impl DecisionModel for BigModel {
     fn capability(&self) -> ProviderCapability {
         ProviderCapability::default()
+    }
+
+    fn on_line(&self, line: &BudgetGuard) -> Option<Arc<dyn DecisionModel>> {
+        Some(Arc::new(self.on_meter(line.clone())))
     }
 
     fn reads_audio(&self) -> bool {

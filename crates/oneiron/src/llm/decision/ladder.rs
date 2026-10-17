@@ -224,6 +224,12 @@ pub trait DecisionProvider: Send + Sync {
     ) -> Option<HostRuleRef> {
         None
     }
+    /// This provider spending on `line` in place of its own meter, for one call that its
+    /// caller pays (an `ai.verdict` on the caller's own Read line). None when it spends on
+    /// no meter, so the call keeps it as it is.
+    fn on_line(&self, _line: &crate::llm::BudgetGuard) -> Option<Arc<dyn DecisionProvider>> {
+        None
+    }
 }
 
 /// Deterministic offline answer table, scoped by exact question version. A question with
@@ -303,6 +309,10 @@ pub trait DecisionModel: Send + Sync {
             .map(|call| self.decide(&call))
             .collect()
     }
+    /// See [`DecisionProvider::on_line`].
+    fn on_line(&self, _line: &crate::llm::BudgetGuard) -> Option<Arc<dyn DecisionModel>> {
+        None
+    }
 }
 
 pub struct ModelDecisionProvider {
@@ -347,6 +357,13 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
         self.model.decide_pack(pack)
+    }
+    fn on_line(&self, line: &crate::llm::BudgetGuard) -> Option<Arc<dyn DecisionProvider>> {
+        let model = self.model.on_line(line)?;
+        Some(Arc::new(Self {
+            pin: self.pin.clone(),
+            model,
+        }))
     }
 }
 

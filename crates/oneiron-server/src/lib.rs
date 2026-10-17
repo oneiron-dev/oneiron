@@ -75,6 +75,7 @@ pub mod server;
 mod skills_pack;
 mod slide_render;
 pub mod usage;
+mod verdict_line;
 mod wake_adapters;
 pub mod web_client;
 pub mod wire_health;

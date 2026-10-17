@@ -159,6 +159,8 @@ pub struct DecisionHost {
     /// The big model on the Big rung, kept so one named model can be asked
     /// as it asks ([`Self::ladder_for_model`]).
     big_model: Option<Arc<crate::big_rung::BigModel>>,
+    /// Each `ai.verdict` caller's own Read line (FIX 1123).
+    verdict_lines: crate::verdict_line::VerdictLines,
 }
 
 impl DecisionHost {
@@ -191,6 +193,7 @@ impl DecisionHost {
             connector_slate: None,
             remote_opt_in: false,
             big_model: None,
+            verdict_lines: crate::verdict_line::VerdictLines::default(),
         }
     }
 
@@ -471,6 +474,12 @@ impl DecisionHost {
     #[must_use]
     pub fn ladder(&self) -> &HeldLadder {
         &self.ladder
+    }
+
+    /// Each `ai.verdict` caller's own Read line, and the spend checks they
+    /// raised.
+    pub(crate) fn verdict_lines(&self) -> &crate::verdict_line::VerdictLines {
+        &self.verdict_lines
     }
 
     /// Whether the owner opted in to sending unit text off the host, for
@@ -1016,6 +1025,7 @@ fn pin(rung: DecisionRung, model: &str, version: &str) -> ProviderPin {
 /// What admits each house read on the ladder as the `/v1/llm/decision_read`
 /// probe admits its own: the server's `limits.decision_reads` pool, its host
 /// account and its run receipts.
+#[derive(Clone)]
 pub(crate) struct ReadAdmission {
     pub(crate) turns: crate::admission::Admission<()>,
     pub(crate) host: Arc<HostAccount>,
@@ -1025,6 +1035,7 @@ pub(crate) struct ReadAdmission {
 /// The house read's gate: a `limits.decision_reads` turn, then one run on
 /// the meter per read, admitted and dispatched before the read and settled
 /// once after it.
+#[derive(Clone)]
 struct HouseGate {
     meter: BudgetGuard,
     connector: PaidConnector,
@@ -1128,6 +1139,21 @@ impl DecisionProvider for HouseRead {
         self.provider()?.decide(call)
     }
 
+    /// The same read, each of its runs on `line`.
+    fn on_line(&self, line: &BudgetGuard) -> Option<Arc<dyn DecisionProvider>> {
+        Some(Arc::new(Self {
+            pin: self.pin.clone(),
+            reader: Arc::clone(&self.reader),
+            gate: HouseGate {
+                meter: line.clone(),
+                ..self.gate.clone()
+            },
+            paired: self.paired.clone(),
+            person: self.person.clone(),
+            leaves: self.leaves,
+        }))
+    }
+
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
         self.provider()?.decide_pack(pack)
     }
@@ -1202,6 +1228,17 @@ impl DecisionProvider for SystemOneRung {
     /// The seat is remote: every call leaves the host.
     fn leaves_host(&self) -> bool {
         true
+    }
+
+    /// The same seat, each measurement admitted and settled on `line`.
+    fn on_line(&self, line: &BudgetGuard) -> Option<Arc<dyn DecisionProvider>> {
+        Some(Arc::new(Self {
+            seat: Arc::clone(&self.seat),
+            guard: line.clone(),
+            posture: self.posture,
+            remote_opt_in: self.remote_opt_in,
+            runtime: self.runtime.clone(),
+        }))
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {

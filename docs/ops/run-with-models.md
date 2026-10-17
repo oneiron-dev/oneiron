@@ -1608,7 +1608,8 @@ bind:
   binds one, on its own meter (`models.raw_budget_units`). It answers Box,
   Point and image questions. On a call with no image it abstains before any
   model call, so the ladder steps past it. A caller with a turn budget
-  (`ai.verdict`, `graph.ask`) seats its own per-call rung there instead.
+  (`graph.ask`) seats its own per-call rung there instead, and
+  `ai.verdict` seats one on its caller's line (below).
 - **The owner**: the last rung is a durable queue. Each ask waits in the
   vault until you answer it (owner-actions.md, "Answer the decision
   ladder's asks").
@@ -1694,6 +1695,16 @@ The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The
 escalation read is metered on `models.raw_budget_units`. A model rung blocks
 on the server's runtime, so a caller runs a ladder call on a blocking thread.
+
+An `ai.verdict` is paid by its caller (Rule 5). Every model rung of the call
+(Local-vision, System One, the escalation read and Big) admits and settles
+on the asking actor's own Read line instead of its rung's meter. Each
+agent, owner session or hook reader has one line for the server's run, and
+the line has no cap, so a verdict is never refused for spend. When one
+caller's verdicts spend past 20,000,000 units in a day, the host raises one
+"is everything okay: a bot, or a valid burst?" health check for that caller
+(source `spend`, subject `spend:ai.verdict:<actor>`). The model rungs, or
+the owner's ask queue, answer it, and the calls go on while it is asked.
 
 ### Standing questions over graph units
 

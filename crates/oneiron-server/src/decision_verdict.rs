@@ -36,7 +36,7 @@ use oneiron::memory::{
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
-use oneiron::{BudgetExhaustionPolicy, EdgeActorClass, EntityId, WriteActor};
+use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, WriteActor};
 
 use crate::ai_host::LocalVisionModel;
 use crate::server::SyncServer;
@@ -190,6 +190,12 @@ pub(crate) fn run_verdict(
     let deadline = RetrievalDeadline::hard(started, budget);
     let host = server.decision_host();
     let mut dial = host.dial(ceiling);
+    // Every model rung spends on the caller's own Read line, with no cap
+    // (FIX 1123): a large spend raises the line's check, which never stops
+    // the call.
+    let lines = host.verdict_lines();
+    let line = lines.line(principal, class);
+    let _settles = lines.settles(principal);
     // An image is read at the Local-vision rung, seated on this call's own
     // run; a rung above it that reads no image is skipped.
     let local = if images.is_empty() {
@@ -202,15 +208,11 @@ pub(crate) fn run_verdict(
             ));
         }
         dial.first = DecisionRung::Local;
-        Some(vision_rung(
-            server,
-            principal,
-            class,
-            &images,
-            "ai.verdict",
-        )?)
+        let run_id = vision_run(server, &images, "ai.verdict");
+        Some(vision_seat(server, run_id, line.clone())?)
     };
-    let mut ladder = host.ladder().ladder();
+    let held = host.ladder().on_line(&line);
+    let mut ladder = held.ladder();
     if let Some(rung) = &local {
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
@@ -479,20 +481,10 @@ pub(crate) fn vision_rung(
     images: &[DecisionImage],
     label: &str,
 ) -> MemoryResult<ModelDecisionProvider> {
-    let vault = Arc::clone(server.vault());
-    let unbound = || {
-        MemoryError::bad_request_with(
-            "no [models.roles.local_vision] seat reads the image",
-            &["Bind a local_vision role, or ask without an image."],
-        )
-    };
-    let asset = images
-        .first()
-        .map(|image| image.evidence.id.to_hex())
-        .unwrap_or_default();
-    let run_id = format!("{label}:{asset}:{}", vault.now_recorded_at());
+    let run_id = vision_run(server, images, label);
     let settings = server.ai.chat_settings();
-    let meter = vault
+    let meter = server
+        .vault()
         .policy_budget_guard(
             run_id.clone(),
             settings.turn_budget_units,
@@ -506,9 +498,40 @@ pub(crate) fn vision_rung(
                 &["Raise the turn budget, or ask without an image."],
             )
         })?;
+    vision_seat(server, run_id, meter)
+}
+
+/// The run id a Local-vision call over `images` spends under: `label`, the
+/// first image's asset and the vault's clock.
+fn vision_run(server: &SyncServer, images: &[DecisionImage], label: &str) -> String {
+    let asset = images
+        .first()
+        .map(|image| image.evidence.id.to_hex())
+        .unwrap_or_default();
+    format!("{label}:{asset}:{}", server.vault().now_recorded_at())
+}
+
+/// The Local-vision seat at the Local rung, spending on `meter` as run
+/// `run_id`.
+fn vision_seat(
+    server: &SyncServer,
+    run_id: String,
+    meter: BudgetGuard,
+) -> MemoryResult<ModelDecisionProvider> {
+    let unbound = || {
+        MemoryError::bad_request_with(
+            "no [models.roles.local_vision] seat reads the image",
+            &["Bind a local_vision role, or ask without an image."],
+        )
+    };
     let run = server.ai.undeclared_run(run_id, meter);
-    let seat = LocalVisionModel::new(&server.ai, vault, run, tokio::runtime::Handle::current())
-        .ok_or_else(unbound)?;
+    let seat = LocalVisionModel::new(
+        &server.ai,
+        Arc::clone(server.vault()),
+        run,
+        tokio::runtime::Handle::current(),
+    )
+    .ok_or_else(unbound)?;
     seat.rung().map_err(|_| unbound())
 }
 

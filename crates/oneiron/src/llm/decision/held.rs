@@ -52,6 +52,27 @@ impl HeldLadder {
         }
     }
 
+    /// These slots for one call its caller pays: every provider that spends on a meter
+    /// spends on `line` instead ([`DecisionProvider::on_line`]), and the rest stay.
+    #[must_use]
+    pub fn on_line(&self, line: &crate::llm::BudgetGuard) -> Self {
+        let bind = |slot: &Option<Arc<dyn DecisionProvider>>| {
+            slot.as_ref().map(|provider| {
+                provider
+                    .on_line(line)
+                    .unwrap_or_else(|| Arc::clone(provider))
+            })
+        };
+        Self {
+            rule: bind(&self.rule),
+            local: bind(&self.local),
+            system_one: bind(&self.system_one),
+            escalation: bind(&self.escalation),
+            big: bind(&self.big),
+            ..self.clone()
+        }
+    }
+
     /// The ladder for one call, borrowing these slots.
     #[must_use]
     pub fn ladder(&self) -> DecisionLadder<'_> {

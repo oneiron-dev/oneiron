@@ -44,6 +44,8 @@ const CURSOR_WIRE: &str = "wire:health:v1:cursor:wire";
 const CURSOR_LIMIT: &str = "wire:health:v1:cursor:limit:";
 /// How far it has read the e-sign ceremony's burst checks.
 const CURSOR_ESIGN: &str = "wire:health:v1:cursor:esign";
+/// How far it has read the `ai.verdict` callers' spend checks.
+const CURSOR_SPEND: &str = "wire:health:v1:cursor:spend";
 /// How often the worker reads new crossings and asks the held checks.
 const SWEEP_EVERY: Duration = Duration::from_secs(15);
 /// The clock one check's ladder call runs under.
@@ -77,6 +79,10 @@ pub enum CrossingSource {
     /// One signing document's, or one recipient's, ceremony calls past
     /// their window's threshold.
     Esign,
+    /// One caller's `ai.verdict` spend past its window's check (FIX 1123).
+    /// It names its one actor apart from `actors`, so no grant passes it at
+    /// the rule rung.
+    Spend,
 }
 
 /// Who answered a check.
@@ -243,6 +249,22 @@ fn limit_crossing(key: String, question: &WireLimitQuestion) -> Crossing {
     }
 }
 
+fn spend_crossing(key: String, crossing: &crate::verdict_line::SpendCrossing) -> Crossing {
+    Crossing {
+        subject: format!("spend:{}:{}", crossing.line, crossing.actor),
+        source: CrossingSource::Spend,
+        raised_at: crossing.raised_at,
+        summary: json!({
+            "line": crossing.line,
+            "actor": crossing.actor,
+            "threshold": crossing.threshold,
+            "spent": crossing.spent,
+            "window": crossing.window,
+        }),
+        read: Some((CURSOR_SPEND.to_owned(), key)),
+    }
+}
+
 fn scan_crossing(check: &ScanCheck) -> Crossing {
     let scope = check.scope.as_deref().unwrap_or("vault");
     Crossing {
@@ -300,6 +322,14 @@ fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
     let esign_after = cursor(vault, CURSOR_ESIGN)?;
     for (key, check) in vault.esign_rate_checks_after(esign_after.as_deref())? {
         unread.push(esign_crossing(key, &check));
+    }
+    let spend_after = cursor(vault, CURSOR_SPEND)?;
+    for (key, crossing) in server
+        .decision_host()
+        .verdict_lines()
+        .crossings_after(spend_after.as_deref())
+    {
+        unread.push(spend_crossing(key, &crossing));
     }
     for check in vault.scan_checks()? {
         let crossing = scan_crossing(&check);
