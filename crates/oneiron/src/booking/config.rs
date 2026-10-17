@@ -238,8 +238,7 @@ pub struct BookingEventTypeClaimValue {
 //
 // `ClaimBody::value` is opaque MessagePack. The typed value above already
 // derives serde, so the codec bridges through `rmp_serde`'s named encoding
-// rather than hand-rolling a nested `rmpv` walk — the same bridge
-// `companion.rs` uses for its opaque record values.
+// rather than hand-rolling a nested `rmpv` walk.
 // -------------------------------------------------------------------------
 
 /// Encodes a claim value to the opaque MessagePack a `ClaimBody` carries.

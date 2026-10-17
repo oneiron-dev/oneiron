@@ -76,6 +76,7 @@ impl WitnessTurnInput {
         Ok(WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
+            quote: None,
             messages,
             occurred_at,
         })
@@ -602,6 +603,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.members.leave")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.members.leave", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.guests.revoke", input))
             .map_err(raise)?;
         encode(&output)
     }

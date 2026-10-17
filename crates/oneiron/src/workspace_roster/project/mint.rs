@@ -184,6 +184,7 @@ impl Vault {
         let header = WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(header_turn.to_hex()),
+            quote: None,
             messages: vec![WitnessMessage {
                 id: Some(header_message.to_hex()),
                 author: WitnessAuthor::User,

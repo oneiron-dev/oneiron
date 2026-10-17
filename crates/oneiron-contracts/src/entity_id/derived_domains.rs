@@ -82,6 +82,14 @@ pub const CONVERSATION_MIRROR_ACTOR: &[u8] = b"oneiron:conversation-mirror-actor
 /// feed dedupe key.
 pub const CALENDAR_ICS_FEED_BLOB: &[u8] = b"oneiron:calendar-ics-feed-blob:v1:";
 
+/// The BLOB artifact holding one verified provider event's body
+/// (`surface_event::provider_payload`). Parts: channel, provider event id.
+pub const SURFACE_PROVIDER_EVENT_BLOB: &[u8] = b"oneiron:surface-provider-event-blob:v1:";
+
+/// The write actor provider event bodies are archived under
+/// (`surface_event::provider_payload`). No parts.
+pub const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inbound-actor:v1";
+
 /// An asking actor's origin (`task_verb::ask_record`). Parts: vault ask origin, actor.
 pub const TASK_ASK_ORIGIN: &[u8] = b"oneiron.tasks.ask.origin.v1";
 
@@ -168,6 +176,8 @@ pub(crate) const ALL: [&[u8]; 37] = [
     CALENDAR_ICS_IMPORT_ACTOR,
     CONVERSATION_MIRROR_ACTOR,
     CALENDAR_ICS_FEED_BLOB,
+    SURFACE_PROVIDER_EVENT_BLOB,
+    SURFACE_PROVIDER_INBOUND_ACTOR,
     TASK_ASK_ORIGIN,
     TASK_ASK_INTENT,
     TASK_ASK_MEMBER,
