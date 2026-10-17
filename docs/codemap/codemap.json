@@ -2269,8 +2269,8 @@
      "path": "src/authority/history_coverage.rs",
      "purpose": "What authority history this vault holds, and exactly what it lacks (OF-469)",
      "surface": {
-      "crate-vis": 2,
-      "fn": 3,
+      "crate-vis": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -2591,7 +2591,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {

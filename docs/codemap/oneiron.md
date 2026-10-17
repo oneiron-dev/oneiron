@@ -194,7 +194,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/fold_state.rs` | src | m | 3 struct · 3 enum · 3 fn · 6 crate-vis | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFold, AuthorityFoldIssue, FoldedActorBinding | Folded-state data model and the two-state merge |
 | `src/authority/guest_revoke.rs` | src | m | 2 fn · 2 crate-vis | — | OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one ask guest's… |
 | `src/authority/handoff_equivocation.rs` | src | m | 3 struct · 4 fn · 1 const · 4 crate-vis | AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation | Evidence that a retired key signed beside the handoff that retired it: the first record of OF-166, ahead of… |
-| `src/authority/history_coverage.rs` | src | s | 2 struct · 3 fn · 2 crate-vis | AuthorityHistoryCoverage, AuthorityHistoryRequest | What authority history this vault holds, and exactly what it lacks (OF-469) |
+| `src/authority/history_coverage.rs` | src | s | 2 struct · 4 fn · 3 crate-vis | AuthorityHistoryCoverage, AuthorityHistoryRequest | What authority history this vault holds, and exactly what it lacks (OF-469) |
 | `src/authority/history_transfer.rs` | src | m | 1 struct · 7 fn · 2 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/host_actor.rs` | src | s | 1 crate-vis | — | The owner a self-hosted root binds (H149) |
 | `src/authority/host_re_root.rs` | src | s | 2 struct · 1 fn · 1 crate-vis | HostReRoot, RetiredSlip | A self-host root move to a new host secret, in-chain (OF-455) |
@@ -220,7 +220,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_project_slip.rs` | src | s | 1 fn | — | The host's owner-project slip (OF-497): the host-held project.write slip an [`OwnerProjectSigner`] signs the… |
 | `src/authority/owner_roots.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | AwaitedRoot, OwnerRootView | The owner roots this vault stores, as this install sees them (world privacy P6b, R1) |
 | `src/authority/pinned_root.rs` | src | s | 8 crate-vis | — | This install's pin: the owner recovery root whose anchor it trusts (world privacy P6b, R1) |
-| `src/authority/readonly_fold.rs` | src | m | 11 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
+| `src/authority/readonly_fold.rs` | src | m | 12 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
 | `src/authority/recover_many.rs` | src | s | 2 struct · 2 enum · 1 fn | VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep | M-vault recovery (OF-169): each vault recovers on its own chain |
 | `src/authority/retired_signers.rs` | src | m | 10 crate-vis | — | A handoff retires its predecessor for good (engine-crates-03) |
 | `src/authority/revoke_proof.rs` | src | m | 8 crate-vis | — | Log-derived, typed restrictive facts (actor revocations, slip withdrawals, slip burns and machine removals)… |
