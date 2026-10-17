@@ -59349,6 +59349,8 @@
       "XlsxSheet",
       "XlsxSheetPlan",
       "XlsxStyle",
+      "XlsxTable",
+      "XlsxTableShift",
       "XlsxValue"
      ],
      "path": "src/xlsx_body.rs",
@@ -59356,13 +59358,13 @@
      "surface": {
       "const": 2,
       "enum": 4,
-      "fn": 11,
+      "fn": 14,
       "re-export": 2,
-      "struct": 7
+      "struct": 9
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SheetFate",
@@ -59372,7 +59374,7 @@
      "path": "src/xlsx_shift.rs",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 7,
       "struct": 1
@@ -59550,7 +59552,7 @@
     "xlsx_shift": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…"
     },
@@ -59562,7 +59564,7 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its font, fill, border or…"
     }
    },
-   "over_bar": 7,
+   "over_bar": 8,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
    "source_files": 67,
    "test_files": 14
@@ -75042,13 +75044,14 @@
       "XlsxSheet",
       "XlsxSheetView",
       "XlsxStyle",
+      "XlsxTable",
       "XlsxValue"
      ],
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
       "enum": 302,
-      "struct": 798
+      "struct": 799
      }
     },
     {
