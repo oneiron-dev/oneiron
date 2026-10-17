@@ -69,6 +69,7 @@ mod stream;
 pub use scratchpad::{
     SCRATCHPAD_LINE_MAX_BYTES, ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark,
 };
+pub(crate) use scratchpad::{erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists};
 
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,

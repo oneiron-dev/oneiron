@@ -301,6 +301,52 @@ impl crate::Vault {
     }
 }
 
+/// The pointer and seal rows an erase of `id` purges: each session and live
+/// pointer `id` writes as the actor or names as its pad, and the seal of pad
+/// `id`. An erased author's sealed pads keep their seals: each pad is its own
+/// NOTE and stays sealed until it is erased itself.
+fn rows_erased_with(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<Vec<PadKey>> {
+    Ok(PAD
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .filter(|(key, row)| match key {
+            PadKey::Session { actor, .. } | PadKey::Live { actor } => {
+                actor == id || row.pad == *id.as_bytes()
+            }
+            PadKey::Sealed { pad } => pad == id,
+        })
+        .map(|(key, _)| key)
+        .collect())
+}
+
+/// Whether an erase of `id` has scratchpad rows to purge.
+pub(crate) fn scratchpad_erase_scope_exists(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<bool> {
+    Ok(!rows_erased_with(vault, txn, id)?.is_empty())
+}
+
+/// Purges the scratchpad rows naming erased actor or NOTE `id` (OF-548), so
+/// an erased pad leaves no pointer behind: the session's next line opens a
+/// new pad instead of failing on the missing one. `true` when a row went.
+pub(crate) fn erase_scratchpad_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<bool> {
+    let mut removed = false;
+    for key in rows_erased_with(vault, txn, id)? {
+        removed |= PAD.delete(&vault.store, txn, &key)?;
+    }
+    Ok(removed)
+}
+
 impl Memory<'_> {
     /// The pad this actor's session writes, and whether it is sealed.
     fn scratchpad_pointer(&self, session: &str) -> MemoryResult<Option<(EntityId, bool)>> {
