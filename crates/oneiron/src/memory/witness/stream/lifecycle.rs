@@ -129,6 +129,38 @@ impl Memory<'_> {
             None,
         )
     }
+    /// Drops a Retry's stream that never started (FIX 3152): one whose run
+    /// its budget refused before any text. Its seed goes and nothing lands,
+    /// no TURN, MESSAGE or receipt, as for a Retry never admitted. Any other
+    /// stream ends by its terminal.
+    pub fn abandon_unstarted_retry(&self, handle: MessageStreamHandle) -> MessageStreamResult<()> {
+        let entry = self.stream_entry(handle)?;
+        let mut state = lock(&entry)?;
+        state.check(handle)?;
+        if state.seed.action.is_none()
+            || state.seed.continuation
+            || !state.base.is_empty()
+            || !state.pending.is_empty()
+            || !state.raw.is_empty()
+        {
+            return Err(MessageStreamError::InvalidRequest(
+                "only an unstarted Retry may be abandoned",
+            ));
+        }
+        self.vault
+            .try_with_write_txn_grouped(|txn| -> MessageStreamResult<()> {
+                let row = storage::ACTIVE
+                    .get(&self.vault.store, txn, &handle.message)?
+                    .ok_or(MessageStreamError::StreamNotFound)?;
+                if row.generation != handle.generation || !row.saved.is_empty() {
+                    return Err(MessageStreamError::StreamNotFound);
+                }
+                storage::ACTIVE.delete(&self.vault.store, txn, &handle.message)?;
+                Ok(())
+            })?;
+        state.terminal = true;
+        self.vault.message_streams.remove(handle)
+    }
 }
 impl Vault {
     fn finish_stream_entry(
@@ -142,7 +174,7 @@ impl Vault {
         let mut state = lock(entry)?;
         state.check(handle)?;
         self.close_withheld(&mut state)?;
-        let receipt = commit_terminal(self, &state, outcome, finish_reason, false, gate)?;
+        let receipt = commit_terminal(self, &mut state, outcome, finish_reason, false, gate)?;
         // Storage success is authoritative. No output is removed on an error.
         state.terminal = true;
         #[cfg(feature = "sync")]
@@ -173,20 +205,18 @@ impl Vault {
                 continue;
             }
             let handle = state.handle();
+            let reason = if state.seed.idle_timeout_ms == DEFAULT_MESSAGE_STREAM_IDLE_MS {
+                StreamFinalityReason::IdleTimeout30s
+            } else {
+                StreamFinalityReason::IdleTimeout {
+                    timeout_ms: state.seed.idle_timeout_ms,
+                }
+            };
             match self.close_withheld(&mut state).and_then(|()| {
                 commit_terminal(
                     self,
-                    &state,
-                    (
-                        StreamFinality::Partial,
-                        if state.seed.idle_timeout_ms == DEFAULT_MESSAGE_STREAM_IDLE_MS {
-                            StreamFinalityReason::IdleTimeout30s
-                        } else {
-                            StreamFinalityReason::IdleTimeout {
-                                timeout_ms: state.seed.idle_timeout_ms,
-                            }
-                        },
-                    ),
+                    &mut state,
+                    (StreamFinality::Partial, reason),
                     None,
                     false,
                     None,
@@ -287,7 +317,7 @@ impl Vault {
                 // A seed holds its text as admitted; no raw copy outlives
                 // the process that wrote it.
                 let pending = std::mem::take(&mut seed.saved);
-                let state = State {
+                let mut state = State {
                     last_op_at_ms: seed.created_at_ms,
                     raw: pending.clone(),
                     pending,
@@ -302,9 +332,11 @@ impl Vault {
                     terminal: false,
                     _turn: None,
                 };
-                commit_terminal(
+                // A Retry that no longer stands is retired, landing
+                // nothing (FIX 3152); any other refusal aborts open.
+                if let Err(error) = commit_terminal(
                     self,
-                    &state,
+                    &mut state,
                     (
                         StreamFinality::Partial,
                         StreamFinalityReason::ProcessCrashRecovery,
@@ -312,7 +344,10 @@ impl Vault {
                     None,
                     true,
                     None,
-                )?;
+                ) && !state.terminal
+                {
+                    return Err(error);
+                }
             }
             after = Some(last);
         }
@@ -320,13 +355,63 @@ impl Vault {
 }
 /// Seeds open-time recovery reads and retires at a time.
 const RECOVERY_PAGE: usize = 256;
+/// A stream's terminal write. A Retry's (FIX 3152, 3149) proves the Retry
+/// again in that write, under the agent's and the requester's reads opened
+/// before it, and lands its TURN, or its room regeneration permit, with its
+/// MESSAGE; a Retry that no longer stands lands nothing and is retired
+/// ([`retire_refused_retry`]), so `state` reads terminal.
 fn commit_terminal(
+    vault: &Vault,
+    state: &mut State,
+    (finality, reason): (StreamFinality, StreamFinalityReason),
+    finish_reason: Option<FinishReason>,
+    recovered: bool,
+    gate: TerminalGate<'_>,
+) -> MessageStreamResult<MessageStreamReceipt> {
+    // Set only when the Retry's own proof refuses it.
+    let refused = std::cell::Cell::new(false);
+    let written = terminal_write(
+        vault,
+        state,
+        (finality, reason),
+        finish_reason,
+        recovered,
+        gate,
+        &refused,
+    );
+    if written.is_err() && refused.get() {
+        retire_refused_retry(vault, state)?;
+    }
+    written
+}
+/// Retires a Retry its terminal's own proof refused (FIX 3152): its
+/// requester's standing lapsed, or its source or room changed. No TURN,
+/// MESSAGE, link or receipt lands, as for a Retry never admitted; its seed
+/// goes, and the stream ends.
+fn retire_refused_retry(vault: &Vault, state: &mut State) -> MessageStreamResult<()> {
+    let seed = &state.seed;
+    vault.try_with_write_txn_grouped(|txn| -> MessageStreamResult<()> {
+        if storage::ACTIVE
+            .get(&vault.store, txn, &seed.message_id)?
+            .is_some_and(|row| row.generation == seed.generation)
+        {
+            storage::ACTIVE.delete(&vault.store, txn, &seed.message_id)?;
+        }
+        Ok(())
+    })?;
+    state.terminal = true;
+    #[cfg(feature = "sync")]
+    vault.message_streams.presence.clear(&state.seed);
+    vault.message_streams.remove(state.handle())
+}
+fn terminal_write(
     vault: &Vault,
     state: &State,
     (finality, reason): (StreamFinality, StreamFinalityReason),
     finish_reason: Option<FinishReason>,
     recovered: bool,
     gate: TerminalGate<'_>,
+    refused: &std::cell::Cell<bool>,
 ) -> MessageStreamResult<MessageStreamReceipt> {
     let seed = &state.seed;
     // A postcommit index hook can return an error after a successful commit.
@@ -431,44 +516,79 @@ fn commit_terminal(
         // A recovered stream's `pending` is its seed's checkpoint.
         let text = state.text();
         receipt.bytes = text.len() as u64;
-        memory
-            .witness_with_route_and_txn_effect(
-                &seed.turn(text),
-                None,
-                callback,
-                || {},
-                |txn| -> MemoryResult<()> {
-                    admit_terminal(gate, txn)?;
-                    #[cfg(feature = "sync")]
-                    crate::entity_doc::birth_message_stream_in_txn(
-                        vault,
-                        txn,
-                        &seed.message_id,
-                        crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
-                        seed.occurred_at,
-                    )?;
-                    // A Retry's reply names the reply it answers again, in
-                    // the transaction that writes it.
-                    admission::validate_regeneration(vault, txn, seed).map_err(|error| {
-                        crate::memory::MemoryError::bad_request(error.to_string())
-                    })?;
-                    if let Some(source) = seed.regenerates {
-                        vault
-                            .batch_in()
-                            .edge(
-                                &seed.message_id,
-                                crate::edge::EdgeKind::Regenerates,
-                                &source,
-                                1.0,
-                            )
-                            .apply(txn)?;
-                    }
-                    storage::finish(vault, txn, seed, &receipt)?;
-                    Ok(())
-                },
-            )
-            .map(|_| ())
-            .map_err(MessageStreamError::from)
+        // A Retry's reads take their own snapshots, so they open before the
+        // writer does.
+        match seed
+            .action
+            .as_ref()
+            .map(|action| memory.retry_lanes(action))
+            .transpose()
+        {
+            Err(error) => {
+                refused.set(true);
+                Err(error.into())
+            }
+            Ok(lanes) => memory
+                .witness_with_route_prepare_and_txn_effect(
+                    &seed.turn(text),
+                    None,
+                    callback,
+                    || {},
+                    |txn| {
+                        admit_terminal(gate, txn)?;
+                        // A Retry's reply names the reply it answers again,
+                        // and the Retry is proven again, in the transaction
+                        // that writes it: its TURN lands here, or its room
+                        // regeneration permit admits its room row.
+                        let retry = match admission::validate_regeneration(vault, txn, seed) {
+                            Err(error) => {
+                                Err(crate::memory::MemoryError::bad_request(error.to_string()))
+                            }
+                            Ok(()) => match (&seed.action, &lanes) {
+                                (Some(action), Some((writer, requester))) => memory
+                                    .prepare_action_retry_in_txn(
+                                        txn,
+                                        action,
+                                        seed.turn,
+                                        seed.occurred_at,
+                                        writer,
+                                        requester,
+                                    ),
+                                _ => Ok(None),
+                            },
+                        };
+                        if retry.is_err() && seed.action.is_some() {
+                            refused.set(true);
+                        }
+                        retry
+                    },
+                    |txn| -> MemoryResult<()> {
+                        #[cfg(feature = "sync")]
+                        crate::entity_doc::birth_message_stream_in_txn(
+                            vault,
+                            txn,
+                            &seed.message_id,
+                            crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
+                            seed.occurred_at,
+                        )?;
+                        if let Some(source) = seed.regenerates {
+                            vault
+                                .batch_in()
+                                .edge(
+                                    &seed.message_id,
+                                    crate::edge::EdgeKind::Regenerates,
+                                    &source,
+                                    1.0,
+                                )
+                                .apply(txn)?;
+                        }
+                        storage::finish(vault, txn, seed, &receipt)?;
+                        Ok(())
+                    },
+                )
+                .map(|_| ())
+                .map_err(MessageStreamError::from),
+        }
     };
     if let Err(error) = written {
         let landed = {

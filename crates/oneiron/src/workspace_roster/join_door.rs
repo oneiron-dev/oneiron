@@ -17,6 +17,7 @@ use super::join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentNeed, ConsentPart, ConsentSet, ConsentState,
     JoinDecision, JoinRequest, JoinSubject, RequiredParty, SpendConsent, agent_person_in_txn,
     decide_with_in_txn, home_room_seats_in_txn, person_of_actor_in_txn,
+    require_join_for_branch_in_txn,
 };
 use super::join_receipt::{
     JOINS, JoinFiling, JoinParticipation, JoinReceipt, JoinReceiptRef, READY, RecordedAnswer,
@@ -212,6 +213,64 @@ pub(super) fn rooms_invite_in_txn(
         None,
         false,
     )
+}
+
+/// Whether `reader` may file a roster join for `room`'s project (FIX 1163),
+/// read in `txn`; nothing is filed. Joins and invitations are filed only by
+/// the installed, signed project-roster write
+/// ([`super::workplace_join::file_roster_joins_in_txn`]), so this is that
+/// write's standing, read: `room` is a project's home room, `reader`'s write
+/// standing verifies as the roster door's does, and `reader` signs the
+/// project's state, as its leader or a board holder by its own id or its
+/// PERSON's, or as a live owner, whom the host signs for.
+pub(crate) fn files_roster_joins_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    reader: WriteActor,
+) -> Result<bool> {
+    let Some((project, _)) = home_room_seats_in_txn(vault, txn, room)? else {
+        return Ok(false);
+    };
+    if vault.verify_write_actor_in_txn(txn, &reader).is_err() {
+        return Ok(false);
+    }
+    let Some((_, effective)) = vault.effective_project_in_txn(txn, project)? else {
+        return Ok(false);
+    };
+    let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+    let me = reader.entity_ref();
+    let person = person_of_actor_in_txn(vault, txn, me, at)?;
+    let signs = std::iter::once(me).chain(person).any(|id| {
+        let id = id.to_hex();
+        effective.leader == id || effective.board.contains(&id)
+    });
+    Ok(match person {
+        _ if signs => true,
+        Some(person) => crate::policy_model::owners_in_txn(vault, txn)?.contains(&person),
+        None => false,
+    })
+}
+
+/// Whether a roster write that seats `person` files her join of `room`
+/// (FIX 1163): a PERSON with no live join of the room, as
+/// [`super::workplace_join::file_roster_joins_in_txn`] reads her standing.
+/// One already standing there needs none.
+pub(crate) fn roster_invitee_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+) -> Result<bool> {
+    if vault.get_entity_type_in_txn(txn, &person)? != Some(crate::registry::ENTITY_TYPE_PERSON) {
+        return Ok(false);
+    }
+    match require_join_for_branch_in_txn(vault, txn, room, None, &JoinSubject::Person(person), None)
+    {
+        Ok(_) => Ok(false),
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 /// Files and decides `request` for a `caller` its door already verified.

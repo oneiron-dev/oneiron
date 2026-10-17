@@ -13,7 +13,11 @@
 //!
 //! On a conversation that adopted the DAG the transcript is the branch that
 //! leads to the turn, and Retry's TURN is a sibling of the old one at its
-//! parent, never moving HEAD; a thread's Retry stays in its thread.
+//! parent, never moving HEAD; a thread's Retry hangs off the old TURN in its
+//! thread. A Retry's TURN lands with its reply's MESSAGE, in the reply's
+//! terminal write, or not at all (FIX 3152). In a project room a Retry
+//! answers the same claimed turn again under the room's regeneration permit
+//! (FIX 3149).
 //!
 //! An action stands while its requester does. One asked through a transport
 //! carries the capability slip its request was admitted on, and runs only
@@ -25,13 +29,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
-use crate::claim::CallerLocality;
+use crate::claim::{CallerLocality, ClaimReadStatus, ScopedRead};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Result;
 use crate::memory::{
     MAX_TRANSCRIPT_PAGE_TURNS, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     WitnessAuthor, resolve_entity_ref,
 };
+use crate::workspace_roster::RoomRegenerationPermit;
 use crate::{EntityId, Error, Vault};
 
 /// The attempt kind a host's turn-action worker claims.
@@ -212,6 +217,37 @@ fn standing_lost() -> MemoryError {
     )
 }
 
+/// Whether `lane` reads every one of `ids` in `txn`.
+fn reads_all(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, ids: &[EntityId]) -> MemoryResult<bool> {
+    Ok(lane
+        .entities_readable_in_txn(txn, ids)?
+        .into_iter()
+        .all(|readable| readable))
+}
+
+/// The room regeneration permit `agent` answers a Retry `action` under, in
+/// `txn` (FIX 3149), when its source is a project room's indexed turn;
+/// `None` anywhere else. A room that no longer lets the agent answer its
+/// claimed turn again refuses as an invalid state.
+fn room_regeneration_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    action: &TurnActionAttempt,
+    agent: EntityId,
+) -> MemoryResult<Option<RoomRegenerationPermit>> {
+    if crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?.is_none() {
+        return Ok(None);
+    }
+    RoomRegenerationPermit::prove_in(vault, txn, action, agent)
+        .map(Some)
+        .map_err(|error| match error {
+            Error::InvalidConfig(_) => {
+                invalid_state("the room no longer lets its agent answer this turn again")
+            }
+            error => error.into(),
+        })
+}
+
 impl Memory<'_> {
     /// `vault.conversations.turn.continue`: queues generation that resumes
     /// an incomplete reply on its own MESSAGE, from exactly its saved text.
@@ -270,58 +306,162 @@ impl Memory<'_> {
                 "the turn's conversation changed after its action was queued",
             ));
         }
+        if attempt.action == TurnAction::Retry {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            room_regeneration_in(self.vault(), &txn, attempt, resolved.context.agent)?;
+        }
         Ok(resolved.context)
     }
 
-    /// The new assistant TURN a Retry `action` answers in on a DAG
-    /// conversation, appended as the answering agent: a sibling of the old
-    /// turn at its parent, replying to the user turn, with HEAD left where it
-    /// is. A thread's Retry is a reply in that thread. `None` on a
-    /// conversation that has not adopted the DAG, where the reply's stream
-    /// mints its own TURN. The action is resolved and checked again as its
-    /// requester first, so this handle must be bound to that actor.
-    pub fn turn_action_retry_turn(
+    /// The two reads a Retry answered by this handle's agent is proven
+    /// under (FIX 3152): the agent's own, and the requester's where it sat,
+    /// under its slip's proof as it stands now. Each takes its own snapshot,
+    /// so both are opened before the Retry's opening or terminal writer.
+    pub(crate) fn retry_lanes(
         &self,
         action: &TurnActionAttempt,
-    ) -> MemoryResult<Option<EntityId>> {
+    ) -> MemoryResult<(ScopedRead<'_>, ScopedRead<'_>)> {
+        let vault = self.vault();
+        let proof = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            action.requester_proof_in(vault, &txn)?
+        };
+        let (actor, class) = action.requester()?;
+        let requester = vault.memory(actor, class).at(if action.off_device {
+            CallerLocality::OffDevice
+        } else {
+            CallerLocality::OnDevice
+        });
+        let requester = match &proof {
+            Some(proof) => requester.with_read_proof(proof),
+            None => requester,
+        };
+        let key = requester.read_key()?;
+        Ok((
+            self.read_lane(ClaimReadStatus::Recorded)?,
+            vault
+                .scoped_read(key)
+                .with_claim_status(ClaimReadStatus::Recorded),
+        ))
+    }
+
+    /// Proves `action`, a Retry this handle's agent answers, in `txn`, as
+    /// its opening and its terminal both do: the requester still stands,
+    /// the source turn, MESSAGE and conversation are live and still bound
+    /// as the action names them, the MESSAGE is this agent's, the requester
+    /// reads them, as the agent does where the Retry writes a DAG TURN or a
+    /// room row, and the agent and the requester both read the source's
+    /// thread. A project room's indexed source answers again only under the
+    /// room's regeneration permit (FIX 3149), returned here; anywhere else,
+    /// `None`.
+    pub(crate) fn check_action_retry_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        action: &TurnActionAttempt,
+        writer: &ScopedRead<'_>,
+        requester: &ScopedRead<'_>,
+    ) -> MemoryResult<Option<RoomRegenerationPermit>> {
+        let vault = self.vault();
         if action.action != TurnAction::Retry {
             return Err(MemoryError::bad_request(
-                "only Retry appends a new assistant turn",
+                "only Retry creates a regeneration turn",
             ));
         }
-        let context = self.turn_action_context(action, 0)?;
-        let vault = self.vault();
-        let (parent, session, thread) = {
-            let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            if !crate::conversation_dag::keeps_dag_topology(
-                &vault.store,
-                &txn,
-                &action.conversation,
-            )? {
-                return Ok(None);
+        action.requester_proof_in(vault, txn)?;
+        let gone = || MemoryError::not_found("regeneration source not found");
+        for id in [action.conversation, action.assistant_turn, action.message] {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+                return Err(gone());
             }
-            (
-                crate::conversation_dag::retained_parent(
-                    &vault.store,
-                    &txn,
-                    &action.assistant_turn,
-                )?,
-                crate::compaction::turn_session_membership_in_txn(
-                    &vault.store,
-                    &txn,
-                    &action.assistant_turn,
-                )?,
-                crate::conversation_dag::is_thread_record(
-                    &vault.store,
-                    &txn,
-                    &action.assistant_turn,
-                )?,
-            )
+        }
+        for (kind, expected) in [
+            (EdgeKind::PartOf, action.assistant_turn),
+            (EdgeKind::AuthoredBy, self.actor()),
+            (EdgeKind::BelongsTo, action.conversation),
+        ] {
+            if crate::memory::sole_edge_target(&vault.store, txn, &action.message, kind, "message")?
+                != Some(expected)
+            {
+                return Err(MemoryError::bad_request(
+                    "regeneration source binding changed",
+                ));
+            }
+        }
+        let indexed =
+            crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?
+                .is_some();
+        // The agent reads them too wherever the Retry writes topology, a
+        // DAG TURN or a room row; a plain chat's reply writes none.
+        let topology = indexed
+            || crate::conversation_dag::keeps_dag_topology(
+                &vault.store,
+                txn,
+                &action.conversation,
+            )?;
+        let refs = [
+            action.conversation,
+            action.user_turn,
+            action.assistant_turn,
+            action.message,
+        ];
+        if !reads_all(requester, txn, &refs)? || (topology && !reads_all(writer, txn, &refs)?) {
+            return Err(gone());
+        }
+        for reader in [self.actor(), action.actor] {
+            if !crate::workspace_roster::record_thread_admits_in(
+                vault,
+                txn,
+                action.assistant_turn,
+                reader,
+            )? {
+                return Err(gone());
+            }
+        }
+        if indexed {
+            return room_regeneration_in(vault, txn, action, self.actor());
+        }
+        Ok(None)
+    }
+
+    /// A Retry's terminal step, in the write that lands its reply (FIX
+    /// 3152), run as the answering agent: proves `action` again
+    /// ([`Self::check_action_retry_in`]) and, on a DAG conversation, appends
+    /// its new assistant TURN at `turn_id`, the id its stream opened under:
+    /// a sibling of the old turn at its parent replying to the user turn,
+    /// or, in a thread, a reply to the old turn itself, HEAD left where it
+    /// is. A project room's indexed source lands no TURN here: the permit
+    /// returned admits the reply's room row. The requester never names the
+    /// agent that answers.
+    pub(crate) fn prepare_action_retry_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        action: &TurnActionAttempt,
+        turn_id: EntityId,
+        at: u64,
+        writer: &ScopedRead<'_>,
+        requester: &ScopedRead<'_>,
+    ) -> MemoryResult<Option<RoomRegenerationPermit>> {
+        let vault = self.vault();
+        if let Some(permit) = self.check_action_retry_in(txn, action, writer, requester)? {
+            return Ok(Some(permit));
+        }
+        if !crate::conversation_dag::keeps_dag_topology(&vault.store, txn, &action.conversation)? {
+            return Ok(None);
+        }
+        let thread =
+            crate::conversation_dag::is_thread_record(&vault.store, txn, &action.assistant_turn)?;
+        let parent = if thread {
+            Some(action.assistant_turn)
+        } else {
+            crate::conversation_dag::retained_parent(&vault.store, txn, &action.assistant_turn)?
         };
-        let now = vault.now_recorded_at();
-        let writer = vault.memory(context.agent, EdgeActorClass::Agent);
+        let session = crate::compaction::turn_session_membership_in_txn(
+            &vault.store,
+            txn,
+            &action.assistant_turn,
+        )?;
         // The TURN carries only its speaker: the reply's words are its
-        // MESSAGE's, added under it by the reply's stream.
+        // MESSAGE's, landed beside it in this write.
         let body = rmp_serde::to_vec_named(&serde_json::json!({ "speaker": "assistant" }))
             .map_err(|_| Error::InvariantViolation("retry turn body encode failed"))?;
         let input = crate::conversation_dag::AppendRecord {
@@ -333,23 +473,29 @@ impl Memory<'_> {
             recipients: Vec::new(),
             advance: false,
             kind: crate::registry::ENTITY_TYPE_TURN,
-            occurred: crate::TimeRange {
-                start: now,
-                end: now,
-            },
-            learned_at: now,
+            occurred: crate::TimeRange { start: at, end: at },
+            learned_at: at,
             body,
             text: Vec::new(),
             session,
             thread_audience: None,
-            actor: crate::WriteActor::new(context.agent, EdgeActorClass::Agent),
+            actor: crate::WriteActor::new(self.actor(), self.actor_class()),
         };
-        let appended = if thread {
-            vault.reply_in_thread(&writer, action.assistant_turn, &input)?
-        } else {
-            vault.append_dag_record(&writer, &input)?
-        };
-        Ok(Some(appended.id))
+        crate::conversation_dag::require_append_references_in_txn(
+            vault,
+            writer,
+            txn,
+            &input,
+            &crate::conversation_dag::append_references(&input, None),
+        )
+        .map_err(|failure| match failure {
+            crate::conversation_dag::AppendFailure::Engine(error) => MemoryError::from(error),
+            crate::conversation_dag::AppendFailure::Unresolved(_) => {
+                MemoryError::not_found("regeneration reference not found")
+            }
+        })?;
+        crate::conversation_dag::append_at_in_txn(vault, txn, &input, None, thread, turn_id)?;
+        Ok(None)
     }
 
     fn queue_turn_action(
@@ -382,10 +528,15 @@ impl Memory<'_> {
             native,
             off_device: self.locality() == CallerLocality::OffDevice,
         };
-        // Queued only while the slip it carries stands for this actor.
+        // Queued only while the slip it carries stands for this actor, and
+        // a project room's Retry only while the room lets its agent answer
+        // the claimed turn again (FIX 3149).
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             payload.requester_proof_in(self.vault(), &txn)?;
+            if action == TurnAction::Retry {
+                room_regeneration_in(self.vault(), &txn, &payload, resolved.context.agent)?;
+            }
         }
         // One live action per MESSAGE: a second while one is queued or
         // running returns that one.
@@ -410,8 +561,8 @@ impl Memory<'_> {
     /// assistant TURN of a conversation the actor may write, holding one
     /// MESSAGE a stream generated, authored by a readable agent, with a user
     /// turn before it. No stream may be open on the MESSAGE, and Continue
-    /// needs it incomplete. Retry on a project room's indexed turn is
-    /// refused: a second answer there needs the room's regeneration door.
+    /// needs it incomplete. Retry on a project room's indexed turn is judged
+    /// by its room regeneration permit, once its agent is known.
     fn resolve_turn_action(
         &self,
         action: TurnAction,
@@ -452,16 +603,6 @@ impl Memory<'_> {
                     crate::memory::MEMORY_CODE_FORBIDDEN,
                     "an erased person cannot act on a turn in this room",
                     &[],
-                ));
-            }
-            // A room answers a claimed turn once; its second answer waits on
-            // the room's own regeneration door, so none is queued here.
-            if action == TurnAction::Retry
-                && crate::workspace_roster::replicated_turn_in(vault, &txn, assistant_turn)?
-                    .is_some()
-            {
-                return Err(invalid_state(
-                    "indexed-room Retry requires the room regeneration door",
                 ));
             }
             conversation

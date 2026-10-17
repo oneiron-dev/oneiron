@@ -173,9 +173,10 @@ pub(crate) use project::{
 };
 
 mod rooms;
+pub(crate) use rooms::RoomRegenerationPermit;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub(crate) use rooms::{
-    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, record_thread_admits_in,
+    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in, record_thread_admits_in,
     require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
     thread_binding, thread_members_in, thread_root_readable_in, validate_private_audience_in,
 };
@@ -227,4 +228,5 @@ pub use join_consent::{
 pub use join_door::{
     ConsentAnswer, JoinDecisionView, JoinOutcome, rooms_consent_in_txn, rooms_join_in_txn,
 };
+pub(crate) use join_door::{files_roster_joins_in_txn, roster_invitee_in_txn};
 pub use join_receipt::{JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer};
