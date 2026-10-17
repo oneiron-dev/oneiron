@@ -1066,6 +1066,9 @@ class Oneiron:
         @property
         def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs":
             return Oneiron._VaultArtifactsBodyForkVerbs(self._client)
+        @property
+        def proposal(self) -> "Oneiron._VaultArtifactsBodyProposalVerbs":
+            return Oneiron._VaultArtifactsBodyProposalVerbs(self._client)
         def export(self, request: dict[str, Any]) -> dict[str, Any]:
             """Exports the live body as the artifact's next version."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_export(json.dumps(request, allow_nan=False))))
@@ -1088,11 +1091,20 @@ class Oneiron:
             """A fork's three-way diff against the live head."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_diff(json.dumps(request, allow_nan=False))))
         def merge(self, request: dict[str, Any]) -> dict[str, Any]:
-            """A person lands a reviewed fork."""
+            """Lands one reviewed fork on an answer."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_merge(json.dumps(request, allow_nan=False))))
         def discard(self, request: dict[str, Any]) -> dict[str, Any]:
             """Abandons an open fork's unlanded work."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_discard(json.dumps(request, allow_nan=False))))
+    class _VaultArtifactsBodyProposalVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, request: dict[str, Any]) -> dict[str, Any]:
+            """An office proposal: its members, answers and settlement."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_proposal_read(json.dumps(request, allow_nan=False))))
+        def settle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Accepts or rejects an office proposal's reviewed forks."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_proposal_settle(json.dumps(request, allow_nan=False))))
     class _VaultArtifactsBodyDeckVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
