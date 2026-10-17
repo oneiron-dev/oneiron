@@ -242,8 +242,8 @@ pub struct ProjectCardDismissal {
     pub card_id: String,
     pub dismissed: bool,
 }
-/// `describe`'s one input: the task to describe, a board card's key, or
-/// none for the whole TASKS section.
+/// `describe`'s one input: the task to describe, a board card's key, the
+/// vault for its shape card, or none for the whole TASKS section.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DescribeRequest {
@@ -251,6 +251,11 @@ pub struct DescribeRequest {
     pub task_ref: Option<String>,
     #[serde(default, rename = "self")]
     pub self_target: bool,
+    /// `describe(vault)`: the vault's shape card (ARCH-0070), what its
+    /// arrangement amounts to and what its actors can send. Names nothing
+    /// else.
+    #[serde(default)]
+    pub vault: bool,
     #[serde(default)]
     pub session_id: Option<String>,
     /// A board card's key: describe expands that card, under the board's

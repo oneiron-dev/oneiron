@@ -22,7 +22,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
   schema(input: { name: string; tool: string }): Promise<unknown>;
   status(input: { name: string }): Promise<unknown>;
 };
-declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
+declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null; vault?: boolean }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare const reveal: ((input: { handle: string; why: string }) => Promise<unknown>) & {

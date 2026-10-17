@@ -575,7 +575,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.memory.diary.query": { description: "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "cancel": { description: "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work.", scope: "Write", proposes: true, hostDoor: false, section: true },
   "steer": { description: "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "describe": { description: "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named.", scope: "Read", proposes: false, hostDoor: false, section: true },
+  "describe": { description: "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named.", scope: "Read", proposes: false, hostDoor: false, section: true },
   "tasks.create": { description: "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal.", scope: "Write", proposes: true, hostDoor: false, section: true },
   "tasks.wave": { description: "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.fanout.launch": { description: "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -1475,7 +1475,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
     cancel: (input: Facade.TaskRequest, options?: O): FacadeReturns<"cancel">[K] => invoke("cancel", input, options, newInvocation()),
     /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
     steer: (input: Facade.SteerRequest, options?: O): FacadeReturns<"steer">[K] => invoke("steer", input, options, newInvocation()),
-    /** Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named. */
+    /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named. */
     describe: (input: Facade.DescribeRequest, options?: O): FacadeReturns<"describe">[K] => invoke("describe", input, options, newInvocation()),
     tasks: {
       /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */

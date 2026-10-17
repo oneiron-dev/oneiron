@@ -2094,7 +2094,14 @@ impl AgentVerb {
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
-            Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
+            Self::Describe => &[
+                "task_ref",
+                "self",
+                "vault",
+                "session_id",
+                "key",
+                "frame_epoch",
+            ],
             Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
@@ -2746,7 +2753,7 @@ impl AgentVerb {
                 "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt."
             }
             Self::Describe => {
-                "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named."
+                "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named."
             }
             Self::TasksCreate => {
                 "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."
