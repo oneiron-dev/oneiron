@@ -312,7 +312,15 @@ impl SyncServer {
             &self.reader_runner.seats(),
             runtime,
         );
-        if let Err(error) = settle(vault, self.decision_host(), &claimed, ran) {
+        // OF-181: the run settles under its live-run guard, and leaves the
+        // host's live runs unless it parked on a durable wait.
+        let waits = ran
+            .as_ref()
+            .is_ok_and(|outcome| matches!(outcome.status, EngineExecutorStatus::Waiting(_)));
+        let run = EntityId::from_bytes(*id.as_bytes()).ok();
+        if let Err(error) = self.live_runs.settle(run, waits, || {
+            settle(vault, self.decision_host(), &claimed, ran)
+        }) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
         false
@@ -421,6 +429,7 @@ fn run_bound(
             compaction.as_mut(),
             &reactor,
             server.decision_host(),
+            &server.live_runs,
         )?;
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
@@ -459,6 +468,7 @@ fn enter_run(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     decisions: &DecisionHost,
+    live_runs: &super::LiveRuns,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
@@ -470,6 +480,14 @@ fn enter_run(
     if let Some(planner) = planner_binding(vault, provider, config, planner)? {
         bound = bound.with_planner(planner);
     }
+    // OF-181: the run's lease proof, registered for the handle a harness
+    // attaches, and its guard, held through the whole entry: an action
+    // through that handle runs only between entries.
+    let proof = bound.live_run_host_binding(config.run_id).map_err(text)?;
+    let _serial = live_runs
+        .register(vault, config.run_id, actor, &status.attempt, proof)
+        .map_err(text)?
+        .enter();
     enter_engine_native_run(
         vault,
         provider,

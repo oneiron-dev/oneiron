@@ -2,8 +2,11 @@ use std::collections::HashSet;
 
 use rmpv::Value;
 
-use crate::{Error, Result};
+use crate::attempt_queue::AttemptId;
+use crate::claim::CallerLocality;
+use crate::{EdgeActorClass, Error, Result};
 
+use super::live_run::{CodeRunLiveRunBinding, LiveRunCredential};
 use super::payload::self_effect_from_str;
 use super::replay::{
     CODE_RUN_REPLAY_SCHEMA_VERSION, CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism,
@@ -17,7 +20,7 @@ use super::support::{
     validate_text,
 };
 
-pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 8] = [
+pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 9] = [
     "schema_version",
     "run_id",
     "determinism",
@@ -26,6 +29,7 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 8] = [
     "outputs",
     "abi_layout_checks",
     "bindings",
+    "live_run",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
 pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 6] = [
@@ -51,6 +55,17 @@ pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 8] = [
 pub const CODE_RUN_OUTPUT_PREVIEW_KEYS: [&str; 3] = ["codec", "text", "truncated"];
 pub const CODE_RUN_ABI_LAYOUT_CHECK_KEYS: [&str; 4] =
     ["name", "schema_version", "fields", "layout_hash"];
+/// A live run's attachment (OF-181); an unattached run's is Nil.
+const CODE_RUN_LIVE_RUN_KEYS: [&str; 8] = [
+    "issued",
+    "credential",
+    "locality",
+    "actor",
+    "actor_class",
+    "attempt",
+    "lease_owner",
+    "lease_generation",
+];
 
 const KEY_SCHEMA_VERSION: &str = CODE_RUN_REPLAY_RECORD_KEYS[0];
 const KEY_RUN_ID: &str = CODE_RUN_REPLAY_RECORD_KEYS[1];
@@ -60,6 +75,7 @@ const KEY_STEP_CHECKPOINTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[4];
 const KEY_OUTPUTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[5];
 const KEY_ABI_LAYOUT_CHECKS: &str = CODE_RUN_REPLAY_RECORD_KEYS[6];
 const KEY_BINDINGS: &str = CODE_RUN_REPLAY_RECORD_KEYS[7];
+const KEY_LIVE_RUN: &str = CODE_RUN_REPLAY_RECORD_KEYS[8];
 
 const KEY_FROZEN_UNIX_MS: &str = CODE_RUN_DETERMINISM_KEYS[0];
 const KEY_RNG_SEED: &str = CODE_RUN_DETERMINISM_KEYS[1];
@@ -140,6 +156,10 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
             Value::from(KEY_BINDINGS),
             Value::Array(record.bindings.iter().map(encode_binding).collect()),
         ),
+        (
+            Value::from(KEY_LIVE_RUN),
+            record.live_run.as_ref().map_or(Value::Nil, encode_live_run),
+        ),
     ]);
     encode_value(&value, "code-run replay record MessagePack encode failed")
 }
@@ -194,6 +214,7 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
             required(fields[7], "missing replay bindings")?,
             decode_binding,
         )?,
+        live_run: decode_live_run(required(fields[8], "missing replay live_run")?)?,
     };
     validate_code_run_replay_record(&record)?;
     Ok(record)
@@ -415,6 +436,75 @@ fn decode_binding(value: &Value) -> Result<CodeRunResultBinding> {
     ))
 }
 
+fn encode_live_run(binding: &CodeRunLiveRunBinding) -> Value {
+    let locality = match binding.credential.locality {
+        CallerLocality::OnDevice => "on_device",
+        CallerLocality::OffDevice => "off_device",
+    };
+    Value::Map(
+        CODE_RUN_LIVE_RUN_KEYS
+            .iter()
+            .map(|key| Value::from(*key))
+            .zip([
+                Value::Binary(binding.issued.to_vec()),
+                Value::Binary(binding.credential.digest.to_vec()),
+                Value::from(locality),
+                Value::Binary(binding.actor.as_bytes().to_vec()),
+                Value::from(binding.actor_class as u8),
+                Value::Binary(binding.attempt.as_bytes().to_vec()),
+                Value::from(binding.lease_owner.as_str()),
+                Value::from(binding.lease_generation),
+            ])
+            .collect(),
+    )
+}
+
+fn decode_live_run(value: &Value) -> Result<Option<CodeRunLiveRunBinding>> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    let fields = pinned_map(value, &CODE_RUN_LIVE_RUN_KEYS, "code-run live run")?;
+    let locality = match str_value(required(fields[2], "missing live run locality")?)? {
+        "on_device" => CallerLocality::OnDevice,
+        "off_device" => CallerLocality::OffDevice,
+        _ => return Err(invalid_code_run_replay("unknown live run locality")),
+    };
+    let actor_class = u8::try_from(u64_value(required(
+        fields[4],
+        "missing live run actor_class",
+    )?)?)
+    .ok()
+    .and_then(EdgeActorClass::try_from_u8)
+    .ok_or(invalid_code_run_replay("unknown live run actor class"))?;
+    let attempt: [u8; 16] = fixed_binary(
+        required(fields[5], "missing live run attempt")?,
+        "live run attempt",
+    )?;
+    Ok(Some(CodeRunLiveRunBinding {
+        issued: fixed_binary(
+            required(fields[0], "missing live run issued")?,
+            "live run issued",
+        )?,
+        credential: LiveRunCredential {
+            digest: fixed_binary(
+                required(fields[1], "missing live run credential")?,
+                "live run credential",
+            )?,
+            locality,
+        },
+        actor: entity_value(required(fields[3], "missing live run actor")?)?,
+        actor_class,
+        attempt: AttemptId::from_bytes(&attempt)
+            .map_err(|_| invalid_code_run_replay("live run attempt"))?,
+        lease_owner: str_value(required(fields[6], "missing live run lease_owner")?)?.to_owned(),
+        lease_generation: u32::try_from(u64_value(required(
+            fields[7],
+            "missing live run lease_generation",
+        )?)?)
+        .map_err(|_| invalid_code_run_replay("live run lease generation overflow"))?,
+    }))
+}
+
 fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
     let mut expected_seq = 0_u64;
     for call in &record.bridge_calls {
@@ -467,6 +557,9 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
                 "result binding names no output of this run",
             ));
         }
+    }
+    if let Some(live_run) = &record.live_run {
+        validate_label(&live_run.lease_owner, "live run lease owner")?;
     }
     Ok(())
 }

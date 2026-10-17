@@ -22,7 +22,7 @@ use super::types::{
     SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfSpeechCall, SelfSpeechResult,
 };
 
-pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 1;
+pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
 pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
 
@@ -632,6 +632,9 @@ pub struct CodeRunReplayRecord {
     /// The run's live result names, each bound to one of `outputs`. A rebind
     /// replaces its entry in place.
     pub bindings: Vec<CodeRunResultBinding>,
+    /// The credential attached to this live agent run (OF-181), as its host
+    /// stored it: association metadata, never the lease proof.
+    pub live_run: Option<super::live_run::CodeRunLiveRunBinding>,
 }
 
 /// One name a program bound to a result of its run (`r7`, or a name it gave
@@ -708,6 +711,7 @@ impl CodeRunReplayRecord {
             outputs: Vec::new(),
             abi_layout_checks: code_run_replay_abi_layout_checks(),
             bindings: Vec::new(),
+            live_run: None,
         }
     }
 
