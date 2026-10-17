@@ -295,6 +295,9 @@ pub struct ServeConfig {
     /// The `[browser]` section, absent until the config file names it.
     /// Absent means code runs have no browser.
     pub browser: Option<super::BrowserConfig>,
+    /// The `[desktop]` section, absent until the config file names it.
+    /// Absent means code runs have no desktop.
+    pub desktop: Option<super::DesktopConfig>,
     /// The `[gpu]` section: the batch lane's rented pods, absent until the
     /// config file names it. Absent means every batch runs where its slot's
     /// provider runs.
@@ -365,6 +368,7 @@ impl Default for ServeConfig {
             import: super::ImportConfig::default(),
             models: None,
             browser: None,
+            desktop: None,
             gpu: None,
             embedding: None,
             // Hosting is opt-in: an operator must name the posture AND supply
@@ -435,6 +439,7 @@ impl fmt::Debug for ServeConfig {
             .field("import", &self.import)
             .field("models", &self.models)
             .field("browser", &self.browser)
+            .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
             .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)

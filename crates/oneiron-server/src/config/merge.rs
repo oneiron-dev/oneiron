@@ -294,6 +294,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     if let Some(browser) = &config.browser {
         browser.validate()?;
     }
+    if let Some(desktop) = &config.desktop {
+        desktop.validate()?;
+    }
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
     }
@@ -508,6 +511,7 @@ struct FileServeConfig {
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
     browser: Option<super::BrowserConfig>,
+    desktop: Option<super::DesktopConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
     embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -564,6 +568,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             import: value.import,
             models: None,
             browser: value.browser,
+            desktop: value.desktop,
             gpu: value.gpu,
             embedding: value.embedding,
             privacy_posture: value.privacy_posture,
@@ -623,6 +628,8 @@ struct PartialServeConfig {
     models: Option<ModelsConfig>,
     /// `[browser]` is file-only, as `[models]` is.
     browser: Option<super::BrowserConfig>,
+    /// `[desktop]` is file-only, as `[browser]` is.
+    desktop: Option<super::DesktopConfig>,
     /// `[gpu]` is file-only, as `[browser]` is.
     gpu: Option<crate::runtime::GpuPoolConfig>,
     /// `[embedding]` is file-only, as `[models]` is.
@@ -693,6 +700,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("import", &self.import)
             .field("models", &self.models)
             .field("browser", &self.browser)
+            .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
             .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
@@ -857,6 +865,9 @@ impl PartialServeConfig {
         if let Some(value) = self.embedding {
             resolved.embedding = Some(value);
         }
+        if let Some(value) = self.desktop {
+            resolved.desktop = Some(value);
+        }
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
         }
@@ -936,6 +947,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             import: None,
             models: None,
             browser: None,
+            desktop: None,
             gpu: None,
             embedding: None,
             privacy_posture: value.privacy_posture,
