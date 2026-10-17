@@ -4,13 +4,15 @@
 //! propose-only door for each on the host's decision ladder. What lands is a
 //! proposed heal in the owner's run tray; nothing is repaired here. The
 //! code-fix run a filed heal wakes (OF-380) and the answer to an agent-health
-//! card's ask (OF-568) ride the same queue.
+//! card's ask (OF-568) ride the same queue. Each code-fix run also replays
+//! the publisher's pinned candidates the worker started with.
 use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::dreamer_runner::maintenance::agent_health::COACH_AGENT_HEALTH_ASK_FACET;
 use oneiron::dreamer_runner::maintenance::coach::{COACH_CODE_FIX_FACET, COACH_ISSUES_FACET};
 use oneiron::dreamer_runner::maintenance::coach_heal::HealDecisions;
+use oneiron::dreamer_runner::maintenance::code_fix::PublisherCandidate;
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, CompleteDreamerAttempt,
     DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore, FailDreamerAttempt,
@@ -38,8 +40,12 @@ const ROUND: usize = 8;
 const DECIDE_BUDGET: Duration = Duration::from_secs(20);
 
 /// Starts the worker. Each round runs on a blocking thread: the ladder's
-/// model rungs block on the server's runtime.
-pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+/// model rungs block on the server's runtime. `publisher` is
+/// `FailureSignalsConfig::publisher_candidates`.
+pub(crate) fn spawn(
+    server: &Arc<SyncServer>,
+    publisher: Arc<[PublisherCandidate]>,
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -49,7 +55,8 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            match tokio::task::spawn_blocking(move || round(&server)).await {
+            let publisher = Arc::clone(&publisher);
+            match tokio::task::spawn_blocking(move || round(&server, &publisher)).await {
                 // By kind only: an engine error can quote the vault.
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "the Coach's heal queue waits for the next round");
@@ -61,7 +68,7 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
     })
 }
 
-fn round(server: &SyncServer) -> oneiron::Result<()> {
+fn round(server: &SyncServer, publisher: &[PublisherCandidate]) -> oneiron::Result<()> {
     let vault = server.vault();
     let store = DreamerRunnerStore::new(vault);
     for _ in 0..ROUND {
@@ -77,7 +84,7 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
             DreamerAdmissionOutcome::Admitted(admitted) => admitted,
             _ => return Ok(()),
         };
-        let ran = run_one(server, &admitted, now);
+        let ran = run_one(server, &admitted, publisher, now);
         settle(vault, &store, &admitted, ran, BUDGET_ID)?;
     }
     Ok(())
@@ -86,6 +93,7 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
 fn run_one(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
+    publisher: &[PublisherCandidate],
     now: u64,
 ) -> oneiron::Result<()> {
     let vault = server.vault();
@@ -93,7 +101,7 @@ fn run_one(
         .ensure_embedded_owner_actor()
         .map_err(|error| oneiron::Error::InvalidConfig(format!("no owner principal: {error}")))?;
     if admitted.status.payload.attempt_type == COACH_CODE_FIX_FACET {
-        return super::code_fix::run(server, admitted, principal, now);
+        return super::code_fix::run(server, admitted, principal, publisher, now);
     }
     if admitted.status.payload.attempt_type == COACH_AGENT_HEALTH_ASK_FACET {
         return super::coach_health::run(server, admitted, now);

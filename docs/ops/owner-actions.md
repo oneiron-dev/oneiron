@@ -684,7 +684,17 @@ terms; a self-hosted server participates only once you set `failure_signal_expor
 endpoint = "https://…"     # ONEIRON_FAILURE_SIGNALS_ENDPOINT; HTTPS, or HTTP on loopback
 every_secs = 3600          # ONEIRON_FAILURE_SIGNALS_EVERY_SECS
 batch = 64                 # ONEIRON_FAILURE_SIGNALS_BATCH: code-fix records per send
+
+[failure_signals.candidates.tone-fix]    # a publisher candidate; file layers only
+instructions_file = "/etc/oneiron/candidates/tone-fix.txt"
+sha256 = "…"               # the file's SHA-256, lowercase hex
 ```
+
+A candidate is an instruction your publisher ships and you install and pin. The Coach replays
+each failure in the vault with the candidate added to the failing agent's instructions, and only
+the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
+fetches or installs it. A file that no longer matches its pin stops the server at start. At most
+8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
 
 The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
