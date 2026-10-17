@@ -629,7 +629,7 @@ fn graph_proposal(
     } else {
         Vec::new()
     };
-    let audio = if answerer.reads_audio() {
+    let audio = if answerer.reads_audio() && record.definition.media.audio {
         graph_ask::unit_audio(&lane, &context)?
     } else {
         Vec::new()
