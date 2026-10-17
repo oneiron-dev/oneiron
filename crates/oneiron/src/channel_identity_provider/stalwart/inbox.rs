@@ -89,13 +89,16 @@ impl StalwartClient {
         now: u64,
     ) -> Result<StalwartInboxOutcome> {
         vault.require_builtin_channel_pack("native_mail")?;
+        // Channel and mailbox are the identity's facts (OF-272); whether it
+        // is delegated is custody, on the local row.
         let identity = vault
             .get_channel_identity(&identity_ref)?
             .ok_or(crate::Error::EntityNotFound)?;
+        let facts = vault
+            .channel_identity_facts(&identity_ref)?
+            .ok_or(crate::Error::EntityNotFound)?;
         let address = self.address_for_identity(identity_ref);
-        if identity.channel() != "email"
-            || identity.is_delegated()
-            || identity.address_or_handle() != address
+        if facts.channel != "email" || identity.is_delegated() || facts.address_or_handle != address
         {
             return Err(invalid(
                 "native inbox identity differs from the instance mailbox",

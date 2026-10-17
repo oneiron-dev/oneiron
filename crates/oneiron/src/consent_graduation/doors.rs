@@ -28,13 +28,21 @@ fn native_mail_offer_is_earned(
         return Ok(true);
     };
     let identity = crate::entity_id::EntityId::from_hex(hex)?;
+    // Channel and binding are the identity's facts, read from its
+    // `channel_identity.*` heads (OF-272); whether it may send is custody, on
+    // the local row.
+    let Some(facts) =
+        crate::channel_identity::channel_identity_facts_in_txn(&vault.store, txn, &identity)?
+    else {
+        return Ok(false);
+    };
     let Some(record) = vault.get_channel_identity_in_txn(txn, &identity)? else {
         return Ok(false);
     };
-    if record.channel() != "email"
+    if facts.channel != "email"
         || !record.may_send()
-        || record
-            .binding()
+        || facts
+            .binding
             .actor_ref()
             .map(|actor| actor.to_hex())
             .as_deref()
