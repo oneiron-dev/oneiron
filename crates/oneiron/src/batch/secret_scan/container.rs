@@ -8,8 +8,11 @@
 //! One walk serves the write door, the release scan and the rebuild, under
 //! one budget for a file's whole tree. A container the walk cannot read
 //! whole (past a bound, malformed, failing a checksum, encrypted, or in a
-//! method or filter no reader here decodes) never reads as clean: the write
-//! door refuses it, and a serving door refuses it to a masked reader.
+//! method or filter no reader here decodes) is sealed ([`is_sealed`]): the
+//! write door stores it as it is and leaves it unmarked (owner ruling C2,
+//! "encrypted files are stored as they are"), a serving door gives it to the
+//! owner and refuses it to a masked reader, and every release door reads it
+//! as a hit.
 //!
 //! A container is known by its leading bytes, never by its name. A tar, 7z,
 //! RAR or xz file is read as plain bytes, and so is a container that starts
@@ -67,6 +70,20 @@ fn kind(bytes: &[u8]) -> Option<Kind> {
 /// Whether the walk reads into `bytes`.
 pub(crate) fn is_container(bytes: &[u8]) -> bool {
     kind(bytes).is_some()
+}
+
+/// Whether `bytes` is a container the walk cannot read whole: encrypted,
+/// malformed, in a method or filter no reader here decodes, or past one of
+/// the bounds above. Its members are not read, so no mark can place a key in
+/// it.
+pub(crate) fn is_sealed(bytes: &[u8]) -> bool {
+    is_container(bytes)
+        && matches!(
+            walk_members(bytes, &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> {
+                Ok(())
+            }),
+            Err(Stop::Refuse(_))
+        )
 }
 
 /// Whether a key's span is placed in `bytes` as they are: plain bytes, and a
