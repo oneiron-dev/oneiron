@@ -13525,7 +13525,7 @@
       "const": 3,
       "crate-vis": 6,
       "enum": 4,
-      "fn": 33,
+      "fn": 34,
       "struct": 7
      }
     },
@@ -14457,6 +14457,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/context_board/readers.rs",
+     "purpose": "The READERS board block (ARCH-0067 #inbox-section, ARCH-0032 #private-reads): an agent sees who may read its…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RoomBar",
       "RoomMode",
@@ -14516,7 +14527,7 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -28613,19 +28624,22 @@
       "DiaryReadReceipt",
       "DiaryReadRecord",
       "DiaryReadRequest",
+      "DiaryReader",
+      "DiaryReaderList",
       "DiaryReadsRequest",
       "DiaryReadsView",
       "DiaryReviewAnswer",
-      "DiaryReviewState"
+      "DiaryReviewState",
+      "SealedPadReader"
      ],
      "path": "src/memory/diary_read.rs",
      "purpose": "The reason-logged door to an agent's diary (OF-490, owner AGM-1+8)",
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 4,
-      "fn": 13,
-      "struct": 9
+      "enum": 5,
+      "fn": 15,
+      "struct": 11
      }
     },
     {
@@ -28865,7 +28879,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 34
+      "re-export": 35
      }
     },
     {
@@ -50263,7 +50277,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51392,7 +51406,7 @@
    },
    "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3106,
+   "source_files": 3107,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62459,7 +62473,7 @@
      "path": "src/api/context_board/scratchpad.rs",
      "purpose": "POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
