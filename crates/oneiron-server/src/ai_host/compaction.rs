@@ -28,6 +28,7 @@ use oneiron::llm::{
 use oneiron::{BudgetGuard, CompactionOwnership, EdgeActorClass, MemoryProfile, Vault, WriteActor};
 
 use super::CHAT_ROLE;
+use super::payer_funding::scope_funding;
 use super::status::{CompactionState, CompactionStatus, StatusCell};
 use crate::admission::Admission;
 use crate::config::models::{ModelsConfig, Rung, role_key};
@@ -588,18 +589,22 @@ impl CompactionBackend for ServedCompactionBackend {
         {
             call.request.envelope.response_format = ResponseFormat::Text;
         }
-        let guard = match &self.meter {
-            CompactionMeter::CodeMode(guard) => guard.clone(),
-            CompactionMeter::Scope(scope) => AgentDispatcher::new(&self.vault)
-                .guard_for_scope(scope)
-                .map_err(|error| {
-                    refused(
-                        CompactionSuppression::TurnScoped { check: None },
-                        error.to_string(),
-                    )
-                })?,
+        let turn =
+            |error: String| refused(CompactionSuppression::TurnScoped { check: None }, error);
+        // A pass under a room-paid scope bills its root payer's own account
+        // (OF-531); a payer this host cannot bill holds the pass for the turn.
+        let (guard, payer) = match &self.meter {
+            CompactionMeter::CodeMode(guard) => (guard.clone(), None),
+            CompactionMeter::Scope(scope) => {
+                let payer = scope_funding(&self.vault, Some(scope), false)
+                    .map_err(|fault| turn(fault.to_string()))?;
+                let guard = AgentDispatcher::new(&self.vault)
+                    .guard_for_scope(scope)
+                    .map_err(|error| turn(error.to_string()))?;
+                (guard, payer)
+            }
         };
-        let run = self.models.undeclared_run(COMPACTION_RUN, guard.clone());
+        let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
         let reply = self
             .handle
             .block_on(call.ladder.generate(&run, call.request, None));
