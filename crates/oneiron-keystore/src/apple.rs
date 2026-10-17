@@ -20,7 +20,9 @@ use security_framework_sys::item::kSecValueData;
 use security_framework_sys::keychain_item::SecItemAdd;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::{DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, Result};
+use crate::{
+    DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot, Result,
+};
 
 const ERR_SEC_SUCCESS: i32 = 0;
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
@@ -67,24 +69,20 @@ impl AppleKeychain {
     }
 }
 
-impl DeviceKeystore for AppleKeychain {
-    fn get(&self, slot: &KeystoreSlot) -> Result<Option<Zeroizing<[u8; 32]>>> {
-        let mut bytes = match generic_password(self.lookup(slot)) {
-            Ok(bytes) => bytes,
-            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => return Ok(None),
-            Err(e) => return Err(platform(e.code())),
-        };
-        let secret = <[u8; 32]>::try_from(bytes.as_slice()).map(Zeroizing::new);
-        bytes.zeroize();
-        secret
-            .map(Some)
-            .map_err(|_| KeystoreError::Corrupt("the slot is not 32 bytes"))
+impl AppleKeychain {
+    /// The slot's item as stored; `None` when the slot is empty.
+    pub(crate) fn read_item(&self, slot: &KeystoreSlot) -> Result<Option<Vec<u8>>> {
+        match generic_password(self.lookup(slot)) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            Err(e) => Err(platform(e.code())),
+        }
     }
 
     /// Create-only, in one `SecItemAdd`: a present item is `errSecDuplicateItem`,
     /// so `AlreadyExists`. The library's set call falls back to an update, and a
     /// check before it races another first use of the slot.
-    fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
+    pub(crate) fn add_item(&self, slot: &KeystoreSlot, data: &[u8]) -> Result<()> {
         let item = self.new_item(slot)?;
         #[expect(
             deprecated,
@@ -94,7 +92,7 @@ impl DeviceKeystore for AppleKeychain {
         // SAFETY: `kSecValueData` is an immutable CFString the Security framework
         // exports for the life of the process; the get rule retains it.
         let value_key = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
-        attributes.push((value_key, CFData::from_buffer(secret).into_CFType()));
+        attributes.push((value_key, CFData::from_buffer(data).into_CFType()));
         let attributes = CFDictionary::from_CFType_pairs(&attributes);
         // SAFETY: `attributes` is a valid dictionary that outlives the call, and a
         // null result pointer asks for no returned item.
@@ -103,6 +101,23 @@ impl DeviceKeystore for AppleKeychain {
             ERR_SEC_SUCCESS => Ok(()),
             other => Err(platform(other)),
         }
+    }
+}
+
+impl DeviceKeystore for AppleKeychain {
+    fn get(&self, slot: &KeystoreSlot) -> Result<Option<Zeroizing<[u8; 32]>>> {
+        let Some(mut bytes) = self.read_item(slot)? else {
+            return Ok(None);
+        };
+        let secret = <[u8; 32]>::try_from(bytes.as_slice()).map(Zeroizing::new);
+        bytes.zeroize();
+        secret
+            .map(Some)
+            .map_err(|_| KeystoreError::Corrupt("the slot is not 32 bytes"))
+    }
+
+    fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
+        self.add_item(slot, secret)
     }
 
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
@@ -116,9 +131,13 @@ impl DeviceKeystore for AppleKeychain {
     fn locality(&self) -> KeystoreLocality {
         KeystoreLocality::ThisDeviceOnly
     }
+
+    fn assurance(&self) -> KeystoreAssurance {
+        KeystoreAssurance::Platform
+    }
 }
 
-fn platform(code: i32) -> KeystoreError {
+pub(crate) fn platform(code: i32) -> KeystoreError {
     match code {
         ERR_SEC_MISSING_ENTITLEMENT => KeystoreError::Unavailable(
             "the data-protection keychain needs a signed app with a keychain access group",

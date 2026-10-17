@@ -218,6 +218,17 @@ impl Vault {
         Ok(machine.expect("closure ran on Ok"))
     }
 
+    /// What keeps this install's slots at rest, as the owner is told it; `None`
+    /// while the host installed no keystore (OF-168).
+    pub fn device_keystore_assurance(&self) -> Option<oneiron_keystore::KeystoreAssurance> {
+        self.world_keys
+            .keystore
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|keystore| keystore.assurance())
+    }
+
     pub(crate) fn device_keystore(&self) -> Result<Arc<dyn DeviceKeystore>> {
         self.world_keys
             .keystore

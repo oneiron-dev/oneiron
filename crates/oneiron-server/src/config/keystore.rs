@@ -3,11 +3,14 @@
 //! seed of this machine's encryption key, which opens the world keys wrapped to it,
 //! and the seed of its signing keys (receipts, settings edits, key records).
 //!
-//! - `backend = "platform"` (the default) is the Apple data-protection keychain, or
-//!   a 0700 key directory on other Unix systems. `"off"` installs none, and every
-//!   signing and world-key door then answers `KeystoreUnavailable`.
+//! - `backend = "platform"` (the default) is the Apple data-protection keychain,
+//!   DPAPI-sealed files on Windows, or a 0700 key directory on other Unix systems.
+//!   `"hardware"` seals every slot to a Secure Enclave key on Apple and is refused
+//!   elsewhere, never served by a weaker tier (OF-168). `"off"` installs none, and
+//!   every signing and world-key door then answers `KeystoreUnavailable`.
 //! - `dir` is that key directory. It defaults to `$XDG_STATE_HOME/oneiron/keys`,
-//!   then `$HOME/.local/state/oneiron/keys`, and it must lie outside the vault.
+//!   then `$HOME/.local/state/oneiron/keys` (`%LOCALAPPDATA%\Oneiron\keys` on
+//!   Windows), and it must lie outside the vault.
 //! - `service` is the Apple keychain service name.
 
 use std::path::{Path, PathBuf};
@@ -23,6 +26,7 @@ pub use oneiron_keystore::DEFAULT_KEYCHAIN_SERVICE;
 pub enum KeystoreBackend {
     #[default]
     Platform,
+    Hardware,
     Off,
 }
 
@@ -72,7 +76,14 @@ impl KeystoreConfig {
             None => default_key_dir()?,
         };
         let service = self.service.as_deref().unwrap_or(DEFAULT_KEYCHAIN_SERVICE);
-        let keystore = oneiron_keystore::platform_keystore(service, &dir, &[vault_path])?;
+        let keystore = match self.backend {
+            KeystoreBackend::Hardware => {
+                oneiron_keystore::hardware_keystore(service, &dir, &[vault_path])?
+            }
+            KeystoreBackend::Platform | KeystoreBackend::Off => {
+                oneiron_keystore::platform_keystore(service, &dir, &[vault_path])?
+            }
+        };
         Ok(Some(keystore))
     }
 
@@ -84,6 +95,10 @@ impl KeystoreConfig {
     pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
         match self.open(vault_path) {
             Ok(Some(keystore)) => {
+                tracing::info!(
+                    assurance = keystore.assurance().label(),
+                    "this-device keystore installed"
+                );
                 vault.install_device_keystore(keystore);
                 vault.prepare_install_signing_logged();
                 true
@@ -132,7 +147,9 @@ pub(super) fn lookup_keystore_override(
     let backend = lookup("ONEIRON_KEYSTORE_BACKEND")
         .map(|value| {
             serde_json::from_value(serde_json::Value::String(value.clone())).map_err(|_| {
-                anyhow::anyhow!("ONEIRON_KEYSTORE_BACKEND must be platform or off, not {value:?}")
+                anyhow::anyhow!(
+                    "ONEIRON_KEYSTORE_BACKEND must be platform, hardware or off, not {value:?}"
+                )
             })
         })
         .transpose()?;
