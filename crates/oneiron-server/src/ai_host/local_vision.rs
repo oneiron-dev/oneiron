@@ -209,10 +209,18 @@ impl DecisionModel for LocalVisionModel {
             return Err(failed("the local vision route serves another model"));
         }
         let time_left = call.deadline.decision_time_left();
+        // A rested offer is waited for within the call's own time, not the
+        // vault's longest wait.
         let response = self.runtime.block_on(async {
             tokio::time::timeout(
                 time_left,
-                admitted.ladder.generate(&self.run, admitted.request, None),
+                admitted.ladder.generate_within(
+                    &self.run,
+                    admitted.request,
+                    None,
+                    &|| true,
+                    time_left,
+                ),
             )
             .await
             .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
