@@ -10,7 +10,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use std::collections::BTreeSet;
 use zeroize::Zeroizing;
 
+mod connect;
 mod courtesy;
+pub use connect::ConnectOffer;
 
 const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
 /// The attestation a host's own root roster row carries.

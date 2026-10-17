@@ -10,6 +10,7 @@ pub(crate) mod backup;
 pub(crate) mod cleanup;
 pub(crate) mod cooperative_deletion;
 pub(crate) mod embedder;
+pub(crate) mod federation_connect;
 pub(crate) mod feedback;
 pub(crate) mod graph_fs;
 pub(crate) mod healer;
