@@ -517,7 +517,7 @@ export type ExportDiaryRead = { agent: string; diaries: number; reason: string }
 /** `oneiron::federation::shared_act::SharedActExport` */
 export type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] }
 /** `oneiron::federation::shared_act::SharedActExecutionReceipt` */
-export type SharedActExecutionReceipt = { id: string; vault_id: number; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; completed_at: number }
+export type SharedActExecutionReceipt = { id: string; vault_id: number; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; completed_at: number }
 /** `oneiron::task_verb::sdk_shared::SharedActExecuted` */
 export type SharedActExecuted = { receipt: SharedActExecutionReceipt; export?: MemoryExport | null }
 /** `oneiron::task_verb::sdk_shared::SharedReceiptRequest` */

@@ -1387,6 +1387,7 @@ class SharedActExecutionReceipt(TypedDict):
     grants: list[str]
     revoked_slips: list[str]
     export: NotRequired[SharedActExport | None]
+    authority_entry: NotRequired[str | None]
     completed_at: int
 class SharedActExecuted(TypedDict):
     receipt: SharedActExecutionReceipt
