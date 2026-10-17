@@ -1313,7 +1313,12 @@ question waits and is tried again later. Each pass also moves every open ask
 whose role has no live holder left to the next role that has one. A role
 holder lists the asks at its role at `GET /v1/core/decisions/asks` and
 answers one at `POST /v1/core/decisions/asks/answer` (`{"seq", "answer"}`).
-The holder is checked again when the answer lands. The owner can answer any
+The holder is checked again when the answer lands. The same calls are the
+SDK and MCP verbs `self.decisions.asks` and `vault.decisions.asks.answer`.
+`vault.decisions.asks.climb` (`{"seq"}`) passes an open ask up to the next
+role with a live holder. It may be called by a holder of the ask's role, the
+ask's principal or an owner. From the CLI, use
+`oneiron api raw POST /v1/core/facade/<verb> --data -`. The owner can answer any
 of them at `/v1/owner/decisions/asks`. A one-off graph ask still holds
 `human` at Big. Each unit has its own
 clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
