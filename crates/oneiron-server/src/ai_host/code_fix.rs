@@ -181,6 +181,16 @@ impl<'a> HostModels<'a> {
         role: ModelRole,
         messages: Vec<LlmMessage>,
     ) -> oneiron::Result<Option<String>> {
+        Ok(self.generate_served(role, messages)?.map(|(text, _)| text))
+    }
+
+    /// [`Self::generate`], with the model of the rung that answered,
+    /// fallback included.
+    pub(super) fn generate_served(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+    ) -> oneiron::Result<Option<(String, String)>> {
         let Some(seat) = self.runtime.seat(role) else {
             return Ok(None);
         };
@@ -206,21 +216,20 @@ impl<'a> HostModels<'a> {
         let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
             return Ok(None);
         };
-        let response = self
+        let (response, served) = self
             .handle
-            .block_on(call.ladder.generate(&self.run, call.request, None))
+            .block_on(call.ladder.generate_served(&self.run, call.request, None))
             .map_err(|error| Error::InvalidConfig(format!("a Coach call failed: {error}")))?;
-        Ok(Some(
-            response
-                .message
-                .content
-                .iter()
-                .filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect(),
-        ))
+        let text = response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        Ok(Some((text, served.as_str().to_owned())))
     }
 }
 
