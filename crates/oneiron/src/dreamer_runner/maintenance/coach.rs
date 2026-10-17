@@ -420,8 +420,7 @@ pub(super) fn run_read_hardening(vault: &Vault, now: u64) -> Result<()> {
 
 /// The nightly tier-1 sweep, as the Coach.
 pub(super) fn run_tripwires(vault: &Vault, now: u64) -> Result<()> {
-    vault.run_tier1_sweep(now)?;
-    Ok(())
+    super::detectors::run(vault, now)
 }
 
 /// The responsible-role climb. The first pass that sees an ask only starts
