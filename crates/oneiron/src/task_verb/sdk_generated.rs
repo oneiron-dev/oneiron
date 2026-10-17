@@ -1396,7 +1396,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.artifacts.body.commits",
                 crate::code_run::vault_read::request_schema::<
-                    crate::office_body::OfficeBodyArtifactRequest,
+                    crate::office_body::OfficeBodyCommitsRequest,
                 >(),
             ),
             (
@@ -1456,7 +1456,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.artifacts.body.preview",
                 crate::code_run::vault_read::request_schema::<
-                    crate::office_body::OfficeBodyArtifactRequest,
+                    crate::office_body::OfficeBodyPreviewRequest,
                 >(),
             ),
             (
@@ -4465,7 +4465,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::office_body::OfficeBodyReadRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.commits" => {
-            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+            let _input: crate::office_body::OfficeBodyCommitsRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.edit" => {
             let _input: crate::office_body::OfficeBodyEditRequest = decode(value.clone())?;
@@ -4496,7 +4496,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::office_body::OfficeBodyExportVerbRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.preview" => {
-            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+            let _input: crate::office_body::OfficeBodyPreviewRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.deck.review" => {
             let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
@@ -7380,8 +7380,8 @@ pub fn vault_artifacts_body_read(
 }
 pub fn vault_artifacts_body_commits(
     memory: &Memory<'_>,
-    input: crate::office_body::OfficeBodyArtifactRequest,
-) -> MemoryResult<Vec<crate::provenance::text_commit::TextCommitReceipt>> {
+    input: crate::office_body::OfficeBodyCommitsRequest,
+) -> MemoryResult<Vec<crate::office_body::OfficeBodyCommitView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.artifacts.body.commits",
@@ -7519,7 +7519,7 @@ pub fn vault_artifacts_body_export(
 }
 pub fn vault_artifacts_body_preview(
     memory: &Memory<'_>,
-    input: crate::office_body::OfficeBodyArtifactRequest,
+    input: crate::office_body::OfficeBodyPreviewRequest,
 ) -> MemoryResult<crate::office_body::XlsxPreview> {
     crate::gate::record_references::admit_row_references(
         memory,

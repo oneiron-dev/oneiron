@@ -191,14 +191,14 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
             }
             crate::batch::apply_phonetic(&vault.store, txn, id, &codes)?;
         }
-        let windows: Vec<_> = vault
-            .store
-            .sync_state
-            .prefix_iter(txn, "d:w:")?
-            .map(|r| r.map(|(k, _)| k.into_owned()))
-            .collect::<std::result::Result<_, _>>()?;
-        for key in windows {
-            WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &key[4..].to_owned(), &[1u8])?;
+        let windows = crate::ports::WindowDeletionRows::port_window_doc_rows_raw(
+            &vault.store,
+            txn,
+            |window, _| window.as_str().to_owned(),
+        )?
+        .collect::<Result<Vec<_>>>()?;
+        for window in windows {
+            WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &window, &[1u8])?;
         }
         crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn)?;

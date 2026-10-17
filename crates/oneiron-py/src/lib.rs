@@ -243,6 +243,35 @@ impl NativeClient {
         encode(&output)
     }
 
+    /// Sends one event on a lens card the connected server rendered
+    /// (OF-181). `request_json` is the route's `{event, idempotencyKey}`
+    /// body, camelCase as the wire spells it; the reply is its wire JSON,
+    /// `{"$state"}` or `{outcome, readReceipt}`. The route, the credential
+    /// and the embedded refusal all stay in
+    /// `oneiron_remote::OneironClient::lens_frame_event`.
+    fn lens_frame_event(
+        &self,
+        py: Python<'_>,
+        card_id: &str,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let request: oneiron_remote::LensFrameEventRequest =
+            decode(request_json, "lens frame event")?;
+        let output = py
+            .detach(|| self.inner.lens_frame_event(card_id, &request))
+            .map_err(raise)?;
+        encode(&output)
+    }
+
+    /// Closes a lens card the connected server rendered and frees its frame
+    /// (OF-181); the reply is the route's `{closed}`.
+    fn close_lens_frame(&self, py: Python<'_>, card_id: &str) -> PyResult<String> {
+        let output = py
+            .detach(|| self.inner.close_lens_frame(card_id))
+            .map_err(raise)?;
+        encode(&output)
+    }
+
     // BEGIN GENERATED AGENT VERBS
     fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "report")?;

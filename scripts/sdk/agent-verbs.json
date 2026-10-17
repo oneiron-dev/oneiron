@@ -4275,12 +4275,12 @@
     },
     {
       "name": "vault.artifacts.body.commits",
-      "description": "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by.",
+      "description": "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone.",
       "refs": [
         "/artifact_ref"
       ],
-      "input": "crate::office_body::OfficeBodyArtifactRequest",
-      "output": "Vec<crate::provenance::text_commit::TextCommitReceipt>",
+      "input": "crate::office_body::OfficeBodyCommitsRequest",
+      "output": "Vec<crate::office_body::OfficeBodyCommitView>",
       "call": "memory.artifacts_body_commits(&input)?",
       "scope": "Read",
       "admission": {
@@ -4299,9 +4299,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Every commit receipt of a live body, in commit order.\n",
-          "ts": "/** Every commit receipt of a live body, in commit order. */",
-          "py": "Every commit receipt of a live body, in commit order."
+          "remote": "    /// Every commit receipt of a live body, in commit order, or one actor's.\n",
+          "ts": "/** Every commit receipt of a live body, in commit order, or one actor's. */",
+          "py": "Every commit receipt of a live body, in commit order, or one actor's."
         }
       }
     },
@@ -4616,11 +4616,11 @@
     },
     {
       "name": "vault.artifacts.body.preview",
-      "description": "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands.",
+      "description": "The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands.",
       "refs": [
         "/artifact_ref"
       ],
-      "input": "crate::office_body::OfficeBodyArtifactRequest",
+      "input": "crate::office_body::OfficeBodyPreviewRequest",
       "output": "crate::office_body::XlsxPreview",
       "call": "memory.artifacts_body_preview(&input)?",
       "scope": "Read",

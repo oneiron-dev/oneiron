@@ -12,6 +12,8 @@ in these stubs.
 import os
 from typing import Any, Literal, NotRequired, TypedDict, overload
 
+from . import facade_types as Facade
+
 __all__ = ["Oneiron", "OneironError"]
 
 WitnessAuthor = Literal["user", "companion", "system"]
@@ -232,6 +234,22 @@ class TaskAskPersonEvidence(TypedDict):
     at: int
     source: str | None
 
+# OF-181: a host-rendered lens card's event and close. These keep the wire's
+# camelCase keys: they are the server route's bodies, not snake_case DTOs.
+LensFrameEventRequest = TypedDict(
+    "LensFrameEventRequest",
+    {"event": Facade.GeneratedUiActionEvent, "idempotencyKey": str},
+)
+LensFrameLocalReply = TypedDict("LensFrameLocalReply", {"$state": Facade.GeneratedUiStateSnapshot})
+LensFrameToolReply = TypedDict(
+    "LensFrameToolReply",
+    {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
+)
+LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply
+
+class CloseLensFrameReply(TypedDict):
+    closed: bool
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -265,6 +283,10 @@ class Oneiron:
     def last_receipt_ref(self) -> str | None: ...
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
         """Resends a PENDING_ASK call under its invocation; the reply is the verb's shared wire JSON."""
+    def lens_frame_event(self, card_id: str, request: LensFrameEventRequest) -> LensFrameEventReply:
+        """Sends one event on a lens card the connected server rendered; embedded raises BAD_REQUEST."""
+    def close_lens_frame(self, card_id: str) -> CloseLensFrameReply:
+        """Closes a lens card the connected server rendered and frees its frame."""
 # BEGIN GENERATED FACADE VERBS
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -756,14 +778,14 @@ class Oneiron:
         def import_(self, request: Facade.OfficeBodyImportRequest) -> Facade.OfficeBodyHead: ...
         def head(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.OfficeBodyHead | None: ...
         def read(self, request: Facade.OfficeBodyReadRequest) -> Facade.OfficeBodyView: ...
-        def commits(self, request: Facade.OfficeBodyArtifactRequest) -> list[Facade.TextCommitReceipt]: ...
+        def commits(self, request: Facade.OfficeBodyCommitsRequest) -> list[Facade.OfficeBodyCommitView]: ...
         def edit(self, request: Facade.OfficeBodyEditRequest) -> Facade.OfficeBodyEdit: ...
         @property
         def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs": ...
         @property
         def proposal(self) -> "Oneiron._VaultArtifactsBodyProposalVerbs": ...
         def export(self, request: Facade.OfficeBodyExportVerbRequest) -> Facade.OfficeBodyExportView: ...
-        def preview(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.XlsxPreview: ...
+        def preview(self, request: Facade.OfficeBodyPreviewRequest) -> Facade.XlsxPreview: ...
         @property
         def deck(self) -> "Oneiron._VaultArtifactsBodyDeckVerbs": ...
     class _VaultArtifactsBodyForkVerbs:

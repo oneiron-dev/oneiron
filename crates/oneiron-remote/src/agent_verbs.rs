@@ -786,7 +786,7 @@ impl OneironClient {
                     oneiron::office_body::OfficeBodyView,
                 >(client, verb, &input),
                 "vault.artifacts.body.commits" => remote_agent_verb_output::<
-                    Vec<oneiron::provenance::text_commit::TextCommitReceipt>,
+                    Vec<oneiron::office_body::OfficeBodyCommitView>,
                 >(client, verb, &input),
                 "vault.artifacts.body.edit" => remote_agent_verb_output::<
                     oneiron::office_body::OfficeBodyEdit,
@@ -3941,11 +3941,11 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.body.read", value)
     }
-    /// Every commit receipt of a live body, in commit order.
+    /// Every commit receipt of a live body, in commit order, or one actor's.
     pub fn vault_artifacts_body_commits(
         &self,
-        input: &oneiron::office_body::OfficeBodyArtifactRequest,
-    ) -> Result<Vec<oneiron::provenance::text_commit::TextCommitReceipt>, MemoryError> {
+        input: &oneiron::office_body::OfficeBodyCommitsRequest,
+    ) -> Result<Vec<oneiron::office_body::OfficeBodyCommitView>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4074,7 +4074,7 @@ impl OneironClient {
     /// The workbook an XLSX export would land now, recalculated.
     pub fn vault_artifacts_body_preview(
         &self,
-        input: &oneiron::office_body::OfficeBodyArtifactRequest,
+        input: &oneiron::office_body::OfficeBodyPreviewRequest,
     ) -> Result<oneiron::office_body::XlsxPreview, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(

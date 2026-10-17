@@ -185,8 +185,16 @@ pub(super) fn chunk_id(hash: &[u8; 32]) -> Result<EntityId> {
 /// The LFS store's own read of a manifest or chunk, a chunk of an object not
 /// yet published included. Only an ASSET passes, so no custody row does.
 pub(super) fn asset_body(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+    asset_body_in_txn(vault, &vault.store.env.read_txn()?, id)
+}
+/// [`asset_body`] in the caller's transaction.
+pub(super) fn asset_body_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<u8>> {
     let raw = vault
-        .get_raw_unsealed(id)?
+        .get_raw_in(txn, id)?
         .ok_or(Error::CorruptedIndex("missing lfs asset"))?;
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("lfs asset header"))?;
@@ -196,7 +204,20 @@ pub(super) fn asset_body(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     Ok(raw[ENTITY_METADATA_HEADER_LEN..].to_vec())
 }
 pub(super) fn read_chunk(vault: &Vault, chunk: &LfsChunkRef) -> Result<Vec<u8>> {
-    let bytes = asset_body(vault, &chunk_id(&chunk.hash)?)?;
+    checked_chunk(chunk, asset_body(vault, &chunk_id(&chunk.hash)?)?)
+}
+/// [`read_chunk`] in the caller's transaction.
+pub(super) fn read_chunk_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    chunk: &LfsChunkRef,
+) -> Result<Vec<u8>> {
+    checked_chunk(
+        chunk,
+        asset_body_in_txn(vault, txn, &chunk_id(&chunk.hash)?)?,
+    )
+}
+fn checked_chunk(chunk: &LfsChunkRef, bytes: Vec<u8>) -> Result<Vec<u8>> {
     if bytes.len() != chunk.size as usize || blake3::hash(&bytes).as_bytes() != &chunk.hash {
         return Err(Error::CorruptedIndex("lfs chunk digest"));
     }

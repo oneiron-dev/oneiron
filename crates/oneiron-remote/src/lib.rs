@@ -38,6 +38,7 @@ mod caps;
 mod embedded;
 mod error;
 mod invocation;
+mod lens_frames;
 pub mod llm;
 mod remote;
 
@@ -57,6 +58,7 @@ use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
 pub use crate::invocation::pending_invocation;
+pub use crate::lens_frames::{CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest};
 use crate::remote::RemoteClient;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
@@ -187,6 +189,23 @@ impl OneironClient {
     /// no handle: connect with the pair it returns, and store the credential
     /// as one secret.
     pub fn pair(link: &str) -> Result<(String, String), MemoryError> {
+        remote::pair(link).map(|(origin, credential, _)| (origin, credential))
+    }
+
+    /// [`Self::pair`], also returning the checkpoint pin the link kept
+    /// (OF-469): `None` when the vault has no attested checkpoint. The pin is
+    /// already checked against the challenge and digest the link carries; it
+    /// is not stored.
+    pub fn pair_pinned(
+        link: &str,
+    ) -> Result<
+        (
+            String,
+            String,
+            Option<oneiron::authority::AuthorityCheckpointPin>,
+        ),
+        MemoryError,
+    > {
         remote::pair(link)
     }
 

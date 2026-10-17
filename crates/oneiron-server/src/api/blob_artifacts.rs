@@ -18,7 +18,7 @@ use axum::{
     body::Body,
     extract::{DefaultBodyLimit, Path, Query, State, rejection::JsonRejection},
     http::{
-        HeaderValue, Response, StatusCode,
+        HeaderMap, HeaderValue, Response, StatusCode,
         header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE},
     },
     routing::{get, post},
@@ -34,6 +34,7 @@ use oneiron::edge::EdgeActorClass;
 use oneiron::edit_roundtrip::{DeckEditContext, EditOutcome};
 use oneiron::edit_settle::{NativeOutput, SettleConsent};
 use oneiron::provenance::made_by::{MadeBy, MadeByTrigger};
+use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -249,10 +250,11 @@ fn owner_actor(auth: &CoreAuth, server: &SyncServer) -> Result<WriteActor, ApiEr
     actor(auth, None)
 }
 
-/// `POST /v1/core/artifacts` through the `vault.artifacts.create` row's
-/// door (OF-181), as the credential's actor. Its bytes ride the request
-/// whole, past what one action argument carries, so the route runs the
-/// row's door itself rather than the action table.
+/// `POST /v1/core/artifacts` as the `vault.artifacts.create` row (OF-181):
+/// an action when the credential binds one that writes as this actor and
+/// the body fits one action argument (64 MiB), else through the row's own
+/// door as the credential's actor. A body past that, up to the route's
+/// 96 MiB, always takes the door.
 #[utoipa::path(
     post,
     path = "/v1/core/artifacts",
@@ -268,6 +270,8 @@ fn owner_actor(auth: &CoreAuth, server: &SyncServer) -> Result<WriteActor, ApiEr
 pub(super) async fn create(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    extensions: axum::http::Extensions,
     payload: Result<Json<CreateArtifact>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), super::facade::FacadeApiError> {
     auth.require(CoreScope::Write)?;
@@ -285,6 +289,18 @@ pub(super) async fn create(
         run_ref: request.run_ref,
         made_by,
     };
+    if let Some(bound) =
+        super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)?
+        && bound.writes_as() == actor
+    {
+        let row = AgentVerb::VaultArtifactsCreate;
+        let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+        let view = super::facade::action_routes::execute_facade_row(
+            &server, headers, extensions, bound, row, &input, key,
+        )
+        .await?;
+        return Ok((StatusCode::CREATED, Json(view)));
+    }
     let view = tokio::task::spawn_blocking(move || {
         crate::api::credential_memory(
             &server.vault,
