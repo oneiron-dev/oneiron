@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use oneiron::claim::{WeaveLinkCorrectionView, WeaveReportRequest, WeaveWrongLinkRequest};
-use oneiron::lens::GeneratedLens;
+use oneiron::lens::LensFrameCard;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 
 use super::host_doors::internal;
@@ -44,14 +44,15 @@ pub(crate) async fn vault_weave_link_wrong(
 
 /// `vault.weave.lens`: the credential's own live weave report, rendered
 /// through the weave-report skill into its lens on this server's Dreamer
-/// narrative route. A person reads the person lens, an agent its own; the
-/// owner lens is `POST /v1/owner/weave/lens`. The step spends on the
-/// caller's own line.
+/// narrative route, as a card whose frame this server holds for the
+/// credential's events on it. A person reads the person lens, an agent its
+/// own; the owner lens is `POST /v1/owner/weave/lens`. The step spends on
+/// the caller's own line.
 pub(crate) async fn vault_weave_lens(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: WeaveReportRequest,
-) -> MemoryResult<GeneratedLens> {
+) -> MemoryResult<LensFrameCard> {
     const VERB: &str = "vault.weave.lens";
     let (actor, class) = super::facade_actor(auth).map_err(|_| {
         MemoryError::new(

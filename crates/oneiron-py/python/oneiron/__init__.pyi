@@ -507,7 +507,8 @@ class Oneiron:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
         def digest(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
             """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
-        def lens(self, spec: Facade.WeaveReportRequest) -> Facade.GeneratedLens: ...
+        def lens(self, spec: Facade.WeaveReportRequest) -> Facade.LensFrameCard:
+            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
     class _VaultWeaveLinkVerbs:

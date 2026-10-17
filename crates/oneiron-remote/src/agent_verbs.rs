@@ -183,7 +183,7 @@ impl OneironClient {
                     Option<oneiron::claim::WeaveDigestView>,
                 >(client, verb, &input),
                 "vault.weave.lens" => {
-                    remote_agent_verb_output::<oneiron::lens::GeneratedLens>(client, verb, &input)
+                    remote_agent_verb_output::<oneiron::lens::LensFrameCard>(client, verb, &input)
                 }
                 "vault.weave.link.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveLinkCorrectionView,
@@ -1480,7 +1480,7 @@ impl OneironClient {
     pub fn vault_weave_lens(
         &self,
         input: &oneiron::claim::WeaveReportRequest,
-    ) -> Result<oneiron::lens::GeneratedLens, MemoryError> {
+    ) -> Result<oneiron::lens::LensFrameCard, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
