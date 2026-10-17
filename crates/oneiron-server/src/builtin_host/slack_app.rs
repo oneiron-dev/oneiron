@@ -47,8 +47,6 @@ const SLACK_EFFECTOR: &str = "connector:slack";
 const SLACK_BOT_TOKEN: &str = "slack.bot_token";
 const SLACK_CLIENT_ID: &str = "slack.client_id";
 const SLACK_CLIENT_SECRET: &str = "slack.client_secret";
-/// Kept for the token refresh; the setup does not declare it.
-const SLACK_REFRESH_TOKEN: &str = "slack.refresh_token";
 const SLACK_AUTHORIZE_URL: &str = "https://slack.com/oauth/v2/authorize";
 const SLACK_OAUTH_ACCESS_URL: &str = "https://slack.com/api/oauth.v2.access";
 /// How long an install link stays redeemable.
@@ -403,9 +401,6 @@ fn finish_install(
     let vault = server.vault();
     let grant = exchange_code(vault, install, code)?;
     store(vault, &install.owner, SLACK_BOT_TOKEN, &grant.access_token)?;
-    if let Some(refresh) = &grant.refresh_token {
-        store(vault, &install.owner, SLACK_REFRESH_TOKEN, refresh)?;
-    }
     let checks = HostConnectionChecks::new(server)?;
     let view = vault.verify_pack_connection(
         &install.owner,
@@ -432,7 +427,6 @@ fn finish_install(
 
 struct SlackGrant {
     access_token: Zeroizing<String>,
-    refresh_token: Option<Zeroizing<String>>,
 }
 
 #[derive(Deserialize)]
@@ -444,8 +438,6 @@ struct OAuthAccess {
     token_type: Option<String>,
     #[serde(default)]
     access_token: Option<String>,
-    #[serde(default)]
-    refresh_token: Option<String>,
 }
 
 /// `oauth.v2.access` with the client secret read inside the credential
@@ -509,7 +501,6 @@ fn exchange_code(
     match (access.token_type.as_deref(), access.access_token) {
         (Some("bot"), Some(token)) if !token.is_empty() => Ok(SlackGrant {
             access_token: Zeroizing::new(token),
-            refresh_token: access.refresh_token.map(Zeroizing::new),
         }),
         _ => Err(invalid("Slack returned no bot token".to_owned())),
     }

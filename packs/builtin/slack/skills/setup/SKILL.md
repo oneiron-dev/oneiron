@@ -50,8 +50,7 @@ own qualification passes.
 ## When the check fails
 
 - Slack refused the credential. The app was reinstalled and Slack issued a new
-  one, or its token expired: Slack rotates the app's token every twelve hours.
-  Install again from a new install link.
+  one, or the token was revoked. Install again from a new install link.
 - The provider did not grant a scope. The app was installed before its manifest
   asked for it. Install again from a new install link.
 - The credential holds a permission the pack never explained. Remove that scope
