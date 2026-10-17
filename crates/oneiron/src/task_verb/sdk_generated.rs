@@ -302,6 +302,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.packs.remove",
+                crate::code_run::vault_read::request_schema::<PackRemoveRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.put",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.list",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionsRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.revoke",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionRevokeRequest>(),
+            ),
+            (
                 "vault.packs.setup.prepare",
                 crate::code_run::vault_read::request_schema::<PackSetupRequest>(),
             ),
@@ -527,6 +543,26 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.legal_holds.lift_and_erase",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+                >(),
+            ),
+            (
+                "vault.courtesy_delete.send",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CourtesyDeleteSendRequest,
+                >(),
+            ),
+            (
+                "vault.courtesy_delete.sent",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.courtesy_delete.incoming",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.courtesy_delete.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CourtesyDeleteAnswerRequest,
                 >(),
             ),
             (
@@ -2131,6 +2167,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.packs.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.packs.setup.prepare" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2388,6 +2452,22 @@ pub fn mcp_arguments_schema_from_input(
         "vault.legal_holds.list" => &[],
         "vault.legal_holds.log" => &[],
         "vault.legal_holds.lift_and_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.courtesy_delete.send" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.courtesy_delete.sent" => &[],
+        "vault.courtesy_delete.incoming" => &[],
+        "vault.courtesy_delete.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3874,6 +3954,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.packs.remove" => {
+            let _input: PackRemoveRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.put" => {
+            let _input: ChannelSubscriptionRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.list" => {
+            let _input: ChannelSubscriptionsRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.revoke" => {
+            let _input: ChannelSubscriptionRevokeRequest = decode(value.clone())?;
+        }
         "vault.packs.setup.prepare" => {
             let _input: PackSetupRequest = decode(value.clone())?;
         }
@@ -3998,6 +4090,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.legal_holds.lift_and_erase" => {
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 decode(value.clone())?;
+        }
+        "vault.courtesy_delete.send" => {
+            let _input: crate::task_verb::sdk::CourtesyDeleteSendRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.sent" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.incoming" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.answer" => {
+            let _input: crate::task_verb::sdk::CourtesyDeleteAnswerRequest = decode(value.clone())?;
         }
         "vault.embedding_spaces.list" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -4782,6 +4886,17 @@ pub fn invoke(
             encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
+        "vault.connectors.subscriptions.put" => {
+            encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
+        }
+        "vault.connectors.subscriptions.list" => {
+            encode(vault_connectors_subscriptions_list(memory, decode(value)?)?)
+        }
+        "vault.connectors.subscriptions.revoke" => encode(vault_connectors_subscriptions_revoke(
+            memory,
+            decode(value)?,
+        )?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
@@ -4846,6 +4961,14 @@ pub fn invoke(
         "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
+        "vault.courtesy_delete.send" => encode(vault_courtesy_delete_send(memory, decode(value)?)?),
+        "vault.courtesy_delete.sent" => encode(vault_courtesy_delete_sent(memory, decode(value)?)?),
+        "vault.courtesy_delete.incoming" => {
+            encode(vault_courtesy_delete_incoming(memory, decode(value)?)?)
+        }
+        "vault.courtesy_delete.answer" => {
+            encode(vault_courtesy_delete_answer(memory, decode(value)?)?)
         }
         "vault.embedding_spaces.list" => {
             encode(vault_embedding_spaces_list(memory, decode(value)?)?)
@@ -5779,6 +5902,30 @@ pub fn vault_packs_put(
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
 }
+pub fn vault_packs_remove(
+    memory: &Memory<'_>,
+    input: PackRemoveRequest,
+) -> MemoryResult<crate::skill_hub::pack_catalog::PackInstallReceipt> {
+    crate::task_verb::sdk::remove_pack_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_put(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<crate::connector_key::ChannelMessageSubscription> {
+    crate::task_verb::sdk::subscribe_channel_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_list(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChannelSubscriptions> {
+    crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_revoke(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChannelSubscriptionRevoked> {
+    crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)
+}
 pub fn vault_packs_setup_prepare(
     memory: &Memory<'_>,
     input: PackSetupRequest,
@@ -6138,6 +6285,38 @@ pub fn vault_legal_holds_lift_and_erase(
         &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
         input,
     )
+}
+pub fn vault_courtesy_delete_send(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CourtesyDeleteSendRequest,
+) -> MemoryResult<crate::task_verb::sdk::CourtesyDeleteSent> {
+    crate::task_verb::sdk::courtesy_delete_host_only(memory, "vault.courtesy_delete.send", &input)
+}
+pub fn vault_courtesy_delete_sent(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::CourtesyDeleteSent>> {
+    crate::task_verb::sdk::courtesy_delete_host_only(
+        memory,
+        "vault.courtesy_delete.sent",
+        &EmptyRequest {},
+    )
+}
+pub fn vault_courtesy_delete_incoming(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::CourtesyDeleteIncoming>> {
+    crate::task_verb::sdk::courtesy_delete_host_only(
+        memory,
+        "vault.courtesy_delete.incoming",
+        &EmptyRequest {},
+    )
+}
+pub fn vault_courtesy_delete_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CourtesyDeleteAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::CourtesyDeleteIncoming> {
+    crate::task_verb::sdk::courtesy_delete_host_only(memory, "vault.courtesy_delete.answer", &input)
 }
 pub fn vault_embedding_spaces_list(
     memory: &Memory<'_>,

@@ -9,8 +9,8 @@ use crate::error::Error;
 use crate::outbound_chokepoint::OutboundEffectResult;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, IntentDispatchResult, IntentEscalationReason, IntentLedgerError,
-    IntentState, OutboundSendOutcome,
+    BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalationReason,
+    IntentLedgerError, IntentState, OutboundSendOutcome,
 };
 
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
@@ -125,6 +125,20 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
     };
     let idempotency_supported = prepared_call.idempotency_supported();
+    // The Send class follows the catalog entry (ONE-1794): only a
+    // counterparty-communication connector's calls debit `Sends` rows.
+    let budget_class = {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        if crate::connector_key::scoped_server_debits_sends_in_txn(
+            &vault.store,
+            &txn,
+            &call.server,
+        )? {
+            BudgetClass::Send
+        } else {
+            BudgetClass::Operation
+        }
+    };
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
         call_seq,
@@ -134,7 +148,7 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         idempotency_supported,
         resolved_endpoint: Some(call.resolved_endpoint),
         gate,
-        budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
+        budget_class,
         authorization: crate::outbound_chokepoint::PreparedAuthorization::ScopedMcp {
             grant_id,
             principal_ref: principal_ref.to_owned(),

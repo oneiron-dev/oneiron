@@ -41,6 +41,9 @@ pub(crate) struct ExportSnapshot {
     /// OF-222: a whole-vault archive carries each stored file an ASSET body is
     /// as it is stored; a records archive and OKF keep today's cut.
     pub(crate) attaches_files: bool,
+    /// OF-013: a whole-vault archive carries every session's epoch floor; a
+    /// records archive and OKF carry none.
+    pub(crate) epoch_floors: Vec<super::ExportEpochFloor>,
 }
 
 /// One run's result manifests, as its replay record names them, each with
@@ -393,6 +396,33 @@ impl Vault {
         } else {
             None
         };
+        // OF-013: the floors travel so an import never numbers an epoch under
+        // one a purge removed. A floor whose session a device-local world
+        // keeps stays here, as the session's own row does.
+        let mut epoch_floors = Vec::new();
+        if scope == ExportScope::WholeVault {
+            for (session, epoch, turn_end) in
+                crate::compaction::epoch_floors_in_txn(&self.store, &rtxn)?
+            {
+                if crate::settings::device_only_withholds(
+                    &self.store,
+                    &rtxn,
+                    &device_only,
+                    &session,
+                )
+                .or_else(|error| match error {
+                    Error::CorruptedIndex(_) => Ok(true),
+                    error => Err(error),
+                })? {
+                    continue;
+                }
+                epoch_floors.push(super::ExportEpochFloor {
+                    session: session.to_hex(),
+                    epoch,
+                    turn_end,
+                });
+            }
+        }
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.
@@ -422,6 +452,7 @@ impl Vault {
                 secrets_included: include_secrets && only.is_none() && cut == ExportCut::Archive,
                 embedding_setup,
                 attaches_files: scope == ExportScope::WholeVault,
+                epoch_floors,
             },
             cut,
         )

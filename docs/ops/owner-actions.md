@@ -284,7 +284,7 @@ oneiron export > vault.zip                     # stdout when --out is omitted
 
 The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per record kind under
 `records/` (`records/entity/<kind>.jsonl` per entity type, then `edge`, `pack`, `agent_pack`,
-`derivation_envelope`, `run` and `result_body`), and each attached file once under
+`derivation_envelope`, `run`, `result_body` and `epoch_floor`), and each attached file once under
 `files/<blake3>` (skill and pack source files, code-run result bodies). The manifest lists every
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
@@ -292,6 +292,9 @@ members disagree with it. It is plaintext and re-imports into a fresh vault
 Credentials inside records are nulled by the serializer. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.
+`epoch_floor.jsonl` has a row `{session, epoch, turn_end}` for each session whose epoch summary a
+purge removed: where that summary left the count, and nothing it said. An import only raises a
+session's floor to its row, so a re-imported vault never numbers an epoch under a removed one.
 
 Your own archive also carries your keys, by default: each active secret-custody record's value,
 in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
@@ -577,16 +580,41 @@ The Dreamer's nightly strength archive works the same way: it archives a quiet g
 of its own at once, keeps the scored snapshot and leaves one receipt naming the claim, and
 `/v1/owner/cleanup/restore` brings it back.
 
+## Revert anything the Dreamer changed
+
+The Dreamer applies its own work at once and keeps what it replaced as history. You take any one
+change back:
+
+- `GET /v1/owner/dreamer/changes` (optionally `?limit=<n>`): the Dreamer's standing changes,
+  newest first, each with its id, its kind (`claim`, `settlement`, `summary` or `note`), the
+  claim's predicate or the note's kind, and when it landed. The list reads the vault's newest
+  20,000 rows. `people_about` names each person whose newest `about` line the Dreamer wrote.
+- `POST /v1/owner/dreamer/revert` with `{"change": "<32 hex>"}` reverts it, with one receipt:
+  - a claim (a promotion, a merged replacement, a nightly same-as, conflict or arc output) is
+    retracted, and each claim it superseded stands again, as in a settlement's revert. The
+    answers it gave the conflicts its correction closed, and its supersession record, are
+    retracted with it, so those conflicts are open again for you.
+  - a settlement's `conflict.resolved` answer reverts exactly as `/conflicts/revert` does.
+  - a scope summary is archived; the summary it replaced is current again, and the header that
+    announced it on the asking turn is retracted.
+  - a note the Dreamer wrote to answer a task is archived. The task stays done.
+  - a person's id puts back the `about` lines the Dreamer's newest pass replaced. A line shows
+    only while the facts it was written from still hold; the Dreamer writes again once they move.
+
+  The reply lists what was retracted, reopened, restored, copied, left closed, archived and made
+  current again. An archived summary or note comes back through `/v1/owner/cleanup/restore`.
+
 ## Revert the Dreamer's maintenance
 
 The Dreamer's own maintenance applies at once too, with one receipt each, and you revert any of
-it. Its curator moves one of the Dreamer's own consolidations one rung (decay, weaken, mark stale,
-retract) as the Dreamer; its harness audit files a retune finding, which deploys nothing; its
-action-mode refresh files an advisory mode, which grants nothing; and a Dreamer-born digest
-cadence and presentation request sets both rows. Each lands as an `auto` finding, and the inbox's
-finding notice tells you. The Coach's and the healer's findings still wait in the run tray. So does
-any Dreamer finding the Gate holds, and every curator rung on a critical claim: that waits for
-your approval in the run tray and applies on the next curator pass.
+it here, effect and all (`/v1/owner/dreamer/revert` above only retracts its finding). Its curator
+moves one of the Dreamer's own consolidations one rung (decay, weaken, mark stale, retract) as the
+Dreamer; its harness audit files a retune finding, which deploys nothing; its action-mode refresh
+files an advisory mode, which grants nothing; and a Dreamer-born digest cadence and presentation
+request sets both rows. Each lands as an `auto` finding, and the inbox's finding notice tells you.
+The Coach's and the healer's findings still wait in the run tray. So does any Dreamer finding the
+Gate holds, and every curator rung on a critical claim: that waits for your approval in the run
+tray and applies on the next curator pass.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
   reverted ones too, newest first, with its finding, kind (`finding`, `curator` or
@@ -924,6 +952,26 @@ ladder asks you. Sending the same answer again changes nothing. A different
 answer to an answered ask is refused, and so is any answer to a withdrawn
 ask.
 
+Add a `reason` to say why (at most 1,024 bytes; a blank one counts as none):
+
+```json
+{"seq": 3, "answer": {"kind": "noul", "value": true}, "reason": "Invoices from this vendor are always fine"}
+```
+
+A reason becomes a rule row. The next time the ladder asks that same
+question about the same evidence, the rule rung answers it from your row,
+and that decision's receipt names the row as `rule: {id, revision}`. A
+rule row is advice only: it answers the question and grants nothing. The
+ask's answer carries `reason` and `rule`, so your app can show a notice with
+an undo. A new reason on the same question and evidence is the row's next
+revision. A box or point answer (found in an image) keeps its reason but
+writes no row, and neither does a call that reads images or audio.
+
+`GET /v1/owner/decisions/rules` lists every row at its latest revision,
+revoked ones included. `POST /v1/owner/decisions/rules/revoke` with
+`{"id": "<32 hex>"}` revokes one (the undo). After that the row answers
+nothing, and the question goes up the ladder again.
+
 ## The vault key on a new host
 
 A vault's data key unlocks from any of its wraps: this device's keystore, the vault password, a
@@ -1154,12 +1202,23 @@ A learned setting is a knob the vault fits from its own runs, such as the audit 
 row on a knob. A **seed** is a prior the fit starts from, weighted in runs. A **pin** is the value,
 whatever the fit says.
 
-A row applies to the vault, to one project, or to one task type (a type row matches its node at
-any tree version). A read takes the narrowest pin (project, then type, then vault). Without a
-pin, it takes the project's seed, then the type's: those are your word for that scope alone,
-so a fit learned across the whole vault does not override them. Failing that, it takes the
-vault's fit once the fit has runs of its own, then the vault's seed (the fit's own prior), then
-the catalog seed. The catalog keeps each knob's bounds; a value outside them is refused.
+A row applies to the vault, to one project's goal, to one project, or to one task type (a type
+row matches its node at any tree version). A goal row names the project's intake goal by its goal
+claim's id. It steers that project's work while the goal stands, and stops when goal intake
+replaces the goal. A read takes the narrowest pin (goal, then project, then type, then vault).
+Without a pin, it takes the goal's seed, then the project's, then the type's: those are your word
+for that scope alone, so a fit learned across the whole vault does not override them. Failing
+that, it takes the vault's fit once the fit has runs of its own, then the vault's seed (the fit's
+own prior), then the catalog seed. The catalog keeps each knob's bounds; a value outside them is
+refused.
+
+A spawn's model, width, pattern and budget take the same seeds and pins, under the keys `model`,
+`width`, `pattern` and `budget`. The value is typed: a model id, a count of agents, a pattern token
+(`solo`, `ceo_decides`, `committee`, `vote`, `market`, `rotation`), or lease units. The planner
+lays these rows under each planned spawn. The narrowest pin comes first, then the narrowest seed;
+an owner pin replaces the spawn call's own seed, and the call's own pin always stands. A model
+row counts only where a seat serves that model. A pin that disagrees with a pinned pattern or
+width is passed over for the next row, and a budget only ever narrows the caller's budget.
 
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows
@@ -1168,12 +1227,16 @@ oneiron learning-settings put health.loop.repeats pin 5 --why "noisy tools" --pr
 oneiron learning-settings put audit_rate seed 0.1 --weight-runs 20 --why "start low"
 oneiron learning-settings put health.silent.minutes pin 60 --why "slow jobs" --task-type research
 oneiron learning-settings clear health.loop.repeats pin --project HEX32
+oneiron learning-settings put pattern pin committee --why "review work" --goal HEX32
+oneiron learning-settings put model seed openai/gpt-6@1 --weight-runs 10 --why "try it" --task-type research
 ```
 
 The commands open a stopped vault. A running server answers the same at
 `GET /v1/owner/settings/learning[?key=…]`, `POST /v1/owner/settings/learning` with
-`{"key", "mode": "seed"|"pin", "value", "weight_runs"?, "why", "project"?, "task_type"?}`, and
-`POST /v1/owner/settings/learning/clear` with `{"key", "mode", "project"?, "task_type"?}`.
+`{"key", "mode": "seed"|"pin", "value"?, "choice"?, "weight_runs"?, "why", "goal"?, "project"?,
+"task_type"?}`, and `POST /v1/owner/settings/learning/clear` with `{"key", "mode", "goal"?,
+"project"?, "task_type"?}`. A knob's row carries `value`; a spawn choice's carries `choice`, such
+as `{"model": "provider/name@rev"}`, `{"width": 3}`, `{"pattern": "vote"}` or `{"budget": 500}`.
 Each answers with the key's catalog entry and rows. The host verbs `vault.settings.learning`,
 `.put` and `.clear` take the same input over the facade and MCP. All of them are the owner's
 alone, and clearing an absent row succeeds.
