@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 254 facade rows, 906 declarations.
-Inputs: 211 of 254 fully typed, 42 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 207 of 254 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 66; unread shapes: 1.
+Census: 255 facade rows, 910 declarations.
+Inputs: 211 of 255 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 207 of 255 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2123,6 +2123,23 @@ class RevealProvenance(TypedDict):
     kind: str
     masked_at: int
 RevealHandleCard = TypedDict("RevealHandleCard", {"handle": str, "label": str, "class": str, "status": str, "band": str, "provenance": NotRequired[RevealProvenance | None], "reveal": str, "grant_ref": NotRequired[str | None], "refusal": NotRequired[str | None]})
+class SecretUseRequest(TypedDict):
+    handle: str
+    operation: str
+    arguments: NotRequired[Any]
+SecretUseStatus = Literal["answered", "failed", "withheld"]
+class SecretUseRecord(TypedDict):
+    handle: str
+    generation: int
+    effector: str
+    operation: str
+    decision: str
+    used_at: int
+class SecretUseAnswer(TypedDict):
+    status: SecretUseStatus
+    result: NotRequired[Any | None]
+    failure: NotRequired[str | None]
+    receipt: SecretUseRecord
 BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]

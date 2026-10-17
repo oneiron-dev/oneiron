@@ -45,11 +45,46 @@ impl Vault {
     ) -> Result<DoorInjectionReceipt> {
         let wtxn = self.store.env.write_txn()?;
         let (id, rec) = read_record_for_ref_in_txn(&self.store, &wtxn, secret_ref)?;
+        self.inject_admitted(wtxn, &id, &rec, secret_ref, effector, apply)
+    }
+
+    /// [`Vault::inject_secret_at_door`] on one custody record named by its
+    /// id, not by its live name: a handle names the record it was minted
+    /// for, so a name re-registered since never reaches its door. A revoked
+    /// or suspended record refuses as the name door does.
+    pub(crate) fn inject_secret_record_at_door(
+        &self,
+        id: &EntityId,
+        effector: &str,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<DoorInjectionReceipt> {
+        let wtxn = self.store.env.write_txn()?;
+        let rec =
+            crate::secret_custody::read_secret_custody_admission_in_txn(&self.store, &wtxn, id)?
+                .ok_or_else(|| {
+                    Error::Secret(SecretError::SecretRefNotFound { name: id.to_hex() })
+                })?;
+        let secret_ref = rec.name.clone();
+        self.inject_admitted(wtxn, id, &rec, &secret_ref, effector, apply)
+    }
+
+    /// The one T0 body both doors share: admission under the live floor and
+    /// the door policy, the value read through the bound door, the write
+    /// transaction released, then `apply`.
+    fn inject_admitted(
+        &self,
+        wtxn: heed::RwTxn<'_>,
+        id: &EntityId,
+        rec: &crate::secret_custody::SecretCustodyAdmission,
+        secret_ref: &str,
+        effector: &str,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<DoorInjectionReceipt> {
         let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
-        admit_record_use(&rec, effector, CustodyTier::T0Doored, &floor)?;
+        admit_record_use(rec, effector, CustodyTier::T0Doored, &floor)?;
         crate::credential_door::admit_materialization_in_txn(&self.store, &wtxn, effector, None)?;
         let generation = rec.rotation_generation;
-        let value = read_value_for_ref_in_txn(self, &wtxn, &id, effector)?;
+        let value = read_value_for_ref_in_txn(self, &wtxn, id, effector)?;
         // The value bytes are owned; nothing was written. Release the write
         // txn BEFORE running caller code — caller closures never execute
         // inside an LMDB write txn.

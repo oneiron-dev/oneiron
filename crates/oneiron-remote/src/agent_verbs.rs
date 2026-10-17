@@ -399,6 +399,9 @@ impl OneironClient {
                 "reveal.describe" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RevealHandleCard,
                 >(client, verb, &input),
+                "self.use" => remote_agent_verb_output::<oneiron::task_verb::sdk::SecretUseAnswer>(
+                    client, verb, &input,
+                ),
                 "vault.shares.create" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ShareCreated,
                 >(client, verb, &input),
@@ -2301,6 +2304,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("reveal.describe", value)
+    }
+    pub fn self_use(
+        &self,
+        input: &oneiron::task_verb::sdk::SecretUseRequest,
+    ) -> Result<oneiron::task_verb::sdk::SecretUseAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.use", value)
     }
     pub fn vault_shares_create(
         &self,

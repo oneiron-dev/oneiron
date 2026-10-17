@@ -191,6 +191,10 @@ impl EngineNativeExecutor<'_> {
             let request_hash = request.canonical_hash()?;
             let response = self.backend.generate(request, self.lease).await?;
             self.post_turn_hooks(turn, &response)?;
+            // The provider that answered is the one this turn's program
+            // speaks for: each verb call it makes carries the name (OF-560).
+            self.gated_write
+                .observe_model_provider(response.usage.served_provider());
             // The reply as the provider gave it, kept apart from the program
             // healed out of it: evidence, never executed.
             record_reply_evidence(

@@ -122,6 +122,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/reveal", post(facade_route))
         .route("/reveal.wait", post(facade_route))
         .route("/reveal.describe", post(facade_route))
+        .route("/self.use", post(facade_route))
         .route("/vault.shares.create", post(facade_route))
         .route("/vault.shares.revoke", post(facade_route))
         .route("/vault.shares.view", post(facade_route))
