@@ -23,7 +23,6 @@ use oneiron::task_verb::sdk::{
     AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, HookReplayRow,
     HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
-use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId, FatalLlmError, LlmError,
     ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
@@ -40,6 +39,7 @@ use oneiron::task_verb::sdk::{
 use crate::api::ai::{VoiceRefusal, bind_voice, caller_options};
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
+use crate::models::RungVoices;
 use crate::server::SyncServer;
 
 // The shared-vault doors live beside these; the generated callers name them here.
@@ -401,29 +401,36 @@ pub(crate) async fn ai_options(
 }
 
 /// One media call's answer, from its seat's ladder. A banked voice
-/// withdrawn or re-recorded while it rendered is not handed back.
+/// withdrawn or re-recorded while it rendered, on the rung that answered, is
+/// not handed back; nor is a call that found the voice withdrawn everywhere
+/// while it waited (FIX 1746).
 async fn answered(
     server: &SyncServer,
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
-    let (request, binding) = admit(server, auth, operation, input)?;
-    let response = server
-        .ai
-        .model_runtime()
-        .media()
-        .run(request)
-        .await
-        .map_err(|error| failure(operation, &error))?;
-    if binding.is_some_and(|binding| !binding.is_current(&server.vault)) {
-        return Err(MemoryError::new(
+    let (request, voices) = admit(server, auth, operation, input)?;
+    let media = server.ai.model_runtime().media();
+    let answer = match &voices {
+        Some(voices) => media.run_voiced(request, voices).await,
+        None => media.run(request).await,
+    };
+    let withdrawn = || {
+        MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             "the voice was withdrawn or its clone replaced while it rendered",
             &["Provision the voice again, then repeat the call."],
-        ));
+        )
+    };
+    match answer {
+        Ok(_) if voices.as_ref().is_some_and(|voices| !voices.answered_current()) => {
+            Err(withdrawn())
+        }
+        Err(_) if voices.as_ref().is_some_and(RungVoices::withdrawn) => Err(withdrawn()),
+        Ok(response) => Ok(response.into()),
+        Err(error) => Err(failure(operation, &error)),
     }
-    Ok(response.into())
 }
 
 /// `ai.image`: one image out; reference images make it an edit.
@@ -875,7 +882,7 @@ fn admit(
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
-) -> MemoryResult<(MediaRequest, Option<BankVoiceBinding>)> {
+) -> MemoryResult<(MediaRequest, Option<RungVoices>)> {
     owner_grade(auth, MEDIA_OWNERS)?;
     let media = server.ai.model_runtime().media();
     let Some((seat, _)) = media.seat(operation) else {
@@ -900,7 +907,7 @@ fn admit(
     if media.locality(operation, &model).is_none() {
         return Err(unserved(&model));
     }
-    let (voice, binding) =
+    let (voice, voices) =
         bind_voice(server, operation, &mut model, input.voice).map_err(voice_refused)?;
     let Some(locality) = media.locality(operation, &model) else {
         return Err(unserved(&model));
@@ -967,7 +974,7 @@ fn admit(
     // The world a caller names does not vouch for what it sends: a
     // fallback judges the call as naming none, as a raw text call is.
     request.envelope.scope.world = None;
-    Ok((request, binding))
+    Ok((request, voices))
 }
 
 /// A refused voice, under the facade's codes: a banked voice no rung holds
