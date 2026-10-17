@@ -560,7 +560,10 @@ fn turn_generate_call(actor: EntityId, invocation: Option<InvocationId>) -> Verb
     VerbCall {
         verb: HOST_TURN_GENERATE.to_owned(),
         invocation: invocation.map_or_else(InvocationId::mint, |id| {
-            InvocationId::of_run_step(&[id.0.as_slice(), HOST_TURN_GENERATE.as_bytes()].concat(), 0)
+            InvocationId::of_run_step(
+                &[id.0.as_slice(), HOST_TURN_GENERATE.as_bytes()].concat(),
+                0,
+            )
         }),
         actor,
         class: HookActorClass::System,
@@ -647,7 +650,10 @@ fn after_turn(vault: Arc<Vault>, generating: VerbHookPre, answering: Answering) 
         });
         let posted = crate::server::blocking(|| vault.post_verb_hooks(generating, result));
         if let Err(error) = posted {
-            tracing::warn!(?error, "host.turn.generate post-hooks failed on a finished turn");
+            tracing::warn!(
+                ?error,
+                "host.turn.generate post-hooks failed on a finished turn"
+            );
         }
         let _ = finished.send(ended);
     });

@@ -31,6 +31,7 @@ mod consult_party_backfill;
 mod consult_payload;
 mod consult_result;
 mod create_facade;
+mod create_origin;
 mod create_spec;
 mod create_validation;
 mod decision_port;
@@ -43,7 +44,6 @@ mod highway_accept;
 mod highway_block;
 mod highway_post;
 mod highway_report;
-mod runner_done;
 pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
@@ -63,7 +63,9 @@ mod reconciliation;
 mod refusal;
 mod room_thread;
 mod route_receipts;
+mod runner_done;
 mod scheduling;
+mod subproject;
 mod symbol_lease;
 mod terminal_state;
 mod verb_kind;
@@ -71,6 +73,7 @@ mod wave_port;
 mod wire_decode;
 pub(crate) use wire_decode::{
     TaskBinding, leader_task_body_in, leader_task_brief_in, task_binding, task_is_blocked_in,
+    task_text_in,
 };
 mod wire_encode;
 
@@ -120,13 +123,13 @@ pub use brief::{
     StoredBrief, TypeRef, brief_digest,
 };
 pub use decision_port::TaskDecisions;
-pub use runner_done::{RunnerDoneAnswer, RunnerDoneQuestion, runner_done_question};
 pub(crate) use highway_post::settle_task_proposal_in_txn;
 pub use highway_types::{
     AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
     TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskReport, TaskReportBody,
     TaskStatusQuery, TaskStatusView, TaskVia,
 };
+pub use runner_done::{RunnerDoneAnswer, RunnerDoneQuestion, runner_done_question};
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,

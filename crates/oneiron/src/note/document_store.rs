@@ -19,6 +19,8 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 use crate::side_table::HexId;
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
+/// The snapshot row's key, for a test that plants one by hand.
+#[cfg(test)]
 pub(super) fn key(id: EntityId) -> String {
     format!("d:e:{}", id.to_hex())
 }

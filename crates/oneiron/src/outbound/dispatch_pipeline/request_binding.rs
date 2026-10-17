@@ -45,6 +45,9 @@ pub(super) struct PreparedOutboundDispatch {
     pub(super) step_binding: Option<crate::llm::StepEffectBinding>,
     pub(super) payload: Option<Vec<u8>>,
     pub(super) native_mail_recipient: bool,
+    /// A second actor the mutation speaks for, admitted beside the primary
+    /// (OF-427).
+    pub(super) co_actor: Option<crate::outbound_chokepoint::CoActorAdmission>,
 }
 impl PreparedOutboundDispatch {
     pub(super) fn prepare(
@@ -71,6 +74,22 @@ impl PreparedOutboundDispatch {
                     session_ref: session_ref.to_owned(),
                 },
             )));
+        }
+        // OF-123 act-now guard: a target the agent took from a saved mention
+        // waits until that mention is settled. A replayed task reads the
+        // mention's state again here.
+        if let Some(mention) = request.intent.mention.as_ref() {
+            let unsettled = {
+                let txn = vault.store.env.read_txn().map_err(Error::from)?;
+                crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+                    vault, &txn, mention,
+                )?
+            };
+            if let Some(name) = unsettled {
+                return Err(OutboundDispatchError::Engine(Error::Record(
+                    crate::error::RecordError::IdentityUnsettled { name },
+                )));
+            }
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
@@ -151,6 +170,7 @@ impl PreparedOutboundDispatch {
             step_binding,
             payload: None,
             native_mail_recipient,
+            co_actor: None,
         })
     }
     /// The same freeze and replay proof runs for every normal call and every

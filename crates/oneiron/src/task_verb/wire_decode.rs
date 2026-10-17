@@ -87,6 +87,28 @@ pub(crate) fn task_is_blocked_in(
         .is_some_and(|body| matches!(body.state, Some(TaskExecutionState::Blocked { .. }))))
 }
 
+/// What one TASK asks, as text: its label, its spec and its typed brief
+/// (OF-380). The Coach's code-fix replay rebuilds a failed agent's call from
+/// it, and the export's verbatim guard checks an invented example against
+/// it. `None` when the row is no TASK.
+pub(crate) fn task_text_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<String>> {
+    let Some(body) = task_verb_body_in(vault, txn, task_ref)? else {
+        return Ok(None);
+    };
+    let mut parts: Vec<String> = body.label.into_iter().collect();
+    if !body.spec.is_nil() {
+        parts.push(body.spec.to_string());
+    }
+    if let Some(stored) = body.brief {
+        parts.extend(serde_json::to_string(&stored.brief).ok());
+    }
+    Ok(Some(parts.join("\n")))
+}
+
 /// Transaction-scoped body read. The custody seal `get_raw` applies is not
 /// needed here: a non-TASK type byte returns `None` two lines below, so a
 /// SECRET_CUSTODY row can never be decoded through this door.
@@ -257,6 +279,9 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
             .transpose()?,
         brief: task_body_optional(entries, "brief")?
             .map(decode_stored_brief)
+            .transpose()?,
+        subproject_ref: task_body_optional(entries, "subproject_ref")?
+            .map(|value| decode_entity_ref(value, "tasks.body.subproject_ref"))
             .transpose()?,
     })
 }

@@ -6,6 +6,9 @@ pub enum StorageTier {
     Runtime,
 }
 use StorageTier::*;
+/// Host orders and the host-only log (OF-470 C2): a restore carries them from
+/// the live vault, never from an image (`host_holds`).
+pub(super) const HOST_HOLD_PREFIX: &[u8] = b"legal_hold:host:";
 pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
     match database {
         "entities" | "edges_out" | "edges_in" | "short_ids" | "short_ids_reverse"
@@ -17,6 +20,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"dreamer:parked:",
                 b"dreamer:peer_wait",
                 b"dreamer:trap_binding:",
+                // A parked code run's trap binding, node-local as the
+                // step's own.
+                b"code_run:wait_trap:",
                 b"retr_run",
                 b"retr_out",
                 b"retr_trace",
@@ -35,7 +41,7 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"vault_archived:v1",
                 // Host orders and the host-only log never enter an owner's
                 // image (OF-470 C2).
-                b"legal_hold:host:",
+                HOST_HOLD_PREFIX,
             ]
             .iter()
             .any(|p| key.starts_with(p))

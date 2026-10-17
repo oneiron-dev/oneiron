@@ -10,7 +10,7 @@ use oneiron::voice_cascade::{Brain, CascadeControl, TtsSeamClient};
 use tokio::net::UnixStream;
 use tokio::sync::oneshot;
 
-use super::{HostError, VoiceHost, VoiceOutputs};
+use super::{HostError, MediaTts, VoiceHost, VoiceMediaBindings, VoiceOutputs};
 use crate::managed::ShutdownSignal;
 
 type ServeFuture = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
@@ -35,6 +35,45 @@ impl VoiceServeBindings {
             Box::pin(async move { host.serve_until(stream, &mut outputs, stop).await })
         });
         Self(Arc::new(Mutex::new(Some(VoiceServeConnection(serve)))))
+    }
+
+    /// [`Self::new`] with the host's own speech and hearing on the media
+    /// seats ([`VoiceMediaBindings`]): the connection's TTS seam is the
+    /// bridge's, and the returned [`MediaTts`] is the one the brain's stream
+    /// driver submits its sentences through. Heard utterances go to the
+    /// session as finals and on to `brain`; spoken audio goes to the
+    /// bindings' playout past the session's filter. A vault with no live
+    /// voice row for either lane, or a banked voice whose render consent
+    /// does not reach the TTS route, refuses here.
+    pub fn with_media<B, C>(
+        stream: UnixStream,
+        brain: B,
+        control: C,
+        media: VoiceMediaBindings,
+    ) -> Result<(Self, MediaTts), HostError>
+    where
+        B: Brain + Send + 'static,
+        C: CascadeControl + Send + 'static,
+    {
+        let (tts, mut bridge, worker) = media.build()?;
+        let mut outputs = VoiceOutputs {
+            brain,
+            tts: tts.clone(),
+            control,
+        };
+        let serve: Serve = Box::new(move |host, stop| {
+            Box::pin(async move {
+                let serving = host.serve_media_until(stream, &mut outputs, &mut bridge, stop);
+                // The worker outlives no connection: once serving ends, its
+                // call in flight is dropped and settles as dropped.
+                tokio::select! {
+                    result = serving => result,
+                    () = worker.run() => Err(io::Error::other("voice media worker stopped")),
+                }
+            })
+        });
+        let bindings = Self(Arc::new(Mutex::new(Some(VoiceServeConnection(serve)))));
+        Ok((bindings, tts))
     }
 
     /// Claims the owner connection once, including across config clones.
