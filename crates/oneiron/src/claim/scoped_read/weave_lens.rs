@@ -433,6 +433,14 @@ pub(super) fn compose_weave_lens(
                 target,
             } = item
             {
+                // An SDK verb action takes the row's whole input as one JSON
+                // text, as the action registry declares it.
+                let input = serde_json::to_string(&super::WeaveWrongLinkRequest {
+                    source_ref: source.to_hex(),
+                    kind: kind.name().to_owned(),
+                    target_ref: target.to_hex(),
+                })
+                .map_err(|_| Error::InvalidConfig("weave wrong link input".into()))?;
                 let control = format!("{id}-wrong");
                 row.children.push(LensNode::new(
                     LensAtomId::new(control.clone())?,
@@ -441,11 +449,7 @@ pub(super) fn compose_weave_lens(
                         label: required_text(&plan.wrong_label, "wrong label")?,
                         action: SelfUiAction {
                             command: SelfUiActionId::new(WRONG_LINK_VERB)?,
-                            args: vec![
-                                SelfUiValue::Text(LensText::new(source.to_hex())?),
-                                SelfUiValue::Text(LensText::new(kind.name().to_owned())?),
-                                SelfUiValue::Text(LensText::new(target.to_hex())?),
-                            ],
+                            args: vec![SelfUiValue::Text(LensText::new(input)?)],
                         },
                     })),
                 ));
