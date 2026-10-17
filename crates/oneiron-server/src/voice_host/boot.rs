@@ -237,6 +237,7 @@ async fn call(
     let brain = ChatBrain::new(ChatBrainBindings {
         ai: server.ai.clone(),
         vault: Arc::clone(vault),
+        auth: auth.clone(),
         instructions,
         payer,
         out,
