@@ -1,8 +1,4 @@
-//! Retired register discriminator and durable companion task payload keys.
-
-pub use oneiron_contracts::companion::{
-    COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
-};
+//! Durable companion task payload keys.
 
 pub(super) const SCOPE_KEYS: [&str; 3] = ["kind", "person_ref", "vault_id"];
 
