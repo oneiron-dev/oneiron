@@ -23,7 +23,7 @@ fn mcp_tasks_section(
     rows: oneiron::context_board::TasksSectionRows,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
-    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
+    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, &[], served)?;
     // The footer type is `oneiron::context_board::tasks::TasksOverflow`,
     // whose module is private and which `context_board` does not
     // re-export, so the method item cannot be named from this crate.
