@@ -35,6 +35,9 @@ fn invalid() -> Error {
 pub(crate) struct CallableSkillLease {
     pub(crate) vault: Arc<Vault>,
     pub(crate) leased: AttemptRecord,
+    /// The key the run's door admitted the call with, which the call's verb
+    /// hooks read under; `None` when its host binds no door.
+    pub(crate) read_as: Option<crate::claim::ScopedReadActorKey>,
 }
 
 impl<'a> HostSelfDispatcher<'a> {
@@ -345,14 +348,19 @@ impl<'a> HostSelfDispatcher<'a> {
                     ..refused
                 })));
             }
-            if let Err(refusal) = self.admit_run_call(RunCall::Bridge(effect))? {
-                return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                    effect,
-                    outcome: refusal.code,
-                    reason_codes: Vec::new(),
-                })));
-            }
-            self.callable_skill_lease()
+            let read_as = match self.admit_run_call(RunCall::Bridge(effect))? {
+                Ok(read_as) => read_as,
+                Err(refusal) => {
+                    return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        effect,
+                        outcome: refusal.code,
+                        reason_codes: Vec::new(),
+                    })));
+                }
+            };
+            Ok(self
+                .callable_skill_lease()?
+                .map(|lease| CallableSkillLease { read_as, ..lease }))
         })
     }
 
@@ -388,6 +396,7 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(Ok(CallableSkillLease {
             vault: Arc::clone(vault),
             leased,
+            read_as: None,
         }))
     }
 

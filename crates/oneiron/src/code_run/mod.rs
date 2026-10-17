@@ -20,6 +20,7 @@ mod payload;
 mod reader;
 mod replay;
 mod result_read;
+pub(crate) mod run_verb_call;
 mod run_verbs;
 mod storage;
 mod support;
