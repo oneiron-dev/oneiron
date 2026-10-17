@@ -3544,7 +3544,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/ask_soft_confirm_delivery.rs` | src | s | 3 fn · 1 crate-vis | — | Durable soft-confirm outbox, retried independently of answer replay |
 | `src/task_verb/ask_soft_confirm_types.rs` | src | s | 2 struct · 2 enum · 1 fn | TaskAskConfirmation, TaskAskConfirmationDecision, TaskAskSoftConfirmDelivery, TaskAskSoftConfirmNotice | Revision-bound soft-confirm reply, notice, and delivery state |
 | `src/task_verb/ask_tests.rs` | test | XL | — | — | — |
-| `src/task_verb/ask_types.rs` | src | m | 21 struct · 16 enum · 5 fn · 2 crate-vis | AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide, TaskAskDecision, TaskAskDefault +29 | Typed asks: response coverage, decision reducers, and policy-bound revisions |
+| `src/task_verb/ask_types.rs` | src | L | 21 struct · 16 enum · 6 fn · 2 crate-vis | AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide, TaskAskDecision, TaskAskDefault +29 | Typed asks: response coverage, decision reducers, and policy-bound revisions |
 | `src/task_verb/attendee_answer.rs` | src | s | 4 crate-vis | — | The owner-proof rule for an attendee ask's answer (OF-365, ILDF2 P4) |
 | `src/task_verb/board_task.rs` | src | s | 2 crate-vis | — | One committed TASK as the board STREAM publisher reads it |
 | `src/task_verb/brief.rs` | src | m | 14 struct · 2 enum · 4 fn · 11 crate-vis | BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion, DoneMeans +8 | The queue task brief (OF-220): the typed why-carrier one TASK holds |
