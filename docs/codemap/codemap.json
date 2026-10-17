@@ -41540,7 +41540,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 25,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -49661,7 +49661,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 9,
-      "fn": 8,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -49809,9 +49809,9 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "enum": 4,
-      "fn": 23,
+      "fn": 24,
       "struct": 2
      }
     },
@@ -57242,6 +57242,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/xlsx_shift.rs",
+     "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/adversarial.rs",
@@ -57387,11 +57397,18 @@
      "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
+    },
+    "xlsx_shift": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…"
     }
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 62,
+   "source_files": 63,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -66212,7 +66229,7 @@
      "path": "src/commands/owner/recovery_kit.rs",
      "purpose": "`oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -66225,13 +66242,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -67868,6 +67885,7 @@
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -69219,13 +69237,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -69275,7 +69293,7 @@
      "purpose": "The serve host's skill judge (OF-495)",
      "surface": {
       "const": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 4
      }
     },
@@ -70803,7 +70821,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 40,
+   "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 564,
    "test_files": 182
