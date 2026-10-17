@@ -68,6 +68,7 @@ pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_re
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
 pub(crate) use self::reverse::reverse_rematerialize_for_sealing;
+pub(crate) use self::reverse::reverse_rematerialize_rows;
 pub(in crate::sync) use self::reverse::reverse_rematerialize_with;
 pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{

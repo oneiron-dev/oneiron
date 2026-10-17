@@ -62,6 +62,19 @@ pub(crate) fn reverse_rematerialize_for_sealing(
     reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Nothing)
 }
 
+/// [`reverse_rematerialize`] for only the `rows` a local commit just wrote,
+/// not the window's whole learned range: each one this window holds (by its
+/// learned month and world) is mirrored as a cold open would mirror it, so a
+/// live window gets a write made after it loaded (the live mirror).
+pub(crate) fn reverse_rematerialize_rows(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    rows: &std::collections::BTreeSet<EntityId>,
+) -> Result<u32> {
+    reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Unknown, Some(rows))
+}
+
 /// [`reverse_rematerialize`], packing every row except those of a world
 /// `withhold` names. Promotion authority packs them all: it asks what a grant
 /// covers and exports nothing. A residence read for a proved machine packs
@@ -71,6 +84,18 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     doc: &LoroDoc,
     window_key: &WindowKey,
     withhold: super::Withhold<'_>,
+) -> Result<u32> {
+    reverse_rematerialize_scan(vault, doc, window_key, withhold, None)
+}
+
+/// The reverse pass over the window's learned range, or over `only` (each
+/// row kept when its learned time falls in the window's month).
+fn reverse_rematerialize_scan(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    withhold: super::Withhold<'_>,
+    only: Option<&std::collections::BTreeSet<EntityId>>,
 ) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
@@ -91,8 +116,18 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     // world window would duplicate every other project's payload into it.
     let mut entities_in_range = Vec::new();
     let mut base_edge_sources = Vec::new();
-    for id in vault.entities_in_learned_range(start_ts, end_ts)? {
+    let scanned = match only {
+        None => vault.entities_in_learned_range(start_ts, end_ts)?,
+        Some(rows) => rows.iter().copied().collect(),
+    };
+    for id in scanned {
         if let Some(raw) = vault.get_raw_unsealed(&id)? {
+            if only.is_some()
+                && !EntityMetadataHeader::parse(&raw)
+                    .is_some_and(|header| (start_ts..end_ts).contains(&header.learned_at))
+            {
+                continue;
+            }
             let belongs = super::types::entity_belongs_to_window(&raw, window_key);
             let retained = if belongs {
                 false
