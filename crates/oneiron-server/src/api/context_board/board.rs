@@ -96,6 +96,11 @@ impl BoardTargets {
     pub(super) fn actor(&self) -> Option<EntityId> {
         self.actor.map(|(actor, _)| actor)
     }
+
+    /// The room the board renders, wherever it was named.
+    pub(super) fn room_id(&self) -> Option<EntityId> {
+        self.room.as_ref().map(|room| room.id)
+    }
 }
 
 /// The caller's entity principal and declared class, when it has both.

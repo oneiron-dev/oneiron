@@ -55,6 +55,19 @@ impl Vault {
 }
 
 impl MemoriesSection {
+    /// A MEMORIES section for a board that ran no retrieval, to carry its hook blocks' rows
+    /// (OF-579): no retrieved row and no optional-row budget, so only PINNED rows ride it.
+    /// `disclosure` is the clamp its pins read under.
+    #[must_use]
+    pub fn pins_only(disclosure: Option<crate::disclosure::DisclosureAssembly>) -> Self {
+        super::memories_projection::finish_projection(
+            Vec::new(),
+            super::memories::MemoriesBudget::default(),
+            None,
+            disclosure,
+        )
+    }
+
     /// Pins each block's rows, tagged with its hook. Every row reads under
     /// `reader`'s ceiling and `disclosure`'s clamp, as an explicit pin does,
     /// and a withheld row is skipped. A TASK is left to TASKS. A row already
