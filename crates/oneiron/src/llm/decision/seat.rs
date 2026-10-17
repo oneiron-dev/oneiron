@@ -2,9 +2,9 @@
 
 use super::ladder::millis;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt,
-    DecisionRung, DecisionTime, HumanAskReason, ProviderPin, Reasoning, ReasoningCause,
-    Reversibility, StopCause, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
+    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, ProviderPin, Reasoning,
+    ReasoningCause, Reversibility, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{
@@ -31,6 +31,9 @@ pub struct SeatRequest {
     /// Images the question reads, each filling the state field of its name. The
     /// receipt keeps their evidence refs, never the pixels.
     pub images: Vec<DecisionImage>,
+    /// Audio clips the question reads, each filling the state field of its name. The
+    /// receipt keeps their evidence refs, never the samples.
+    pub audio: Vec<DecisionAudio>,
     /// Caller-authored labels for score levels in ascending order (2 to 10).
     pub score_levels: Vec<String>,
     pub posture: HostingPrivacyPosture,
@@ -59,6 +62,7 @@ impl SeatRequest {
             &self.state,
             matches!(self.question.contract, AnswerContract::Box),
         )?;
+        DecisionAudio::check_call(&self.audio, &self.images, &self.state)?;
         match &self.question.contract {
             AnswerContract::Score { .. } if !(2..=10).contains(&self.score_levels.len()) => {
                 return Err(FatalLlmError::InvalidRequest.into());
@@ -270,6 +274,7 @@ pub async fn decide_at_remote_seat(
         .images
         .iter()
         .map(|image| image.evidence.clone())
+        .chain(request.audio.iter().map(|clip| clip.evidence.clone()))
         .collect();
     Ok(TypedDecision {
         answer,

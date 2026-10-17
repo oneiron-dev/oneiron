@@ -23,6 +23,10 @@ impl DreamerWakeDriver<'_> {
         if input.scope != DreamerConsolidationScope::Macro || executors.len() == 1 {
             return self.run_wake_pass(input, &mut executors[0], cancel).await;
         }
+        let hooks = match self.pre_wake_hooks(&input)? {
+            Ok(hooks) => hooks,
+            Err(skipped) => return Ok(skipped),
+        };
         self.begin_wake(input.now)?;
         let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
             self.vault,
@@ -133,6 +137,7 @@ impl DreamerWakeDriver<'_> {
                 aggregate.stop = report.stop;
             }
         }
+        self.post_wake_hooks(hooks, &aggregate);
         Ok(aggregate)
     }
 }

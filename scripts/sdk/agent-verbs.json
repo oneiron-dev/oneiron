@@ -255,7 +255,7 @@
       "prose_links": ["/label", "/spec"],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
-      "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::msgpack_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
+      "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
       "scope": "Write",
       "proposes": true,
       "mcp_fields": {
@@ -2027,6 +2027,70 @@
       "section": false
     },
     {
+      "name": "vault.graph.ask",
+      "input": "crate::receipt::GraphAskRequest",
+      "output": "crate::receipt::GraphAskOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.ask\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false
+    },
+    {
+      "name": "vault.questions.create",
+      "input": "crate::receipt::QuestionCreateRequest",
+      "output": "crate::llm::decision::questions::QuestionRecord",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.create\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.edit",
+      "input": "crate::receipt::QuestionEditRequest",
+      "output": "crate::llm::decision::questions::QuestionRecord",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.edit\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.pause",
+      "input": "crate::receipt::QuestionPauseRequest",
+      "output": "crate::receipt::QuestionPaused",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.pause\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.read",
+      "input": "crate::receipt::QuestionReadRequest",
+      "output": "Option<crate::llm::decision::questions::QuestionRecord>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.read\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.answers",
+      "input": "crate::receipt::QuestionAnswersRequest",
+      "output": "Vec<crate::llm::decision::questions::AnswerRecord>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "connector.list",
       "input": "ConnectorListRequest",
       "output": "Vec<crate::task_verb::sdk::ConnectorEntry>",
@@ -2183,6 +2247,36 @@
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::BatchOutput",
       "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.find",
+      "input": "oneiron_browser::LibraryFindInput",
+      "output": "oneiron_browser::LibraryFindOutput",
+      "call": "driver.library_find(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.propose",
+      "input": "oneiron_browser::ProposeInput",
+      "output": "oneiron_browser::ProposeOutput",
+      "call": "driver.library_propose(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.run",
+      "input": "oneiron_browser::LibraryRunInput",
+      "output": "oneiron_browser::LibraryRunOutput",
+      "call": "driver.library_run(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",

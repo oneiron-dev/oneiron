@@ -4,11 +4,11 @@ use super::codec::{
     decode_attempt_id_value, decode_hash_hex, expect_key, expect_map, expect_string, expect_u64,
     invalid_trap, pinned_key_index,
 };
-use super::peer_wait::{peer_wait_binding_delete_in_txn, peer_wait_task_for_trap};
+use super::peer_wait::{peer_wait_binding_delete_in_txn, peer_wait_task_for_trap_in_txn};
 use super::step_claim::dreamer_runtime_envelope;
 use super::trap_binding::{
     TrapBindingRow, TrapBindingScope, trap_binding_delete_in_txn, trap_binding_put_in_txn,
-    trap_binding_read, trap_binding_read_in_txn,
+    trap_binding_read_in_txn,
 };
 use super::types::{
     DREAMER_TRAP_PREDICATE, DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION,
@@ -185,24 +185,35 @@ pub fn send_trap_signal(
     now: u64,
 ) -> Result<EntityId> {
     vault.with_write_txn_grouped(|wtxn| {
-        let (head_id, head) = trap_head_in_txn(vault, wtxn, trap_claim_id)?;
-        require_attempt_scoped_signal_in_txn(vault, wtxn, trap_claim_id)?;
-        if head.step_hash != step_hash {
-            return Err(invalid_trap("dreamer trap signal hash mismatch"));
-        }
-        if !head.state.may_transition_to(DreamerTrapState::Sent) {
-            return Err(invalid_trap("dreamer trap signal on non-waiting trap"));
-        }
-        append_trap_transition_in_txn(
-            vault,
-            wtxn,
-            &head_id,
-            &head,
-            DreamerTrapState::Sent,
-            now,
-            None,
-        )
+        send_trap_signal_in_txn(vault, wtxn, trap_claim_id, step_hash, now)
     })
+}
+
+/// Transaction-composable body of [`send_trap_signal`].
+fn send_trap_signal_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    trap_claim_id: &EntityId,
+    step_hash: [u8; 32],
+    now: u64,
+) -> Result<EntityId> {
+    let (head_id, head) = trap_head_in_txn(vault, wtxn, trap_claim_id)?;
+    require_attempt_scoped_signal_in_txn(vault, wtxn, trap_claim_id)?;
+    if head.step_hash != step_hash {
+        return Err(invalid_trap("dreamer trap signal hash mismatch"));
+    }
+    if !head.state.may_transition_to(DreamerTrapState::Sent) {
+        return Err(invalid_trap("dreamer trap signal on non-waiting trap"));
+    }
+    append_trap_transition_in_txn(
+        vault,
+        wtxn,
+        &head_id,
+        &head,
+        DreamerTrapState::Sent,
+        now,
+        None,
+    )
 }
 
 /// Validates and absorbs the resume signal (`→consumed`).
@@ -223,18 +234,30 @@ pub fn consume_trap_signal(
     trap: &TrapRef,
     now: u64,
 ) -> Result<AttemptId> {
-    let (head_id, head) = trap_head(vault, &trap.trap_claim_id)?;
+    vault.with_write_txn_grouped(|wtxn| consume_trap_signal_in_txn(vault, wtxn, store, trap, now))
+}
+
+/// Transaction-composable body of [`consume_trap_signal`]: every check reads
+/// the caller's transaction, so a signal sent earlier in it is consumed.
+fn consume_trap_signal_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    store: &crate::dreamer_runner::DreamerRunnerStore<'_>,
+    trap: &TrapRef,
+    now: u64,
+) -> Result<AttemptId> {
+    let (head_id, head) = trap_head_in_txn(vault, wtxn, &trap.trap_claim_id)?;
     if head.state != DreamerTrapState::Sent {
         return Err(invalid_trap("dreamer trap consume requires a sent signal"));
     }
     let anchor = vault
-        .get_claim(&trap.trap_claim_id)?
+        .get_claim_in_txn(wtxn, &trap.trap_claim_id)?
         .ok_or(invalid_trap("dreamer trap created record missing"))?;
     let anchor_decoded = decode_trap_claim_value(&anchor.value)?;
     if anchor_decoded.state != DreamerTrapState::Created {
         return Err(invalid_trap("dreamer trap anchor must be a created record"));
     }
-    let binding = trap_binding_read(vault, &trap.trap_claim_id)?
+    let binding = trap_binding_read_in_txn(vault, wtxn, &trap.trap_claim_id)?
         .ok_or(invalid_trap("dreamer trap binding missing"))?;
     if binding.park_owner != trap_park_owner(&trap.trap_claim_id) {
         return Err(invalid_trap(
@@ -252,34 +275,54 @@ pub fn consume_trap_signal(
             "dreamer trap signal names a different attempt",
         ));
     }
-    require_lineage_chains_to_anchor(vault, &head_id, &trap.trap_claim_id)?;
-    let delegated_task = peer_wait_task_for_trap(vault, &trap.trap_claim_id)?;
+    require_lineage_chains_to_anchor_in_txn(vault, wtxn, &head_id, &trap.trap_claim_id)?;
+    let delegated_task = peer_wait_task_for_trap_in_txn(vault, wtxn, &trap.trap_claim_id)?;
 
-    vault.with_write_txn_grouped(|wtxn| {
-        append_trap_transition_in_txn(
-            vault,
-            wtxn,
-            &head_id,
-            &head,
-            DreamerTrapState::Consumed,
-            now,
-            None,
-        )?;
-        // Idempotent when no parked row exists (a consent trap raised before
-        // any park, or a resume raced by the runner); a row parked by any
-        // OTHER owner is refused inside resume_parked_in_txn.
-        store.resume_parked_in_txn(wtxn, binding.attempt_id, &binding.park_owner, now)?;
-        // Consumed is terminal — retire the private binding with the trap.
-        trap_binding_delete_in_txn(vault, wtxn, &trap.trap_claim_id)?;
-        // A delegation's TASK→trap binding retires in the SAME transaction, so
-        // reconciliation never re-walks a settled wait and a duplicate result
-        // finds nothing to signal.
-        if let Some(task_ref) = delegated_task {
-            peer_wait_binding_delete_in_txn(vault, wtxn, &task_ref, &trap.trap_claim_id)?;
-        }
-        Ok(())
-    })?;
+    append_trap_transition_in_txn(
+        vault,
+        wtxn,
+        &head_id,
+        &head,
+        DreamerTrapState::Consumed,
+        now,
+        None,
+    )?;
+    // Idempotent when no parked row exists (a consent trap raised before
+    // any park, or a resume raced by the runner); a row parked by any
+    // OTHER owner is refused inside resume_parked_in_txn.
+    store.resume_parked_in_txn(wtxn, binding.attempt_id, &binding.park_owner, now)?;
+    // Consumed is terminal — retire the private binding with the trap.
+    trap_binding_delete_in_txn(vault, wtxn, &trap.trap_claim_id)?;
+    // A delegation's TASK→trap binding retires in the SAME transaction, so
+    // reconciliation never re-walks a settled wait and a duplicate result
+    // finds nothing to signal.
+    if let Some(task_ref) = delegated_task {
+        peer_wait_binding_delete_in_txn(vault, wtxn, &task_ref, &trap.trap_claim_id)?;
+    }
     Ok(binding.attempt_id)
+}
+
+/// Signals and consumes `trap` in the caller's transaction: the wait a
+/// parked code run holds was answered, so its attempt un-parks in the commit
+/// that delivered the answer. Returns the resumed attempt, or `None` for a
+/// trap already past `Waiting`, which an earlier wake reached.
+pub(crate) fn wake_trap_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    trap: &TrapRef,
+    now_ms: u64,
+) -> Result<Option<AttemptId>> {
+    let (_, head) = trap_head_in_txn(vault, wtxn, &trap.trap_claim_id)?;
+    if !matches!(
+        head.state,
+        DreamerTrapState::Created | DreamerTrapState::Waiting
+    ) {
+        return Ok(None);
+    }
+    let now = now_ms.max(head.at);
+    send_trap_signal_in_txn(vault, wtxn, &trap.trap_claim_id, trap.step_hash, now)?;
+    let store = crate::dreamer_runner::DreamerRunnerStore::new(vault);
+    consume_trap_signal_in_txn(vault, wtxn, &store, trap, now).map(Some)
 }
 
 #[derive(Debug, Clone)]
@@ -440,8 +483,9 @@ pub(super) fn trap_head_in_txn(
 /// Walks backward from `head` via outbound `Supersedes` edges and requires
 /// reaching `anchor` (the run's `created` record). A sent record that does
 /// not chain to this run's anchor is stale.
-fn require_lineage_chains_to_anchor(
+fn require_lineage_chains_to_anchor_in_txn(
     vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
     head: &EntityId,
     anchor: &EntityId,
 ) -> Result<()> {
@@ -450,11 +494,17 @@ fn require_lineage_chains_to_anchor(
         if current == *anchor {
             return Ok(());
         }
-        let superseded = vault
-            .edges_out(&current)?
-            .into_iter()
-            .find(|edge| edge.kind == EdgeKind::Supersedes)
-            .map(|edge| edge.target);
+        let superseded = crate::ports::EdgeStore::port_edge_neighbors(
+            vault,
+            rtxn,
+            &current,
+            crate::ports::EdgeDirection::Out,
+            None,
+            crate::vault::MAX_EDGE_QUERY_RESULTS,
+        )?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Supersedes)
+        .map(|edge| edge.target);
         match superseded {
             Some(next) => current = next,
             None => return Err(invalid_trap("dreamer trap signal not chained to this trap")),

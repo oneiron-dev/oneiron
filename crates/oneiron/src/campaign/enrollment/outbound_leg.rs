@@ -107,6 +107,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         dedupe_key: None,
         suppression_receipt: None,
         admission_ceiling: None,
+        co_actor: None,
     };
     let result = execute_outbound_effect(
         vault,

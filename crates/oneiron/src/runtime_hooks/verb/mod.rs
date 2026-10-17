@@ -11,13 +11,14 @@
 mod ask;
 mod chain;
 mod redact;
+mod served;
 mod state;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::skill_hub::pack_catalog::HookActorClass;
 pub use crate::error::VerbHookStop;
+use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 pub(crate) use state::{HookDepth, VerbHookState};
@@ -58,7 +59,9 @@ impl InvocationId {
         if text.len() != 32 {
             return None;
         }
-        uuid::Uuid::try_parse(text).ok().map(|id| Self(id.into_bytes()))
+        uuid::Uuid::try_parse(text)
+            .ok()
+            .map(|id| Self(id.into_bytes()))
     }
 }
 
