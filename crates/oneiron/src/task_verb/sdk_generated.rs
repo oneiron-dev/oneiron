@@ -302,6 +302,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.guests.mint_slip",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GuestSlipMintRequest,
+                >(),
+            ),
+            (
                 "vault.authority.handoff_alarms",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -1483,6 +1489,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.guests.mint_slip" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.authority.handoff_alarms" => &[],
         "vault.authority.handoff_alarms.acknowledge" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -2491,6 +2504,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
+        "vault.guests.mint_slip" => {
+            let _input: crate::task_verb::sdk::GuestSlipMintRequest = decode(value.clone())?;
+        }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -3045,6 +3061,7 @@ pub fn invoke(
             encode(vault_members_withdraw_invitation(memory, decode(value)?)?)
         }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
+        "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -3870,6 +3887,12 @@ pub fn vault_guests_revoke(
     input: crate::task_verb::sdk::GuestRevokeRequest,
 ) -> MemoryResult<crate::receipt::GuestRevokeResponse> {
     crate::task_verb::sdk::revoke_guest_embedded(memory, input)
+}
+pub fn vault_guests_mint_slip(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GuestSlipMintRequest,
+) -> MemoryResult<crate::task_verb::sdk::GuestSlipMinted> {
+    crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)
 }
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,
