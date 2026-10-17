@@ -1,6 +1,7 @@
 //! Production MCP provider over the hash-pinned engine QuickJS component.
 
 use super::{McpCodeModeProvider, ReaderMeter, RunCompactionSeat};
+use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::CodeRunDeterminism;
 use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron::code_sandbox::wasmtime_runtime::{ComponentBudget, WasmtimeComponentRuntime};
@@ -235,10 +236,15 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     fn backend(&self) -> &dyn LlmBackend {
         self.backend.as_ref()
     }
-    fn compaction(&self, byline: WriteActor, credential: &str) -> Option<RunCompaction> {
+    fn compaction(
+        &self,
+        byline: WriteActor,
+        credential: &str,
+        spend: Option<&SpendScopeId>,
+    ) -> Option<RunCompaction> {
         self.compaction
             .as_ref()
-            .map(|seat| seat(byline, credential))
+            .map(|seat| seat(byline, credential, spend))
     }
     fn lease(&self) -> &BudgetLease {
         &self.lease

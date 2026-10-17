@@ -25,7 +25,8 @@ use utoipa::ToSchema;
 }))]
 pub(crate) struct ContextPackMediaQuery {
     /// Declared embedding space id: an `ai.embed` rung id from
-    /// `GET /v1/ai/options`, then `@where`.
+    /// `GET /v1/ai/options`, then `@` and the `[models]` provider key that
+    /// binds that rung.
     #[schema(example = "local/clip-vit-b32@2024-01@own-server")]
     space: String,
     /// Media type of the bytes; it picks the space's query tower: `image/*`,
@@ -38,8 +39,7 @@ pub(crate) struct ContextPackMediaQuery {
     #[schema(example = "iVBORw0KGgo=")]
     bytes_b64: String,
     /// The kinds of item the space's list keeps (`text`, `image`, `audio`);
-    /// every kind the space holds when empty. `POST /v1/core/query` does not
-    /// filter by it yet.
+    /// every kind the space holds when empty.
     #[serde(default)]
     #[schema(value_type = Vec<String>, example = json!(["image"]))]
     kinds: Vec<InputKind>,
@@ -262,10 +262,10 @@ fn media_query_refusal(refusal: MediaEmbedRefusal, source: SeedSource) -> ApiErr
             ApiErrorDetails::EmbedderUnavailable,
             [match source {
                 SeedSource::Media => {
-                    "Serve the rung the space's id names under [models.media.embed], or retry without media."
+                    "Serve the rung the space's id names under [models.media.embed], from the [models] provider its @where names, or retry without media."
                 }
                 SeedSource::TextSlot | SeedSource::SemanticText => {
-                    "The text slot binds this space (the one-space preset): serve the rung its id names under [models.media.embed], or unbind the text slot."
+                    "The text slot binds this space (the one-space preset): serve the rung its id names under [models.media.embed], from the [models] provider its @where names, or unbind the text slot."
                 }
             }],
         ),

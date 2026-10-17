@@ -62,7 +62,7 @@ pub(crate) use self::storage::{
 };
 pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
-    bind_wait_trap,
+    bind_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
