@@ -1,6 +1,9 @@
 //! Credential filtering at memory serve and export serialization boundaries.
 
-use super::{ExportManifest, ExportSecretsNulledManifest, whole_vault_export_excludes_entity};
+use super::{
+    ExportManifest, ExportScope, ExportSecretsNulledManifest, carries_embedding_setup,
+    whole_vault_export_excludes_entity,
+};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
@@ -162,6 +165,9 @@ pub fn redacted_memory_body(bytes: &[u8]) -> Value {
 
 impl Vault {
     /// Whole-vault JSON export with credential nulling enforced at serialization.
+    /// Beside its entities it carries the vault's embedding setup (OF-370):
+    /// `embedding_spaces`, each declared space's descriptor in id order, and
+    /// `slot_bindings`, the three kind slots; no vector. It has no importer.
     pub fn export_vault_json(&self) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
@@ -169,7 +175,7 @@ impl Vault {
             ids.push(row?.0);
         }
         drop(txn);
-        self.export_entity_bundle_json(&ids)
+        self.entity_bundle_json(&ids, ExportScope::WholeVault)
     }
 
     /// Serializes an entity bundle through the whole-vault export boundary.
@@ -177,6 +183,12 @@ impl Vault {
     /// containers are always nulled.
     /// The manifest is derived from the bytes, not a caller's declaration.
     pub fn export_entity_bundle_json(&self, ids: &[EntityId]) -> Result<Vec<u8>> {
+        self.entity_bundle_json(ids, ExportScope::Records)
+    }
+
+    /// The bundle both doors write; `scope` decides whether it carries the
+    /// embedding setup.
+    fn entity_bundle_json(&self, ids: &[EntityId], scope: ExportScope) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
         let exported: std::collections::BTreeSet<EntityId> = ids.iter().copied().collect();
         let mut records = Vec::new();
@@ -270,9 +282,28 @@ impl Vault {
             }
             entities.push(record);
         }
+        // OF-370: the setup is read in this snapshot, each descriptor through
+        // this bundle's nulling pass; one the pass would change is withheld.
+        let setup = if carries_embedding_setup(scope) {
+            let setup = super::embedding_setup_in_txn(&self.store, &txn)?.released(|value| {
+                crate::batch::secret_scan::sanitize_read_credentials(&mut value.clone(), true)
+            })?;
+            nulled |= !setup.withheld.is_empty();
+            Some(setup)
+        } else {
+            None
+        };
         let manifest =
             ExportManifest::from_secrets_nulled(ExportSecretsNulledManifest::from_redacted(nulled));
-        serde_json::to_vec(&serde_json::json!({"manifest": manifest, "entities": entities}))
+        let bundle = match setup {
+            Some(setup) => serde_json::json!({
+                "manifest": manifest, "entities": entities,
+                "embedding_spaces": setup.spaces, "slot_bindings": setup.slots,
+                "embedding_setup_withheld": setup.withheld,
+            }),
+            None => serde_json::json!({"manifest": manifest, "entities": entities}),
+        };
+        serde_json::to_vec(&bundle)
             .map_err(|_| Error::InvariantViolation("entity export JSON encode failed"))
     }
 }

@@ -388,6 +388,9 @@ pub enum RefreshTrigger {
     Arrival(EntityId),
     Schedule,
     Manual,
+    /// A scheduled backfill: each covered unit with no answer at the
+    /// question's current version, once.
+    Backfill,
 }
 
 /// Provider output only. The engine owns the question, principal, evidence and version receipt.
@@ -426,6 +429,45 @@ pub struct OutcomeLabel {
     pub label: bool,
     pub noise_weight: f64,
     pub occurred_at: u64,
+}
+
+/// How a bound answer's outcome window closed (OF-516).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowOutcome {
+    /// An admissible fact had labelled the answer by the close.
+    Observed,
+    /// No fact had, and the binding maps silence to this label.
+    Silence(bool),
+    /// No fact had and the binding maps no silence, or the answer no longer
+    /// stands: nothing is learned from it.
+    Unknown,
+}
+
+/// One answer's closed outcome window, written once by the question pump
+/// the first second after `ends_at`. A fact in the window that lands later
+/// still labels the answer and outranks a silence label.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutcomeWindowClose {
+    #[serde(with = "super::super::codec::entity")]
+    pub answer: EntityId,
+    pub question_version: u32,
+    /// The window's last second: the answer's `answered_at` plus the horizon.
+    pub ends_at: u64,
+    pub closed_at: u64,
+    pub outcome: WindowOutcome,
+}
+
+/// A standing question's scheduled backfill: from `due_at`, the question
+/// pump answers each covered unit with no answer at `version`, once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduledBackfill {
+    #[serde(with = "super::super::codec::entity")]
+    pub question: EntityId,
+    pub version: u32,
+    pub due_at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

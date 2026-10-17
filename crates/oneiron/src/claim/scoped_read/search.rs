@@ -149,7 +149,8 @@ impl ScopedRead<'_> {
     /// text query, a vector into the vault's own index, and media queries into declared
     /// embedding spaces (OF-370), each `(space id, the tower that encoded it, its vector, the
     /// kinds its list keeps)` (every kind the space holds when empty) and each its own ranked
-    /// list beside the others.
+    /// list beside the others. `query_affect` is the affect the query is asked in (OF-423):
+    /// emotion congruence scales each candidate's final score by it, as on the context pack.
     pub fn search_seeded(
         &self,
         query: Option<&str>,
@@ -162,6 +163,7 @@ impl ScopedRead<'_> {
         )],
         limit: usize,
         requested: Option<&RetrievalFilter>,
+        query_affect: Option<crate::affect::Vad>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
@@ -187,6 +189,9 @@ impl ScopedRead<'_> {
         }
         for (space, kind, vector, kinds) in media {
             pipeline = pipeline.search_media(space, *kind, vector, kinds, limit);
+        }
+        if let Some(vad) = query_affect {
+            pipeline = pipeline.query_affect(vad);
         }
         let results = pipeline.limit(limit).run_for_pack()?;
         self.filter_search_results(

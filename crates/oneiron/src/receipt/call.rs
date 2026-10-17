@@ -212,6 +212,17 @@ impl Vault {
     /// A transport never calls this for a call inside an anonymous
     /// off-record session.
     pub fn record_call_receipt(&self, input: CallReceiptInput) -> Result<String> {
+        self.with_write_txn_grouped(|txn| self.record_call_receipt_in_txn(txn, input))
+    }
+
+    /// [`Self::record_call_receipt`] inside `txn`, for a writer whose own
+    /// row and the receipt commit together: the drain's refusal of a
+    /// credential call and its receipt (ARCH-0080 §3 Ask).
+    pub(crate) fn record_call_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: CallReceiptInput,
+    ) -> Result<String> {
         let id = self.store.clock.entity_id()?;
         let receipt_ref = format!("{CALL_RECEIPT_REF_PREFIX}{}", id.to_hex());
         let mut served = input.served;
@@ -235,7 +246,7 @@ impl Vault {
             served: served.into_iter().map(bounded).collect(),
             served_records: Vec::new(),
         };
-        self.with_write_txn_grouped(|txn| CALL_RECEIPTS.put(self, txn, &id, &receipt))?;
+        CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
         Ok(receipt_ref)
     }
 }
