@@ -323,6 +323,36 @@ pub(crate) async fn run_context_pack(
         signal_disclosure.as_ref(),
         &mut response,
     )?;
+    // OF-365: what went out under a contact's standing clearance gets the
+    // owner's quiet post-hoc receipt (DEC-0006), one per contact.
+    let mut delivered = response
+        .served_rows()
+        .map_err(|error| core_engine_error("delivery ids failed", error))?;
+    for row in memories.iter().flat_map(|section| &section.rows) {
+        delivered.push(
+            oneiron::EntityId::from_hex(&row.id)
+                .map_err(|error| core_engine_error("memory delivery id failed", error))?,
+        );
+    }
+    let channels: std::collections::BTreeSet<String> = room_id
+        .map(|room| oneiron::consent::contact_disclosure_room_channel(&room))
+        .into_iter()
+        .chain(
+            req.interlocutors
+                .as_ref()
+                .and_then(|controls| controls.voice_session_ref.as_deref())
+                .map(oneiron::consent::contact_disclosure_voice_channel),
+        )
+        .collect();
+    let vault = Arc::clone(&server.vault);
+    let parties = interlocutors.clone();
+    let once_terms = once.clone();
+    tokio::task::spawn_blocking(move || {
+        vault.record_standing_disclosure_uses(&delivered, parties.as_ref(), &once_terms, &channels)
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("disclosure receipt task failed"))?
+    .map_err(|error| core_engine_error("disclosure receipt failed", error))?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     response.limit_clamped = req.limit_clamped;
     Ok((response, memories, cursor))

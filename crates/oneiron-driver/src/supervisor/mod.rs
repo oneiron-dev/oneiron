@@ -44,7 +44,9 @@ pub use self::attachment::{
 pub use self::config::{
     MAX_PASS_BUDGET_BASE_LEN, NowSeconds, RestartBackoffConfig, WakeSupervisorConfig,
 };
-pub use self::factory::{ConsolidationExecutorFactory, PassExecutorFactory, WaveReadyDispatcher};
+pub use self::factory::{
+    ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
+};
 pub use self::run::{WakeSupervisor, WakeSupervisorReport};
 pub use self::shutdown::ShutdownHandle;
 

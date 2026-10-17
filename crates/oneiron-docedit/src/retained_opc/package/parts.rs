@@ -1,12 +1,15 @@
-//! The add-part door. A new part, the content type that declares it and the
-//! relationship that reaches it are written as checked metadata edits under
-//! the package budgets, each call all-or-nothing. `changed_parts` is the
-//! write set an export would actually carry, for a caller's independent
-//! comparison with the parts its operation was allowed to touch.
+//! The add-part and remove-part doors. A new part, the content type that
+//! declares it and the relationship that reaches it are written as checked
+//! metadata edits under the package budgets, each call all-or-nothing; a
+//! removed part leaves with its relationship part and its content type
+//! override. `changed_parts` is the write set an export would actually carry,
+//! for a caller's independent comparison with the parts its operation was
+//! allowed to touch.
 use super::{Added, Editability, Error, Limits, Package, Result, as_u32, check_limits};
 use crate::ooxml::{CONTENT_TYPES, PACKAGE_RELATIONSHIPS, XmlTree, escape_text};
 use crate::retained_opc::xml;
 use flate2::{Compression, write::DeflateEncoder};
+use std::collections::BTreeSet;
 use std::io::Write;
 
 const TYPES: &str = "[Content_Types].xml";
@@ -168,6 +171,42 @@ impl Package {
         Ok(id)
     }
 
+    /// Remove the part `name` from the archive with its relationship part and
+    /// its content type override; an export carries none of their records.
+    /// The caller first removes every relationship that reaches it.
+    pub fn remove_part(&mut self, name: &str) -> Result<()> {
+        if name.to_ascii_lowercase().ends_with(".rels") || name == TYPES {
+            return Err(Error::Edit("package metadata is written by its own door"));
+        }
+        self.transact(|package| {
+            package.drop_record(name)?;
+            let rels = rels_name(name);
+            if package.names().any(|held| held == rels) {
+                package.drop_record(&rels)?;
+            }
+            package.undeclare(name)
+        })
+    }
+
+    /// Every part name reachable from `source` (`""` is the package) through
+    /// internal relationships, `source` itself included when it is a part. A
+    /// target the archive does not hold is named but leads nowhere.
+    pub fn reachable(&self, source: &str) -> Result<BTreeSet<String>> {
+        let mut seen = BTreeSet::new();
+        if !source.is_empty() {
+            seen.insert(source.to_owned());
+        }
+        let mut queue = vec![source.to_owned()];
+        while let Some(part) = queue.pop() {
+            for rel in self.relationships(&part)? {
+                if !rel.external && seen.insert(rel.target.clone()) {
+                    queue.push(rel.target);
+                }
+            }
+        }
+        Ok(seen)
+    }
+
     /// Remove `source`'s relationship `id`. Its target stays in the archive,
     /// unreachable: a cache the opening application rebuilds when it is
     /// missing (a workbook's calculation chain) goes this way.
@@ -245,12 +284,12 @@ impl Package {
         self.transact(|package| package.write_metadata(name, value))
     }
 
-    /// Parts an export would write differently from the source: edited
-    /// retained parts and added parts, in archive order.
+    /// Parts an export would write differently from the source: edited and
+    /// removed retained parts, then added parts, in archive order.
     pub fn changed_parts(&self) -> Vec<&str> {
         self.entries
             .iter()
-            .filter(|entry| entry.replacement.is_some())
+            .filter(|entry| entry.replacement.is_some() || entry.removed)
             .map(|entry| entry.name.as_str())
             .chain(self.added.iter().map(|part| part.name.as_str()))
             .collect()
@@ -297,6 +336,7 @@ impl Package {
             || self
                 .entries
                 .iter()
+                .filter(|entry| !entry.removed)
                 .map(|entry| (entry.name.trim_end_matches('/'), entry.is_directory()))
                 .chain(self.added.iter().map(|part| (part.name.as_str(), false)))
                 .any(|(existing, directory)| {
@@ -377,14 +417,58 @@ impl Package {
         let index = self
             .entries
             .iter()
-            .position(|entry| entry.name == name)
+            .position(|entry| entry.name == name && !entry.removed)
             .ok_or(Error::Edit("part missing"))?;
         let old = self.expanded(&self.entries[index])?;
         self.commit_replacement(index, old, value)
     }
 
+    /// Take one part's record out: an added part is dropped, a retained one
+    /// is marked removed.
+    fn drop_record(&mut self, name: &str) -> Result<()> {
+        if let Some(at) = self.added.iter().position(|part| part.name == name) {
+            self.added.remove(at);
+            return Ok(());
+        }
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.name == name && !entry.is_directory() && !entry.removed)
+            .ok_or(Error::Edit("part missing"))?;
+        entry.removed = true;
+        entry.replacement = None;
+        Ok(())
+    }
+
+    /// Drop `name`'s content type override, when it has one; an extension
+    /// default stays, other parts may still use it.
+    fn undeclare(&mut self, name: &str) -> Result<()> {
+        let bytes = self
+            .part(TYPES)?
+            .ok_or(Error::Edit("content types missing"))?;
+        let tree = XmlTree::parse(&bytes, self.limits.xml)
+            .map_err(|_| Error::Edit("content types unreadable"))?;
+        tree.root(CONTENT_TYPES, "Types")
+            .map_err(|_| Error::Edit("content types unreadable"))?;
+        let part_name = format!("/{name}");
+        let Some(span) = tree
+            .children(0)
+            .find(|(_, node)| {
+                node.is(CONTENT_TYPES, "Override")
+                    && node
+                        .attr("PartName")
+                        .is_some_and(|declared| declared.eq_ignore_ascii_case(&part_name))
+            })
+            .map(|(_, node)| node.span.clone())
+        else {
+            return Ok(());
+        };
+        let value = [&bytes[..span.start], &bytes[span.end..]].concat();
+        self.write_metadata(TYPES, value)
+    }
+
     fn check_budgets(&self) -> Result<()> {
-        let count = self.entries.len() + self.added.len();
+        let count = self.entries.iter().filter(|entry| !entry.removed).count() + self.added.len();
         if count > self.limits.entries || count >= usize::from(u16::MAX) {
             return Err(Error::Edit("entry limit"));
         }
@@ -398,6 +482,7 @@ impl Package {
         let total = self
             .entries
             .iter()
+            .filter(|entry| !entry.removed)
             .try_fold(self.added_bytes(), |sum, entry| {
                 sum.checked_add(
                     entry
