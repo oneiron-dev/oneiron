@@ -41,7 +41,9 @@ pub use decisions::{
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use planner::{PlannerSeatSetting, PlannerSettings};
-pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
+pub use provider::{
+    OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire, ResponsesSocket,
+};
 pub use voice::VoiceSettings;
 
 use levels::{RoleFile, Shorthand};
