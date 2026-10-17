@@ -17574,16 +17574,17 @@
       "IdentityHint",
       "IdentityOption",
       "IdentityRuling",
-      "IdentitySettled"
+      "IdentitySettled",
+      "MentionProvenance"
      ],
      "path": "src/dreamer_runner/maintenance/identity.rs",
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 8,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -27967,7 +27968,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 33
+      "re-export": 34
      }
     },
     {
@@ -30801,7 +30802,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
+      "re-export": 1,
       "struct": 3
      }
     },
@@ -52851,7 +52853,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -52867,7 +52869,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 14,
+      "const": 15,
       "fn": 7,
       "struct": 5,
       "type": 1
