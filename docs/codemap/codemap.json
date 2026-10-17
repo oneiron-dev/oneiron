@@ -10619,7 +10619,7 @@
      "path": "src/code_run/agent_authoring.rs",
      "purpose": "Bounded guest definition request; actor, lease and approval stay host-owned",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -10723,7 +10723,7 @@
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5
      }
     },
