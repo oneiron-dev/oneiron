@@ -450,6 +450,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::Leader(text) => json!({"output": serde_json::from_str::<Value>(text)
             .unwrap_or_else(|_| Value::String(text.clone()))}),
         SelfDispatchOutcome::Team(answer) => json!({"output": answer}),
+        SelfDispatchOutcome::TeamSubmitted(answer) => json!({"output": answer}),
     })
 }
 
@@ -551,6 +552,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         SelfCall::Leader(SelfLeaderCall::Advice { top }) => json!({"top": top}),
         SelfCall::Leader(SelfLeaderCall::Pattern { skill }) => json!({"skill": skill.to_hex()}),
         SelfCall::Team(team) => to_json(team)?,
+        SelfCall::TeamSubmit(submit) => to_json(submit)?,
     })
 }
 
@@ -969,7 +971,8 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         | SelfCall::ReaderReport(_)
         | SelfCall::Summarize(_)
         | SelfCall::Leader(_)
-        | SelfCall::Team(_) => {
+        | SelfCall::Team(_)
+        | SelfCall::TeamSubmit(_) => {
             return Err(format!("{} takes no rewrite", call.effect().as_str()));
         }
     })
