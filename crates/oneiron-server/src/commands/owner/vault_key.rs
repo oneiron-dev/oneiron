@@ -18,6 +18,10 @@
 //!   line break on stdin; exit 0 once it is kept.
 //! - `PROGRAM release <vault id hex> <label>`: the seed as 64 hex digits on
 //!   stdout and exit 0, after its own sign-in on the terminal.
+//!
+//! A sealed vault (OF-570 maximum tier) opens only once its pages unlock from
+//! the mirror beside it ([`prepare_page_seal`]): with this device's keystore,
+//! or on a new device with `oneiron vault-key add-device --unlock`.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -25,15 +29,18 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
-use oneiron::world_keys::{HybridSecretKey, NewVaultKeyWrap, VaultKeyUnlock, VaultKeyWrapInfo};
+use oneiron::world_keys::{
+    self, HybridSecretKey, NewVaultKeyWrap, VaultKeyUnlock, VaultKeyWrapInfo, VaultPageSeal,
+};
 use oneiron_keystore::DeviceKeystore;
 use rand_core::RngCore as _;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::{emit, open_stopped_vault, raw_stdin, vault_config};
+use super::{emit, open_stopped_vault, open_stopped_vault_with, raw_stdin, vault_config};
 use crate::cli::{
-    RestoreArgs, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs,
+    RestoreArgs, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
+    VaultKeyCommand, VaultKeyNamedArgs,
 };
 use crate::commands::credential_file;
 use crate::config::{ServeConfig, resolve_serve_config};
@@ -58,18 +65,11 @@ pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
             let vault = open(&args.serve)?;
             emit(&SignerPin::from(vault.checkpoint_signer()?))
         }
-        VaultKeyCommand::PrfInput(args) => {
-            let vault = open(&args.serve)?;
-            emit(&view::prf_input(&vault, &args.name)?)
-        }
+        VaultKeyCommand::PrfInput(args) => prf_input(&args),
         VaultKeyCommand::SetPassword(args) => set_password(*args),
         VaultKeyCommand::AddPasskey(args) => add_passkey(*args),
         VaultKeyCommand::AddEscrow(args) => add_escrow(*args),
-        VaultKeyCommand::AddDevice(args) => {
-            let vault = open_held(&args.serve)?;
-            let owner = local_owner(&vault)?;
-            emit(&vault.add_vault_key_wrap_as(&owner, NewVaultKeyWrap::Device)?)
-        }
+        VaultKeyCommand::AddDevice(args) => add_device(*args),
         VaultKeyCommand::Remove(args) => {
             let vault = open(&args.serve)?;
             let owner = local_owner(&vault)?;
@@ -92,6 +92,136 @@ fn open_held(serve: &crate::config::ServeArgs) -> anyhow::Result<oneiron::Vault>
         anyhow::anyhow!("the vault key does not unlock with this install's keystore: {error}")
     })?;
     Ok(vault)
+}
+
+/// A passkey's PRF input. A sealed vault's comes from the public vault id
+/// its mirror names, with no page opened: a new device asks its passkey for
+/// the output before the vault opens.
+fn prf_input(args: &VaultKeyNamedArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    if world_keys::vault_is_sealed(&config.vault_path)? {
+        let vault_id = world_keys::page_seal_vault_id(&config.vault_path)
+            .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))?;
+        return emit(&view::prf_input_for(&vault_id, &args.name)?);
+    }
+    let vault = open_stopped_vault(&config, INSTEAD)?;
+    emit(&view::prf_input(&vault, &args.name)?)
+}
+
+/// Wraps the key to this install. A vault this install holds no wrap of
+/// opens with the unlock the flags name: a sealed vault's pages unlock with
+/// it before the open, a plain vault's key after it. A recovery box files an
+/// escrow seed under the vault's id: a sealed vault's mirror names it, and a
+/// plain vault opens first to read its own.
+fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = if args.unlock == UnlockMethod::Device {
+        open_held(&args.serve)?
+    } else if world_keys::vault_is_sealed(&config.vault_path)? {
+        refuse_orphaned_page_seal(&config.vault_path)?;
+        let unlock = HostUnlock::read_for_device(&args, || {
+            world_keys::page_seal_vault_id(&config.vault_path)
+                .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
+        })?;
+        let mut vault_config = vault_config(&config);
+        vault_config.page_seal = prepare_page_seal(&config, Some(&unlock))?;
+        open_stopped_vault_with(&config, vault_config, INSTEAD)?
+    } else {
+        let vault = open_stopped_vault(&config, INSTEAD)?;
+        let unlock = HostUnlock::read_for_device(&args, || Ok(vault.vault_key_vault_id()))?;
+        unlock.unlock_live(&vault).map_err(|error| {
+            anyhow::anyhow!(
+                "the vault key did not unlock with {}: {error}",
+                unlock.name()
+            )
+        })?;
+        vault
+    };
+    let owner = local_owner(&vault)?;
+    emit(&vault.add_vault_key_wrap_as(&owner, NewVaultKeyWrap::Device)?)
+}
+
+/// The page seal the configured vault opens with (OF-570 maximum tier):
+/// - a sealed vault's, unlocked with `unlock`, or with this device's keystore
+///   when that names none;
+/// - a new one where no vault is yet and the config asks for the tier. Its
+///   key needs a keystore to wrap to, or the password `unlock` names, which
+///   the caller sets right after the open;
+/// - none for a plain vault, refused when the config asks for the tier.
+///
+/// A mirror whose vault's data is missing is refused
+/// ([`refuse_orphaned_page_seal`]).
+pub(crate) fn prepare_page_seal(
+    config: &ServeConfig,
+    unlock: Option<&HostUnlock>,
+) -> anyhow::Result<Option<VaultPageSeal>> {
+    let path = &config.vault_path;
+    refuse_orphaned_page_seal(path)?;
+    if world_keys::vault_is_sealed(path)? {
+        let unlocked = match unlock.and_then(|unlock| unlock.engine()) {
+            Some(engine) => world_keys::unlock_page_seal(path, &engine),
+            None => {
+                let keystore = config.keystore.open(path)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "vault {} is sealed (maximum tier) and the keystore backend is off: \
+                         unlock it with `oneiron vault-key add-device --unlock password`",
+                        path.display()
+                    )
+                })?;
+                world_keys::unlock_page_seal(path, &VaultKeyUnlock::Device(keystore.as_ref()))
+            }
+        };
+        return unlocked.map(Some).map_err(|error| {
+            anyhow::anyhow!(
+                "vault {} is sealed (maximum tier) and did not unlock: {error}",
+                path.display()
+            )
+        });
+    }
+    if !config.maximum_tier {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        !path.join("data.mdb").exists(),
+        "vault {} has no page-seal mirror, and the maximum tier is chosen when the vault is \
+         created: remove `maximum_tier` to open it plain",
+        path.display()
+    );
+    let password = matches!(unlock, Some(HostUnlock::Password(_)));
+    anyhow::ensure!(
+        password || config.keystore.open(path)?.is_some(),
+        "the maximum tier needs a keystore to wrap the new vault's key to, or a password: \
+         `oneiron init --maximum-tier --secret-file <file>`"
+    );
+    Ok(Some(world_keys::new_page_seal(path)?))
+}
+
+/// Refuses a page-seal mirror with no vault beside it, before anything can
+/// create a vault there: the new vault would take that vault's identity and
+/// custody. The mirror stays as it is.
+pub(crate) fn refuse_orphaned_page_seal(path: &Path) -> anyhow::Result<()> {
+    if path.join("data.mdb").exists() || !world_keys::vault_is_sealed(path)? {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "the data of vault {} is missing, but its page-seal mirror {} is still there: move the \
+         mirror away to create a new vault (it may be the only copy of that vault's key wraps)",
+        path.display(),
+        world_keys::page_seal_custody_path(path)?.display()
+    )
+}
+
+/// Refuses a sealed vault that would not open again: it needs a wrap of its
+/// key, and a mirror that reads back and carries one of the wraps the vault
+/// holds. A plain vault passes.
+pub(crate) fn ensure_page_seal_wrapped(vault: &oneiron::Vault, path: &Path) -> anyhow::Result<()> {
+    vault.check_page_custody().map_err(|error| {
+        anyhow::anyhow!(
+            "the sealed vault at {} would not open again ({error}): if it was just created, \
+             delete it and run `oneiron init --maximum-tier` with a keystore or --secret-file",
+            path.display()
+        )
+    })
 }
 
 fn set_password(args: VaultKeyArgs) -> anyhow::Result<()> {
@@ -169,6 +299,18 @@ fn check_name(name: &str) -> anyhow::Result<()> {
         "a wrap name is 1 to 64 letters, digits, dots, dashes or underscores"
     );
     Ok(())
+}
+
+/// The secret in `path`, a file only its owner may read, as `--secret-file`
+/// reads it.
+pub(crate) fn read_secret_file(path: &Path, what: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+    read_secret(
+        &SecretSourceArgs {
+            secret_file: Some(path.to_path_buf()),
+            ..SecretSourceArgs::default()
+        },
+        what,
+    )
 }
 
 /// One secret, from the named owner-only file or else stdin, exactly as given
@@ -328,9 +470,9 @@ impl RecoveryBox for CommandBox {
     }
 }
 
-/// What unlocks a backup's vault key on this host, its secret read once and
-/// wiped on drop.
-pub(super) enum HostUnlock {
+/// What unlocks a backup's vault key, or a sealed vault's pages, on this
+/// host, its secret read once and wiped on drop.
+pub(crate) enum HostUnlock {
     Device,
     Password(Zeroizing<Vec<u8>>),
     Passkey {
@@ -345,46 +487,80 @@ pub(super) enum HostUnlock {
 
 impl HostUnlock {
     /// The unlock `args` name for `backup`, its secret read now. An escrow
-    /// secret comes from the named recovery box when there is one.
+    /// secret comes from the named recovery box when there is one, and the
+    /// world kit's from its pieces.
     pub(super) fn read(args: &RestoreArgs, backup: &Path) -> anyhow::Result<Self> {
-        Ok(match args.unlock {
+        if args.unlock == UnlockMethod::Kit {
+            return super::recovery_kit::kit_unlock(args);
+        }
+        Self::read_with(
+            args.unlock,
+            args.credential.as_deref(),
+            args.label.as_deref(),
+            &args.secret,
+            || {
+                Ok(CheckpointKey::unlocks(backup)
+                    .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?
+                    .vault_id)
+            },
+        )
+    }
+
+    /// The unlock `args` name for `vault-key add-device`, its secret read now.
+    /// A recovery box files an escrow seed under the vault `vault_id` reads.
+    fn read_for_device(
+        args: &VaultKeyAddDeviceArgs,
+        vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
+    ) -> anyhow::Result<Self> {
+        Self::read_with(
+            args.unlock,
+            args.credential.as_deref(),
+            args.label.as_deref(),
+            &args.secret,
+            vault_id,
+        )
+    }
+
+    /// The unlock `method` names, its secret read now from `secret`. An
+    /// escrow seed comes from the named recovery box, which files it under
+    /// the vault `vault_id` reads.
+    fn read_with(
+        method: UnlockMethod,
+        credential: Option<&str>,
+        label: Option<&str>,
+        secret: &SecretSourceArgs,
+        vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
+    ) -> anyhow::Result<Self> {
+        Ok(match method {
             UnlockMethod::Device => Self::Device,
-            UnlockMethod::Password => {
-                Self::Password(read_secret(&args.secret, "the vault password")?)
-            }
+            UnlockMethod::Password => Self::Password(read_secret(secret, "the vault password")?),
             UnlockMethod::Passkey => {
-                let credential = args.credential.clone().ok_or_else(|| {
-                    anyhow::anyhow!("--unlock passkey names the passkey: --credential")
-                })?;
-                let prf = secret32(
-                    &read_secret(&args.secret, "the PRF output")?,
-                    "a PRF output",
-                )?;
+                let credential = credential
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("--unlock passkey names the passkey: --credential")
+                    })?
+                    .to_owned();
+                let prf = secret32(&read_secret(secret, "the PRF output")?, "a PRF output")?;
                 Self::Passkey { credential, prf }
             }
             UnlockMethod::Escrow => {
-                let label = args.label.clone().ok_or_else(|| {
-                    anyhow::anyhow!("--unlock escrow names the escrow wrap: --label")
-                })?;
+                let label = label
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("--unlock escrow names the escrow wrap: --label")
+                    })?
+                    .to_owned();
                 check_name(&label)?;
-                let seed = match recovery_box(&args.secret) {
-                    Some((recovery_box, _)) => {
-                        let vault_id = CheckpointKey::unlocks(backup)
-                            .map_err(|error| {
-                                anyhow::anyhow!("read backup {}: {error}", backup.display())
-                            })?
-                            .vault_id;
-                        recovery_box.release(&vault_id, &label)?
-                    }
-                    None => secret32(
-                        &read_secret(&args.secret, "the escrow seed")?,
-                        "an escrow seed",
-                    )?,
+                let seed = match recovery_box(secret) {
+                    Some((recovery_box, _)) => recovery_box.release(&vault_id()?, &label)?,
+                    None => secret32(&read_secret(secret, "the escrow seed")?, "an escrow seed")?,
                 };
                 let secret = oneiron::world_keys::escrow_recipient(&seed)?;
                 Self::Escrow { label, secret }
             }
-            UnlockMethod::Kit => super::recovery_kit::kit_unlock(args)?,
+            UnlockMethod::Kit => anyhow::bail!(
+                "--unlock kit opens a backup (`oneiron restore --unlock kit`); a vault on this \
+                 host unlocks with device, password, passkey or escrow"
+            ),
         })
     }
 

@@ -28,14 +28,18 @@ pub(crate) struct VaultId([u8; 32]);
 
 impl VaultId {
     /// Reads the id `store` persisted at its first open, minting it on that
-    /// first open.
-    pub(super) fn resolve_at_open(store: &Store) -> Result<Self> {
+    /// first open: `preset` when given (a sealed vault's, which its page
+    /// seal's wraps are bound to), else at random.
+    pub(super) fn resolve_at_open(store: &Store, preset: Option<[u8; 32]>) -> Result<Self> {
         let mut wtxn = store.env.write_txn()?;
         if let Some(id) = VAULT_STORE_ID.get(store, &wtxn, &())? {
             return Ok(Self(id));
         }
-        let mut id = [0; 32];
-        OsRng.fill_bytes(&mut id);
+        let id = preset.unwrap_or_else(|| {
+            let mut id = [0; 32];
+            OsRng.fill_bytes(&mut id);
+            id
+        });
         VAULT_STORE_ID.put(store, &mut wtxn, &(), &id)?;
         wtxn.commit()?;
         Ok(Self(id))

@@ -232,8 +232,9 @@ pub enum VaultKeyCommand {
     AddPasskey(Box<VaultKeyNamedArgs>),
     /// Seal the key to a new escrow recipient whose seed a recovery box keeps.
     AddEscrow(Box<VaultKeyNamedArgs>),
-    /// Wrap the key to this install's keystore.
-    AddDevice(Box<VaultKeyArgs>),
+    /// Wrap the key to this install's keystore. A sealed vault (maximum tier)
+    /// this install holds no wrap of opens with `--unlock` first.
+    AddDevice(Box<VaultKeyAddDeviceArgs>),
     /// Remove one wrap by its id (`password`, `passkey:<name>`, ...); the
     /// last one stays.
     Remove(Box<VaultKeyNamedArgs>),
@@ -241,6 +242,29 @@ pub enum VaultKeyCommand {
 
 #[derive(Args, Clone, Debug)]
 pub struct VaultKeyArgs {
+    #[command(flatten)]
+    pub secret: SecretSourceArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct VaultKeyAddDeviceArgs {
+    /// How a sealed vault's pages unlock before it opens: `device` (this
+    /// install's keystore), `password`, `passkey` or `escrow`, its secret
+    /// read as `oneiron restore --unlock` reads it.
+    #[arg(long, value_enum, default_value_t = UnlockMethod::Device)]
+    pub unlock: UnlockMethod,
+
+    /// With `--unlock passkey`: the passkey's credential name.
+    #[arg(long, value_name = "NAME")]
+    pub credential: Option<String>,
+
+    /// With `--unlock escrow`: the escrow wrap's label.
+    #[arg(long, value_name = "NAME")]
+    pub label: Option<String>,
+
     #[command(flatten)]
     pub secret: SecretSourceArgs,
 

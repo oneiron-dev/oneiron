@@ -455,6 +455,11 @@ pub struct VaultConfig {
     /// host-managed KMS key reference; the pairing is validated by every
     /// opener before the storage environment is mapped.
     pub privacy: VaultPrivacyConfig,
+    /// The maximum tier (OF-570): the page seal every LMDB page of the vault
+    /// is sealed under. `None` opens a plain vault; a sealed one opens only
+    /// with its seal ([`crate::world_keys::unlock_page_seal`]), and a new one
+    /// is created sealed with [`crate::world_keys::new_page_seal`].
+    pub page_seal: Option<crate::world_keys::VaultPageSeal>,
 }
 
 /// Text analyzer configuration. Kept minimal in v1 — the full analyzer
@@ -653,6 +658,7 @@ impl VaultConfig {
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: crate::limit_ask::EngineLimits::default(),
+            page_seal: None,
         }
     }
 
@@ -686,6 +692,7 @@ impl VaultConfig {
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
             limits: crate::limit_ask::EngineLimits::default(),
+            page_seal: None,
         }
     }
 }

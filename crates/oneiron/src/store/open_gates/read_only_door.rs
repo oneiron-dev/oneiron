@@ -132,6 +132,9 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
     // The full reader table: a door that opens a vault first builds the
     // table a server opened beside it gets.
     options.max_dbs(1).max_readers(crate::config::READER_SLOTS);
+    // A sealed vault (maximum tier) opens here only with the page key of a
+    // vault this process opened.
+    let keyed = crate::world_keys::seal_read_only(&mut options, root)?;
     // SAFETY: as `open_existing_environment`. The open path is the
     // `/proc/self/fd/<dirfd>` view of the root this call bound and validated,
     // and `bound` keeps that descriptor open through the call and then lives
@@ -148,8 +151,9 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
             root.to_path_buf(),
             || {},
             || {},
-        )?
-    };
+        )
+    }
+    .map_err(|error| crate::world_keys::page_seal_open_error(error, keyed))?;
     let mut env = OwnedEnv {
         env,
         _bound_root_dir: None,
@@ -174,6 +178,9 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
     // The full reader table: a door that opens a vault first builds the
     // table a server opened beside it gets.
     options.max_dbs(1).max_readers(crate::config::READER_SLOTS);
+    // A sealed vault (maximum tier) opens here only with the page key of a
+    // vault this process opened.
+    let keyed = crate::world_keys::seal_read_only(&mut options, root)?;
     // SAFETY: as the create-capable door on this platform: the canonical root
     // passed the preflight above and is checked again below, and
     // `registered`, reserved under the root-open guard by both path and LMDB
@@ -182,8 +189,9 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
     // writes `data.mdb`.
     let env = unsafe {
         options.flags(EnvFlags::READ_ONLY);
-        options.open(root)?
-    };
+        options.open(root)
+    }
+    .map_err(|error| crate::world_keys::page_seal_open_error(error, keyed))?;
     let env = OwnedEnv {
         env,
         _bound_root_dir: None,

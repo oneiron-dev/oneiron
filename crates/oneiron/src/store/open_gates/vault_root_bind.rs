@@ -588,24 +588,29 @@ pub(super) fn open_existing_environment(
     //
     // The two hooks are test-only interleave points: they rename or stage
     // directories and never re-enter heed.
+    let mut options = EnvOpenOptions::new();
+    options
+        .map_size(config.map_size)
+        .max_readers(config.max_readers)
+        .max_dbs(MAX_DBS);
+    if let Some(seal) = &config.page_seal {
+        options.page_key(seal.page_key());
+    }
     let env = unsafe {
-        EnvOpenOptions::new()
-            .map_size(config.map_size)
-            .max_readers(config.max_readers)
-            .max_dbs(MAX_DBS)
-            .open_with_cache_identity(
-                &root.environment_path(),
-                canonical_path.clone(),
-                || {
-                    #[cfg(test)]
-                    test_hooks::run_before_lmdb_open(&canonical_path);
-                },
-                || {
-                    #[cfg(test)]
-                    test_hooks::run_after_lmdb_open(&canonical_path);
-                },
-            )?
-    };
+        options.open_with_cache_identity(
+            &root.environment_path(),
+            canonical_path.clone(),
+            || {
+                #[cfg(test)]
+                test_hooks::run_before_lmdb_open(&canonical_path);
+            },
+            || {
+                #[cfg(test)]
+                test_hooks::run_after_lmdb_open(&canonical_path);
+            },
+        )
+    }
+    .map_err(|error| crate::world_keys::page_seal_open_error(error, config.page_seal.is_some()))?;
     // Wrap IMMEDIATELY so every `?` below releases the environment instead of
     // leaking it into heed's process-global registry (ONE-1142).
     let mut env = OwnedEnv {

@@ -120,6 +120,27 @@ impl KeystoreConfig {
             }
         }
     }
+
+    /// [`Self::install_on`] where init or serve may just have created the
+    /// vault sealed (maximum tier, OF-570): one with no wrap yet takes this
+    /// device's, and a failure fails the boot, since its pages open from the
+    /// mirror beside it only through a wrap. True when a keystore was
+    /// installed.
+    pub fn install_on_boot(
+        &self,
+        vault: &oneiron::Vault,
+        vault_path: &Path,
+    ) -> anyhow::Result<bool> {
+        let installed = self.install_on(vault, vault_path);
+        if installed && vault.vault_pages_sealed() && vault.vault_key_wraps()?.is_empty() {
+            vault.add_vault_key_device().map_err(|error| {
+                anyhow::anyhow!(
+                    "the new sealed vault's key was not wrapped to this device: {error}"
+                )
+            })?;
+        }
+        Ok(installed)
+    }
 }
 
 /// The keystore crate's default key directory, or why there is none.
