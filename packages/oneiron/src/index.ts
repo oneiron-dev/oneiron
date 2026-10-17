@@ -317,6 +317,8 @@ export class Oneiron {
     },
     guests: {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
+      /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
+      mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */

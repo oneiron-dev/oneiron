@@ -94,6 +94,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(vault_shared_close_erase_ask),
         )
         .route("/vault.guests.revoke", post(vault_guests_revoke))
+        .route("/vault.guests.mint_slip", post(vault_guests_mint_slip))
         .route(
             "/vault.authority.handoff_alarms",
             post(vault_authority_handoff_alarms),
@@ -1673,6 +1674,28 @@ async fn vault_guests_revoke(
     let output = facade_output(
         super::host_doors::vault_guests_revoke(&server, &auth, facade_input(hooks.args.clone())?)
             .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_guests_mint_slip(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.guests.mint_slip")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.guests.mint_slip", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.guests.mint_slip", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_guests_mint_slip(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
     )?;
     Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }

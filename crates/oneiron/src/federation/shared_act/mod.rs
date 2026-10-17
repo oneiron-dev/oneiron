@@ -695,6 +695,44 @@ impl Vault {
         Ok(outcomes)
     }
 
+    /// `person`'s own notices of losing the vault: their leave, their
+    /// removal, and an ownership change that left them no role. Read for a
+    /// removed person whose slips no longer authenticate
+    /// (`Vault::removed_member_notices`).
+    pub(crate) fn removal_outcomes_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<Vec<SharedActOutcome>> {
+        let person = person.to_hex();
+        let prefix = key(OUTCOME_PREFIX, &format!("{person}:"));
+        let mut outcomes = Vec::new();
+        for entry in self.store.vault_meta.prefix_iter(txn, &prefix)? {
+            let (_, bytes) = entry?;
+            let outcome: SharedActOutcome = decode(&bytes)?;
+            let lost = match &outcome.change {
+                SharedVaultChange::MemberLeft { member }
+                | SharedVaultChange::MemberRemoved { member } => *member == person,
+                SharedVaultChange::OwnerRemoved {
+                    target,
+                    target_keeps: None,
+                    ..
+                } => *target == person,
+                SharedVaultChange::OwnershipTransferred {
+                    from,
+                    from_keeps: None,
+                    ..
+                }
+                | SharedVaultChange::OwnerRecovered { from, .. } => *from == person,
+                _ => false,
+            };
+            if lost {
+                outcomes.push(outcome);
+            }
+        }
+        Ok(outcomes)
+    }
+
     pub(crate) fn shared_vault_deletion_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

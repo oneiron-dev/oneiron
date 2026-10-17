@@ -246,6 +246,9 @@ impl OneironClient {
                 "vault.guests.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::GuestRevokeResponse,
                 >(client, verb, &input),
+                "vault.guests.mint_slip" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GuestSlipMinted,
+                >(client, verb, &input),
                 "vault.authority.handoff_alarms" => remote_agent_verb_output::<
                     Vec<oneiron::authority::AuthorityHandoffAlarm>,
                 >(client, verb, &input),
@@ -1473,6 +1476,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.guests.revoke", value)
+    }
+    pub fn vault_guests_mint_slip(
+        &self,
+        input: &oneiron::task_verb::sdk::GuestSlipMintRequest,
+    ) -> Result<oneiron::task_verb::sdk::GuestSlipMinted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.guests.mint_slip", value)
     }
     pub fn vault_authority_handoff_alarms(
         &self,

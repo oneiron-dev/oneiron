@@ -69,6 +69,7 @@ pub enum AgentVerb {
     VaultSharedEraseAsks,
     VaultSharedCloseEraseAsk,
     VaultGuestsRevoke,
+    VaultGuestsMintSlip,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -288,6 +289,7 @@ impl AgentVerb {
         Self::VaultSharedEraseAsks,
         Self::VaultSharedCloseEraseAsk,
         Self::VaultGuestsRevoke,
+        Self::VaultGuestsMintSlip,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -510,6 +512,7 @@ impl AgentVerb {
             Self::VaultSharedEraseAsks => "vault.shared.erase_asks",
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
+            Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -730,6 +733,7 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -956,6 +960,7 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1204,6 +1209,7 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1389,6 +1395,7 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -1554,6 +1561,7 @@ impl AgentVerb {
             Self::VaultSharedEraseAsks => &["spec"],
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
+            Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1774,6 +1782,7 @@ impl AgentVerb {
             Self::VaultSharedEraseAsks => &["spec"],
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
+            Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2107,6 +2116,9 @@ impl AgentVerb {
                 "An Owner closes an open erase ask, as erased (naming its erase act) or declined."
             }
             Self::VaultGuestsRevoke => "",
+            Self::VaultGuestsMintSlip => {
+                "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."
             }

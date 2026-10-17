@@ -759,7 +759,11 @@ fn room_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, request: &JoinRequest
     let Some(branch) = request.branch else {
         return Ok(true);
     };
-    if branch == request.room {
+    // An erased thread root keeps its stored turn as topology for its
+    // replies, so the stored turn alone admits no join to it.
+    if branch == request.room
+        || !crate::vault::live_entity_row_in_txn(&vault.store, txn, &branch)?.is_live()
+    {
         return Ok(false);
     }
     if let Some(turn) = super::rooms::TURNS.get(&vault.store, txn, &branch)? {
