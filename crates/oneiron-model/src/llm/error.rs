@@ -16,6 +16,24 @@ pub enum LlmError {
     BudgetDenied(#[from] BudgetDenied),
 }
 
+impl LlmError {
+    /// Whether this failure says its provider is down, not that the request
+    /// or its credentials are wrong: a server error, a timeout, a cut stream
+    /// or an empty answer. The offer rests for its health, and a Dreamer
+    /// attempt it parks resumes when an offer recovers (OF-305).
+    #[must_use]
+    pub fn is_provider_unavailable(&self) -> bool {
+        matches!(
+            self,
+            Self::Retryable(
+                RetryableLlmError::ServerError
+                    | RetryableLlmError::Timeout
+                    | RetryableLlmError::StreamCut
+            ) | Self::Fatal(FatalLlmError::EmptyResponse)
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
 pub enum RetryableLlmError {
     /// A spent quota or a rate limit: a 429, or a 403 or 5xx whose body

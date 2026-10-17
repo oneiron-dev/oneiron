@@ -11,7 +11,8 @@ use crate::claim::{
     ScopedReadActorKey, claim_evidence_taint,
 };
 use crate::dreamer_runner::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
+    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerParkCause,
+    DreamerRunnerStore,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::llm::{
@@ -346,14 +347,19 @@ impl ConsolidationExecutor<'_> {
                     response
                 }
                 Ok(StepOutcome::Trapped { .. }) => {
-                    return Ok(charges.park("durable step trapped for resume"));
+                    return Ok(charges
+                        .park_for("durable step trapped for resume", DreamerParkCause::Signal));
                 }
                 Err(DurableStepError::SpentFinalizeRefused { usage })
                 | Err(DurableStepError::SpentSchemaValidation { usage, .. }) => {
                     charges.record_usage(&usage);
                     return Ok(charges.checkpoint());
                 }
-                Err(error) => return Ok(charges.park(&error.to_string())),
+                Err(error) => {
+                    return Ok(
+                        charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error))
+                    );
+                }
             };
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());

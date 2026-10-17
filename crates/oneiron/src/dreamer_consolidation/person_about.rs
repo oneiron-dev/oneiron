@@ -15,7 +15,8 @@ use super::support::{DREAMER_PERSON_ABOUT_ATTEMPT_TYPE, invalid_consolidation};
 use super::turn_text::{dreamer_read, snapshot};
 use crate::claim::{ClaimSubject, ScopedRead};
 use crate::dreamer_runner::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
+    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerParkCause,
+    DreamerRunnerStore,
 };
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -416,6 +417,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                 Ok(StepOutcome::Trapped { .. }) => {
                     return Ok(DreamerAttemptExecution::Park {
                         reason: "durable step trapped for resume".to_owned(),
+                        cause: DreamerParkCause::Signal,
                     });
                 }
                 Err(DurableStepError::SpentFinalizeRefused { usage }) => {
@@ -425,17 +427,20 @@ impl<E> PersonAboutExecutor<'_, E> {
                 Err(DurableStepError::DeadlineHardCut) => {
                     return Ok(DreamerAttemptExecution::Park {
                         reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                        cause: DreamerParkCause::Checkpoint,
                     });
                 }
                 Err(DurableStepError::FinalizeRefused) => {
                     return Ok(DreamerAttemptExecution::Park {
                         reason: "wake pass finalize window".to_owned(),
+                        cause: DreamerParkCause::Checkpoint,
                     });
                 }
                 Err(DurableStepError::Engine(error)) => return Err(error),
                 Err(other) => {
                     return Ok(DreamerAttemptExecution::Park {
                         reason: other.to_string(),
+                        cause: DreamerParkCause::of_step(&other),
                     });
                 }
             };

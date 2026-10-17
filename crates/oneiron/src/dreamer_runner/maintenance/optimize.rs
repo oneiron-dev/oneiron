@@ -2,7 +2,9 @@
 //! admission remain separate: this job asks the independent held-out gate and
 //! never activates or supersedes a skill itself.
 use crate::claim::ClaimApprovalStatus;
-use crate::dreamer_runner::{DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DreamerAdmittedAttempt};
+use crate::dreamer_runner::{
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
+};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
@@ -63,11 +65,13 @@ pub(crate) fn execute(
     let Some(optimizer) = optimizer else {
         return Ok(DreamerAttemptExecution::Park {
             reason: "Coach skill optimizer has no host author and decision route".into(),
+            cause: DreamerParkCause::Other,
         });
     };
     if ctx.deadline.in_finalize_window() {
         return Ok(DreamerAttemptExecution::Park {
             reason: "Coach skill optimization deadline".into(),
+            cause: DreamerParkCause::Checkpoint,
         });
     }
     let resident = resident(&attempt.status.payload.input)?;

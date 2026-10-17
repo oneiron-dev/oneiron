@@ -28,8 +28,8 @@ use oneiron::dispatch_byoa::{
     validate_official_seat,
 };
 use oneiron::{
-    DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, HostingPrivacyPosture,
-    WakeAttemptContext,
+    DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
+    HostingPrivacyPosture, WakeAttemptContext,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -445,11 +445,13 @@ where
                         "official seat attempt {} dispatched; awaiting foreign exhaust",
                         attempt_hex(outcome.status().attempt.id.as_bytes())
                     ),
+                    cause: DreamerParkCause::Signal,
                 })
             }
             Ok(OfficialSeatDispatchOutcome::Parked { resets_at }) => {
                 Ok(DreamerAttemptExecution::Park {
                     reason: format!("official seat dry; plan window resets at {resets_at}"),
+                    cause: DreamerParkCause::Signal,
                 })
             }
             Ok(OfficialSeatDispatchOutcome::DryFallback(_)) => {
@@ -458,6 +460,7 @@ where
             Err(ByoaError::Store(error)) => Err(error),
             Err(other) => Ok(DreamerAttemptExecution::Park {
                 reason: format!("official seat refused: {other}"),
+                cause: DreamerParkCause::Other,
             }),
         }
     }
@@ -607,19 +610,23 @@ where
                     Some(until) => format!("runner seat spent; work parked until {until}"),
                     None => "runner seat spent; work parked for the owner".to_owned(),
                 },
+                cause: DreamerParkCause::Signal,
             }),
             Ok(SeatRoute::NextSeat { seat, .. }) => Ok(DreamerAttemptExecution::Park {
                 reason: format!(
                     "runner seat spent; seat {seat} took the work, awaiting its exhaust"
                 ),
+                cause: DreamerParkCause::Signal,
             }),
             Ok(SeatRoute::InternalModels { .. }) => self.inner.execute(attempt, ctx).await,
             Ok(_) => Ok(DreamerAttemptExecution::Park {
                 reason: "runner seat route is not understood by this host".to_owned(),
+                cause: DreamerParkCause::Other,
             }),
             Err(ByoaError::Store(error)) => Err(error),
             Err(other) => Ok(DreamerAttemptExecution::Park {
                 reason: format!("runner seat routing refused: {other}"),
+                cause: DreamerParkCause::Other,
             }),
         }
     }
@@ -667,10 +674,12 @@ where
                     "runner seat attempt {} dispatched; awaiting foreign exhaust",
                     attempt_hex(outcome.status().attempt.id.as_bytes())
                 ),
+                cause: DreamerParkCause::Signal,
             }),
             Err(ByoaError::Store(error)) => Err(error),
             Err(other) => Ok(DreamerAttemptExecution::Park {
                 reason: format!("runner seat refused: {other}"),
+                cause: DreamerParkCause::Other,
             }),
         }
     }

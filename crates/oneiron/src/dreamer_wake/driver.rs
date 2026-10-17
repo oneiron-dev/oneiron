@@ -14,7 +14,7 @@ use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
     DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneKind,
-    DreamerRunnerStore, ParkDreamerAttempt, SettleDreamerBudget,
+    DreamerParkCause, DreamerRunnerStore, ParkDreamerAttempt, SettleDreamerBudget,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
@@ -597,6 +597,7 @@ impl<'a> DreamerWakeDriver<'a> {
             let executed = if cancel_requested {
                 Ok(DreamerAttemptExecution::Park {
                     reason: DREAMER_CANCELLED_PARK_REASON.to_owned(),
+                    cause: DreamerParkCause::Cancelled,
                 })
             } else if let Err(publish_error) =
                 self.publish(attempt_id, ProgressKind::Running, None, input.now)
@@ -625,6 +626,7 @@ impl<'a> DreamerWakeDriver<'a> {
             {
                 Ok(DreamerAttemptExecution::Park {
                     reason: (*reason).to_owned(),
+                    cause: DreamerParkCause::Other,
                 })
             } else {
                 let mut ctx = WakeAttemptContext {
@@ -757,6 +759,7 @@ impl<'a> DreamerWakeDriver<'a> {
                             self.park_attempt(
                                 attempt_id,
                                 reason,
+                                DreamerParkCause::ExecutorError,
                                 input.lease_owner.clone(),
                                 input.now,
                             )?;
@@ -765,6 +768,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     }
                     DreamerAttemptExecution::Park {
                         reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                        cause: DreamerParkCause::Checkpoint,
                     }
                 }
             };
@@ -841,6 +845,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 DreamerAttemptExecution::ParkWithSpend {
                     reason,
+                    cause,
                     completed_units,
                     step_hashes,
                 } => {
@@ -859,6 +864,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         ParkDreamerAttempt {
                             attempt_id,
                             reason: reason.clone(),
+                            cause,
                             park_owner: input.lease_owner.clone(),
                             now: input.now,
                         },
@@ -871,7 +877,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     )?;
                     report.parked += 1;
                 }
-                DreamerAttemptExecution::Park { reason } => {
+                DreamerAttemptExecution::Park { reason, cause } => {
                     // Executor-authored reasons get the same clamp as the
                     // error arm's: park validation failing on length here
                     // would propagate AFTER the refund but BEFORE the park,
@@ -895,6 +901,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         self.park_attempt(
                             attempt_id,
                             reason,
+                            cause,
                             input.lease_owner.clone(),
                             input.now,
                         )?;

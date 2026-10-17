@@ -1,7 +1,7 @@
 //! Attempt-local step spend due to the shared wake ledger after memo replay.
 
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_runner::DreamerRunnerStore;
+use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
 use crate::dreamer_wake::{DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution};
 use crate::error::Result;
 use crate::{LlmUsage, Vault};
@@ -17,13 +17,23 @@ pub(super) struct StepChargeTally {
 
 impl StepChargeTally {
     pub(super) fn checkpoint(&self) -> DreamerAttemptExecution {
-        self.park(DREAMER_HARD_CUT_PARK_REASON)
+        self.park_for(DREAMER_HARD_CUT_PARK_REASON, DreamerParkCause::Checkpoint)
     }
 
     /// Parks with `reason` and settles what the attempt already spent.
     pub(super) fn park(&self, reason: &str) -> DreamerAttemptExecution {
+        self.park_for(reason, DreamerParkCause::Other)
+    }
+
+    /// [`Self::park`] with a typed cause, for a failed model call or step.
+    pub(super) fn park_for(
+        &self,
+        reason: &str,
+        cause: DreamerParkCause,
+    ) -> DreamerAttemptExecution {
         DreamerAttemptExecution::ParkWithSpend {
             reason: reason.to_owned(),
+            cause,
             completed_units: self.units,
             step_hashes: self.step_hashes.clone(),
         }

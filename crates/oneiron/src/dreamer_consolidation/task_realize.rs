@@ -12,7 +12,9 @@
 use super::step_charge::StepChargeTally;
 use crate::WriteActor;
 use crate::attempt_queue::{AttemptQueue, AttemptResultRef, SetAttemptResult};
-use crate::dreamer_runner::{DREAMER_TASK_REALIZE_ATTEMPT_KIND, DreamerAdmittedAttempt};
+use crate::dreamer_runner::{
+    DREAMER_TASK_REALIZE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
+};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
@@ -147,6 +149,7 @@ pub async fn run_task_realize(
         Ok(StepOutcome::Trapped { .. }) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: "durable step trapped for resume".to_owned(),
+                cause: DreamerParkCause::Signal,
             });
         }
         Err(DurableStepError::SpentFinalizeRefused { usage }) => {
@@ -156,17 +159,20 @@ pub async fn run_task_realize(
         Err(DurableStepError::DeadlineHardCut) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                cause: DreamerParkCause::Checkpoint,
             });
         }
         Err(DurableStepError::FinalizeRefused) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: "wake pass finalize window".to_owned(),
+                cause: DreamerParkCause::Checkpoint,
             });
         }
         Err(DurableStepError::Engine(error)) => return Err(error),
         Err(other) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
+                cause: DreamerParkCause::of_step(&other),
             });
         }
     };

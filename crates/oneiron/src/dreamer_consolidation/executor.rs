@@ -27,7 +27,7 @@ use super::support::{
 };
 use super::watermark::{WorkingSetTurn, conversation_of, read_turn_facts};
 use crate::claim::{ClaimSource, ClaimSubject};
-use crate::dreamer_runner::{DreamerClaimAuthoringStrategy, dreamer_turn_role};
+use crate::dreamer_runner::{DreamerClaimAuthoringStrategy, DreamerParkCause, dreamer_turn_role};
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
@@ -536,6 +536,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: "resident dreaming needs its host's model".to_owned(),
+                cause: DreamerParkCause::Other,
             });
         }
         // A TASK realizes on the model and wording its host lends; this
@@ -545,6 +546,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: crate::dreamer_consolidation::TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
+                cause: DreamerParkCause::Other,
             });
         }
         // A weave lens renders on the model its host lends; this executor
@@ -554,6 +556,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: crate::dreamer_consolidation::WEAVE_LENS_UNLENT_PARK_REASON.to_owned(),
+                cause: DreamerParkCause::Other,
             });
         }
         if self.actor
@@ -779,19 +782,24 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             }
             // The step layer already parked the trapped attempt; Park it for resume
             // WITHOUT accepting candidates or completing it (#485-1, #485-2).
-            Ok(PartitionRun::Trapped) => Ok(charges.park("durable step trapped for resume")),
+            Ok(PartitionRun::Trapped) => {
+                Ok(charges.park_for("durable step trapped for resume", DreamerParkCause::Signal))
+            }
             Err(crate::llm::DurableStepError::DeadlineHardCut) => {
                 Ok(DreamerAttemptExecution::Park {
                     reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                    cause: DreamerParkCause::Checkpoint,
                 })
             }
             Err(crate::llm::DurableStepError::FinalizeRefused) => {
                 Ok(DreamerAttemptExecution::Park {
                     reason: "wake pass finalize window".to_owned(),
+                    cause: DreamerParkCause::Checkpoint,
                 })
             }
             Err(crate::llm::DurableStepError::Engine(error)) => Err(error),
             Err(other) => Ok(DreamerAttemptExecution::Park {
+                cause: DreamerParkCause::of_step(&other),
                 reason: other.to_string(),
             }),
         }
