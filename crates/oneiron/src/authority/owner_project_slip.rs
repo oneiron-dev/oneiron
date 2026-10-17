@@ -60,6 +60,7 @@ impl Vault {
                     channels: BTreeSet::new(),
                     actor_class: None,
                     org_ref: None,
+                    grant_ref: None,
                 };
                 let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
                 OWNER_PROJECT_SLIP_CACHE.put(

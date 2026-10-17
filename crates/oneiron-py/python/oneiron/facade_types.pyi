@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 170 facade rows, 633 declarations.
-Inputs: 148 of 170 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 144 of 170 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 174 facade rows, 643 declarations.
+Inputs: 152 of 174 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 148 of 174 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -713,7 +713,11 @@ class WeaveItemViewDreamProgress(TypedDict):
     resident_ref: str
     dreamed_at: int
     entries: int
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress
+class WeaveItemViewAgentHealth(TypedDict):
+    item: Literal["agent_health"]
+    card_ref: str
+    card: AgentHealthCard
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth
 class WeaveSectionView(TypedDict):
     kind: WeaveSectionKind
     items: list[WeaveItemView]
@@ -1468,6 +1472,14 @@ class GuestRevokeResponse(TypedDict):
     revoked_slip_refs: NotRequired[list[str]]
     pact_standing: GuestPactStanding
     disclosure: GuestRevokeDisclosure
+class GuestSlipMintRequest(TypedDict):
+    grant_ref: EntityId
+    holder_key: str
+    expires_at: int
+class GuestSlipMinted(TypedDict):
+    slip_id: str
+    slip: str
+    expires_at: int
 class AuthorityHandoffAlarmAck(TypedDict):
     by: str
     at: int
@@ -1537,6 +1549,43 @@ class LegalHoldErasedRecord(TypedDict):
 class LegalHoldLiftAndErased(TypedDict):
     holds: list[EntityId]
     records: list[LegalHoldErasedRecord]
+class LearningSettingsRequest(TypedDict):
+    key: NotRequired[str | None]
+class LearningSettingSpecView(TypedDict):
+    key: str
+    min: float
+    max: float
+    seed: float
+    value: float
+LearningSettingMode = Literal["seed", "pin"]
+LearningSettingScope = Literal["vault", "project", "task_type"]
+class LearningSettingRowView(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    scope: LearningSettingScope
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
+    value: float
+    weight_runs: NotRequired[float | None]
+    by: str
+    at: int
+    why: str
+class LearningSettingsView(TypedDict):
+    catalog: list[LearningSettingSpecView]
+    rows: list[LearningSettingRowView]
+class LearningSettingPut(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    value: float
+    weight_runs: NotRequired[float | None]
+    why: str
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
+class LearningSettingClear(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
 class LensSlot(TypedDict):
     pack_name: str
     skill_id: str
@@ -2126,7 +2175,7 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Team"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Leader", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
