@@ -133,6 +133,7 @@ pub(super) fn remember_in_txn(
 struct Known {
     len: usize,
     fingerprint: [u8; 32],
+    custody: EntityId,
     handle: String,
 }
 
@@ -144,10 +145,11 @@ pub(crate) struct KnownValues {
     longest: usize,
 }
 
-/// One known value in incoming bytes: where, and the handle of the custody
-/// record that holds it.
+/// One known value in incoming bytes: where, the custody record that holds
+/// it, and that record's handle.
 pub(crate) struct KnownSpan<'k> {
     pub(crate) span: Range<usize>,
+    pub(crate) custody: EntityId,
     pub(crate) handle: &'k str,
 }
 
@@ -181,6 +183,7 @@ impl KnownValues {
                 bucket.push(Known {
                     len,
                     fingerprint: entry.fingerprint,
+                    custody,
                     handle: handle.clone(),
                 });
             }
@@ -220,6 +223,7 @@ impl KnownValues {
                 Some(known) => {
                     spans.push(KnownSpan {
                         span: at..at + known.len,
+                        custody: known.custody,
                         handle: &known.handle,
                     });
                     at += known.len;

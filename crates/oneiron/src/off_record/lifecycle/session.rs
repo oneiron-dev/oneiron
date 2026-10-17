@@ -922,6 +922,14 @@ impl OffRecordSession<'_> {
         Ok(dirs)
     }
 
+    /// The known-value index of this session's vault (OF-560 C), for a sweep
+    /// over what a run in this session writes.
+    pub(crate) fn known_values(
+        &self,
+    ) -> Result<Option<std::sync::Arc<crate::secret_custody::KnownValues>>> {
+        self.vault.known_values()
+    }
+
     /// The `[limits]` rows of this session's vault.
     pub(crate) fn limit_watch(&self) -> &crate::limit_ask::LimitWatch {
         self.vault.limit_watch()
