@@ -188,7 +188,7 @@ impl Vault {
         ) {
             return Err(invalid("scores must change through snapshot diff"));
         }
-        REGISTRY_ROW.put(&self.store, &mut txn, &key, row)?;
+        REGISTRY_ROW.put(self, &mut txn, &key, row)?;
         txn.commit()?;
         Ok(())
     }

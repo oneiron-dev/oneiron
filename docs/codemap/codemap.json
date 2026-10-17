@@ -4655,7 +4655,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -10960,7 +10960,7 @@
      "purpose": "—",
      "surface": {
       "const": 8,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 23,
       "struct": 12
@@ -14231,7 +14231,7 @@
      "path": "src/context_board/hook_pins.rs",
      "purpose": "Hook blocks on the board (ARCH-0080 §11, OI-1 = A)",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -35499,7 +35499,7 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 93,
+      "crate-vis": 94,
       "enum": 1,
       "fn": 12,
       "struct": 6
@@ -35539,7 +35539,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 17
      }
     },
@@ -35631,7 +35631,7 @@
      "path": "src/receipt/send_receipt_txn.rs",
      "purpose": "Send receipt persistence inside a caller-owned transaction",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -62781,7 +62781,7 @@
      "path": "src/api/context_board/board.rs",
      "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -62821,7 +62821,7 @@
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -62878,6 +62878,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/context_pack/audience.rs",
+     "purpose": "The audience an assembly reads for: the room a request names, and the caller's read narrowed to that room's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/context_pack/companion_assembly.rs",
      "purpose": "Companion scope-resolution authorization for context-pack assembly",
      "surface": {
@@ -62921,7 +62931,7 @@
      "path": "src/api/context_pack/mod.rs",
      "purpose": "Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -69865,7 +69875,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 280,
+     "files": 281,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70210,7 +70220,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 554,
+   "source_files": 555,
    "test_files": 182
   },
   "oneiron-spawn": {

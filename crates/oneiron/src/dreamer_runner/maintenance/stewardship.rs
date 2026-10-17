@@ -165,10 +165,12 @@ impl Vault {
                     })
                     .map_or(now, |kept| kept.since);
             }
-            let row = StewardshipRules {
+            let mut row = StewardshipRules {
                 owner: actor,
                 rules,
             };
+            // The rule set as the side-row wall keeps it is the one handed back.
+            RULES.admit(self, txn, &(), &mut row)?;
             RULES.put(&self.store, txn, &(), &row)?;
             Ok(row)
         })
