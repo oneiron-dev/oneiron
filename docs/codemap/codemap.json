@@ -667,6 +667,24 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "BudgetHoldLease",
+      "BudgetHoldNotice",
+      "BudgetHoldState",
+      "HeldAttempt",
+      "PartialResultHold"
+     ],
+     "path": "src/agent_dispatch/budget_hold.rs",
+     "purpose": "The graceful stop (ARCH-0079 #budget, OF-541): a run near the end of its lease gets the wrap-up warning…",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/codec.rs",
      "purpose": "Pinned-key MessagePack codec plus payload/status decode helpers",
@@ -781,6 +799,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "VaultLeaderTeamPlanner"
+     ],
+     "path": "src/agent_dispatch/leader_planner.rs",
+     "purpose": "The concrete CEO planner (OF-389, ARCH-0079 #planner): the leader's top-shapes advice over the one live…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "LeaderResponsibility",
       "LeaderStarter",
       "LeaderStarterSkills",
@@ -791,7 +822,7 @@
      "purpose": "CEO starter over existing TASK promises, project responsibility and skill loads",
      "surface": {
       "crate-vis": 2,
-      "fn": 4,
+      "fn": 6,
       "struct": 4,
       "trait": 1
      }
@@ -803,8 +834,8 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 4,
-      "re-export": 16
+      "crate-vis": 5,
+      "re-export": 20
      }
     },
     {
@@ -818,26 +849,48 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AvailableModel",
       "CostEnvelope",
-      "GracefulStop",
-      "PartialResultHold",
+      "MeasuredRate",
+      "PatternCandidate",
+      "PlanBudget",
       "PlannerDecisions",
+      "PlannerEvidence",
+      "PlannerQuestionContext",
       "PlannerRung",
       "PlannerThresholds",
       "ShapeQuote",
+      "SkillRevisionRef",
       "SpawnPlanReceipt",
       "TeamPlan"
      ],
      "path": "src/agent_dispatch/planner.rs",
-     "purpose": "The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a-launch-ready plan — which…",
+     "purpose": "The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a launch-ready plan — which…",
      "surface": {
+      "const": 1,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 13,
-      "struct": 9
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LivePlanRequest",
+      "PlannerSeat",
+      "PlannerSkills"
+     ],
+     "path": "src/agent_dispatch/planner_live.rs",
+     "purpose": "The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -916,7 +969,7 @@
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
       "crate-vis": 10,
-      "fn": 14
+      "fn": 15
      }
     },
     {
@@ -945,20 +998,29 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/task_type_tree.rs",
+     "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CoordinationPattern",
-      "PayoffRow",
-      "PlannerCard",
-      "SeededShape",
       "TeamShape"
      ],
      "path": "src/agent_dispatch/team_shape.rs",
-     "purpose": "The team-shape skill's engine half (ARCH-0079 #planner, OF-541): the closed pattern vocabulary, the seeded…",
+     "purpose": "The team-shape skill's engine half (ARCH-0079 #planner, OF-541): the closed shape vocabulary the planner…",
      "surface": {
-      "const": 5,
+      "const": 4,
       "enum": 1,
-      "fn": 13,
-      "struct": 4
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -1015,9 +1077,9 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 7,
-      "fn": 25,
+      "fn": 26,
       "struct": 9
      }
     },
@@ -1444,6 +1506,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HoldAttemptForBudget"
+     ],
+     "path": "src/attempt_queue/budget_hold.rs",
+     "purpose": "OF-541: the budget hold (ARCH-0079 #budget)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/cancel/mod.rs",
      "purpose": "ONE-1896 two-rung graceful-cancel and LANDING protocol",
@@ -1659,7 +1736,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 17,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -10506,7 +10583,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "fn": 2
+      "fn": 5
      }
     },
     {
@@ -44717,7 +44794,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -48734,9 +48811,9 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 34,
+     "files": 38,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate"
     },
@@ -48776,7 +48853,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50197,9 +50274,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 121,
+   "over_bar": 122,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3031,
+   "source_files": 3036,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60492,7 +60569,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/workflows.rs",
