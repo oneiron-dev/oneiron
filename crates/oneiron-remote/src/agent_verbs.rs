@@ -767,7 +767,7 @@ impl OneironClient {
     }
     pub fn tasks_update(
         &self,
-        input: &oneiron::task_verb::sdk::TaskRequest,
+        input: &oneiron::task_verb::sdk::TaskUpdateRequest,
     ) -> Result<oneiron::task_verb::TaskUpdateReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
