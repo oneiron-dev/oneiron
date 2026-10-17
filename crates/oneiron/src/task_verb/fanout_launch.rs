@@ -104,6 +104,9 @@ pub struct FanoutLaunchReceipt {
     pub choice_receipt_ref: Option<String>,
     /// The TASKs it launched; none while it is held.
     pub task_refs: Vec<EntityId>,
+    /// The project whose live lead and board may rule on the hold beside the
+    /// owner; `None` leaves it to the owner.
+    pub approval_project: Option<EntityId>,
 }
 
 /// An answer to the width check of a fan-out that already went out. The
@@ -307,6 +310,7 @@ impl StoredLaunch {
             check_row_ref: self.check_row.as_ref().map(|row| row.row_ref.clone()),
             choice_receipt_ref: self.choice_receipt_ref.clone(),
             task_refs: self.task_refs.clone(),
+            approval_project: self.approval_project,
         }
     }
 }
