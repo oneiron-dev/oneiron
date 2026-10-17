@@ -1215,3 +1215,51 @@ enum Flow {
     On,
     Ended,
 }
+
+impl OfferLadder {
+    /// Opens one bounded media stream under `run` (live `ai.transcribe`
+    /// partials) on the first rung that serves it: one permit for the whole
+    /// stream, reserving `bound_ms` of audio at the rung's rate, started at
+    /// its media gate before any audio leaves. An open stream never moves to
+    /// another rung; a voice route pins its one rung.
+    pub(super) fn open_media_stream(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        bound_ms: u64,
+    ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
+        let admission = request.admission_request();
+        self.admits(&admission)?;
+        let call = Call {
+            run,
+            request: &admission,
+            selector: None,
+        };
+        let mut walk = Walk::default();
+        for (index, rung) in self.rungs.iter().enumerate() {
+            let Some(media) = &rung.media else {
+                continue;
+            };
+            let mut bound = request.clone();
+            bound.model = rung.model.clone();
+            bound.envelope.locality = rung.offer.binding.locality;
+            if media.row.admit_media(&bound).is_err() || self.passes_over(call, index, &mut walk) {
+                continue;
+            }
+            let reserve = oneiron::llm::run_admission::MediaStreamLease::reserve_units(
+                bound.operation,
+                &media.caps,
+                bound_ms,
+            );
+            let permit = run.admit_media_stream(
+                Some(self.name.as_str()),
+                &bound,
+                &rung.offer.binding,
+                reserve,
+            )?;
+            let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
+            return gate.open_stream(&bound, permit, media.caps.clone(), bound_ms);
+        }
+        Err(self.unanswered(walk))
+    }
+}
