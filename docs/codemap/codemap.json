@@ -60332,7 +60332,7 @@
   "oneiron-mesh-transport": {
    "files": [
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "IrohTransport"
@@ -60424,7 +60424,7 @@
     "iroh_transport": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Private iroh data plane"
     },
@@ -60443,7 +60443,7 @@
      "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Vault-scoped mesh transport",
    "source_files": 4,
    "test_files": 2
@@ -68710,7 +68710,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
