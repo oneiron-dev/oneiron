@@ -62512,7 +62512,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 25
      }
     },
     {
@@ -62526,13 +62526,23 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_verbs.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/call_context.rs",
+     "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -62551,6 +62561,16 @@
      "notable": [],
      "path": "src/api/facade/decision_role_asks.rs",
      "purpose": "OF-516: a role holder's door to the ladder's person asks (Q3 by role)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/dispatch.rs",
+     "purpose": "The facade's one admission and typed call per verb-table row (OF-489)",
      "surface": {
       "crate-vis": 1
      }
@@ -63122,7 +63142,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 39
      }
     },
     {
@@ -66167,7 +66187,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -66187,7 +66207,7 @@
      "path": "src/livequery/connection.rs",
      "purpose": "Socket attachment and bounded reconnect retention",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -66259,16 +66279,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/livequery/reads.rs",
-     "purpose": "The eight existing WS read verbs call the engine facade, without write aliases",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -66304,6 +66314,16 @@
      "purpose": "Private routing header for the EXISTING server broadcast channel and a socket's own reply queue",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/rpc.rs",
+     "purpose": "The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68962,7 +68982,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 270,
+     "files": 272,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69279,7 +69299,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 532,
+   "source_files": 534,
    "test_files": 182
   },
   "oneiron-spawn": {
