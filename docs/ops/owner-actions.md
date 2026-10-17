@@ -1087,9 +1087,10 @@ whatever the fit says.
 
 A row applies to the vault, to one project, or to one task type (a type row matches its node at
 any tree version). A read takes the narrowest pin (project, then type, then vault). Without a
-pin, it takes the vault's fit once the fit has runs of its own. Failing that, it takes the
-narrowest seed, then the catalog seed. The catalog keeps each knob's bounds; a value outside
-them is refused.
+pin, it takes the project's seed, then the type's: those are your word for that scope alone,
+so a fit learned across the whole vault does not override them. Failing that, it takes the
+vault's fit once the fit has runs of its own, then the vault's seed (the fit's own prior), then
+the catalog seed. The catalog keeps each knob's bounds; a value outside them is refused.
 
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows
@@ -1141,10 +1142,13 @@ The core conversation writes and the atomic batch are verbs too:
   them below it, which refuses a put that turns an agent definition back on.
 
 Each REST route (`POST /v1/core/conversations`, `.../{id}/turns`, `.../{id}/records`,
-`/v1/core/batch`) runs its verb as an action of your credential. It runs the verb's own door
-instead when the request is larger than one action argument (16 KiB of JSON), names a room
-turn, or comes from a credential that binds no person or agent. The route picks the path before
-it writes. A TURN write wakes the Dreamer once on either path.
+`/v1/core/batch`) runs its verb as an action of your credential: a person's, an agent's or a
+system job's. The whole body rides as one structured argument, so every size the route accepts
+runs as an action. It runs the verb's own door instead when the request names a room turn, or
+comes from a credential that binds no principal or read key. The route picks the path before it
+writes. A refusal answers with the code, words and suggestions the verb's own route refused
+with (a replay of a refused key keeps the code). A TURN write wakes the Dreamer once on either
+path.
 
 ## Live agent runs
 
@@ -1172,7 +1176,8 @@ at once. Refusals carry these codes:
 - 409 `code_run_busy`: the run is mid-step or mid-action. Retry.
 - 409 `live_run_attached`: another credential is attached to this lease.
 
-A running server holds the frame of each card `vault.lenses.default` returns, for your credential:
+A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
+`POST /v1/owner/weave/lens` return, for your credential:
 - `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
 - `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
 

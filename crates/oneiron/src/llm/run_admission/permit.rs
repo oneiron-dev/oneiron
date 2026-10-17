@@ -208,6 +208,12 @@ impl RunInner {
                     .and_then(|(_, hold)| hold.meter.reserved_for(&hold.lease)),
                 teacher_target: teacher.as_ref().map(|(target, _)| target.clone()),
                 purpose: teacher.map(|(_, purpose)| purpose),
+                seat: request
+                    .envelope
+                    .tier
+                    .per_seat
+                    .as_ref()
+                    .map(|tier| tier.0.clone()),
                 rules_enforced,
             },
             revision,
@@ -281,6 +287,7 @@ impl RunInner {
                     .and_then(|(_, hold)| hold.meter.reserved_for(&hold.lease)),
                 teacher_target: None,
                 purpose: None,
+                seat: None,
                 rules_enforced,
             },
             revision,
