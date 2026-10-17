@@ -82,7 +82,7 @@ pub use run_backend::RunBackend;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank};
-use ladder::LadderRung;
+use ladder::{LadderRung, SeatScope, Wire};
 use offer::provider_offer;
 use output_cap::OutputCap;
 
@@ -265,8 +265,6 @@ impl ModelRuntime {
             }
         }
         let mut router = ModelRouter::default();
-        // Each chat model the router serves is one a parked offer's calls
-        // may fall back to, once the owner names it (`use_fallback`).
         let mut fallbacks = Vec::new();
         for (rerank, backends) in [(false, &built), (true, &rerankers)] {
             for (name, backend) in backends {
@@ -282,7 +280,13 @@ impl ModelRuntime {
                         // chat route; the reranker reaches it through its seat.
                         && !(rerank && router.served(&rung.model).is_some())
                     {
-                        let ladder = Arc::new(OfferLadder::bare(rung, Arc::clone(&rests)));
+                        let wire = if rerank { Wire::Rerank } else { Wire::Chat };
+                        let ladder = Arc::new(OfferLadder::bare(rung, Arc::clone(&rests)).scoped(
+                            SeatScope {
+                                wire,
+                                ..SeatScope::default()
+                            },
+                        ));
                         if !rerank {
                             fallbacks.push(FallbackRung {
                                 provider: name.clone(),
@@ -295,7 +299,6 @@ impl ModelRuntime {
                 }
             }
         }
-        rests.offer_fallbacks(fallbacks);
         let mut seats = BTreeMap::new();
         for (role, ladder) in &config.roles {
             let mut rungs = Vec::new();
@@ -334,11 +337,21 @@ impl ModelRuntime {
             } else {
                 SeatState::Ready
             };
+            let scope = SeatScope {
+                wire: if *role == ModelRole::Reranker {
+                    Wire::Rerank
+                } else {
+                    Wire::Chat
+                },
+                stays_on_device: stays,
+                configured: ladder.len(),
+            };
             if let Some(seat) = seat_for(
                 *role,
                 ladder_locality(&rungs, config),
                 rungs,
                 Arc::clone(&rests),
+                scope,
             ) {
                 router.insert(seat.model.clone(), seat.locality, Arc::clone(&seat.ladder));
                 status.seats.push(SeatStatus::new(
@@ -355,6 +368,11 @@ impl ModelRuntime {
             }
         }
         let media = MediaRuntime::build(config, &rests, &mut status.seats);
+        // Each chat model the router serves, and each media seat's rung, is
+        // one a parked offer's calls may fall back to once the owner names
+        // it (`use_fallback`).
+        fallbacks.extend(media.fallback_rungs());
+        rests.offer_fallbacks(fallbacks);
         status.configured = true;
         // A read blocks on the runtime its reader was built on; a build with
         // none has no reader.
@@ -660,6 +678,7 @@ fn seat_for(
     locality: ModelLocality,
     rungs: Vec<LadderRung>,
     rests: Arc<OfferCooldowns>,
+    scope: SeatScope,
 ) -> Option<Seat> {
     if rungs.is_empty() {
         return None;
@@ -677,15 +696,15 @@ fn seat_for(
     let model = ModelId::new(format!("seat/{}@{revision}", role_key(role))).ok()?;
     let mut alone: BTreeMap<ModelId, Arc<OfferLadder>> = BTreeMap::new();
     for rung in &rungs {
-        alone
-            .entry(rung.model.clone())
-            .or_insert_with(|| Arc::new(OfferLadder::pinned(rung.clone(), Arc::clone(&rests))));
+        alone.entry(rung.model.clone()).or_insert_with(|| {
+            Arc::new(OfferLadder::pinned(rung.clone(), Arc::clone(&rests)).scoped(scope))
+        });
     }
     Some(Seat {
         role,
         model: model.clone(),
         locality,
-        ladder: Arc::new(OfferLadder::seat(model, rungs, rests)),
+        ladder: Arc::new(OfferLadder::seat(model, rungs, rests).scoped(scope)),
         rungs: alone,
     })
 }

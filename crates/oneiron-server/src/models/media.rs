@@ -29,10 +29,10 @@ use serde::Serialize;
 use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind};
 
 use super::catalog::{catalog_entry, engine_model_id};
-use super::cooldown::{OfferCooldowns, ProbePermit};
+use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
 use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
-use super::ladder::{LadderRung, OfferLadder};
+use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, media_offer};
 use super::rerank::transport;
 use super::status::{RungStatus, SeatState, SeatStatus};
@@ -67,6 +67,8 @@ pub(super) struct HeldJob {
     /// offer's one probation request (OF-305). The job's end reports to it,
     /// and dropping the job frees it.
     pub(super) probe: Option<ProbePermit>,
+    /// The served receipt its answer carries, when its ladder stamps one.
+    pub(super) receipt: Option<PendingReceipt>,
     pub(super) provider_job: String,
     pub(super) model: ModelId,
     pub(super) operation: AiOperation,
@@ -77,16 +79,17 @@ impl HeldJob {
     /// Where the job stands. A job that ended settles its permit: an answer
     /// pays its usage, a failure its reservation. Its end also counts toward
     /// its offer's health: an answer toward recovery, and a provider that
-    /// was down as one more failure in a row.
+    /// was down as one more failure in a row. An answer carries the ladder's
+    /// served receipt.
     async fn poll(&mut self) -> LlmResult<MediaJobState> {
         let Some(permit) = &self.permit else {
             return Err(FatalLlmError::InvalidRequest.into());
         };
-        let state = self
+        let mut state = self
             .gate
             .poll(&self.model, &self.provider_job, permit.lease())
             .await?;
-        match &state {
+        match &mut state {
             MediaJobState::Done { response } => {
                 let units = response.usage.token_units(self.operation, &self.caps);
                 if let Some(permit) = self.permit.take()
@@ -96,6 +99,10 @@ impl HeldJob {
                 }
                 if let Some(probe) = self.probe.take() {
                     probe.answered();
+                }
+                if let Some(receipt) = &self.receipt {
+                    let raw = std::mem::take(&mut response.usage.raw_provider);
+                    response.usage.raw_provider = receipt.stamp(raw);
                 }
             }
             MediaJobState::Failed { error } => {
@@ -353,10 +360,15 @@ impl MediaRuntime {
                 })
                 .collect();
             let locality = ladder_locality(&rungs, config);
+            let scope = SeatScope {
+                wire: Wire::Media(*operation),
+                stays_on_device: false,
+                configured: seat.rungs.len(),
+            };
             let alone = rungs
                 .iter()
                 .map(|rung| {
-                    let ladder = OfferLadder::pinned(rung.clone(), Arc::clone(rests));
+                    let ladder = OfferLadder::pinned(rung.clone(), Arc::clone(rests)).scoped(scope);
                     (rung.model.clone(), Arc::new(ladder))
                 })
                 .collect();
@@ -380,7 +392,9 @@ impl MediaRuntime {
                 MediaSeat {
                     model: seat_model.clone(),
                     locality,
-                    ladder: Arc::new(OfferLadder::seat(seat_model, rungs, Arc::clone(rests))),
+                    ladder: Arc::new(
+                        OfferLadder::seat(seat_model, rungs, Arc::clone(rests)).scoped(scope),
+                    ),
                     rungs: alone,
                     rows,
                     tiers,
@@ -429,6 +443,16 @@ impl MediaRuntime {
         self.seats
             .get(&operation)
             .map(|seat| (seat.model.clone(), seat.locality))
+    }
+
+    /// One rung alone of each media seat, as a model that a parked offer's
+    /// media calls may fall back to once the owner names it (OF-305).
+    pub(super) fn fallback_rungs(&self) -> Vec<FallbackRung> {
+        self.seats
+            .values()
+            .flat_map(|seat| seat.rungs.values())
+            .filter_map(OfferLadder::fallback_rung)
+            .collect()
     }
 
     /// The ladder of the media seat that the status route lists as `role`
