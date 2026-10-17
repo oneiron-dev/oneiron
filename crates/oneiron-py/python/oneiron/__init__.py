@@ -420,7 +420,7 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs":
             return Oneiron._VaultClaimsVerbs(self._client)
-        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None) -> dict[str, Any]:
+        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None, query_affect: dict[str, Any] | None = None) -> dict[str, Any]:
             """Recalls a memory pack.
 
             ``effort="high"`` needs a lease this package never mints: an embedded
@@ -433,9 +433,12 @@ class Oneiron:
             ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
             ``media`` (``{"space", "mime", "bytes_b64", "kinds"}``) is embedded
             by the server into its declared space; an embedded client raises
-            ``MODEL_UNAVAILABLE``.
+            ``MODEL_UNAVAILABLE``. ``query_affect`` (``{"valence", "arousal",
+            "dominance"}``: valence in -1..1, arousal and dominance in 0..1)
+            ranks by emotion congruence, embedded and remote alike; out of range
+            it raises ``BAD_REQUEST``.
             """
-            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None)))
+            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None)))
         def export(self, format: str | None = None) -> dict[str, Any]:
             """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
@@ -481,6 +484,9 @@ class Oneiron:
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
+        @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs":
+            return Oneiron._VaultSecretsVerbs(self._client)
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
             return Oneiron._VaultWidenProposalsVerbs(self._client)
@@ -926,6 +932,12 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def lift_history(self, spec):
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
     class _VaultWidenProposalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -954,7 +966,7 @@ class Oneiron:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def default(self, spec):
-            """Composes the default vault lens from the named sources, read under the caller's own scope."""
+            """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
             return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
     class _VaultDisclosureVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1053,6 +1065,9 @@ class Oneiron:
         @property
         def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs":
             return Oneiron._VaultArtifactsBodyForkVerbs(self._client)
+        @property
+        def proposal(self) -> "Oneiron._VaultArtifactsBodyProposalVerbs":
+            return Oneiron._VaultArtifactsBodyProposalVerbs(self._client)
         def export(self, request: dict[str, Any]) -> dict[str, Any]:
             """Exports the live body as the artifact's next version."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_export(json.dumps(request, allow_nan=False))))
@@ -1075,11 +1090,20 @@ class Oneiron:
             """A fork's three-way diff against the live head."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_diff(json.dumps(request, allow_nan=False))))
         def merge(self, request: dict[str, Any]) -> dict[str, Any]:
-            """A person lands a reviewed fork."""
+            """Lands one reviewed fork on an answer."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_merge(json.dumps(request, allow_nan=False))))
         def discard(self, request: dict[str, Any]) -> dict[str, Any]:
             """Abandons an open fork's unlanded work."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_discard(json.dumps(request, allow_nan=False))))
+    class _VaultArtifactsBodyProposalVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, request: dict[str, Any]) -> dict[str, Any]:
+            """An office proposal: its members, answers and settlement."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_proposal_read(json.dumps(request, allow_nan=False))))
+        def settle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Accepts or rejects an office proposal's reviewed forks."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_proposal_settle(json.dumps(request, allow_nan=False))))
     class _VaultArtifactsBodyDeckVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

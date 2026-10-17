@@ -547,6 +547,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.secrets.lift_history",
+                crate::code_run::vault_read::request_schema::<crate::policy_model::SecretLiftRequest>(
+                ),
+            ),
+            (
                 "vault.widen_proposals",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -1383,6 +1388,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.artifacts.body.fork.discard",
                 crate::code_run::vault_read::request_schema::<
                     crate::office_body::OfficeBodyForkRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.proposal.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyProposalRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.proposal.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyProposalSettleRequest,
                 >(),
             ),
             (
@@ -2275,6 +2292,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.settings.learning.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.secrets.lift_history" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3269,6 +3293,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.body.proposal.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.body.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3750,6 +3788,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.settings.learning.clear" => {
             let _input: crate::learning_setting_doors::LearningSettingClear =
                 decode(value.clone())?;
+        }
+        "vault.secrets.lift_history" => {
+            let _input: crate::policy_model::SecretLiftRequest = decode(value.clone())?;
         }
         "vault.widen_proposals" => {
             let _input: crate::agent_dispatch::widen_doors::WidenProposalsRequest =
@@ -4299,6 +4340,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.body.fork.discard" => {
             let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
         }
+        "vault.artifacts.body.proposal.read" => {
+            let _input: crate::office_body::OfficeBodyProposalRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            let _input: crate::office_body::OfficeBodyProposalSettleRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.body.export" => {
             let _input: crate::office_body::OfficeBodyExportVerbRequest = decode(value.clone())?;
         }
@@ -4540,6 +4588,7 @@ pub fn invoke(
         "vault.settings.learning.clear" => {
             encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
+        "vault.secrets.lift_history" => encode(vault_secrets_lift_history(memory, decode(value)?)?),
         "vault.widen_proposals" => encode(vault_widen_proposals(memory, decode(value)?)?),
         "vault.widen_proposals.approve" => {
             encode(vault_widen_proposals_approve(memory, decode(value)?)?)
@@ -4738,6 +4787,13 @@ pub fn invoke(
         "vault.artifacts.body.fork.discard" => {
             encode(vault_artifacts_body_fork_discard(memory, decode(value)?)?)
         }
+        "vault.artifacts.body.proposal.read" => {
+            encode(vault_artifacts_body_proposal_read(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.proposal.settle" => encode(vault_artifacts_body_proposal_settle(
+            memory,
+            decode(value)?,
+        )?),
         "vault.artifacts.body.export" => {
             encode(vault_artifacts_body_export(memory, decode(value)?)?)
         }
@@ -5838,6 +5894,17 @@ pub fn vault_settings_learning_clear(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_secrets_lift_history(
+    memory: &Memory<'_>,
+    input: crate::policy_model::SecretLiftRequest,
+) -> MemoryResult<crate::policy_model::SecretLiftStatus> {
+    crate::policy_model::secret_lift_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.lift_history")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_widen_proposals(
     memory: &Memory<'_>,
     input: crate::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -5916,7 +5983,7 @@ pub fn vault_lenses_list(
 pub fn vault_lenses_default(
     memory: &Memory<'_>,
     input: crate::lens::LensDefaultRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::GeneratedLens>> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::LensFrameCard>> {
     memory.lenses_default(input)
 }
 pub fn vault_disclosure_offer(
@@ -7120,7 +7187,7 @@ pub fn vault_artifacts_body_fork_open(
         memory,
         "vault.artifacts.body.fork.open",
         &input,
-        &["/artifact_ref", "/run_root_ref"],
+        &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
     )?;
     memory.artifacts_body_fork_open(&input)
 }
@@ -7178,6 +7245,30 @@ pub fn vault_artifacts_body_fork_discard(
         &["/artifact_ref", "/fork_ref"],
     )?;
     memory.artifacts_body_fork_discard(&input)
+}
+pub fn vault_artifacts_body_proposal_read(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyProposalRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.proposal.read",
+        &input,
+        &["/artifact_ref", "/proposal_ref"],
+    )?;
+    memory.artifacts_body_proposal_read(&input)
+}
+pub fn vault_artifacts_body_proposal_settle(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyProposalSettleRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.proposal.settle",
+        &input,
+        &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+    )?;
+    memory.artifacts_body_proposal_settle(&input)
 }
 pub fn vault_artifacts_body_export(
     memory: &Memory<'_>,

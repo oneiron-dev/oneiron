@@ -77,6 +77,7 @@ pub use self::definition::{
     SAVED_QUERY_SHORT_ID_PREFIX, SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord,
     UpdateSavedQueryRequest, register_saved_query_kind,
 };
+pub(crate) use self::evaluator::WakeVisit;
 pub use self::evaluator::{
     EvaluationRequest, SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE, SAVED_QUERY_WHY_SCOPE_CLOSED,
     SavedQueryEvaluator, SavedQueryJudgeBinding,
@@ -90,6 +91,7 @@ pub use self::filter::{
     ClaimComparison, EvidenceDependencies, FilterAst, MatcherSpec, filter_dependencies,
     parse_filter_ast, validate_per_entity_decidable,
 };
+pub(crate) use self::lifecycle::load_saved_query;
 pub use self::lifecycle::{
     archive_saved_query, create_saved_query, read_saved_query, update_saved_query,
 };

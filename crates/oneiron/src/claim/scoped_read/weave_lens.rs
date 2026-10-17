@@ -100,6 +100,23 @@ pub struct WeaveLensRender {
     pub rendered_at: u64,
 }
 
+/// Why a period has no render, saved on its digest row in the render's
+/// place: the step's answer did not meet the period, and neither did the
+/// answer to its repair turns. The period's data still serves.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveLensRefusal {
+    pub reason: String,
+    pub skill_ref: String,
+    pub skill_version: String,
+    pub model: String,
+    pub refused_at: u64,
+}
+
+/// How many repair turns a refused plan gets: the refused answer and why go
+/// back to the model, which answers again.
+pub(crate) const WEAVE_LENS_PLAN_REPAIRS: usize = 1;
+
 fn item_key(section: usize, item: usize) -> String {
     format!("{section}.{item}")
 }
@@ -159,6 +176,31 @@ impl WeaveLensPlan {
         }
         Ok(())
     }
+}
+
+/// `answer`, the generate step's text, as a plan for `report`; else why it
+/// is refused, in the words a repair turn and the period's row carry.
+pub(crate) fn weave_lens_answer_plan(
+    answer: &str,
+    report: &WeaveReport,
+) -> std::result::Result<WeaveLensPlan, String> {
+    let plan: WeaveLensPlan = serde_json::from_str(answer.trim())
+        .map_err(|error| format!("weave lens: the answer is not a plan: {error}"))?;
+    match plan.validate(report) {
+        Ok(()) => Ok(plan),
+        Err(Error::InvalidConfig(reason)) => Err(reason),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// A repair turn's text: why the plan was refused, and every key the plan
+/// must cite exactly once.
+pub(crate) fn weave_lens_repair_text(report: &WeaveReport, reason: &str) -> String {
+    serde_json::json!({
+        "plan_errors": [reason],
+        "required_keys": keyed_items(report).keys().collect::<Vec<_>>(),
+    })
+    .to_string()
 }
 
 /// The generate step's input: the period's items as their served views,
