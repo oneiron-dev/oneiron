@@ -14320,13 +14320,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HookPin"
+      "HookPin",
+      "HookShare"
      ],
      "path": "src/context_board/hook_pins.rs",
      "purpose": "Hook blocks on the board (ARCH-0080 §11, OI-1 = A)",
      "surface": {
-      "fn": 7,
-      "struct": 1
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -14385,7 +14386,7 @@
      "path": "src/context_board/memories_frame.rs",
      "purpose": "Connects typed MEMORIES projections to the shared board frame and shed ladder",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -63674,7 +63675,7 @@
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 28
      }
     },
     {
@@ -64632,7 +64633,7 @@
      "path": "src/api/mcp_gateway/exec_board_verbs.rs",
      "purpose": "Execute-code and board-verb executors",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
