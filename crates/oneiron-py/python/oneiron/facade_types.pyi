@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 234 facade rows, 804 declarations.
+Census: 234 facade rows, 805 declarations.
 Inputs: 199 of 234 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 189 of 234 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 54; unread shapes: 1.
@@ -2660,7 +2660,12 @@ class TaskAskShort(TypedDict):
     until: NotRequired[int | None]
     default: NotRequired[TaskAskDefault]
 TaskAskRequest = TaskAskSpec | TaskAskShort
-TaskAskHoldReason = Literal["NoLiveRoute"]
+TaskAskHoldReason = Literal["NoLiveRoute", "ApprovalRequired"]
+class TaskAskLaunchHold(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    surface_ref: str
+    denied: bool
 class TaskAskReceipt(TypedDict):
     handle: TaskAskHandle
     task_refs: list[EntityId]
@@ -2668,6 +2673,7 @@ class TaskAskReceipt(TypedDict):
     idempotent_replay: bool
     statement: NotRequired[FanoutStatement | None]
     task_records: list[RecordRef]
+    launch: NotRequired[TaskAskLaunchHold | None]
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str

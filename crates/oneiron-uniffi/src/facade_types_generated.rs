@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 234 facade rows, 674 generated types.
+// UniFFI census: 234 facade rows, 675 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 194.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
@@ -6981,6 +6981,21 @@ pub enum TaskAskRequest {
 pub enum TaskAskHoldReason {
     #[serde(rename = "NoLiveRoute")]
     NoLiveRoute,
+    #[serde(rename = "ApprovalRequired")]
+    ApprovalRequired,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskLaunchHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskAskLaunchHold {
+    #[serde(rename = "launch_ref")]
+    pub launch_ref: String,
+    #[serde(rename = "plan_digest")]
+    pub plan_digest: String,
+    #[serde(rename = "surface_ref")]
+    pub surface_ref: String,
+    #[serde(rename = "denied")]
+    pub denied: bool,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskReceipt`.
@@ -6998,6 +7013,8 @@ pub struct TaskAskReceipt {
     pub statement: Option<FanoutStatement>,
     #[serde(rename = "task_records")]
     pub task_records: Vec<RecordRef>,
+    #[serde(rename = "launch", default, skip_serializing_if = "Option::is_none")]
+    pub launch: Option<TaskAskLaunchHold>,
 }
 
 /// `oneiron::task_verb::sdk::TaskWaitRequest`.

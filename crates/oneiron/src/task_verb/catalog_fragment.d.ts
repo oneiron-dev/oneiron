@@ -4,7 +4,7 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 291 code-mode rows (273 host rows, 18 run rows), 905 declarations.
+// Census: 291 code-mode rows (273 host rows, 18 run rows), 906 declarations.
 // Replies: 236 fully typed, 43 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 60; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -549,8 +549,9 @@ declare namespace Sdk {
   type TaskAskPersonEvidence = { who: EntityId; answer?: TaskAskWord | null; kind: TaskAskPersonKind; at: number; source?: EntityId | null };
   type TaskAskShort = { who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault };
   type TaskAskRequest = TaskAskSpec | TaskAskShort;
-  type TaskAskHoldReason = "NoLiveRoute";
-  type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[] };
+  type TaskAskHoldReason = "NoLiveRoute" | "ApprovalRequired";
+  type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
+  type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
   type TaskAskEffectAuthorization = "not_evaluated_by_ask";
   type TaskAskCoverage = { met: boolean; required: number; responded: EntityId[]; unknown: EntityId[]; unmet_people: EntityId[] };

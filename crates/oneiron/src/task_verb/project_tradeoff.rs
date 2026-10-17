@@ -45,7 +45,7 @@ struct QuestionTurn {
 /// What one project ask carries: the gate's question by reference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ProjectTradeoffRoute {
+pub(super) struct ProjectTradeoffRoute {
     proposal: EntityId,
     question_digest: String,
     project: EntityId,
@@ -157,18 +157,7 @@ impl Memory<'_> {
             turn,
             state: RouteState::Open,
         };
-        self.tasks_ask_project_with(task, &spec, |txn, group| {
-            // A question replaced since an earlier route voids that route and
-            // its ask with this admission, on whichever TASK it was routed.
-            let now = vault.store.clock.now_recorded_at();
-            for (old, row) in ROUTES.scan(&vault.store, txn)? {
-                if superseded_by(&row, &route) {
-                    close_route_in(vault, txn, old, RouteState::Void { at: now })?;
-                }
-            }
-            ROUTES.put(&vault.store, txn, &group, &route)?;
-            Ok(())
-        })
+        self.tasks_ask_project_with(task, &spec, Some(route))
     }
 
     /// The TURN `ask`'s question is witnessed as in `project`'s home room,
@@ -422,6 +411,25 @@ impl Memory<'_> {
         )
         .map_err(MemoryError::from)
     }
+}
+
+/// A tradeoff ask's route, written beside its ask: a question replaced
+/// since an earlier route voids that route and its ask, on whichever TASK
+/// it was routed, and this ask's route opens.
+pub(super) fn route_tradeoff_in(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    group: EntityId,
+    route: &ProjectTradeoffRoute,
+) -> MemoryResult<()> {
+    let now = vault.store.clock.now_recorded_at();
+    for (old, row) in ROUTES.scan(&vault.store, txn)? {
+        if superseded_by(&row, route) {
+            close_route_in(vault, txn, old, RouteState::Void { at: now })?;
+        }
+    }
+    ROUTES.put(&vault.store, txn, &group, route)?;
+    Ok(())
 }
 
 /// Close an open route; a closed one keeps its first close.

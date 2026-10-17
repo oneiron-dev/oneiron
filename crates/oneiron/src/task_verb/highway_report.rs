@@ -26,6 +26,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
+use super::ask_effect::AskEffect;
 use super::ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOptionId, TaskAskQuestion, TaskAskSpec,
     TaskAskStatus,
@@ -692,46 +693,30 @@ impl Memory<'_> {
     /// own transaction and a refusal fails the report, as it always has. In
     /// a runner's write, admission's read-only rules run first: a refusal
     /// there opens no ask and is kept for the receipt. `continuation`, when
-    /// the ask holds a block, is written beside a first admission.
+    /// the ask holds a block, is written beside a first admission, or, when
+    /// the approval mode holds the ask, as the owner's approval releases it.
     fn report_ask(
         &self,
         rt: &mut ReportTxn<'_, '_>,
         spec: &TaskAskSpec,
         continuation: Option<(&BlockContinuation, &str)>,
     ) -> MemoryResult<Option<TaskAskHandle>> {
+        let effect = continuation.map(|(continuation, label)| AskEffect::Block {
+            continuation: *continuation,
+            label: label.to_owned(),
+        });
         match rt.txn.as_deref_mut() {
-            None => Ok(Some(
-                self.tasks_ask_with_txn_effect(spec, |txn, group| {
-                    self.continuation_effect(txn, group, continuation)
-                })?
-                .handle,
-            )),
+            None => Ok(Some(self.tasks_ask_composed(spec, effect)?.handle)),
             Some(txn) => {
                 if let Err(refusal) = self.ask_admits_in(txn, spec) {
                     rt.refused.push(refusal.message);
                     return Ok(None);
                 }
                 Ok(Some(
-                    self.tasks_ask_in_txn(txn, spec, |txn, group| {
-                        self.continuation_effect(txn, group, continuation)
-                    })?
-                    .handle,
+                    self.tasks_ask_composed_in_txn(txn, spec, effect)?.handle,
                 ))
             }
         }
-    }
-
-    /// The effect a block's ask admits with: its continuation, beside it.
-    fn continuation_effect(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        group: EntityId,
-        continuation: Option<(&BlockContinuation, &str)>,
-    ) -> MemoryResult<()> {
-        if let Some((continuation, label)) = continuation {
-            self.put_block_question_in_txn(txn, group, continuation, label)?;
-        }
-        Ok(())
     }
 
     /// An ask's status, settling it when due: in its own transactions, or

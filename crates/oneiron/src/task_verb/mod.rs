@@ -4,6 +4,7 @@
 //! Sibling files own each ask implementation and its existing admission rules.
 
 mod ask_band;
+mod ask_effect;
 mod ask_facade;
 mod ask_guest;
 mod ask_limits;
@@ -262,6 +263,7 @@ pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
 
+pub(crate) use ask_effect::ProjectWidenRoute;
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
 
 pub use ask_soft_confirm_types::{
@@ -273,9 +275,9 @@ pub use ask_types::{
     AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide,
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
     TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
-    TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId,
-    TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight, TaskAskPreflightRecipient,
-    TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult, TaskAskSettlement,
-    TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskSurface,
-    TaskAskTarget, TaskAskWait, TaskAskWord,
+    TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskLaunchHold, TaskAskNeed,
+    TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
+    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult,
+    TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
+    TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
