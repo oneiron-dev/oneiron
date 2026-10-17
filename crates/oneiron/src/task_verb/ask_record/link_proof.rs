@@ -145,9 +145,7 @@ pub(super) fn validate_source(
         .map_err(|_| invalid())?;
     // A forged proof is refused above for good; a genuine word whose PERSON
     // row has not replicated yet stays retryable.
-    let raw = store
-        .entities
-        .get(txn, fact.actor.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &fact.actor)?
         .ok_or(Error::Record(RecordError::AskDependencyPending))?;
     if EntityMetadataHeader::parse(&raw)
         .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)

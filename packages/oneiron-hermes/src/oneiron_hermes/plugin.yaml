@@ -1,0 +1,7 @@
+name: oneiron
+kind: memory
+version: 1.0.0
+description: Oneiron as the agent's memory, or beside Hermes's built-in memory.
+requires:
+  python:
+    - "oneiron>=1.0.0,<2"

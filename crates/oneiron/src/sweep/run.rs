@@ -1,26 +1,21 @@
 //! Sweep driver, run state, and race-injection hooks.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::compact::compact_all_windows;
-use super::finalize::{audit_dropped_obligations, finalize_job, rewrite_job_for_retry};
+use super::finalize::{
+    audit_dropped_obligations, finalize_job, finalize_withdrawn_job, rewrite_job_for_retry,
+    rewrite_withdrawn_job_for_retry,
+};
 use crate::Vault;
 use crate::deletion::{
-    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
-    decode_hard_erase_sweep_seq,
+    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, WITHDRAWN_GENERATION_SWEEP_PREFIX,
+    WithdrawnGenerationSweepJob, decode_hard_erase_sweep_job, decode_hard_erase_sweep_seq,
+    decode_withdrawn_generation_row, withdrawn_generation_cutoffs_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, HexId, Raw, SideTable};
-
-/// The local hard-delete marker this run scans for the erased-id authority.
-/// `deletion::tombstone` owns the row family (see its `HARD_DELETE_MARKER`
-/// doc comment: other modules keep using `local_hard_delete_key` plus their
-/// own raw access) and is not reachable from here, so this binds the SAME
-/// declaration independently (two typed tables, one declaration). Key:
-/// hex32.
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
+use crate::ports::{DeletionFamily, TombstoneStoreRead};
 
 /// Retry backoff cap: a failed job is retried no later than 24 h out, so
 /// the ≤30 d `deadline_at` SLA cannot be silently outwaited by backoff.
@@ -44,6 +39,10 @@ pub(crate) struct HardEraseSweepRun {
     /// is overwritten, the obligation stays. SIBLING of
     /// `windows_deferred_live`; never folded into it.
     pub windows_deferred_raced: u64,
+    /// Windows and documents left as they are because a legal hold names a
+    /// row their compaction would destroy (OF-470); the obligation stays
+    /// until the hold lifts.
+    pub windows_deferred_held: u64,
     pub receipts_finalized: u64,
     pub deadline_breaches: u64,
     pub quarantine_rows_expired: u64,
@@ -115,6 +114,25 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// The withdrawn generations one pass rewrites (OF-013), beside the
+/// erased-id authority. Unlike an erased id, a withdrawn artifact keeps its
+/// row and every newer generation: only its carriers of the withdrawn
+/// generation or older change, to the content-free keyframe.
+#[derive(Debug, Default)]
+pub(super) struct WithdrawnSweep {
+    /// Each artifact's newest withdrawn generation, from every `hw:` row and
+    /// every fence. A fenced artifact's carriers are rewritten on every pass,
+    /// as a `dt:` id's are scrubbed: a late re-put goes with the next one.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(super) cutoffs: BTreeMap<EntityId, u64>,
+    /// Artifacts with a due `hw:` row: their document outbox goes with this
+    /// pass, and every compacted window's queued sends with it.
+    pub(super) due: BTreeSet<EntityId>,
+    /// Artifacts a carrier or document of which this pass could not clear:
+    /// their `hw:` rows wait, and no other obligation waits with them.
+    pub(super) held: BTreeSet<EntityId>,
+}
+
 /// Executes one sweep pass the owner asked for (phase 1): every window's
 /// history is compacted past the erased ids, an obligation due or not.
 pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
@@ -169,6 +187,47 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
         }
     }
 
+    // ── 1b. Inventory the hw: withdrawn-generation rows (OF-013) ────────
+    // Decoded strictly, key and scope agreeing; a row that fails is kept and
+    // reported like an undecodable h: row, never executed.
+    let mut withdrawn_jobs: Vec<(Vec<u8>, EntityId, WithdrawnGenerationSweepJob)> = Vec::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        for row in vault
+            .store
+            .sync_queue
+            .prefix_iter(&rtxn, WITHDRAWN_GENERATION_SWEEP_PREFIX)?
+        {
+            let (key, value) = row?;
+            match decode_withdrawn_generation_row(&key, &value) {
+                Ok((id, job)) => withdrawn_jobs.push((key.to_vec(), id, job)),
+                Err(_) => {
+                    tracing::error!(
+                        key_len = key.len(),
+                        "sweep: undecodable hw: row — obligation kept, cannot execute"
+                    );
+                    run.jobs_deferred += 1;
+                }
+            }
+        }
+    }
+    for (_, id, job) in &withdrawn_jobs {
+        if job.retry_state.deadline_at < now {
+            run.deadline_breaches += 1;
+            tracing::error!(
+                entity = %id.to_hex(),
+                generation = job.scope.generation,
+                deadline_at = job.retry_state.deadline_at,
+                attempt_count = job.retry_state.attempt_count,
+                "sweep: hw: job past its 30-day deadline"
+            );
+        }
+    }
+    let (withdrawn_due, withdrawn_not_due): (Vec<_>, Vec<_>) = withdrawn_jobs
+        .into_iter()
+        .partition(|(_, _, job)| job.retry_state.next_attempt_at <= now);
+    run.jobs_deferred += withdrawn_not_due.len() as u64;
+
     // Deadline surveillance covers EVERY decodable row, due or not — a
     // breach of the queued_at + 30 d SLA (GDPR Art. 12(3)) is loud each run.
     for (key, job) in &jobs {
@@ -219,8 +278,8 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
     let mut erased: BTreeSet<EntityId> = BTreeSet::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for (HexId(id), _) in HARD_DELETE_MARKER
-            .iter_from(&vault.store, &rtxn, &[])?
+        for (id, _) in vault
+            .port_tombstone_records(&rtxn, DeletionFamily::HardDelete)?
             .flatten()
         {
             erased.insert(id);
@@ -234,15 +293,25 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
         }
     }
 
+    // Withdrawn-generation authority: every hw: row and fence, due or not.
+    let mut withdrawn = WithdrawnSweep {
+        cutoffs: {
+            let rtxn = vault.store.env.read_txn()?;
+            withdrawn_generation_cutoffs_in_txn(&vault.store, &rtxn)?
+        },
+        due: withdrawn_due.iter().map(|(_, id, _)| *id).collect(),
+        held: BTreeSet::new(),
+    };
+
     // ── 3. Compact the historical carriers ──────────────────────────────
     // A shallow snapshot drops history, which is an erase, so a run no one
     // asked for spends it only for a due obligation (ARCH-0038 carrier-1,
     // ARCH-0073); the owner's run compacts every window. A late re-put of an
     // erased id never materializes; its bytes go with the next compaction.
-    let window_state = if !owner_asked && due.is_empty() {
+    let window_state = if !owner_asked && due.is_empty() && withdrawn_due.is_empty() {
         WindowSweepState::NoObligation
     } else {
-        compact_all_windows(vault, &erased, &mut run, now)?
+        compact_all_windows(vault, &erased, &mut withdrawn, &mut run, now)?
     };
 
     #[cfg(test)]
@@ -295,16 +364,30 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
                     Err(err) => return Err(err),
                 }
             }
+            // A withdrawn generation finalizes on the same global gate, unless
+            // a carrier of its artifact could not be cleared this pass.
+            for (key, id, job) in &withdrawn_due {
+                if !withdrawn.held.contains(id) && finalize_withdrawn_job(vault, key, id, job)? {
+                    run.jobs_processed += 1;
+                } else {
+                    run.jobs_deferred += 1;
+                }
+            }
         }
         WindowSweepState::Deferred => {
             // Nothing failed — the engine REFUSED (live window open, or a
             // non-sync build facing CRDT carriers). No attempt was made, so
             // retry_state is not consumed; the obligation simply stays.
             run.jobs_deferred += due.len() as u64;
+            run.jobs_deferred += withdrawn_due.len() as u64;
         }
         WindowSweepState::Failed(error_code) => {
             for (key, job) in &due {
                 rewrite_job_for_retry(vault, key, job, now, &error_code)?;
+                run.jobs_failed += 1;
+            }
+            for (key, _, job) in &withdrawn_due {
+                rewrite_withdrawn_job_for_retry(vault, key, job, now, &error_code)?;
                 run.jobs_failed += 1;
             }
         }

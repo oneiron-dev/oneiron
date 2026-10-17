@@ -53,6 +53,10 @@ impl Vault {
                 identity_ref,
                 actor_ref,
                 facet_ref,
+                participants: vec![AgentInboxParticipant {
+                    identity_ref,
+                    actor_ref,
+                }],
                 impact: InboxImpact(match row.state {
                     AttemptState::Failed | AttemptState::Paused | AttemptState::Abandoned => 100,
                     AttemptState::Completed | AttemptState::Cancelled => 0,
@@ -61,6 +65,7 @@ impl Vault {
                 occurred_at: event.received_at,
                 receipt_ref: None,
                 payload_ref: event.payload_ref,
+                concern: None,
             };
             // Retries retain one correlation. Current state/time breaks ties,
             // not physical queue-row order.
@@ -114,10 +119,15 @@ impl Vault {
                     identity_ref,
                     actor_ref,
                     facet_ref,
+                    participants: vec![AgentInboxParticipant {
+                        identity_ref,
+                        actor_ref,
+                    }],
                     impact: InboxImpact(0),
                     occurred_at: 0,
                     receipt_ref: None,
                     payload_ref: None,
+                    concern: None,
                 });
             }
         }

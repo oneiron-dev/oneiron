@@ -45,6 +45,9 @@ pub(super) struct PreparedOutboundDispatch {
     pub(super) step_binding: Option<crate::llm::StepEffectBinding>,
     pub(super) payload: Option<Vec<u8>>,
     pub(super) native_mail_recipient: bool,
+    /// A second actor the mutation speaks for, admitted beside the primary
+    /// (OF-427).
+    pub(super) co_actor: Option<crate::outbound_chokepoint::CoActorAdmission>,
 }
 impl PreparedOutboundDispatch {
     pub(super) fn prepare(
@@ -71,6 +74,22 @@ impl PreparedOutboundDispatch {
                     session_ref: session_ref.to_owned(),
                 },
             )));
+        }
+        // OF-123 act-now guard: a target the agent took from a saved mention
+        // waits until that mention is settled. A replayed task reads the
+        // mention's state again here.
+        if let Some(mention) = request.intent.mention.as_ref() {
+            let unsettled = {
+                let txn = vault.store.env.read_txn().map_err(Error::from)?;
+                crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+                    vault, &txn, mention,
+                )?
+            };
+            if let Some(name) = unsettled {
+                return Err(OutboundDispatchError::Engine(Error::Record(
+                    crate::error::RecordError::IdentityUnsettled { name },
+                )));
+            }
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
@@ -105,7 +124,7 @@ impl PreparedOutboundDispatch {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
             read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)?
         };
-        request.channel_identity_ref = resolve_dispatch_sender(
+        (request.channel_identity_ref, request.facet_ref) = resolve_dispatch_sender(
             vault,
             &request,
             replay
@@ -151,6 +170,7 @@ impl PreparedOutboundDispatch {
             step_binding,
             payload: None,
             native_mail_recipient,
+            co_actor: None,
         })
     }
     /// The same freeze and replay proof runs for every normal call and every
@@ -191,6 +211,8 @@ impl PreparedOutboundDispatch {
             requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
             policy_risk: self.policy_risk.as_str(),
             originating_session_ref: request.originating_session_ref.as_deref(),
+            reply_thread_ref: request.reply_thread_ref.as_deref(),
+            facet_ref: request.facet_ref.map(|id| id.to_hex()),
         })
         .map_err(|_| Error::InvariantViolation("outbound intent freeze failed"))?;
         if let Some(record) = self.replay.as_ref() {
@@ -239,6 +261,8 @@ impl PreparedOutboundDispatch {
 }
 /// Only an executable Pending retry needs the native sender live today.
 /// Parked Pending and terminal records remain readable without transport.
+/// A member mailbox (OF-374) shares the canonical mail binding, so its live
+/// send-capable row answers here too.
 pub(super) fn require_native_mail_retry_sender(
     vault: &Vault,
     request: &OutboundDispatchRequest,
@@ -253,6 +277,10 @@ pub(super) fn require_native_mail_retry_sender(
             &vault.store,
             &txn,
             sender,
+        )? && !crate::channel_identity_provider::member_mail::is_member_mail_sender_in_txn(
+            &vault.store,
+            &txn,
+            sender,
         )? {
             return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
         }
@@ -262,6 +290,8 @@ pub(super) fn require_native_mail_retry_sender(
 
 /// Bind one canonical native-mail recipient to gate, ledger and transport.
 /// The generic dispatch API must not bypass the adapter's target check.
+/// OF-374: a delegated member mailbox is bound the same way, so its per-send
+/// approval digest and replay proof are the canonical mail operation's.
 fn bind_native_mail_recipient(
     vault: &Vault,
     request: &mut OutboundDispatchRequest,
@@ -301,7 +331,21 @@ fn bind_native_mail_recipient(
         {
             return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
         }
-        structural
+        let member = crate::channel_identity_provider::member_mail::is_member_mail_identity_in_txn(
+            &vault.store,
+            &txn,
+            identity,
+        )?;
+        if member
+            && !crate::channel_identity_provider::member_mail::is_member_mail_sender_in_txn(
+                &vault.store,
+                &txn,
+                identity,
+            )?
+        {
+            return Err(Error::InvalidConfig("inactive member-mail sender".into()).into());
+        }
+        structural || member
     };
     if !native {
         return Ok(false);
@@ -320,34 +364,85 @@ pub(super) fn invalid_replay() -> OutboundDispatchError {
     ))
 }
 
+/// The sender identity and facet a send goes out as. A replay reads both
+/// from its frozen binding; a new send on a reply thread wears the thread's
+/// pin (OF-272); any other new send enriches by connector and actor.
 fn resolve_dispatch_sender(
     vault: &Vault,
     request: &OutboundDispatchRequest,
     replay_payload: Option<&[u8]>,
-) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
+) -> std::result::Result<(Option<EntityId>, Option<EntityId>), OutboundDispatchError> {
     if let Some(payload) = replay_payload {
         let frozen: serde_json::Value =
             serde_json::from_slice(payload).map_err(|_| invalid_replay())?;
-        let sender = match frozen.get("channel_identity_ref") {
-            Some(serde_json::Value::Null) => None,
-            Some(serde_json::Value::String(value)) => {
-                Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
-            }
-            _ => return Err(invalid_replay()),
-        };
-        if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
+        let sender = frozen_entity(frozen.get("channel_identity_ref"), true)?;
+        let facet = frozen_entity(frozen.get("facet_ref"), false)?;
+        if (request.channel_identity_ref.is_some() && request.channel_identity_ref != sender)
+            || (request.facet_ref.is_some() && request.facet_ref != facet)
+        {
             return Err(invalid_replay());
         }
-        Ok(sender)
-    } else {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        enrich_dispatch_channel_identity(
-            &vault.store,
-            &txn,
-            &request.intent.channel,
-            request.actor.actor_entity_ref.as_ref(),
-            request.channel_identity_ref,
-        )
-        .map_err(Into::into)
+        return Ok((sender, facet));
     }
+    let (requested, facet) = match request.reply_thread_ref.as_deref() {
+        Some(thread_ref) => match reply_thread_pin(vault, request, thread_ref)? {
+            Some(pin) => (Some(pin.identity_ref), pin.facet_ref),
+            None => (request.channel_identity_ref, request.facet_ref),
+        },
+        None => (request.channel_identity_ref, request.facet_ref),
+    };
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let sender = enrich_dispatch_channel_identity(
+        &vault.store,
+        &txn,
+        &request.intent.channel,
+        request.actor.actor_entity_ref.as_ref(),
+        requested,
+    )?;
+    Ok((sender, facet))
+}
+
+/// One frozen entity ref: a hex string, or null where `nullable` (the
+/// sender is frozen even when absent; an absent facet is elided).
+fn frozen_entity(
+    value: Option<&serde_json::Value>,
+    nullable: bool,
+) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
+    match value {
+        Some(serde_json::Value::String(value)) => Ok(Some(
+            EntityId::from_hex(value).map_err(|_| invalid_replay())?,
+        )),
+        Some(serde_json::Value::Null) if nullable => Ok(None),
+        None if !nullable => Ok(None),
+        _ => Err(invalid_replay()),
+    }
+}
+
+/// OF-272 reply selection: the thread's first passport pins who speaks on
+/// it. A reply from another actor, or one that names another identity or
+/// facet, is refused; the composer decides what to say about the pin.
+fn reply_thread_pin(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    thread_ref: &str,
+) -> std::result::Result<Option<crate::thread_passport::ThreadMask>, OutboundDispatchError> {
+    let pin = match vault.sticky_thread_mask(thread_ref, None)? {
+        crate::thread_passport::StickyMaskDecision::Keep(pin)
+        | crate::thread_passport::StickyMaskDecision::Conflict { pinned: pin, .. } => pin,
+        crate::thread_passport::StickyMaskDecision::Unset => return Ok(None),
+    };
+    if request.actor.actor_entity_ref != Some(pin.actor_ref)
+        || request
+            .channel_identity_ref
+            .is_some_and(|identity| identity != pin.identity_ref)
+        || request
+            .facet_ref
+            .is_some_and(|facet| Some(facet) != pin.facet_ref)
+    {
+        return Err(Error::InvalidConfig(
+            "the reply thread is pinned to another identity, facet or actor".to_owned(),
+        )
+        .into());
+    }
+    Ok(Some(pin))
 }

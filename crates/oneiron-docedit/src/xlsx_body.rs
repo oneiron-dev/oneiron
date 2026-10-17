@@ -13,6 +13,8 @@ use crate::ooxml::{
 };
 use crate::retained_opc::{self, Limits, Package};
 use crate::xlfn::{storage_form, ui_form};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 /// Excel's ceiling on one cell's text.
@@ -34,7 +36,7 @@ const ERRORS: &[&str] = &[
 ];
 
 /// A workbook as the body imports it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxBook {
     /// Serial days count from 1904-01-01 rather than 1900-01-01.
     pub date1904: bool,
@@ -45,7 +47,7 @@ pub struct XlsxBook {
     pub styles: Vec<XlsxStyle>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxSheet {
     pub name: String,
     /// Stored cells in row-major order.
@@ -55,7 +57,7 @@ pub struct XlsxSheet {
     pub locked: Vec<XlsxArea>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxCell {
     pub col: u32,
     pub row: u32,
@@ -69,7 +71,8 @@ pub struct XlsxCell {
     pub locked: Option<XlsxLock>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum XlsxValue {
     Blank,
     Number(f64),
@@ -79,7 +82,8 @@ pub enum XlsxValue {
     Error(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum XlsxLock {
     /// A shared formula's anchor or member: one text serves the whole range.
     SharedFormula,
@@ -98,7 +102,7 @@ pub enum XlsxLock {
 }
 
 /// A rectangular range, 1-based `(column, row)` corners.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxArea {
     pub first: (u32, u32),
     pub last: (u32, u32),
@@ -133,7 +137,7 @@ impl XlsxArea {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxName {
     pub name: String,
     /// The sheet a local name belongs to; `None` for a workbook name.
@@ -144,7 +148,7 @@ pub struct XlsxName {
     pub locked: Option<XlsxLock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct XlsxStyle {
     pub num_fmt: u32,
     /// The workbook's own format code; a built-in format id has none.
@@ -152,7 +156,8 @@ pub struct XlsxStyle {
 }
 
 /// One change a body makes to its imported workbook.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum XlsxChange {
     /// The cell's whole new state: a formula is written without a cached
     /// value; a blank cell without a format is removed.
@@ -262,8 +267,10 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             .ok_or(refused("no such worksheet"))?
             .clone();
         let (cells, areas) = book.sheet(&part)?;
-        let stored: BTreeMap<(u32, u32), &XlsxCell> =
-            cells.iter().map(|cell| ((cell.col, cell.row), cell)).collect();
+        let stored: BTreeMap<(u32, u32), &XlsxCell> = cells
+            .iter()
+            .map(|cell| ((cell.col, cell.row), cell))
+            .collect();
         for (row, line) in rows {
             for (col, change) in line {
                 let held = stored.get(&(*col, *row));
@@ -272,8 +279,15 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
                 {
                     return Err(refused("a change writes a read-only cell"));
                 }
-                let writes_formula = matches!(change, XlsxChange::Cell { formula: Some(_), .. });
-                dropped_formula |= held.is_some_and(|cell| cell.formula.is_some()) && !writes_formula;
+                let writes_formula = matches!(
+                    change,
+                    XlsxChange::Cell {
+                        formula: Some(_),
+                        ..
+                    }
+                );
+                dropped_formula |=
+                    held.is_some_and(|cell| cell.formula.is_some()) && !writes_formula;
             }
         }
         let bytes = rewrite_rows(&book.package, &part, rows)?;
@@ -314,16 +328,29 @@ pub fn mark_full_calc(bytes: &[u8], limits: Limits) -> Result<Vec<u8>> {
             None => {
                 let open = &source[node.span.start..node.open_end];
                 let end = node.open_end - if open.ends_with(b"/>") { 2 } else { 1 };
-                [&source[..end], &b" fullCalcOnLoad=\"1\""[..], &source[end..]].concat()
+                [
+                    &source[..end],
+                    &b" fullCalcOnLoad=\"1\""[..],
+                    &source[end..],
+                ]
+                .concat()
             }
         },
         None => {
             let at = insertion(
                 &tree,
-                &["sheets", "functionGroups", "externalReferences", "definedNames"],
+                &[
+                    "sheets",
+                    "functionGroups",
+                    "externalReferences",
+                    "definedNames",
+                ],
             )
             .ok_or(refused("the workbook has no sheet list"))?;
-            let element = format!("<{} fullCalcOnLoad=\"1\"/>", tree.nodes[0].child_name("calcPr"));
+            let element = format!(
+                "<{} fullCalcOnLoad=\"1\"/>",
+                tree.nodes[0].child_name("calcPr")
+            );
             [&source[..at], element.as_bytes(), &source[at..]].concat()
         }
     };
@@ -339,7 +366,9 @@ pub fn check_cell(value: &XlsxValue, formula: Option<&str>) -> Result<()> {
             || formula.starts_with('=')
             || formula.chars().count() > MAX_FORMULA_CHARS
     }) {
-        return Err(refused("a formula is 1 to 8,192 characters, without its `=`"));
+        return Err(refused(
+            "a formula is 1 to 8,192 characters, without its `=`",
+        ));
     }
     match value {
         XlsxValue::Number(number) if !number.is_finite() => Err(refused("a number must be finite")),
@@ -521,7 +550,9 @@ impl Book {
                 } else if node.attr("cm").is_some() {
                     locked.get_or_insert(XlsxLock::ArrayFormula);
                 }
-                let stored = tree.child(index, SML, "v")?.map(|(_, node)| node.text.clone());
+                let stored = tree
+                    .child(index, SML, "v")?
+                    .map(|(_, node)| node.text.clone());
                 let value = match (node.attr("t").unwrap_or("n"), stored) {
                     ("inlineStr", _) => match tree.child(index, SML, "is")? {
                         Some((item, _)) => XlsxValue::Text(string_item(&tree, item)),
@@ -599,7 +630,10 @@ impl Book {
             }
             if totals > 0 {
                 areas.push(XlsxArea {
-                    first: (range.first.0, (range.last.1 + 1).saturating_sub(totals).max(range.first.1)),
+                    first: (
+                        range.first.0,
+                        (range.last.1 + 1).saturating_sub(totals).max(range.first.1),
+                    ),
                     ..range
                 });
             }
@@ -649,7 +683,10 @@ impl Book {
                 XlsxChange::DeleteName { name, sheet } => (name, sheet, None),
                 XlsxChange::Cell { .. } => continue,
             };
-            let key = (name.to_lowercase(), local_sheet(&self.order, sheet.as_deref())?);
+            let key = (
+                name.to_lowercase(),
+                local_sheet(&self.order, sheet.as_deref())?,
+            );
             if pending.iter().any(|(held, _)| *held == key) {
                 return Err(refused("two changes write one name"));
             }
@@ -666,7 +703,10 @@ impl Book {
                 let local = node
                     .attr("localSheetId")
                     .and_then(|at| at.trim().parse::<usize>().ok());
-                match pending.iter().position(|(key, _)| key.0 == name && key.1 == local) {
+                match pending
+                    .iter()
+                    .position(|(key, _)| key.0 == name && key.1 == local)
+                {
                     Some(at) => {
                         if name.starts_with("_xlnm.") {
                             return Err(refused("a built-in name is read-only"));

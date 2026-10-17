@@ -18,6 +18,9 @@ pub(super) const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 
 const TERMINAL_OUTPUT_SUFFIX: &str = ".terminal.json";
 
+/// Between a resumed reply's step and the wait it names.
+const RESUMED_OUTPUT_INFIX: &str = ".resumed.";
+
 /// ONE-1686: the trailing-plaintext fallback's durable emission marker. A
 /// SIBLING suffix of the terminal marker, never the same one:
 /// `is_terminal_output_path` must not read it as a terminal status.
@@ -109,7 +112,7 @@ impl std::io::Write for ByteCount {
 /// A verb answer whose JSON is longer than this is stored as a body of the
 /// run, and the guest and the replay row get its handle: no reply passes one
 /// message, and no answer is refused for its size.
-pub(super) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
+pub(crate) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
 
 /// The guest's read path for a stored result body; `<path>/chunk/<offset>`
 /// reads up to [`RECOVERABLE_OUTPUT_CHUNK_BYTES`] from `offset`.
@@ -126,7 +129,7 @@ pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
 /// size, kind, completion and preview, and where to read it.
-pub(super) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
+pub(crate) fn result_handle_json(output: &CodeRunRawOutput) -> serde_json::Value {
     json!({
         "handle": output.handle,
         "bytes": output.raw_len,
@@ -268,13 +271,16 @@ pub(super) fn record_text_output(
     record_output(storage, record, path, text.as_bytes())
 }
 
-/// Whether `output`'s body may enter model context as it stands: a body
-/// the secret scan marked, or one under live or stale taint, never does.
-pub(super) fn clean_for_context(
+/// Whether the occurrence of `output` that run `owner` holds may enter
+/// model context as it stands: one the secret scan marked, or one under
+/// live or stale taint, never does. A context output has no `owner`, and is
+/// read as its bytes are.
+pub(crate) fn clean_for_context(
     storage: &ExecutorStorage<'_>,
+    owner: Option<EntityId>,
     output: &CodeRunRawOutput,
 ) -> Result<bool> {
-    Ok(!storage.code_run_result_taint(output)?.0.is_tainted())
+    Ok(!storage.code_run_result_taint(owner, output)?.0.is_tainted())
 }
 
 /// A text output as model context reads it: its body, or the withheld mark
@@ -289,7 +295,7 @@ pub(super) fn load_context_output(
         .iter()
         .find(|output| output.path == path)
         .ok_or(Error::CorruptedIndex("executor replay output path"))?;
-    if !clean_for_context(storage, output)? {
+    if !clean_for_context(storage, Some(record.run_id), output)? {
         return Ok(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
     }
     load_utf8_output(storage, record, path)
@@ -353,7 +359,7 @@ pub(super) fn load_observation_window(
         .iter()
         .find(|output| output.path == path)
         .ok_or(Error::CorruptedIndex("executor replay output path"))?;
-    if !clean_for_context(storage, output)? {
+    if !clean_for_context(storage, Some(record.run_id), output)? {
         return Ok(CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
     }
     if output.raw_len <= cap as u64 {
@@ -446,8 +452,9 @@ pub(super) fn store_result_output_path(digest: &[u8; 32]) -> String {
 }
 
 /// Whether `path` names a result of the run the guest may read back: a
-/// stored bridge result or a stored value.
-pub(super) fn is_result_output_path(path: &str) -> bool {
+/// stored bridge result, a stored value, or the reply a parked call resumed
+/// with.
+pub(crate) fn is_result_output_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
         return false;
     };
@@ -456,6 +463,33 @@ pub(super) fn is_result_output_path(path: &str) -> bool {
         || rest
             .strip_prefix("/store/")
             .is_some_and(|rest| rest.ends_with(".result"))
+        || resumed_output_wait(path).is_some()
+}
+
+/// The reply the wait step `seq` parked on was answered with, published when
+/// the run resumed from it: the result of the step's parked call. The path
+/// names the wait, so the record alone counts the run's resumes from one.
+pub(super) fn resumed_output_path(seq: u64, wait_id: EntityId) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/{seq:06}{RESUMED_OUTPUT_INFIX}{}.json",
+        wait_id.to_hex()
+    )
+}
+
+/// The step and the wait (lower-case hex) a resumed reply's path names.
+pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
+    let rest = path.strip_prefix(SCRIPT_OUTPUT_DIR)?.strip_prefix('/')?;
+    let (seq, rest) = rest.split_once(RESUMED_OUTPUT_INFIX)?;
+    let wait = rest.strip_suffix(".json")?;
+    let digits = !seq.is_empty() && seq.bytes().all(|byte| byte.is_ascii_digit());
+    let hex = wait.len() == 32
+        && wait
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !(digits && hex) {
+        return None;
+    }
+    Some((seq.parse().ok()?, wait))
 }
 
 pub(super) fn script_output_path(seq: u64) -> String {
@@ -480,16 +514,19 @@ pub(super) fn terminal_output_path(seq: u64) -> String {
 }
 
 pub(super) fn is_terminal_output_path(path: &str) -> bool {
-    let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
-        return false;
-    };
-    let Some(rest) = rest.strip_prefix('/') else {
-        return false;
-    };
-    let Some(seq) = rest.strip_suffix(TERMINAL_OUTPUT_SUFFIX) else {
-        return false;
-    };
-    !seq.is_empty() && seq.bytes().all(|byte| byte.is_ascii_digit())
+    terminal_output_seq(path).is_some()
+}
+
+/// The step a terminal marker's path names.
+pub(super) fn terminal_output_seq(path: &str) -> Option<u64> {
+    let seq = path
+        .strip_prefix(SCRIPT_OUTPUT_DIR)?
+        .strip_prefix('/')?
+        .strip_suffix(TERMINAL_OUTPUT_SUFFIX)?;
+    if seq.is_empty() || !seq.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    seq.parse().ok()
 }
 
 fn runtime_output_path(seq: u64, index: usize, path: &str) -> String {

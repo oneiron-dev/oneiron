@@ -20,6 +20,7 @@ mod content;
 #[cfg(feature = "sync")]
 mod content_window;
 mod doors;
+mod kit;
 mod machine;
 mod pads;
 mod reassert;
@@ -40,10 +41,16 @@ pub use self::content::{
     OpenedSealedContent, SEALED_RETENTION_SECS, SealedContentBinding, SealedContentId,
     SealedContentKind, SealedResidenceContent,
 };
+#[cfg(feature = "sync")]
+pub use self::content_window::SealedTake;
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
-pub use self::machine::{machine_encryption_key, machine_secret};
+pub use self::kit::{
+    ConfirmedWorldKit, IssuedWorldKit, StoredCost, StoredKit, WORLD_KIT_ESCROW, WorldKitRestore,
+    WorldKitStatus,
+};
 pub(crate) use self::machine::{keystore_error, slot_seed};
+pub use self::machine::{machine_encryption_key, machine_secret};
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
     destroy_world_keys_in_txn, late_pad_in_txn, pad_body_world, validate_pad_put_in_txn,
@@ -57,12 +64,16 @@ pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::WorldKeySession;
 pub use self::state::{WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
-pub use self::vault_key::{VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind};
+pub use self::vault_key::{
+    NewVaultKeyWrap, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo,
+    VaultKeyWrapKind, escrow_recipient, passkey_prf_input,
+};
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;
 pub use oneiron_authority::authority::{
     FIRST_GENERATION, PolicyRevision, WORLD_KEY_EPOCH, WorldKeyId, WrapRecipient,
 };
+pub use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 
 use zeroize::Zeroizing;
 

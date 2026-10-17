@@ -278,10 +278,10 @@ pub struct HeldOutReplayCase<'a> {
 
 /// Host replay data and the Coach's configured typed-decision path.
 /// Replay and pair sampling are evidence preparation, not judge callbacks.
-/// Judgment scores, blind preferences, audits and tradeoffs all run on that
-/// path. Independent honesty findings are supplied by the replay auditor.
-/// The archive coverage floor is computed from engine-owned evidence.
-pub trait HeldOutReplayScorer {
+/// Judgment scores, blind preferences, audits, honesty findings and tradeoffs
+/// all run on that path; nothing here returns a verdict. The archive coverage
+/// floor is computed from engine-owned evidence, and person-time is metered.
+pub trait HeldOutReplayNotes {
     fn judge_revision(&self) -> &str;
 
     fn decisions(&self) -> crate::skill_optimize::SkillOptimizeDecisions<'_>;
@@ -307,15 +307,18 @@ pub trait HeldOutReplayScorer {
         state: &serde_json::Value,
     ) -> Result<()>;
 
-    /// Independently examine every objective of every held-out replay for
-    /// hidden flaws. Raw confession and judge agreement are not findings. The
-    /// host's auditor uses the existing scoring Grant and budget; there is no
-    /// optimistic default for a host that cannot perform the examination.
-    fn replay_honesty(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-    ) -> Result<Vec<HonestyReplayObservation>> {
-        Err(invalid("no held-out honesty auditor is registered"))
+    /// Every held-out replay with every objective its run took on, in
+    /// receipt order. The decision path asks about each objective's hidden
+    /// flaw on its own; raw confession and judge agreement are not findings.
+    /// There is no optimistic default for a host that cannot supply them.
+    fn honesty_replays(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+        Err(invalid("no held-out honesty replays are supplied"))
+    }
+
+    /// The person-time metered on these receipts, in minutes: an observed
+    /// cost (lower is better), never a model's estimate or quality score.
+    fn human_minutes(&self, _case: &HeldOutReplayCase<'_>) -> Result<f64> {
+        Err(invalid("no person-time is recorded on these receipts"))
     }
 
     /// Engine-projected coverage evidence, not a host-supplied scalar score.
@@ -351,10 +354,10 @@ pub fn skill_edit_score_call_purpose() -> CallPurpose {
 /// it holds a proposal id and a vault, not a policy object.
 ///
 /// Unset is FAIL-CLOSED and stays that way. There is deliberately no in-engine
-/// default (see [`HeldOutReplayScorer`]): a vault with no registered judge
+/// default (see [`HeldOutReplayNotes`]): a vault with no registered judge
 /// cannot gate an edit, which is the correct answer, not an outage to paper
 /// over with a computed scalar.
-pub static HELD_OUT_REPLAY_SCORER: OnceLock<&'static (dyn HeldOutReplayScorer + Send + Sync)> =
+pub static HELD_OUT_REPLAY_SCORER: OnceLock<&'static (dyn HeldOutReplayNotes + Send + Sync)> =
     OnceLock::new();
 
 /// Registers the host's replay judge.
@@ -369,14 +372,14 @@ pub static HELD_OUT_REPLAY_SCORER: OnceLock<&'static (dyn HeldOutReplayScorer + 
 /// a second registration cannot silently retire the judge earlier verdicts were
 /// ruled by.
 pub fn register_held_out_replay_scorer(
-    scorer: &'static (dyn HeldOutReplayScorer + Send + Sync),
+    scorer: &'static (dyn HeldOutReplayNotes + Send + Sync),
 ) -> std::result::Result<(), &'static str> {
     HELD_OUT_REPLAY_SCORER
         .set(scorer)
         .map_err(|_| "a held-out replay scorer is already registered")
 }
 
-pub(super) fn host_replay_scorer() -> Result<&'static (dyn HeldOutReplayScorer + Send + Sync)> {
+pub(super) fn host_replay_scorer() -> Result<&'static (dyn HeldOutReplayNotes + Send + Sync)> {
     HELD_OUT_REPLAY_SCORER.get().copied().ok_or(invalid(
         "no held-out replay scorer is registered; the gate has no in-engine default",
     ))

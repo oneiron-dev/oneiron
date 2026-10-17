@@ -362,8 +362,32 @@ async fn export(
 ) -> Result<Response<Body>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
+    // Keys in a file reach the owner only; every other reader gets them
+    // masked (OF-560).
+    let sight = if auth.is_owner_grade() && auth.actor_class() != Some("agent") {
+        oneiron::secret_custody::SecretSight::Owner
+    } else {
+        oneiron::secret_custody::SecretSight::Masked
+    };
+    // Who took the copy, for its travel receipt: the bound principal, else
+    // the vault owner an owner-grade secret speaks for.
+    let bound = auth
+        .principal_ref()
+        .map(|s| parse_entity_id_param(s, "principal_ref"))
+        .transpose()?;
+    let owner_grade = auth.is_owner_grade();
     let file = blocking("artifact export failed", move || {
-        server.vault().export_blob_artifact(&id, version)
+        let vault = server.vault();
+        let file = vault.export_blob_artifact_as(&id, version, sight)?;
+        let by = bound.or_else(|| {
+            owner_grade
+                .then(|| vault.ensure_embedded_owner_actor().ok())
+                .flatten()
+        });
+        if let (Some(file), Some(by)) = (&file, by) {
+            vault.record_blob_artifact_download(file, &by)?;
+        }
+        Ok(file)
     })
     .await?
     .ok_or_else(|| ApiError::not_found("artifact version", Some(artifact.as_str())))?;

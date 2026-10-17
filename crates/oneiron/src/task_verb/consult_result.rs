@@ -156,12 +156,23 @@ pub(super) struct TaskVerbBody {
     pub(super) state: Option<TaskExecutionState>,
     pub(super) provenance: Value,
     pub(super) created_at: u64,
+    /// OF-543 ONE TASK TYPE stamp placed at creation. `None` only on rows
+    /// written before OF-543, where it reads as the seeded root.
+    pub(super) type_ref: Option<crate::task_type::TaskTypeRef>,
     /// The assignee's one self-refusal (OF-533), written once by
     /// `Memory::land_task_refusal`. Absent on every task she did not refuse.
     pub(super) refusal: Option<super::refusal::TaskRefusalRecord>,
     /// OF-220: the typed brief and its revision. Engine-internal minters
     /// (consult, reconciliation) carry none.
     pub(super) brief: Option<super::brief::StoredBrief>,
+    /// OF-389: the subproject this TASK wraps, written once by
+    /// `Memory::spawn_task_subproject`. The parent still sees this one task;
+    /// the child PROJECT names it back as its `wrapper_task`.
+    pub(super) subproject_ref: Option<EntityId>,
+    /// OF-540: the team run this TASK was created in, frozen at its route
+    /// for an external taker. It rides the synced TASK, so a peer's accept
+    /// freezes it into its try; `None` is no team run.
+    pub(super) team: Option<crate::agent_dispatch::TeamRunStamp>,
 }
 
 impl TaskVerbBody {
@@ -171,6 +182,11 @@ impl TaskVerbBody {
             Some(kind) => kind,
             None => TaskKind::Standard,
         }
+    }
+
+    /// The OF-543 stamp on this body; pre-OF-543 rows read as the root.
+    pub(super) fn resolved_type_ref(&self) -> crate::task_type::TaskTypeRef {
+        self.type_ref.clone().unwrap_or_default()
     }
 
     pub(super) const fn terminal(&self) -> Option<&TaskTerminalRecord> {

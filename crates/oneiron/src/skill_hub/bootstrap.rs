@@ -7,7 +7,8 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::derived_domains::BOOTSTRAP_SKILL;
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Raw, SideTable};
-use crate::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord};
+use crate::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord, SkillRole};
+use crate::team::{PatternSkill, TeamAxis, TeamPattern};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
@@ -35,7 +36,7 @@ impl Vault {
 /// Marker (engine version string) that the built-in bootstrap skill set has
 /// been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
-const FILES: [(&str, &str); 6] = [
+const FILES: [(&str, &str); 13] = [
     (
         "skill-optimize",
         include_str!("../../../../skills/skill-optimize/SKILL.md"),
@@ -44,6 +45,10 @@ const FILES: [(&str, &str); 6] = [
     (
         "goal-intake",
         include_str!("../../../../skills/goal-intake/SKILL.md"),
+    ),
+    (
+        "project-proposal",
+        include_str!("../../../../skills/project-proposal/SKILL.md"),
     ),
     ("wake", include_str!("../../../../skills/wake/SKILL.md")),
     (
@@ -54,7 +59,104 @@ const FILES: [(&str, &str); 6] = [
         "team-lead",
         include_str!("../../../../skills/team-lead/SKILL.md"),
     ),
+    (
+        "weave-report",
+        include_str!("../../../../skills/weave-report/SKILL.md"),
+    ),
+    (
+        "team-ceo-decides",
+        include_str!("../../../../skills/team-ceo-decides/SKILL.md"),
+    ),
+    (
+        "team-committee",
+        include_str!("../../../../skills/team-committee/SKILL.md"),
+    ),
+    (
+        "team-vote",
+        include_str!("../../../../skills/team-vote/SKILL.md"),
+    ),
+    (
+        "team-market",
+        include_str!("../../../../skills/team-market/SKILL.md"),
+    ),
+    (
+        "team-rotation",
+        include_str!("../../../../skills/team-rotation/SKILL.md"),
+    ),
 ];
+
+/// The shipped coordination pattern skills (OF-540), each bound to the
+/// pattern it teaches: its default setting, the `works well for` line from
+/// ARCH-0079's pattern table, and the seed task types that line names. A
+/// bound pattern skill is what the live planner offers as a team.
+const PATTERNS: [(&str, TeamPattern, TeamAxis, &str, &[&str]); 5] = [
+    (
+        "team-ceo-decides",
+        TeamPattern::CeoDecides,
+        TeamAxis::Converge,
+        "most work; work with independent advice streams",
+        &[],
+    ),
+    (
+        "team-committee",
+        TeamPattern::Committee,
+        TeamAxis::Converge,
+        "researching what exists; refining",
+        &["research", "refine"],
+    ),
+    (
+        "team-vote",
+        TeamPattern::Vote,
+        TeamAxis::Converge,
+        "judging between finished options",
+        &["judge"],
+    ),
+    (
+        "team-market",
+        TeamPattern::Market,
+        TeamAxis::Converge,
+        "checkable work at width: tests, holdouts, a pinned judge",
+        &[],
+    ),
+    (
+        "team-rotation",
+        TeamPattern::Rotation,
+        TeamAxis::Diverge,
+        "reframing, negotiation, open questions",
+        &["negotiate"],
+    ),
+];
+
+/// The binding for `name` when it is a shipped pattern skill, at `skill`.
+fn pattern_binding(name: &str, skill: EntityId) -> Option<PatternSkill> {
+    PATTERNS
+        .iter()
+        .find(|(pattern_name, ..)| *pattern_name == name)
+        .map(|(_, pattern, axis, line, types)| PatternSkill {
+            skill,
+            pattern: *pattern,
+            default_axis: *axis,
+            works_well_for: (*line).to_owned(),
+            works_well_for_types: types.iter().map(|node| (*node).to_owned()).collect(),
+            at: 0,
+        })
+}
+
+/// Binds `skill` when `name` is a shipped pattern skill, in the caller's
+/// write transaction, on the seeded tree.
+fn bind_shipped_pattern_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    name: &str,
+    skill: EntityId,
+) -> Result<()> {
+    let Some(binding) = pattern_binding(name, skill) else {
+        return Ok(());
+    };
+    let tree_version = u32::try_from(crate::task_type::SEEDED_TREE_VERSION)
+        .map_err(|_| Error::InvariantViolation("seeded task-type tree version"))?;
+    crate::team::pattern::bind_pattern_skill_in_txn(vault, txn, &binding, tree_version)
+}
 
 fn stable_id(name: &str) -> Result<EntityId> {
     EntityId::derive(BOOTSTRAP_SKILL, &[name.as_bytes()])
@@ -103,21 +205,39 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
     )
     .with_governance_tier(SkillGovernanceTier::Standard)
     .with_role(
-        if name == "team-lead" {
-            crate::skill::SkillRole::Workflow
+        // The CEO starter, the team-shape planner and the coordination
+        // patterns are workflows: the leader path loads only workflows.
+        if name == "team-lead"
+            || name == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME
+            || PATTERNS
+                .iter()
+                .any(|(pattern_name, ..)| *pattern_name == name)
+        {
+            SkillRole::Workflow
         } else {
-            crate::skill::SkillRole::Knowledge
+            SkillRole::Knowledge
         },
         None,
     );
+    let mut files = vec![HubFile::new("SKILL.md", markdown.as_bytes())];
+    // The vault task-type tree lives in the team-shape skill (ARCH-0079): it
+    // ships as the seeded tree, and receipts fork it from there.
+    if name == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME {
+        let tree =
+            serde_json::to_vec_pretty(&crate::task_type::TaskTypeTree::seeded()).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidSkillBody(
+                    "seeded task-type tree does not encode",
+                ))
+            })?;
+        files.push(HubFile::new(
+            crate::agent_dispatch::TASK_TYPE_TREE_FILE,
+            tree,
+        ));
+    }
     // Native format: the shipped markdown carries no versioned folder
     // frontmatter (version rides the record), so the folder parser must not be
     // asked to re-derive the record from it on export/import round trips.
-    let mut package = HubPackage::new(
-        record,
-        vec![HubFile::new("SKILL.md", markdown.as_bytes())],
-        SkillCapabilitySurface::default(),
-    );
+    let mut package = HubPackage::new(record, files, SkillCapabilitySurface::default());
     package.format = super::SkillPackageFormat::Native;
     Ok(package)
 }
@@ -187,6 +307,9 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
             let proof = HubAdmissionProof::bootstrap(id, &data);
             vault.admit_hub_skill_record_in_txn(&mut wtxn, occurred, 0, data, proof)?;
         }
+        // A pattern skill is a team the planner can offer only once bound
+        // (OF-540), in the transaction that admitted it.
+        bind_shipped_pattern_in_txn(vault, &mut wtxn, name, id)?;
     }
     SEEDED.put(
         &vault.store,
@@ -281,9 +404,12 @@ impl Vault {
                 continue;
             }
             let id = self.store.clock.entity_id()?;
-            self.restore_default_skill_in_txn(
+            let restored_id = self.restore_default_skill_in_txn(
                 &mut txn, owner, &source, &package, id, occurred, learned_at,
             )?;
+            // A restored pattern stays a Candidate the planner skips until
+            // admitted, but it is bound under its fresh id.
+            bind_shipped_pattern_in_txn(self, &mut txn, name, restored_id)?;
             restored.push(id);
         }
         txn.commit()?;

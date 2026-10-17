@@ -37,6 +37,8 @@ The build emits:
 - `quickjs-first-party.wasm`: all 15 typed imports;
 
 - `quickjs-foreign.wasm`: only the six non-write imports;
+- `quickjs-hook.wasm`: the hook guest (below), world `oneiron:hook/hook@1.0.0`
+  from `crates/oneiron/wit/hook/hook.wit`, with its own three imports;
 - `manifest.json`: source, WIT, toolchain and artifact pins.
 
 The foreign WIT file is a generated import projection of the same world, not
@@ -44,10 +46,10 @@ another protocol. `run-step` and every record/variant stay byte-identical.
 Do not install the first-party artifact in a foreign VM. The foreign linker
 refuses it before guest code runs.
 
-The checked-in `components/code-run-quickjs/artifacts/` contains both component
+The checked-in `components/code-run-quickjs/artifacts/` contains the three component
 files, the emitted manifest and upstream LICENSE. A second controlled build in
 a different output directory produced byte-identical component SHA-256 values.
-For each source change, rebuild and replace all four files together.
+For each source change, rebuild and replace all five files together.
 Review the binary SHA-256 values. Deploy those exact bytes and pass their pin
 to `QuickJsRuntimeFactory::from_component`. The loader rejects WAT, wrong pins,
 wrong exports/imports and a failed real-JS readiness probe. There is no fallback.
@@ -103,6 +105,36 @@ code, never prose, and so does the bridge's own argument check
 The interpreter has its own 24 MiB tracked heap and instruction-interrupt cap.
 Wasmtime adds bounded fuel, linear memory, stack, wall time and host-call counts.
 The host refuses any first-party proposal rather than silently committing it.
+
+## Hook guest
+
+`quickjs-hook.wasm` runs a hook body (`hook_guest.c`, `hook_bootstrap.js`), not
+a code-mode step. Its world imports only `scoped-read`, `ai-verdict` and
+`emit-outcome` and exports `run-hook(source, input-json)`. None of the code-mode SDK is linked:
+no files, credentials, verbs, asks, clock or random, and no WASI.
+
+The body is plain JS run as an async function body. `input` is the parsed,
+frozen input JSON. `await oneiron.read(request)` sends the request as JSON
+through `scoped-read` and resolves to the parsed answer; a host refusal
+rejects with its code. `await ai.verdict(request)` sends an `ai.verdict`
+input through `ai-verdict` the same way. The host answers it only for a fact
+hook that declares `render_class: generative`; any other body's call is
+refused. The body returns its one outcome or calls
+`oneiron.emit(outcome)` once. Returning nothing without an emit is
+`{"kind":"nothing"}`. A second outcome is refused. `Date` reads `input.now`
+(Unix ms, UTC), and `Math.random` throws `hook_has_no_random`. The guest
+keeps the code-mode 24 MiB JS heap, 256 KiB JS stack and interrupt cap.
+
+The host is `oneiron::runtime_hooks::sandbox::HookSandbox` (feature
+`code-sandbox-wasmtime`). `HookSandbox::from_component(bytes, blake3_pin)`
+checks the pin, refuses any import outside the three, checks the `run-hook`
+export and runs a real-JS readiness probe. `hook_component_bytes()` returns
+the checked-in artifact and its BLAKE3 pin, `HOOK_COMPONENT_BLAKE3`, which
+must be replaced along with the artifact. Each `run_hook` gets a fresh Store
+under the code-mode fuel, memory, stack, host-call and message limits. The
+deadline is the hook's `budget_ms`, and it covers start-up and reads. Every
+read and verdict debits the host-call budget. A read request may carry 4 KiB,
+a verdict request 64 KiB, and an answer 256 KiB.
 
 ## Production MCP binding
 

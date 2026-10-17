@@ -1,6 +1,6 @@
 //! Narrow value and text edits in place (ARCH-0077, "Edit in place with
-//! passthrough"): `set_text`, `replace_run_text`, `set_xfrm`,
-//! `move_in_slide_space`, `set_picture` and `set_notes`.
+//! passthrough"): `set_text`, `replace_run_text`, `set_run_props`,
+//! `set_xfrm`, `move_in_slide_space`, `set_picture` and `set_notes`.
 //!
 //! One edit is one checked operation on a copy of the package. Each verb
 //! derives its own allowed part set and its declared elements; the copy lands
@@ -22,7 +22,7 @@ pub mod transaction;
 mod xfrm;
 pub(crate) mod xml;
 
-pub use structure::{NewShape, Preset, StructureEdit, StructureReport, structure_patch};
+pub use structure::{NewGroup, NewShape, Preset, StructureEdit, StructureReport, structure_patch};
 pub use transaction::{
     AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
     PartChange, StepRefusal, TransactionError, run_transaction,
@@ -43,7 +43,7 @@ pub struct Target<'a> {
     pub expected: [u8; 32],
 }
 
-/// The six value and text verbs.
+/// The seven value and text verbs.
 #[derive(Debug, Clone, Copy)]
 pub enum ValueEdit<'a> {
     /// The whole text body: `\n` separates paragraphs and U+000B is an
@@ -58,6 +58,16 @@ pub enum ValueEdit<'a> {
         run: usize,
         expected: &'a str,
         text: &'a str,
+    },
+    /// Run properties over characters `range` of one paragraph, counted over
+    /// its runs and fields as [`DeckView`] reads them; `expected` is that
+    /// paragraph's text. Partly covered runs are split at the range's edges.
+    SetRunProps {
+        target: Target<'a>,
+        paragraph: usize,
+        range: (usize, usize),
+        expected: &'a str,
+        props: RunProps<'a>,
     },
     /// Local transform properties; only the declared ones are written.
     SetXfrm { target: Target<'a>, xfrm: Xfrm },
@@ -88,6 +98,17 @@ pub struct Xfrm {
     pub rotation: Option<i64>,
     pub flip_h: Option<bool>,
     pub flip_v: Option<bool>,
+}
+
+/// Declared run properties (`a:rPr`); only the declared ones are written.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunProps<'a> {
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    /// Hundredths of a point.
+    pub size: Option<u32>,
+    /// `a:latin/@typeface`, as written (`+mn-lt` stays a theme reference).
+    pub latin: Option<&'a str>,
 }
 
 /// A raster asset for `set_picture`, admitted by the ONE-2534 asset checks.
@@ -139,6 +160,11 @@ pub enum Effect {
     CommentsOmitted { relationship: String },
     /// A custom show that lists the source and is not given the copy.
     NotInCustomShow { show: String },
+    /// A slide left the slide list; its part stays, unreachable.
+    SlideRemoved { part: String, sld_id: u32 },
+    /// One native id of a copied shape (or member) and the id its copy
+    /// holds on the destination slide.
+    ShapeCopied { from: u32, id: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -237,6 +263,17 @@ pub fn edit(deck: &mut Package, op: &ValueEdit<'_>) -> Result<EditReport, EditRe
             let (index, shape) = locate(&before, &target)?;
             let at = (paragraph, run);
             text::replace_run_text(&mut next, &before.slides[index], shape, at, expected, text)?
+        }
+        ValueEdit::SetRunProps {
+            target,
+            paragraph,
+            range,
+            expected,
+            props,
+        } => {
+            let (index, shape) = locate(&before, &target)?;
+            let slide = &before.slides[index];
+            text::set_run_props(&mut next, slide, shape, paragraph, range, expected, &props)?
         }
         ValueEdit::SetXfrm { target, xfrm } => {
             let (index, shape) = locate(&before, &target)?;

@@ -117,6 +117,34 @@ pub struct ServeArgs {
     #[arg(long = "keystore-dir")]
     pub keystore_dir: Option<PathBuf>,
 
+    /// Managed mode: the node's managed escrow recipient, an absolute path to
+    /// the file the node's operator installed it in, holding its hybrid
+    /// public key's bytes. The vault seals its data key to it at start
+    /// (CROSS-ARCH-0022 #ov-custody).
+    #[arg(long = "escrow-recipient-file")]
+    pub escrow_recipient_file: Option<PathBuf>,
+
+    /// Managed mode: the owner-held offline break-glass recipient, an
+    /// absolute path to the file holding its hybrid public key's bytes. The
+    /// vault seals its data key to it at start, beside the managed one.
+    #[arg(long = "break-glass-recipient-file")]
+    pub break_glass_recipient_file: Option<PathBuf>,
+
+    /// Managed mode: the directory the vault spools its escrow capsules to,
+    /// an absolute path the supervisor chose and ships from. The node
+    /// removes each report only after the registry's durable acknowledgement
+    /// (CROSS-ARCH-0022 #ov-custody, invariant 03;
+    /// `oneiron_vault_contract::escrow`).
+    #[arg(long = "escrow-outbox-dir")]
+    pub escrow_outbox_dir: Option<PathBuf>,
+
+    /// Managed mode: the unix socket the vault's artifact origin listens on,
+    /// an absolute path the supervisor chose and routes `<vault>.<domain>` to
+    /// (`oneiron_vault_contract::artifact_origin`). Without it a managed vault
+    /// serves `/a/` on its API socket alone.
+    #[arg(long = "artifact-http-socket")]
+    pub artifact_http_socket: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -321,6 +349,11 @@ pub struct ServeArgs {
     /// `relay` and `self-host`.
     #[arg(long)]
     pub hosted_kms_key_ref: Option<String>,
+
+    /// Start no fact-hook runner for this run: the clean baseline
+    /// (ARCH-0080 §10).
+    #[arg(long = "no-hooks")]
+    pub no_hooks: bool,
 }
 
 impl fmt::Debug for ServeArgs {
@@ -341,6 +374,13 @@ impl fmt::Debug for ServeArgs {
             .field("credentials_fd", &self.credentials_fd)
             .field("vsock_guest", &self.vsock_guest)
             .field("keystore_dir", &self.keystore_dir)
+            .field("escrow_recipient_file", &self.escrow_recipient_file)
+            .field(
+                "break_glass_recipient_file",
+                &self.break_glass_recipient_file,
+            )
+            .field("escrow_outbox_dir", &self.escrow_outbox_dir)
+            .field("artifact_http_socket", &self.artifact_http_socket)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)
@@ -414,6 +454,7 @@ impl fmt::Debug for ServeArgs {
                 "hosted_kms_key_ref",
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
+            .field("no_hooks", &self.no_hooks)
             .finish()
     }
 }

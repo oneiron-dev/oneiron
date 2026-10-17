@@ -17,14 +17,15 @@
 
 use super::listener::bind_unix_socket;
 use super::vault_gates::read_managed_credentials;
+use super::vm_schedule::VmWakeSchedule;
 use oneiron_vault_contract::vm::{
-    MAX_VM_FRAME, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT, VM_LEDGER_PORT,
-    VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame, guest_initiated_socket,
-    host_connect_line,
+    MAX_VM_FRAME, VM_ARTIFACT_PORT, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT,
+    VM_LEDGER_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame,
+    guest_initiated_socket, host_connect_line,
 };
 use oneiron_vault_contract::{
     CREDENTIALS_LEN, Credentials, CtlRequest, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
-    MAX_CTL_LINE, READY_BYTE, Schedule, TokenHex, UnixTs, WakeEntry, now_ts, valid_vault_name,
+    MAX_CTL_LINE, READY_BYTE, TokenHex, UnixTs, now_ts, valid_vault_name,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -66,6 +67,16 @@ pub struct VaultVmConfig {
     pub mem_mib: u32,
     #[serde(default = "default_boot_args")]
     pub boot_args: String,
+    /// External web client origins, passed to the guest's managed HTTP app.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// Whether the guest serves an artifact origin, reached on
+    /// [`VM_ARTIFACT_PORT`] (OF-356).
+    #[serde(default)]
+    pub artifact_origin: bool,
+    /// The domains that origin answers under (`<vault>.<domain>`).
+    #[serde(default)]
+    pub artifact_domains: Vec<String>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -94,6 +105,7 @@ pub struct VaultVm {
     boot: UnixListener,
     child: Option<tokio::process::Child>,
     lifecycle: Option<Lifecycle>,
+    schedule: VmWakeSchedule,
 }
 
 impl VaultVm {
@@ -101,8 +113,10 @@ impl VaultVm {
     /// before any VMM runs, so a guest never dials an unbound port.
     pub fn prepare(config: VaultVmConfig, vault: String) -> anyhow::Result<Self> {
         anyhow::ensure!(valid_vault_name(&vault), "invalid vault name");
+        crate::web_client::parse_allowed_origins(&config.allowed_origins)?;
         std::fs::create_dir_all(&config.state_dir)?;
         std::fs::set_permissions(&config.state_dir, std::fs::Permissions::from_mode(0o700))?;
+        let schedule = VmWakeSchedule::load(config.state_dir.join("wake-ledger.json"), &vault)?;
         let vsock = config.state_dir.join("vsock.sock");
         let boot = bind_unix_socket(&guest_initiated_socket(&vsock, VM_BOOT_PORT))?;
         Ok(Self {
@@ -111,6 +125,7 @@ impl VaultVm {
             boot,
             child: None,
             lifecycle: None,
+            schedule,
         })
     }
 
@@ -224,11 +239,42 @@ impl VaultVm {
     ) -> anyhow::Result<()> {
         self.spawn_vmm().await?;
         let config = &self.config;
+        let mut boot_args = config.boot_args.clone();
+        let origins = crate::web_client::parse_allowed_origins(&config.allowed_origins)?;
+        if !origins.is_empty() {
+            let origins = origins
+                .iter()
+                .map(|origin| origin.to_str())
+                .collect::<Result<Vec<_>, _>>()?;
+            boot_args.push_str(" oneiron.allowed_origins=");
+            boot_args.push_str(&origins.join(","));
+        }
+        if config.artifact_origin {
+            boot_args.push_str(" oneiron.artifact_origin=1");
+            let domains: Vec<String> = config
+                .artifact_domains
+                .iter()
+                .map(|domain| {
+                    oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain)
+                })
+                .filter(|domain| !domain.is_empty())
+                .collect();
+            anyhow::ensure!(
+                domains.iter().all(|domain| domain
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')),
+                "an artifact domain is letters, digits, '-' and '.'"
+            );
+            if !domains.is_empty() {
+                boot_args.push_str(" oneiron.artifact_domains=");
+                boot_args.push_str(&domains.join(","));
+            }
+        }
         self.api(
             "PUT",
             "/boot-source",
             json!({
-                "kernel_image_path": config.kernel, "boot_args": config.boot_args,
+                "kernel_image_path": config.kernel, "boot_args": boot_args,
             }),
         )
         .await?;
@@ -342,6 +388,11 @@ impl VaultVm {
         self.connect(VM_HTTP_PORT).await
     }
 
+    /// The vault's artifact origin, when its profile serves one.
+    pub async fn artifacts(&self) -> anyhow::Result<UnixStream> {
+        self.connect(VM_ARTIFACT_PORT).await
+    }
+
     /// One ctl verb, exactly as a node's supervisor sends it.
     pub async fn ctl(&self, request: &CtlRequest) -> anyhow::Result<CtlResponse> {
         let stream = self.connect(VM_CTL_PORT).await?;
@@ -370,10 +421,15 @@ impl VaultVm {
 
     /// Freezes the vault, asks for its next wake, and snapshots or stops it.
     pub async fn sleep(&mut self, timeout: Duration) -> anyhow::Result<SleepOutcome> {
-        let CtlResponse::PrepareReap { quiescent, .. } = self.ctl(&CtlRequest::PrepareReap).await?
+        let CtlResponse::PrepareReap {
+            quiescent,
+            ledger_rev,
+            next_wake,
+        } = self.ctl(&CtlRequest::PrepareReap).await?
         else {
             anyhow::bail!("prepare_reap answered with another verb");
         };
+        self.schedule.replace(ledger_rev, next_wake)?;
         if !quiescent {
             self.ctl(&CtlRequest::ReapAbort).await?;
             return Ok(SleepOutcome::Busy);
@@ -477,35 +533,27 @@ pub struct VaultVmRun {
     pub idle: Duration,
 }
 
-/// A window counts from its start.
-fn wake_at(entry: &WakeEntry) -> UnixTs {
-    match entry.at {
-        Schedule::Exact { at } => at,
-        Schedule::Window { start, .. } => start,
-    }
-}
-
 async fn take_ledger_push(
     stream: UnixStream,
     vault: &str,
     token: &TokenHex,
-) -> anyhow::Result<Vec<WakeEntry>> {
+    schedule: &mut VmWakeSchedule,
+) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
     BufReader::new(reader.take(MAX_CTL_LINE as u64 + 2))
         .read_line(&mut line)
         .await?;
-    let update: anyhow::Result<LedgerUpdate> =
-        serde_json::from_str(line.trim_end_matches(['\r', '\n']))
-            .map_err(anyhow::Error::from)
-            .and_then(|update: LedgerUpdate| {
-                update.validate()?;
-                anyhow::ensure!(
-                    update.vault == vault && update.token.ct_eq(token),
-                    "foreign ledger push"
-                );
-                Ok(update)
-            });
+    let update: anyhow::Result<()> = serde_json::from_str(line.trim_end_matches(['\r', '\n']))
+        .map_err(anyhow::Error::from)
+        .and_then(|update: LedgerUpdate| {
+            update.validate()?;
+            anyhow::ensure!(
+                update.vault == vault && update.token.ct_eq(token),
+                "foreign ledger push"
+            );
+            schedule.replace(update.rev, update.entries)
+        });
     let ack = match &update {
         Ok(_) => LedgerAck {
             ok: true,
@@ -519,7 +567,7 @@ async fn take_ledger_push(
     let mut reply = serde_json::to_string(&ack)?;
     reply.push('\n');
     writer.write_all(reply.as_bytes()).await?;
-    Ok(update?.entries)
+    update
 }
 
 pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
@@ -531,7 +579,6 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
     let ledger = bind_unix_socket(&vm.ledger_socket())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let open = Arc::new(AtomicUsize::new(0));
-    let mut entries: Vec<WakeEntry> = Vec::new();
     let mut last_activity = Instant::now();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
@@ -553,28 +600,29 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
             }
             pushed = ledger.accept() => {
                 let (stream, _) = pushed?;
-                match take_ledger_push(stream, &run.vault_name, &token).await {
-                    Ok(update) => entries = update,
-                    Err(error) => tracing::warn!(%error, "vault VM ledger push refused"),
+                if let Err(error) = take_ledger_push(stream, &run.vault_name, &token, &mut vm.schedule).await {
+                    tracing::warn!(%error, "vault VM ledger push refused");
                 }
             }
             _ = tick.tick() => {
+                if !vm.is_running() && vm.schedule.has_due(now_ts()) {
+                    vm.start(&credentials, API_TIMEOUT).await?;
+                    last_activity = Instant::now();
+                }
                 if vm.is_running() {
+                    for entry in vm.schedule.due(now_ts()) {
+                        let response = vm.ctl(&CtlRequest::AlarmDue {
+                            id: entry.id.clone(), reason_tag: entry.reason_tag.clone(),
+                        }).await?;
+                        anyhow::ensure!(matches!(response, CtlResponse::Ok { ok: true }), "alarm_due was not acknowledged");
+                        vm.schedule.delivered(&entry)?;
+                        last_activity = Instant::now();
+                    }
                     if open.load(Ordering::SeqCst) == 0 && last_activity.elapsed() >= run.idle {
                         match vm.sleep(API_TIMEOUT).await? {
                             SleepOutcome::Busy => last_activity = Instant::now(),
                             SleepOutcome::Snapshotted { .. } | SleepOutcome::Stopped { .. } => {}
                         }
-                    }
-                } else if entries.iter().map(wake_at).min().is_some_and(|at| at <= now_ts()) {
-                    vm.start(&credentials, API_TIMEOUT).await?;
-                    last_activity = Instant::now();
-                    let now = now_ts();
-                    let (due, later): (Vec<_>, Vec<_>) =
-                        entries.drain(..).partition(|entry| wake_at(entry) <= now);
-                    entries = later;
-                    for entry in due {
-                        vm.ctl(&CtlRequest::AlarmDue { id: entry.id, reason_tag: entry.reason_tag }).await?;
                     }
                 }
             }

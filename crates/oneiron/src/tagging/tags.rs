@@ -364,7 +364,8 @@ pub(super) fn readable_in_txn(
         return Ok(None);
     };
     for source in std::iter::once(&tags.turn).chain(&tags.messages) {
-        if store.entities.get(txn, source.as_bytes())?.is_none()
+        if crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, source, |_| Ok(()))?
+            .is_none()
             || store.port_deletion_state(txn, source)?.deleted
         {
             return Ok(None);
@@ -568,6 +569,85 @@ pub(super) fn redirect_in_txn(
         MENTION_REF.put(store, txn, &(to, turn), &())?;
     }
     Ok(())
+}
+
+/// Up to `limit` readable tag sets in turn order after `after`, and the
+/// last turn the walk passed, readable or not: the identity re-check's
+/// page (OF-123). `None` for the last turn when the walk read nothing.
+pub(crate) fn readable_page_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    after: Option<&EntityId>,
+    limit: usize,
+) -> Result<(Vec<TurnTags>, Option<EntityId>)> {
+    let start = after.map_or(Bound::Unbounded, Bound::Excluded);
+    let mut found = Vec::new();
+    let mut last = None;
+    for row in TAG_SET.iter_range(store, txn, start, Bound::Unbounded)? {
+        if found.len() == limit {
+            break;
+        }
+        let (turn, _) = row?;
+        last = Some(turn);
+        if let Some(tags) = readable_in_txn(store, txn, &turn)? {
+            found.push(tags);
+        }
+    }
+    Ok((found, last))
+}
+
+/// Settles the saved span of `turn` at `message`, `start`..`end` as
+/// `entity` alone: the identity re-check's answer (OF-123). The link stays
+/// a suggestion, now of one entity; the index and every provisional entity
+/// the change touches follow as on any replace. `false` when the turn's
+/// tags no longer read or hold no linked span there.
+pub(crate) fn settle_mention_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+    span: (&EntityId, usize, usize),
+    entity: EntityId,
+) -> Result<bool> {
+    let Some(mut tags) = readable_in_txn(&vault.store, txn, turn)? else {
+        return Ok(false);
+    };
+    let (message, start, end) = span;
+    let Some(mention) = tags
+        .mentions
+        .iter_mut()
+        .find(|each| each.message == *message && each.start == start && each.end == end)
+    else {
+        return Ok(false);
+    };
+    let Some(kind) = mention.link.kind() else {
+        return Ok(false);
+    };
+    mention.link = MentionLink::Candidates {
+        kind,
+        entities: vec![entity],
+    };
+    tags.keep_live_evidence();
+    replace_in_txn(vault, txn, turn, Some(&tags))?;
+    Ok(true)
+}
+
+/// The text of `message` in `turn` as the tagger reads it: what a saved
+/// span's offsets index (OF-123).
+pub(crate) fn message_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    message: &EntityId,
+) -> Result<Option<String>> {
+    let TurnInput::Ready { input, .. } = turn_text_in_txn(vault, txn, turn)? else {
+        return Ok(None);
+    };
+    let message = message.to_hex();
+    Ok(input
+        .messages
+        .into_iter()
+        .find(|each| each.id == message)
+        .map(|each| each.text))
 }
 
 /// The text of a span in `turn` linked to `entity` whose own text keys to

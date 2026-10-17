@@ -10,23 +10,63 @@
 //!
 //! A browser row (`self.browser.*`) is no tool. The run's own browser
 //! answers it: one guest per run, started on the run's first admitted
-//! browser call and removed when the run's door drops.
+//! browser call and removed when the run's door drops. The vault's
+//! standing action grants set each browser effect class's press for the
+//! run, and the built-in `oneiron.browser` pack must stand installed:
+//! the browser is that connector pack's capability, never the engine's.
+//!
+//! Each call carries its step's invocation, so the row's verb hooks fire once
+//! for it (ARCH-0080 §3): at the one dispatcher a verb row takes, or here for
+//! a browser row. A hook's stop goes back to the run as the typed stop.
+//!
+//! The run's browser holds its screenshots (OF-523). An `ai.verdict` that
+//! names one by its `blake3:` ref reads it from that browser, and a batch's
+//! routine steps are the run's own `ai.verdict` calls through this door,
+//! each with the step's screenshot handed in the same way.
+//!
+//! The vault's replay library (OF-598) rides the run's browser: the session
+//! checks and replays a solved run's program, and the vault files it.
+//!
+//! A desktop row (`self.desktop.*`) takes the same door to the run's own
+//! desktop guest, a Linux desktop the `[desktop]` section names, under the
+//! same pack, grants and decider. Its screenshots answer an `ai.verdict`
+//! as the browser's do.
 
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
-use super::admission::{mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb};
+use super::admission::{
+    mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
+};
 use super::tasks_response::{execute_agent_verb_input, mcp_agent_verb_arguments};
 use super::{McpCallContext, McpGatewayError};
+use crate::decision_host::PLACEMENT_BUDGET;
+use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
+use oneiron::browser_library::{
+    WorkflowRecord, file_workflow, record_workflow_run, site_workflows,
+};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
-use oneiron::memory::HostWriteOrigin;
-use oneiron::task_verb::sdk::{AgentVerb, RunVerb};
-use oneiron_browser::{BrowserError, BrowserGuest, BrowserSession};
+use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
+use oneiron::llm::decision::{DecisionRung, RoutineOutcome};
+use oneiron::memory::{HostWriteOrigin, Memory};
+use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::task_verb::sdk::{
+    AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
+};
+use oneiron_browser::{
+    BrowserDriver, BrowserError, BrowserGuest, BrowserSession, DesktopGuest, DesktopSession,
+    EFFECT_CLASSES, GuestLimits, LibraryCard, PressMode, RoutineAnswer, RoutineAsk, RoutineDecider,
+    RoutineReply, SendPolicy, WorkflowLibrary, WorkflowProgram, WorkflowProof,
+};
+use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 /// The verb door one `execute_code` run binds, under that call's connector.
 pub(crate) struct McpCodeModeVerbs {
@@ -36,8 +76,16 @@ pub(crate) struct McpCodeModeVerbs {
     /// The rows this run's verb calls listed as served during this call
     /// (DEC-0005); each answer carries its own into the run's record too.
     served: std::sync::Mutex<Vec<oneiron::EntityId>>,
-    /// This run's browser, when the host has a `[browser]` guest to give it.
+    /// This run's browser and desktop.
+    guests: RunGuests,
+}
+
+/// One run's guests: its browser, when the host has a `[browser]` guest to
+/// give it, and its desktop, when it has a `[desktop]` one. Whichever door
+/// the run binds admits each call before its guest acts.
+pub(crate) struct RunGuests {
     browser: Option<RunBrowser>,
+    desktop: Option<RunDesktop>,
 }
 
 /// One run's browser guest. It starts on the first call that needs it, is
@@ -49,71 +97,568 @@ struct RunBrowser {
     run_id: oneiron::EntityId,
 }
 
+/// One run's desktop guest, held as the run's browser is.
+struct RunDesktop {
+    guest: DesktopGuest,
+    session: Mutex<Option<DesktopSession>>,
+    vault: Arc<oneiron::Vault>,
+    run_id: oneiron::EntityId,
+}
+
+/// A run's guest session as the door drives it: its verbs, whether its
+/// sandbox was abandoned, and what its container proved.
+trait RunGuestSession: BrowserDriver {
+    fn abandoned(&self) -> bool;
+    fn manifest(&self) -> &SessionManifest;
+}
+
+impl RunGuestSession for BrowserSession {
+    fn abandoned(&self) -> bool {
+        Self::abandoned(self)
+    }
+
+    fn manifest(&self) -> &SessionManifest {
+        Self::manifest(self)
+    }
+}
+
+impl RunGuestSession for DesktopSession {
+    fn abandoned(&self) -> bool {
+        Self::abandoned(self)
+    }
+
+    fn manifest(&self) -> &SessionManifest {
+        Self::manifest(self)
+    }
+}
+
+/// Starts one run's guest from a pinned image through the engine's tier
+/// selector, behind the run's egress proxy, and receipts its manifest.
+fn start_run_guest(
+    vault: &Arc<oneiron::Vault>,
+    run_id: oneiron::EntityId,
+    runtime: &Path,
+    image: &str,
+    limits: GuestLimits,
+    fixture: Option<&PathBuf>,
+    entry: &str,
+) -> Result<(SessionTransport, Arc<dyn EgressRelay>), BrowserError> {
+    use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
+    use oneiron_container::{GuestSeccomp, GuestSpec, ImageRef};
+    let unavailable = |e: String| BrowserError::Unavailable(e);
+    let backend =
+        select_backend_for_session(SandboxGuestTier::Untrusted, runtime.to_path_buf(), image)
+            .map_err(|e| unavailable(e.to_string()))?;
+    let spec = GuestSpec {
+        image: ImageRef::pinned(image).map_err(|e| unavailable(e.to_string()))?,
+        user: (10001, 10001),
+        limits,
+        seccomp: GuestSeccomp::EngineFence,
+        read_only_mounts: fixture
+            .iter()
+            .map(|p| ((*p).clone(), PathBuf::from("/srv/fixture")))
+            .collect(),
+    };
+    let relay: Arc<dyn EgressRelay> = Arc::new(
+        oneiron::code_sandbox::egress::OpenEgressProxy::new(
+            Arc::clone(vault),
+            run_id,
+            oneiron::code_sandbox::egress::EgressConfig::from_env()
+                .map_err(|e| unavailable(e.to_string()))?,
+        )
+        .with_fixture(fixture.cloned()),
+    );
+    let transport = backend
+        .start_session(&spec, &[entry.into()], Arc::clone(&relay))
+        .map_err(|e| unavailable(e.to_string()))?;
+    vault
+        .append_sandbox_manifest_receipt(run_id, &transport.manifest)
+        .map_err(|e| unavailable(e.to_string()))?;
+    Ok((transport, relay))
+}
+
+/// One verb call on a run's guest session: an abandoned sandbox lands its
+/// receipt and refuses, and an answer carries the session's manifest.
+fn drive_run_guest<S: RunGuestSession>(
+    vault: &oneiron::Vault,
+    run_id: oneiron::EntityId,
+    driver: &mut S,
+    verb: AgentVerb,
+    input: Value,
+) -> Result<Value, BrowserError> {
+    let result = oneiron::task_verb::sdk::invoke_browser(driver, verb.as_str(), input);
+    if driver.abandoned() {
+        vault
+            .append_sandbox_abandon_receipt(run_id, driver.manifest())
+            .map_err(|e| BrowserError::Unavailable(e.to_string()))?;
+        return Err(BrowserError::Abandoned);
+    }
+    let mut output = result?;
+    if let Some(output) = output.as_object_mut() {
+        output.insert(
+            "session_manifest".into(),
+            serde_json::to_value(driver.manifest())
+                .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+        );
+    }
+    Ok(output)
+}
+
+/// The press policy the vault's standing action grants set for one run's
+/// browser: a grant naming a browser effect class covers it (no press),
+/// and a budgeted grant covers that many sends as one reviewed batch.
+/// No grant leaves the floor: a press per send.
+fn browser_send_policy(server: &SyncServer) -> SendPolicy {
+    let mut policy = SendPolicy::default();
+    let Ok(grants) = server.vault.active_standing_consent_grants() else {
+        return policy;
+    };
+    for grant in &grants {
+        let StandingConsentGrant::Action(_) = grant else {
+            continue;
+        };
+        let bound = grant.bound();
+        let BoundClass::Action(class) = bound.class() else {
+            continue;
+        };
+        let class = class.as_str();
+        if !EFFECT_CLASSES.contains(&class) || SendPolicy::person_only(class) {
+            continue;
+        }
+        let budget = match bound.envelope() {
+            BoundEnvelope::Action(envelope) => envelope.budget(),
+            BoundEnvelope::Disclosure(_) => None,
+        };
+        match budget {
+            Some(count) => {
+                policy.modes.insert(class.to_owned(), PressMode::PerBatch);
+                policy
+                    .batch
+                    .insert(class.to_owned(), u32::try_from(count).unwrap_or(u32::MAX));
+            }
+            None => {
+                policy.modes.insert(class.to_owned(), PressMode::None);
+            }
+        }
+    }
+    policy
+}
+
+/// A batch's routine steps through the host's ladder: each step is the
+/// run's own `ai.verdict` call through its door (a connector's scope
+/// admission, verb gate and hooks, or an agent run's hooks), under the batch call's
+/// origin, with the step's screenshot handed in from the run's browser as an
+/// evidence ref on the run.
+#[derive(Clone)]
+struct LadderDecider {
+    server: Arc<SyncServer>,
+    asker: VerdictAsker,
+    runtime: tokio::runtime::Handle,
+    origin: HostWriteOrigin,
+    run_id: oneiron::EntityId,
+}
+
+/// Whom a run's routine decisions are asked for.
+#[derive(Clone)]
+pub(crate) enum VerdictAsker {
+    /// The `execute_code` connector: each decision is an `ai.verdict` call by
+    /// that credential, under a fresh invocation. The browser batch it is
+    /// bound for carries it, so `ai.verdict` need not be bound itself.
+    Connector(McpCallContext),
+    /// A pumped run's own agent, which holds no credential: each decision is
+    /// the agent's `ai.verdict` through its run's host door, under a fresh
+    /// invocation.
+    Agent(oneiron::WriteActor),
+}
+
+impl RoutineDecider for LadderDecider {
+    fn decide(&mut self, ask: RoutineAsk<'_>) -> Result<RoutineReply, BrowserError> {
+        let locate = ask.options.is_empty();
+        let request = AiVerdictRequest {
+            question: ask.question.to_owned(),
+            options: ask.options,
+            evidence: Vec::new(),
+            state: Some(ask.state),
+            // No model: the ladder stops at its rule rung.
+            ceiling: ask.no_model.then_some(DecisionRung::Rule),
+            // A step acts on a live page: at a cut it abstains and goes up.
+            reversibility: AiVerdictReversibility::OutboundEffect,
+            deadline_ms: None,
+            routine: true,
+            image: ask.image.map(|(image, _)| image.to_owned()),
+            locate,
+            misses: ask.misses,
+            until_ms: ask.until_ms,
+        };
+        let input =
+            serde_json::to_value(&request).map_err(|e| BrowserError::Decider(e.to_string()))?;
+        let held = ask
+            .image
+            .map(|(image, png)| HeldImage::new(self.run_id, image, png.to_vec()));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let server = Arc::clone(&self.server);
+        let origin = self.origin.clone();
+        match self.asker.clone() {
+            VerdictAsker::Connector(actor) => {
+                self.runtime.spawn(HELD_IMAGE.scope(held, async move {
+                    let _ = sender.send(execute_step_verdict(&server, &actor, input, origin).await);
+                }));
+            }
+            VerdictAsker::Agent(actor) => {
+                self.runtime.spawn_blocking(move || {
+                    let answered = crate::server::answer_as_agent(
+                        &server,
+                        actor,
+                        &origin,
+                        InvocationId::mint(),
+                        AgentVerb::AiVerdict,
+                        input,
+                        held,
+                    );
+                    let _ = sender.send(answered.map_err(super::mcp_facade_error));
+                });
+            }
+        }
+        let (output, _) = receiver
+            .recv()
+            .map_err(|_| BrowserError::Decider("the ladder did not answer".to_owned()))?
+            .map_err(|error| BrowserError::Decider(format!("{}: {}", error.kind, error.message)))?;
+        let verdict: AiVerdict = serde_json::from_value(output.clone())
+            .map_err(|e| BrowserError::Decider(e.to_string()))?;
+        let answer = match verdict.outcome {
+            Some(RoutineOutcome::Act { candidate }) => RoutineAnswer::Act { candidate },
+            Some(RoutineOutcome::Point { x, y, .. }) => RoutineAnswer::Point { x, y },
+            Some(RoutineOutcome::None) => RoutineAnswer::None,
+            Some(RoutineOutcome::Reobserve) => RoutineAnswer::Reobserve,
+            Some(RoutineOutcome::AskUp { reason }) => RoutineAnswer::AskUp {
+                reason: reason
+                    .and_then(|reason| serde_json::to_value(reason).ok())
+                    .and_then(|reason| reason.as_str().map(str::to_owned)),
+            },
+            None => {
+                return Err(BrowserError::Decider(
+                    "the ladder answered no routine outcome".to_owned(),
+                ));
+            }
+        };
+        Ok(RoutineReply {
+            answer,
+            screenshot: verdict.screenshot,
+            until_ms: verdict.until_ms,
+            decision: output,
+        })
+    }
+}
+
+/// The vault's replay library, as the run's browser files and reads it:
+/// what it files names the run's caller, placed through the host's ladder.
+struct VaultLibrary {
+    server: Arc<SyncServer>,
+    by: oneiron::EntityId,
+}
+
+fn library_failed(error: oneiron::Error) -> BrowserError {
+    BrowserError::Library(error.to_string())
+}
+
+impl WorkflowLibrary for VaultLibrary {
+    fn find(
+        &mut self,
+        site: &str,
+        subgoal: Option<&str>,
+    ) -> Result<Vec<LibraryCard>, BrowserError> {
+        Ok(site_workflows(&self.server.vault, site, subgoal)
+            .map_err(library_failed)?
+            .iter()
+            .map(WorkflowRecord::card)
+            .collect())
+    }
+
+    fn program(&mut self, workflow: &str) -> Result<Option<WorkflowProgram>, BrowserError> {
+        let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
+            return Ok(None);
+        };
+        Ok(oneiron::browser_library::workflow(&self.server.vault, id)
+            .map_err(library_failed)?
+            .map(|record| record.program))
+    }
+
+    fn admit(
+        &mut self,
+        site: &str,
+        program: &WorkflowProgram,
+        proof: &WorkflowProof,
+    ) -> Result<String, BrowserError> {
+        let deadline = RetrievalDeadline::hard(Instant::now(), PLACEMENT_BUDGET);
+        let decisions = self
+            .server
+            .decision_host()
+            .placement_decisions(self.by, &deadline);
+        file_workflow(
+            &self.server.vault,
+            self.by,
+            site,
+            program,
+            proof,
+            self.server.vault.now_recorded_at(),
+            Some(&decisions),
+        )
+        .map(|id| id.to_hex())
+        .map_err(library_failed)
+    }
+
+    fn record_run(&mut self, workflow: &str, met: bool) -> Result<(), BrowserError> {
+        let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
+            return Ok(());
+        };
+        record_workflow_run(
+            &self.server.vault,
+            id,
+            met,
+            self.server.vault.now_recorded_at(),
+        )
+        .map_err(library_failed)
+    }
+}
+
 impl RunBrowser {
-    fn call(&self, verb: AgentVerb, input: Value) -> Result<Value, BrowserError> {
+    /// The browser the host gives run `run_id`, under the press policy the
+    /// vault's standing grants set, when it has a `[browser]` guest.
+    fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
+        let mut guest = server.browser_guest()?.clone();
+        guest.policy = browser_send_policy(server);
+        Some(Self {
+            guest,
+            session: Mutex::new(None),
+            vault: Arc::clone(&server.vault),
+            run_id,
+        })
+    }
+
+    fn call(
+        &self,
+        verb: AgentVerb,
+        input: Value,
+        decider: LadderDecider,
+        library: VaultLibrary,
+    ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
-            use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
-            use oneiron_container::{GuestSeccomp, GuestSpec, ImageRef};
-            let unavailable = |e: String| BrowserError::Unavailable(e);
-            let backend = select_backend_for_session(
-                SandboxGuestTier::Untrusted,
-                self.guest.runtime.clone(),
+            let (transport, relay) = start_run_guest(
+                &self.vault,
+                self.run_id,
+                &self.guest.runtime,
                 &self.guest.image,
-            )
-            .map_err(|e| unavailable(e.to_string()))?;
-            let spec = GuestSpec {
-                image: ImageRef::pinned(&self.guest.image)
-                    .map_err(|e| unavailable(e.to_string()))?,
-                user: (10001, 10001),
-                limits: self.guest.limits,
-                seccomp: GuestSeccomp::EngineFence,
-                read_only_mounts: self
-                    .guest
-                    .fixture
-                    .iter()
-                    .map(|p| (p.clone(), std::path::PathBuf::from("/srv/fixture")))
-                    .collect(),
-            };
-            let relay: Arc<dyn oneiron_container::EgressRelay> = Arc::new(
-                oneiron::code_sandbox::egress::OpenEgressProxy::new(
-                    Arc::clone(&self.vault),
-                    self.run_id,
-                    oneiron::code_sandbox::egress::EgressConfig::from_env()
-                        .map_err(|e| unavailable(e.to_string()))?,
-                )
-                .with_fixture(self.guest.fixture.clone()),
-            );
-            let transport = backend
-                .start_session(
-                    &spec,
-                    &["/usr/local/bin/oneiron-browser-guest".into()],
-                    Arc::clone(&relay),
-                )
-                .map_err(|e| unavailable(e.to_string()))?;
-            self.vault
-                .append_sandbox_manifest_receipt(self.run_id, &transport.manifest)
-                .map_err(|e| unavailable(e.to_string()))?;
+                self.guest.limits,
+                self.guest.fixture.as_ref(),
+                "/usr/local/bin/oneiron-browser-guest",
+            )?;
             let started = BrowserSession::attach(&self.guest, transport, relay)?;
             *session = Some(started);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
-        let result = oneiron::task_verb::sdk::invoke_browser(driver, verb.as_str(), input);
-        if driver.abandoned() {
-            self.vault
-                .append_sandbox_abandon_receipt(self.run_id, driver.manifest())
-                .map_err(|e| BrowserError::Unavailable(e.to_string()))?;
-            return Err(BrowserError::Abandoned);
+        driver.set_decider(Box::new(decider));
+        driver.set_library(Box::new(library));
+        drive_run_guest(&self.vault, self.run_id, driver, verb, input)
+    }
+}
+
+impl RunDesktop {
+    /// The desktop the host gives run `run_id`, as [`RunBrowser::new`] gives
+    /// its browser, when it has a `[desktop]` guest.
+    fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
+        let mut guest = server.desktop_guest()?.clone();
+        guest.policy = browser_send_policy(server);
+        Some(Self {
+            guest,
+            session: Mutex::new(None),
+            vault: Arc::clone(&server.vault),
+            run_id,
+        })
+    }
+
+    fn call(
+        &self,
+        verb: AgentVerb,
+        input: Value,
+        decider: LadderDecider,
+    ) -> Result<Value, BrowserError> {
+        let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        if session.is_none() {
+            // The desktop's own apps reach the network through the same
+            // engine proxy, at the guest's fenced sockets.
+            let (transport, _relay) = start_run_guest(
+                &self.vault,
+                self.run_id,
+                &self.guest.runtime,
+                &self.guest.image,
+                self.guest.limits,
+                None,
+                "/usr/local/bin/oneiron-desktop-guest",
+            )?;
+            *session = Some(DesktopSession::attach(&self.guest, transport)?);
         }
-        let mut output = result?;
-        if let Some(output) = output.as_object_mut() {
-            output.insert(
-                "session_manifest".into(),
-                serde_json::to_value(driver.manifest())
-                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
-            );
+        let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
+        driver.set_decider(Box::new(decider));
+        drive_run_guest(&self.vault, self.run_id, driver, verb, input)
+    }
+}
+
+impl RunGuests {
+    /// The guests the host gives run `run_id`.
+    pub(crate) fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Self {
+        Self {
+            browser: RunBrowser::new(server, run_id),
+            desktop: RunDesktop::new(server, run_id),
         }
-        Ok(output)
+    }
+
+    /// A browser or desktop row its door admitted: the row's verb hooks on
+    /// `memory` around the run's guest, each routine decision asked for
+    /// `asker`, and what the browser files named for `by`. The browser runs
+    /// as its connector pack, once its setup connection is checked. Its
+    /// answer derives from no vault row.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one axis of the door the call came through"
+    )]
+    pub(crate) fn call(
+        &self,
+        server: &Arc<SyncServer>,
+        runtime: &tokio::runtime::Handle,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        memory: &Memory<'_>,
+        asker: VerdictAsker,
+        by: oneiron::EntityId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        // The browser runs as its connector pack: no installed pack, no browser.
+        if server
+            .vault
+            .require_builtin_channel_pack("browser")
+            .is_err()
+        {
+            return Ok(Err(AgentVerbRefusal {
+                code: "browser_pack_not_installed".to_owned(),
+            }));
+        }
+        let browser_refused = |error: BrowserError| {
+            tracing::debug!(verb = call.verb.as_str(), %error, "code run browser call refused");
+            AgentVerbRefusal {
+                code: error.code().to_owned(),
+            }
+        };
+        // A desktop row drives the run's desktop; every other row its browser.
+        let desktop = call.verb.as_str().starts_with("self.desktop.");
+        // The browser guest runs only once its setup connection is checked.
+        if !desktop
+            && server
+                .vault
+                .require_pack_connection_verified("oneiron.browser", "browser-guest")
+                .is_err()
+        {
+            return Ok(Err(AgentVerbRefusal {
+                code: "browser_connection_unchecked".to_owned(),
+            }));
+        }
+        let run_id = if desktop {
+            self.desktop.as_ref().map(|desktop| desktop.run_id)
+        } else {
+            self.browser.as_ref().map(|browser| browser.run_id)
+        };
+        let Some(run_id) = run_id else {
+            return Ok(Err(browser_refused(BrowserError::Unbound)));
+        };
+        let verb = call.verb.as_str();
+        let hooks =
+            match oneiron::task_verb::verb_hook_boundary::row_pre(memory, verb, call.input.clone())
+            {
+                Ok(hooks) => hooks,
+                Err(error) => return refused(super::mcp_facade_error(error)),
+            };
+        let decider = LadderDecider {
+            server: Arc::clone(server),
+            asker,
+            runtime: runtime.clone(),
+            origin: origin.clone(),
+            run_id,
+        };
+        let called = match (&self.desktop, &self.browser) {
+            (Some(run), _) if desktop => run.call(call.verb, hooks.args.clone(), decider),
+            (_, Some(run)) if !desktop => {
+                let library = VaultLibrary {
+                    server: Arc::clone(server),
+                    by,
+                };
+                run.call(call.verb, hooks.args.clone(), decider, library)
+            }
+            _ => Err(BrowserError::Unbound),
+        };
+        let output = match called {
+            Ok(output) => output,
+            Err(error) => return Ok(Err(browser_refused(error))),
+        };
+        // An effect's answer carries its receipt, naming the page it acted on.
+        if let Some(receipt) = output.get("receipt") {
+            tracing::info!(verb, ?receipt, "browser effect receipt");
+        }
+        if let Some(receipts) = output.get("receipts") {
+            tracing::info!(verb, ?receipts, "browser batch receipts");
+        }
+        match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, output) {
+            Ok(output) => Ok(Ok(AgentVerbAnswer {
+                output,
+                rows: Some(Vec::new()),
+            })),
+            Err(error) => refused(super::mcp_facade_error(error)),
+        }
+    }
+
+    /// The screenshot this run's browser or desktop holds under the
+    /// `blake3:` ref an `ai.verdict` input names, when one holds it.
+    pub(crate) fn held_image(&self, input: &Value) -> Option<HeldImage> {
+        let handle = input
+            .get("image")
+            .and_then(Value::as_str)
+            .filter(|handle| handle.starts_with(HELD_PREFIX))?;
+        if let Some(browser) = self.browser.as_ref() {
+            let session = browser
+                .session
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(png) = session.as_ref().and_then(|s| s.image(handle)) {
+                return Some(HeldImage::new(browser.run_id, handle, png.to_vec()));
+            }
+        }
+        let desktop = self.desktop.as_ref()?;
+        let session = desktop
+            .session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let png = session.as_ref()?.image(handle)?.to_vec();
+        Some(HeldImage::new(desktop.run_id, handle, png))
+    }
+
+    pub(crate) fn manifests(&self) -> Vec<Value> {
+        let browser = self
+            .browser
+            .as_ref()
+            .and_then(|b| b.session.lock().ok())
+            .and_then(|session| {
+                session
+                    .as_ref()
+                    .and_then(|s| serde_json::to_value(s.manifest()).ok())
+            });
+        let desktop = self
+            .desktop
+            .as_ref()
+            .and_then(|d| d.session.lock().ok())
+            .and_then(|session| {
+                session
+                    .as_ref()
+                    .and_then(|s| serde_json::to_value(s.manifest()).ok())
+            });
+        browser.into_iter().chain(desktop).collect()
     }
 }
 
@@ -129,53 +674,49 @@ impl McpCodeModeVerbs {
             actor: actor.clone(),
             runtime: tokio::runtime::Handle::current(),
             served: std::sync::Mutex::new(Vec::new()),
-            browser: server.browser_guest().map(|guest| RunBrowser {
-                guest: guest.clone(),
-                session: Mutex::new(None),
-                vault: Arc::clone(&server.vault),
-                run_id,
-            }),
+            guests: RunGuests::new(server, run_id),
         }
     }
 
     /// A browser row: this connector's binding and live credential at each
-    /// call, then the run's browser. Its answer derives from no vault row.
-    fn call_browser(&self, call: &SelfAgentVerbCall) -> Result<AgentVerbAnswer, AgentVerbRefusal> {
-        let refused = |error: McpGatewayError| AgentVerbRefusal {
-            code: error.kind.to_owned(),
-        };
-        mcp_admit_host_verb(&self.actor, call.verb).map_err(refused)?;
-        mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
-        let browser_refused = |error: BrowserError| {
-            tracing::debug!(verb = call.verb.as_str(), %error, "code run browser call refused");
-            AgentVerbRefusal {
-                code: error.code().to_owned(),
-            }
-        };
-        let browser = self
-            .browser
-            .as_ref()
-            .ok_or_else(|| browser_refused(BrowserError::Unbound))?;
-        let output = browser
-            .call(call.verb, call.input.clone())
-            .map_err(browser_refused)?;
-        Ok(AgentVerbAnswer {
-            output,
-            rows: Some(Vec::new()),
-        })
+    /// call, then the run's guest.
+    fn call_browser(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
+            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
+        {
+            return refused(error);
+        }
+        let memory = crate::api::credential_memory(
+            &self.server.vault,
+            self.actor.auth.as_ref(),
+            self.actor.actor_ref,
+            self.actor.actor_class,
+        )
+        .with_invocation(invocation);
+        // Each routine decision is a verb call of its own, under a fresh
+        // invocation.
+        let asker = VerdictAsker::Connector(McpCallContext {
+            invocation: None,
+            ..self.actor.clone()
+        });
+        self.guests.call(
+            &self.server,
+            &self.runtime,
+            call,
+            origin,
+            &memory,
+            asker,
+            self.actor.actor_ref,
+        )
     }
 
     pub(crate) fn manifests(&self) -> Vec<Value> {
-        self.browser
-            .as_ref()
-            .and_then(|b| b.session.lock().ok())
-            .and_then(|session| {
-                session
-                    .as_ref()
-                    .and_then(|s| serde_json::to_value(s.manifest()).ok())
-            })
-            .into_iter()
-            .collect()
+        self.guests.manifests()
     }
 
     /// The rows this run's verb calls listed as served.
@@ -192,38 +733,46 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         &self,
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
-    ) -> Result<AgentVerbAnswer, AgentVerbRefusal> {
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if call.verb.is_browser() {
             // The run's worker thread holds the call while the guest acts.
-            return self.call_browser(call);
+            return self.call_browser(call, origin, invocation);
         }
+        let held = matches!(call.verb, AgentVerb::AiVerdict)
+            .then(|| self.guests.held_image(&call.input))
+            .flatten();
         // The run's worker thread drives its own reactor; the verb runs on the
         // server runtime, as a tool call would, and the worker waits for it.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let server = Arc::clone(&self.server);
-        let actor = self.actor.clone();
+        let actor = McpCallContext {
+            invocation: Some(invocation),
+            ..self.actor.clone()
+        };
         let verb = call.verb.as_str();
         let input = call.input.clone();
         let origin = origin.clone();
-        self.runtime.spawn(async move {
+        self.runtime.spawn(HELD_IMAGE.scope(held, async move {
             let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input, origin).await);
-        });
-        let (output, listed) = receiver
-            .recv()
-            .map_err(|_| AgentVerbRefusal {
+        }));
+        let Ok(executed) = receiver.recv() else {
+            return Ok(Err(AgentVerbRefusal {
                 code: "engine_error".to_owned(),
-            })?
-            .map_err(|error| AgentVerbRefusal {
-                code: error.kind.to_owned(),
-            })?;
+            }));
+        };
+        let (output, listed) = match executed {
+            Ok(executed) => executed,
+            Err(error) => return refused(error),
+        };
         self.served
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .extend(listed.iter().copied());
-        Ok(AgentVerbAnswer {
+        Ok(Ok(AgentVerbAnswer {
             output,
             rows: Some(listed),
-        })
+        }))
     }
 
     /// A call the run serves itself meets this connector's door at each call
@@ -294,12 +843,130 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     }
 }
 
+/// The door a reader child's run binds (ARCH-0079 #reader-forks). It runs
+/// no verb, and of the calls the run serves itself admits only its report,
+/// `self.context`, `self.think` and reads of what it recorded. What the
+/// child read leaves this device again by its parent caller's rule
+/// (DEC-0005), as the door that caller's run binds rules. It holds no
+/// credential of the parent's.
+pub(crate) struct ReaderChildDoor {
+    vault: Arc<oneiron::Vault>,
+    /// Where the parent run's caller sits.
+    caller: oneiron::claim::CallerLocality,
+}
+
+impl ReaderChildDoor {
+    pub(crate) fn new(vault: Arc<oneiron::Vault>, caller: oneiron::claim::CallerLocality) -> Self {
+        Self { vault, caller }
+    }
+}
+
+fn read_only() -> AgentVerbRefusal {
+    AgentVerbRefusal {
+        code: crate::server::READER_CHILD_READ_ONLY.to_owned(),
+    }
+}
+
+impl AgentVerbDoor for ReaderChildDoor {
+    fn call(
+        &self,
+        _: &SelfAgentVerbCall,
+        _: &HostWriteOrigin,
+        _: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(read_only()))
+    }
+
+    fn admit_run_call(
+        &self,
+        call: RunCall,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        match call {
+            RunCall::RecordedOutput
+            | RunCall::Bridge(SelfEffect::ReaderReport | SelfEffect::Context | SelfEffect::Think) => {
+                Ok(None)
+            }
+            _ => Err(read_only()),
+        }
+    }
+
+    /// The parent caller's rule: on this device nothing is withheld; off
+    /// it, a result leaves again only while every row it was served from
+    /// may, and one with no row set stays.
+    fn withholds_retained(
+        &self,
+        rows: Option<&[oneiron::EntityId]>,
+    ) -> Result<bool, AgentVerbRefusal> {
+        if self.caller == oneiron::claim::CallerLocality::OnDevice {
+            return Ok(false);
+        }
+        let Some(rows) = rows else {
+            return Ok(true);
+        };
+        crate::device_local::withholds_retained(&self.vault, self.caller, rows, &[]).map_err(|_| {
+            AgentVerbRefusal {
+                code: "engine_error".to_owned(),
+            }
+        })
+    }
+}
+
+/// A refused call as the run takes it: a verb hook's stop as the typed stop,
+/// any other refusal as its stable code.
+fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, AgentVerbRefusal>> {
+    match error.hook {
+        Some(stop) => Err(oneiron::Error::from(*stop)),
+        None => Ok(Err(AgentVerbRefusal {
+            code: error.kind.to_owned(),
+        })),
+    }
+}
+
 async fn execute_code_mode_verb(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     verb: &str,
     input: Value,
     origin: HostWriteOrigin,
+) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
+    run_code_mode_verb(server, actor, verb, input, origin, mcp_admit_scoped_verb).await
+}
+
+/// A browser batch's routine decision: the connector's `ai.verdict`, admitted
+/// by its scope only, since the batch it is bound for carries it. Its
+/// credential gate and hooks run as on any verb call.
+async fn execute_step_verdict(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    input: Value,
+    origin: HostWriteOrigin,
+) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
+    run_code_mode_verb(
+        server,
+        actor,
+        "ai.verdict",
+        input,
+        origin,
+        mcp_admit_step_verb,
+    )
+    .await
+}
+
+/// How one verb call's tool binding and scope are admitted.
+type VerbAdmission = fn(
+    &Arc<SyncServer>,
+    crate::mcp::McpGeneratedVerbTool,
+    &crate::mcp::McpVerbArguments,
+    &McpCallContext,
+) -> Result<(), McpGatewayError>;
+
+async fn run_code_mode_verb(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    verb: &str,
+    input: Value,
+    origin: HostWriteOrigin,
+    admit: VerbAdmission,
 ) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
     let Some(McpEndpointTool::Verb(tool)) =
         registered_surface(McpSurfaceMode::ToolFirst).resolve(verb)
@@ -317,7 +984,7 @@ async fn execute_code_mode_verb(
     arguments
         .validate(tool.name, tool)
         .map_err(mcp_tool_validation_error)?;
-    mcp_admit_scoped_verb(server, tool, &arguments, actor)?;
+    admit(server, tool, &arguments, actor)?;
     mcp_verb_gate(server, tool, &arguments, actor)?;
     // A run's call is answered once and never continued.
     let mut served = Vec::new();

@@ -123,12 +123,18 @@ mod project;
 pub(crate) use project::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
+pub(crate) use project::{
+    ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
+    ProjectDetectionVerdict, claim_project_detection, fail_project_detection, project_house_agent,
+    settle_project_detection, stage_project_detection_in_txn,
+};
 pub use project::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, OwnerProjectSigner,
-    ProjectAsk, ProjectCycleQuestion, ProjectDisposition, ProjectEffective, ProjectForkEvidence,
-    ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget, ProjectHistoryPolicy,
-    ProjectHistoryQuestion, ProjectParentWitness, ProjectRank, ProjectResolution, ProjectRevision,
-    ProjectRevisionHash, ProjectRevisionProof, ProjectSeal, ProjectWitness, ProjectWriteOutcome,
+    ProjectAsk, ProjectCycleQuestion, ProjectDisposition, ProjectEffective, ProjectForkConflict,
+    ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget,
+    ProjectHistoryPolicy, ProjectHistoryQuestion, ProjectParentWitness, ProjectRank,
+    ProjectResolution, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, ProjectSeal,
+    ProjectWitness, ProjectWriteOutcome,
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
@@ -155,6 +161,10 @@ pub(crate) use project::{
     check_revision_put, is_project_revision_type, project_revision_type, projects_touched_by_put,
     rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
 };
+pub use project::{
+    ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectGoalInterviewContext,
+    ProjectProposalRequest,
+};
 #[cfg(feature = "sync")]
 pub(crate) use project::{
     decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
@@ -170,8 +180,39 @@ pub use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub use rooms::{HostPin, HostPinKind, RoomHostHand, RoomHostPin};
+pub use rooms::{
+    OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferSettlement, OfferState,
+    OffersPage, OffersRequest,
+};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
-pub(crate) use rooms::project_room_audience_in;
+pub(crate) use rooms::erase_room_side_rows;
+pub(crate) use rooms::room_project_in;
+pub(crate) use rooms::room_thread_turns_in_txn;
+pub(crate) use rooms::{TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in};
+pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
+
+pub(crate) use rooms::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    record_participation_in_txn, require_join_covering_in_txn,
+};
+pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
 
 pub use crate::gate::RoomThreadFill;
+
+mod join_consent;
+mod join_door;
+mod join_receipt;
+mod workplace_join;
+pub(crate) use join_consent::person_of_actor_in_txn;
+pub use join_consent::{
+    AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
+    ConsentState, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, MembershipConsent,
+    RequiredParty, RoomWork, SpendConsent, decide_join_in_txn, require_actor_join_in_txn,
+    require_join_for_branch_in_txn, require_join_in_txn,
+};
+pub use join_door::{
+    ConsentAnswer, JoinDecisionView, JoinOutcome, rooms_consent_in_txn, rooms_join_in_txn,
+};
+pub use join_receipt::{JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer};

@@ -19,20 +19,22 @@ mod artifact;
 mod authority_plane;
 mod commitment;
 mod decisions;
+mod host_holds;
 mod rebuild;
 mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
+pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
+pub use commitment::CheckpointSigner;
 use heed::types::Bytes;
+pub use host_holds::HostOrderHolds;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-pub use artifact::{ArtifactKind, CheckpointKey};
-pub use commitment::CheckpointSigner;
 pub use tiers::{StorageTier, storage_tier};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -230,8 +232,7 @@ fn read_image<'k>(
     key: &'k CheckpointKey,
 ) -> Result<(CheckpointImage, String, artifact::SealedBodies<'k>)> {
     let opened = artifact::open_artifact(path, key)?;
-    let image: CheckpointImage =
-        rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
+    let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     if image.version != 2
         || image.created_at != opened.created_at
         || image.bodies != opened.bodies.list()
@@ -306,6 +307,7 @@ impl Vault {
         self.unlock_vault_key()?;
         let keys = self.checkpoint_signing_keys()?;
         let _custody = self.store.gate_custody_read_guard()?;
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         if let Some(owner) = owner {
             owner.revalidate_in_txn(self, &txn)?;
@@ -521,6 +523,8 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
+        // The copy holds the source's records, so its host orders hold them too.
+        host_holds::carry(&mut image.databases, live.host_holds())?;
         let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
@@ -677,6 +681,8 @@ impl Vault {
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         // The carried rows hold `current`'s custody binding and retirements.
         authority_plane::carry_current_authority(&mut image.databases, current)?;
+        // And its host orders, which no image carries.
+        host_holds::carry_current(&mut image.databases, current)?;
         // Two live vaults never answer as one machine (wp-keys I7).
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
@@ -724,13 +730,11 @@ impl Vault {
             return Err(codec_error());
         }
         // A signed authority row that fails its key-free checks (an owner
-        // root or a world-key record among them) is refused here as at every
-        // other write door, before any destination exists.
-        if image.databases["entities"]
-            .iter()
-            .any(|(_, blob)| malformed_entity_row(blob))
-        {
-            return Err(codec_error());
+        // root or a world-key record among them), and a FACET carrying PERSON
+        // identity, are refused here as at every other write door, before any
+        // destination exists.
+        for (_, blob) in &image.databases["entities"] {
+            validate_checkpoint_entity_row(blob)?;
         }
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
@@ -784,6 +788,12 @@ impl Vault {
                     db.put(txn, key, value)?;
                 }
             }
+            // The rows came back without a put: every entity kind is judged
+            // against the image's own registry, now readable in this
+            // transaction. A refusal discards the copy before it commits.
+            vault
+                .store
+                .validate_checkpoint_entity_kinds_in_txn(&*txn, &image.databases["entities"])?;
             if fork {
                 forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
             }
@@ -889,15 +899,18 @@ use test_hooks::{RestoreStep, fail_at, panic_if_armed};
 #[cfg(test)]
 mod tests;
 
-/// A row with no header, which the index rebuild refuses anyway, or an
-/// AUTHORITY_LOG row whose body the shared authority validator refuses, an
-/// empty one included: no authority row is a bodiless shell.
-fn malformed_entity_row(blob: &[u8]) -> bool {
-    crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|header| {
-        header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
-            && crate::authority::validate_authority_log_entry_body_bytes(
-                &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            )
-            .is_err()
-    })
+/// Refuses a row with no header, which the index rebuild refuses anyway; a
+/// body the local identity refusal turns away; or an AUTHORITY_LOG row whose
+/// body the shared authority validator refuses, an empty one included: no
+/// authority row is a bodiless shell.
+fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
+    let header = crate::batch::EntityMetadataHeader::parse(blob).ok_or_else(codec_error)?;
+    let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    crate::batch::validate_local_identity_body(header.entity_type, body)?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+        && crate::authority::validate_authority_log_entry_body_bytes(body).is_err()
+    {
+        return Err(codec_error());
+    }
+    Ok(())
 }

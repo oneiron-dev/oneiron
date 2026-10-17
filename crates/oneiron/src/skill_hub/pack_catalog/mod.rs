@@ -2,6 +2,7 @@
 mod advisories;
 mod agent_facets;
 mod builtin;
+pub use builtin::CheckedBuiltinConnection;
 pub(crate) use builtin::seed_builtin_packs;
 mod codec;
 mod doors;
@@ -10,6 +11,10 @@ mod hub_install;
 mod local;
 mod manifest;
 mod migrations;
+mod organs;
+mod setup;
+mod setup_cards;
+mod setup_session;
 mod source;
 
 pub use crate::gate::PackInstallPolicyOverride;
@@ -17,13 +22,30 @@ pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub(crate) use hooks::is_hook_binding;
 pub use hooks::{
-    HookActorClass, HookOutcomeKind, HookPhase, HookSelector, PackHook, PackHookBinding,
+    FOREIGN_SKILL_PUBLISHER, HookActorClass, HookAuthor, HookOutcomeKind, HookPhase,
+    HookRenderClass, HookSelector, PackHook, PackHookBinding,
 };
 pub use hub_install::hub_pin;
 pub use local::LOCAL_PACK_NAME;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
+pub use organs::{
+    MAX_ORGAN_BUILD_BYTES, PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree,
+    host_platform,
+};
 pub use screening::PackInstallRules;
+pub use setup::{
+    MAX_SETUP_ACCOUNTS, MAX_SETUP_CONNECTIONS, MAX_SETUP_PERMISSIONS, MAX_SETUP_SECRETS, PackSetup,
+    PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission, PackSetupRisk,
+    PackSetupSecret,
+};
+pub use setup_cards::PackSetupCardAction;
+pub use setup_session::{
+    PackSetupAnswer, PackSetupCheck, PackSetupCheckRecord, PackSetupConnectionState,
+    PackSetupCustodyRef, PackSetupGrantRef, PackSetupKeyRef, PackSetupPermissionState,
+    PackSetupSecretState, PackSetupSession, PackSetupView,
+};
+pub(crate) use setup_session::{live_custody_in_txn, pin_connection_custody_in_txn};
 pub use source::{PackSection, PackSource};
 
 pub(crate) fn export_source_body(
@@ -45,8 +67,14 @@ fn invalid(reason: &'static str) -> crate::error::Error {
 mod admission;
 mod admission_types;
 mod bundled_skills;
+mod qualify;
+mod removal;
 #[cfg(test)]
 pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
+pub use qualify::{
+    ConnectorPackQualification, PackConnectorReceipt, PackHookQualification, PackHookReplay,
+    ProbePackQualifier, QualifiedPackFitPolicy, SetupCheckQualifier,
+};
 mod schema;
 mod screening;
 mod script_plan;

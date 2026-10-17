@@ -13,10 +13,14 @@ use crate::entity_doc::PurgeReceipt;
 use crate::error::Result;
 use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::ports::{DocumentRowStore, DocumentSlot};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
 use crate::side_table::HexId;
 use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
+/// The snapshot row's key, for a test that plants one by hand.
+#[cfg(test)]
 pub(super) fn key(id: EntityId) -> String {
     format!("d:e:{}", id.to_hex())
 }
@@ -183,7 +187,8 @@ impl Memory<'_> {
                         now,
                         &body,
                     )
-                    .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0),
+                    .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0)
+                    .made_by(&id, brief_birth(actor, pins, now)),
             )?;
             content.update_note(id, |txn| {
                 super::operations::record_authorship(
@@ -263,21 +268,36 @@ impl Memory<'_> {
     /// Discarding history is the ladder's erase (ARCH-0038): an Owner's own
     /// act, so writing the note is not enough.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
-        self.purge_note_history_with(None, note, Some(through))
+        self.purge_note_history_with(None, note, Some(through), None)
             .map(|_| ())
     }
 
     /// [`Self::purge_note_history`] as `owner`, whose proof is rechecked in the
     /// transaction that commits. Without `through` it erases up to the oldest
     /// pin, or up to the head when nothing pins the note. The receipt lands
-    /// beside the entity-text purge receipts.
+    /// beside the entity-text purge receipts. A legal hold on the note refuses
+    /// it (OF-470); with two or more live Owners it runs only through the
+    /// vault's `erase` veto window ([`Vault::start_text_history_erase`],
+    /// Docs Q05).
     pub fn purge_note_history_as(
         &self,
         owner: &AuthenticatedOwner,
         note: EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
-        self.purge_note_history_with(Some(owner), note, through)
+        self.purge_note_history_with(Some(owner), note, through, None)
+    }
+
+    /// [`Self::purge_note_history_as`], claiming the completed `erase` act
+    /// `act` in its writer.
+    pub(crate) fn purge_note_history_for_act(
+        &self,
+        owner: &AuthenticatedOwner,
+        note: EntityId,
+        through: Option<&[u8]>,
+        act: &str,
+    ) -> MemoryResult<PurgeReceipt> {
+        self.purge_note_history_with(Some(owner), note, through, Some(act))
     }
 
     fn purge_note_history_with(
@@ -285,6 +305,7 @@ impl Memory<'_> {
         owner: Option<&AuthenticatedOwner>,
         note: EntityId,
         requested: Option<&[u8]>,
+        act: Option<&str>,
     ) -> MemoryResult<PurgeReceipt> {
         self.with_actor_content_write_txn(|content| {
             content.update_note(note, |txn| {
@@ -303,6 +324,19 @@ impl Memory<'_> {
                     txn,
                     self.actor(),
                     self.actor_class(),
+                )?;
+                // A held note keeps its history (OF-470).
+                self.vault()
+                    .store
+                    .reject_legal_hold_in_txn(txn, note.as_bytes())?;
+                let receipt_id = self.vault().new_entity_id()?;
+                crate::entity_doc::admit_history_erase_in_txn(
+                    self.vault(),
+                    txn,
+                    &note,
+                    requested,
+                    act,
+                    &receipt_id,
                 )?;
                 let doc = load(self.vault(), txn, note)?;
                 let key_prefix = format!("{}:", note.to_hex()).into_bytes();
@@ -345,7 +379,6 @@ impl Memory<'_> {
                     &shallow.doc.shallow_since_vv().to_vv().encode(),
                 )?;
                 let applied = through.encode();
-                let receipt_id = self.vault().new_entity_id()?;
                 let receipt = PurgeReceipt {
                     receipt: receipt_id.to_hex(),
                     entity: note.to_hex(),
@@ -362,6 +395,24 @@ impl Memory<'_> {
             })
         })
     }
+}
+
+/// A brief is made from the claims and NOTEs its pins cite, read as their
+/// quoted text. An agent's brief that cites nothing has no birth to name.
+fn brief_birth(actor: WriteActor, pins: &[NotePin], at: u64) -> Option<RowBirth> {
+    let cited: Vec<EntityId> = pins
+        .iter()
+        .flat_map(|pin| [pin.claim, pin.document])
+        .collect();
+    let quotes: Vec<&[u8]> = pins.iter().map(|pin| pin.quote_text.as_bytes()).collect();
+    RowBirth::written(
+        actor,
+        MadeByClass::of_writer(actor.actor_class()),
+        "note.author_brief",
+        &cited,
+        &quotes,
+        at,
+    )
 }
 
 pub(super) fn validate_pin_source(

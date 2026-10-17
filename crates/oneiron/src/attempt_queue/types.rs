@@ -402,7 +402,7 @@ pub struct AttemptRecord {
 }
 
 impl AttemptRecord {
-    pub(super) fn accepts_worker(&self, worker: &str) -> bool {
+    pub(crate) fn accepts_worker(&self, worker: &str) -> bool {
         self.placement
             .as_ref()
             .and_then(|p| p.worker.as_deref())

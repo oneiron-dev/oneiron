@@ -1,5 +1,6 @@
 //! Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and deadline source traits.
 
+use oneiron::session_lifecycle::SessionKey;
 use oneiron::{DreamerConsolidationScope, WakeTrigger};
 
 use crate::session::SessionHint;
@@ -65,6 +66,7 @@ pub(crate) struct SessionHintStamp {
 /// survive queueing and awaited delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionHintCarrier {
+    pub(crate) key: SessionKey,
     pub(crate) hint: SessionHint,
     pub(crate) first: SessionHintStamp,
     pub(crate) last: SessionHintStamp,
@@ -72,12 +74,18 @@ pub struct SessionHintCarrier {
 }
 
 impl SessionHintCarrier {
-    pub(crate) fn point(hint: SessionHint, claimed_ms: Option<u64>, arrival_ms: u64) -> Self {
+    pub(crate) fn point(
+        key: SessionKey,
+        hint: SessionHint,
+        claimed_ms: Option<u64>,
+        arrival_ms: u64,
+    ) -> Self {
         let stamp = SessionHintStamp {
             claimed_ms,
             arrival_ms,
         };
         Self {
+            key,
             hint,
             first: stamp,
             last: stamp,
@@ -110,7 +118,9 @@ pub trait TickSource {
     /// close deadline is applied before the close decision reads the clock
     /// it bumps (ONE-1685). Sources without a hint buffer keep the default:
     /// no buffered hints, ever.
-    fn take_buffered_session_hint(&mut self) -> Option<(SessionHint, Option<u64>, u64)> {
+    fn take_buffered_session_hint(
+        &mut self,
+    ) -> Option<(SessionKey, SessionHint, Option<u64>, u64)> {
         None
     }
 
@@ -118,8 +128,8 @@ pub trait TickSource {
     /// adapts the required point triple for sources that do not aggregate.
     fn take_buffered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
         self.take_buffered_session_hint()
-            .map(|(hint, claimed_ms, arrival_ms)| {
-                SessionHintCarrier::point(hint, claimed_ms, arrival_ms)
+            .map(|(key, hint, claimed_ms, arrival_ms)| {
+                SessionHintCarrier::point(key, hint, claimed_ms, arrival_ms)
             })
     }
 

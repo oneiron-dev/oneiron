@@ -2,12 +2,17 @@
 //! ordinary member changes an Admin's named power makes at once. Each rewrites
 //! or deletes FEDERATION_GRANT records in the caller's writer and, given the
 //! host's slip issuer, revokes the capability slips of whoever lost a role.
-//! Removal is access revocation, never a group rekey.
+//! Removal is access revocation, never a group rekey. A new member joins only
+//! by accepting an invitation (`invitation`).
+mod invitation;
+
+pub use invitation::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
+
 use super::{
     Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode,
     invalid, live_owners, non_root,
 };
-use crate::authority::HostSlipIssuer;
+use crate::authority::{HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -41,13 +46,13 @@ impl Vault {
         vault_id: u64,
     ) -> Result<Vec<(EntityId, FederationGrant)>> {
         let mut grants = Vec::new();
-        for row in self
-            .store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_FEDERATION_GRANT])?
-        {
-            let (index, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&index)?;
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
             let raw = self.get_raw_in(txn, &id)?.ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&raw)
                 .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
@@ -284,14 +289,53 @@ impl Vault {
         let effect = apply(&mut txn, actor_id, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         let receipt = self.record_shared_change_in_txn(
-            &mut txn, id, vault_id, None, actor_id, owners, effect, None, now,
+            &mut txn, id, vault_id, None, actor_id, owners, effect, None, None, now,
         )?;
         txn.commit()?;
         Ok(receipt)
     }
 
-    /// Add `member`, a live person with no membership here, at a non-root
-    /// role, or the creation preset's default member role when `None`.
+    /// One founding member's invitation (OF-531), in the initializer's
+    /// writer: the vault's creator invites `member`, a live person, at
+    /// `role`, Owner included (a co-owned vault, OF-150), and the receipt
+    /// tells them through their own outcome notice. They join only on
+    /// acceptance, as any invitee does.
+    pub(crate) fn invite_founding_member_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        creator: EntityId,
+        member: EntityId,
+        role: Role,
+        now: u64,
+    ) -> Result<SharedActExecutionReceipt> {
+        if role != Role::Owner {
+            non_root(Some(role))?;
+        }
+        if !crate::consent::person_is_live_in_txn(self, txn, &member)? {
+            return Err(invalid());
+        }
+        let effect =
+            self.issue_invitation_in_txn(txn, vault_id, creator, member, role, true, now)?;
+        let id = self.store.clock.entity_id()?.to_hex();
+        self.record_shared_change_in_txn(
+            txn,
+            id,
+            vault_id,
+            None,
+            creator,
+            BTreeSet::from([creator]),
+            effect,
+            None,
+            None,
+            now,
+        )
+    }
+
+    /// Invite `member`, a live person with no membership here, at a non-root
+    /// role, or the creation preset's default member role when `None`. No
+    /// grant is written until they accept ([`Vault::accept_shared_invitation`]);
+    /// the receipt's `MemberInvited` names the invitation.
     pub fn add_shared_member(
         &self,
         admin: &AuthenticatedOwner,
@@ -303,7 +347,7 @@ impl Vault {
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
-            |txn, _, now| {
+            |txn, inviter, now| {
                 let preset = self
                     .shared_vault_creation_in_txn(txn)?
                     .and_then(|row| row.preset);
@@ -318,16 +362,7 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                let grants = self.set_member_role_in_txn(txn, vault_id, member, role, now)?;
-                Ok(Effect {
-                    change: SharedVaultChange::MemberAdded {
-                        member: member.to_hex(),
-                        role,
-                    },
-                    grants,
-                    revoked_slips: Vec::new(),
-                    notify: BTreeSet::from([member]),
-                })
+                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)
             },
         )
     }
@@ -400,6 +435,98 @@ impl Vault {
             },
         )
     }
+    /// Proof-of-control recovery (ARCH-0043): a shared vault with no live
+    /// Owner left takes `claimant` as its Owner. The host judges, outside the
+    /// engine, the claimant's proof that they control the organization owning
+    /// the vault, and signs the handover with `issuer`. The engine checks
+    /// what it holds: no live Owner remains, `from` still holds the Owner
+    /// role here, and `claimant` is a live person. `from` leaves with its
+    /// slips revoked, the claimant takes the Owner role, and the host's
+    /// `OwnerHandover` (cause `proof_of_control`) lands in the authority log
+    /// in the same writer as the receipt and its notices.
+    pub fn recover_shared_owner(
+        &self,
+        issuer: &HostSlipIssuer,
+        vault_id: u64,
+        from: EntityId,
+        claimant: EntityId,
+    ) -> Result<SharedActExecutionReceipt> {
+        self.recover_shared_owner_with_proof(issuer, vault_id, from, claimant, None)
+    }
+    /// [`Vault::recover_shared_owner`], keeping with the signed handover the
+    /// BLAKE3 of the proof of organization control the host judged (`proof`,
+    /// never the proof itself), so the authority log records what the
+    /// recovery rested on.
+    pub fn recover_shared_owner_with_proof(
+        &self,
+        issuer: &HostSlipIssuer,
+        vault_id: u64,
+        from: EntityId,
+        claimant: EntityId,
+        proof: Option<[u8; 32]>,
+    ) -> Result<SharedActExecutionReceipt> {
+        let mut txn = self.store.env.write_txn()?;
+        super::check_vault(self, &txn, vault_id)?;
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
+        let owners = live_owners(&self.live_act_holders(&txn, vault_id, now)?, None);
+        if !owners.is_empty()
+            || claimant == from
+            || !crate::consent::person_is_live_in_txn(self, &txn, &claimant)?
+            || self.member_role_in_txn(&txn, vault_id, from)? != Some(Role::Owner)
+        {
+            return Err(invalid());
+        }
+        let mut grants =
+            self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
+        let (moved, revoked_slips) = self.move_member_in_txn(
+            &mut txn,
+            vault_id,
+            from,
+            Role::Owner,
+            None,
+            Some(issuer),
+            now,
+        )?;
+        grants.extend(moved);
+        let id = self.store.clock.entity_id()?.to_hex();
+        let authority_entry = self.append_owner_handover_in_txn(
+            &mut txn,
+            issuer,
+            OwnerHandover {
+                shared_vault: vault_id,
+                cause: OwnerHandoverCause::ProofOfControl,
+                from,
+                to: Some(claimant),
+                from_keeps: None,
+                act: None,
+                proof: proof.map(|digest| crate::entity_id::bytes_to_hex_lower(&digest)),
+                receipt: id.clone(),
+            },
+        )?;
+        let receipt = self.record_shared_change_in_txn(
+            &mut txn,
+            id,
+            vault_id,
+            None,
+            claimant,
+            owners,
+            Effect {
+                change: SharedVaultChange::OwnerRecovered {
+                    from: from.to_hex(),
+                    to: claimant.to_hex(),
+                },
+                grants,
+                revoked_slips,
+                notify: BTreeSet::from([from]),
+            },
+            None,
+            Some(authority_entry),
+            now,
+        )?;
+        txn.commit()?;
+        Ok(receipt)
+    }
+
     /// Leave the vault. Leave covers access only: the personal vault goes
     /// with the person and company-scoped claims stay. An Owner leaves
     /// through the `remove_owner` act, naming a successor when last.

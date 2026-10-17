@@ -93,6 +93,7 @@ pub(crate) mod gate;
 pub mod policy_model;
 pub mod receipt;
 pub mod share;
+pub mod share_travel;
 pub mod workspace_roster;
 // World privacy P6b: per-world keys, the recovery root and the machine secret.
 pub mod world_keys;
@@ -125,6 +126,7 @@ pub mod habit;
 pub mod human_task;
 pub mod linear_sync;
 pub mod task_authority;
+pub mod task_type;
 pub mod task_verb;
 pub mod team;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
@@ -157,6 +159,7 @@ pub mod engine_executor;
 pub mod failure_ladder;
 pub mod failure_signals;
 pub mod run_tree;
+pub mod runtime_hooks;
 pub mod self_heal;
 pub mod session_lifecycle;
 pub mod wave_orchestration;
@@ -175,7 +178,9 @@ pub mod fanout_auto;
 pub mod inbox;
 pub mod learning;
 pub mod learning_setting;
+pub mod learning_setting_doors;
 pub mod own_rate;
+pub mod policy_setting_doors;
 pub mod posterior;
 pub mod skill;
 pub mod skill_attribution;
@@ -191,6 +196,7 @@ pub mod vault_cleanup;
 pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod blob_artifact;
+pub mod browser_library;
 pub mod build_cache;
 pub mod checkout;
 pub mod code_artifact;
@@ -292,7 +298,7 @@ pub use crate::calendar::{
 };
 pub use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EmailProviderInbound,
+    DevEmailIdentityAdapterConfig, EmailProviderInbound, EmailThreadHeaders,
 };
 pub use crate::channel_identity_selection::{
     ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
@@ -341,7 +347,6 @@ pub use crate::companion::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
     EnqueueCompanionTaskOutcome,
 };
-pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,
@@ -364,7 +369,8 @@ pub use crate::deletion::{
 pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
 pub use crate::dreamer_consolidation::{
-    ConsolidationExecutor, ConsolidationSink, plan_partitions, read_watermark, scan_dirty_turns,
+    ConsolidationDecisions, ConsolidationExecutor, ConsolidationSink, plan_partitions,
+    read_watermark, scan_dirty_turns,
 };
 pub use crate::dreamer_prefilter::{
     NoveltyWindow, PrefilterConfig, PrefilterScreen, PrefilterTurnVerdict, PrefilterVerdict,
@@ -378,8 +384,8 @@ pub use crate::dreamer_runner::{
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
     DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerBudgetReserveOutcome,
     DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerHomeNodeCandidate,
-    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
-    EnqueueDreamerVaultCleanupAttempt, ReserveDreamerBudget,
+    DreamerParkCause, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, EnqueueDreamerVaultCleanupAttempt, ReserveDreamerBudget,
 };
 pub use crate::dreamer_wake::{
     DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
@@ -475,6 +481,7 @@ pub use crate::pipeline::{
     world_access_claim_body,
 };
 pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
+pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 // The provider-confidence shortcut rows are a DISPOSABLE cache with no
 // production control surface — reads repair them and the prior writer moves
 // them, and that is the whole contract. These three seams exist only so the
@@ -582,6 +589,14 @@ pub(crate) fn unix_seconds_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+pub(crate) fn unix_millis_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {

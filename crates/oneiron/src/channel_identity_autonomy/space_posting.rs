@@ -125,7 +125,8 @@ impl Vault {
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )?;
             if preset.mode() == SpacePostingMode::PostAsOwner
-                && (!record.may_send() || !posting_supported(record.channel()))
+                && (!record.may_send()
+                    || !posting_supported(&identity_channel(self, txn, identity)?))
             {
                 return Err(invalid_autonomy());
             }
@@ -243,7 +244,7 @@ impl Vault {
         };
         let policy_risk = preset.mode() == SpacePostingMode::PostAsOwner;
         let needs_owner_consent = if policy_risk {
-            if !record.may_send() || !posting_supported(record.channel()) {
+            if !record.may_send() || !posting_supported(&identity_channel(self, txn, identity)?) {
                 return Err(invalid_autonomy());
             }
             let bound = GrantBound::action(
@@ -276,4 +277,13 @@ pub(super) struct PostingState {
     pub(super) setting_ref: Option<EntityId>,
     pub(super) preset: GroupPostingPreset,
     pub(super) needs_owner_consent: Option<GrantBound>,
+}
+
+/// The identity's channel, from its `channel_identity.channel` head (OF-272).
+fn identity_channel(vault: &Vault, txn: &heed::RoTxn<'_>, identity: EntityId) -> Result<String> {
+    Ok(
+        crate::channel_identity::channel_identity_facts_in_txn(&vault.store, txn, &identity)?
+            .ok_or_else(invalid_autonomy)?
+            .channel,
+    )
 }

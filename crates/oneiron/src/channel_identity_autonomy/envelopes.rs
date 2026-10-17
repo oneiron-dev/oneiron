@@ -31,10 +31,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         key: &[u8],
     ) -> Result<(EntityId, u64, Value)> {
-        let row = AUTONOMY
-            .get(&self.store, txn, &key.to_vec())?
-            .ok_or_else(invalid_autonomy)?;
-        Ok((row.actor, row.at, row.value))
+        self.autonomy_reader().autonomy_row(txn, key)
     }
 
     pub(super) fn write_autonomy_row(
@@ -145,6 +142,49 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         reference: &EntityId,
     ) -> Result<ChannelIdentityActionEnvelope> {
+        self.autonomy_reader()
+            .autonomy_action_envelope(txn, reference)
+    }
+
+    pub(super) fn autonomy_identity_actor(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        identity: EntityId,
+    ) -> Result<EntityId> {
+        self.autonomy_reader()
+            .autonomy_identity_actor(txn, identity)
+    }
+
+    pub(super) fn autonomy_reader(&self) -> AutonomyReader<'_> {
+        AutonomyReader { store: &self.store }
+    }
+}
+
+/// The autonomy reads over a bare store, so the Gate resolves a sender row's
+/// rung and action envelope on its own writer snapshot. The `Vault` methods
+/// of the same names delegate here.
+#[derive(Clone, Copy)]
+pub(crate) struct AutonomyReader<'a> {
+    pub(crate) store: &'a crate::store::Store,
+}
+
+impl AutonomyReader<'_> {
+    pub(super) fn autonomy_row(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &[u8],
+    ) -> Result<(EntityId, u64, Value)> {
+        let row = AUTONOMY
+            .get(self.store, txn, &key.to_vec())?
+            .ok_or_else(invalid_autonomy)?;
+        Ok((row.actor, row.at, row.value))
+    }
+
+    pub(super) fn autonomy_action_envelope(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reference: &EntityId,
+    ) -> Result<ChannelIdentityActionEnvelope> {
         let value = self
             .autonomy_row(txn, &key(PREDICATE_ACTION_ENVELOPE, &reference.to_hex()))?
             .2;
@@ -154,7 +194,7 @@ impl Vault {
         action_from(&value)
     }
 
-    pub(super) fn autonomy_identity_actor(
+    pub(crate) fn autonomy_identity_actor(
         &self,
         txn: &heed::RoTxn<'_>,
         identity: EntityId,
@@ -170,16 +210,21 @@ impl Vault {
         }
         // A deleted identity authorizes nothing, even while an unapplied
         // delete leaves its Active body stored.
-        if !crate::vault::live_entity_row_in_txn(&self.store, txn, &identity)?.is_live() {
+        if !crate::vault::live_entity_row_in_txn(self.store, txn, &identity)?.is_live() {
+            return Err(invalid_autonomy());
+        }
+        // State and binding are the identity's claim heads (OF-272); the row
+        // is read for a delegated identity's custody re-proof.
+        let facts =
+            crate::channel_identity::channel_identity_facts_in_txn(self.store, txn, &identity)?
+                .ok_or_else(invalid_autonomy)?;
+        if facts.state != ChannelIdentityState::Active {
             return Err(invalid_autonomy());
         }
         let record = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if record.state() != ChannelIdentityState::Active {
-            return Err(invalid_autonomy());
-        }
         if record.is_delegated() {
             crate::channel_identity::admit_channel_identity_transition_in_txn(
-                &self.store,
+                self.store,
                 txn,
                 &identity,
                 crate::channel_identity::IdentityTransition::Step {
@@ -188,7 +233,7 @@ impl Vault {
                 },
             )?;
         }
-        match record.binding() {
+        match facts.binding {
             ChannelIdentityBinding::Actor { actor_ref, .. } => Ok(actor_ref),
             ChannelIdentityBinding::Vault { .. } => Err(invalid_autonomy()),
         }

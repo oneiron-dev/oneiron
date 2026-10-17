@@ -2,9 +2,12 @@
 
 pub mod backup;
 pub mod browser;
+pub mod desktop;
 pub mod embedder;
 mod embedder_shape;
 mod embedder_space;
+mod embedding;
+mod failure_signals;
 mod feedback;
 pub mod import;
 mod keystore;
@@ -12,20 +15,28 @@ mod limits;
 mod lookup;
 pub mod merge;
 pub mod models;
+pub mod native_mail;
 pub mod oneironer;
 mod recall;
 pub mod remote_embedder;
+mod self_heal;
 pub mod serve_args;
 pub mod server_config;
+mod skills;
 mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
 pub use browser::BrowserConfig;
+pub use desktop::DesktopConfig;
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
 };
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
+pub use embedding::{EmbeddingConfig, EmbeddingSlotsConfig};
+pub use failure_signals::{
+    CLOUD_FAILURE_SIGNALS_ENDPOINT, FailureSignalsConfig, PublisherCandidateConfig,
+};
 pub use feedback::{CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig};
@@ -36,12 +47,15 @@ pub use merge::{
     resolve_serve_config_with_sources,
 };
 pub use models::ModelsConfig;
+pub use native_mail::NativeMailConfig;
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
 };
 pub use recall::RecallConfig;
+pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;
 pub use server_config::{ServeConfig, SyncServerConfig};
+pub use skills::SkillsConfig;
 pub use trusted_proxy::TrustedProxy;
 
 #[cfg(test)]

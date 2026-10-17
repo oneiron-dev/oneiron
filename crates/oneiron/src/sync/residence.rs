@@ -11,14 +11,18 @@ mod policy;
 mod prune;
 mod sealed;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
-pub use authority_tail::{AUTHORITY_TAIL_PAGE_MAX, authority_tail_for, held_authority_entries};
+pub use authority_tail::{
+    AUTHORITY_TAIL_PAGE_MAX, AuthorityPageImport, authority_append_for, authority_tail_for,
+    authority_wanted, held_authority_entries, import_authority_page,
+};
 pub use discover::discover_local_window_keys;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference,
 };
+pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::record_item_touch_in_txn;
-pub use prune::{prune_thin_items, record_item_touch};
+pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 pub use sealed::{
     SEALED_SHELF_PAGE_MAX, SealedShelfEntry, sealed_shelf_after, sealed_shelf_packet,
     shelve_sealed_window,
@@ -389,8 +393,9 @@ pub fn promotion_snapshot_with(
             named.insert(id.to_hex());
             readable(id)
         };
-        if !promotion_covers_full_window(vault, source, window, scope, selector, walk)?
-            || super::window::window_withheld_for(vault, window, source, withhold)?
+        if !promotion_covers_full_window_for(
+            vault, source, window, scope, selector, withhold, walk,
+        )? || super::window::window_withheld_for(vault, window, source, withhold)?
         {
             return Ok(None);
         }
@@ -444,6 +449,31 @@ pub fn promotion_covers_full_window(
     window: &WindowKey,
     scope: FederationGrantScope,
     selector: &SyncSelector,
+    readable: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<bool> {
+    promotion_covers_full_window_for(
+        vault,
+        source,
+        window,
+        scope,
+        selector,
+        Withhold::Nothing,
+        readable,
+    )
+}
+
+/// [`promotion_covers_full_window`] for the machine `destination` names. A
+/// machine of this vault's that proved itself also covers the window's
+/// custody transitions (OF-422), each sealed to the owner's machines, and its
+/// room turn rows (OF-522); the selector copies neither. Any other
+/// destination does not, so a window that carries one is not promoted to it.
+pub fn promotion_covers_full_window_for(
+    vault: &Vault,
+    source: &LoroDoc,
+    window: &WindowKey,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    destination: Withhold<'_>,
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<bool> {
     // The existing full-window egress scrub is the authority for local-only
@@ -451,6 +481,14 @@ pub fn promotion_covers_full_window(
     // only the content-bearing current state against the grant selector.
     let _ = super::window::export_scrubbed_window_snapshot(vault, window, source)?;
     let selected = granted_window_doc(vault, source, window, scope, selector)?;
+    if matches!(destination, Withhold::Worlds(_) | Withhold::Peer(_)) {
+        for name in [
+            super::custody::CUSTODY_MAP,
+            super::room_turns::ROOM_TURNS_MAP,
+        ] {
+            super::loro_support::copy_binary_root_map(source, &selected, name)?;
+        }
+    }
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }

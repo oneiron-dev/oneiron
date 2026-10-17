@@ -9,8 +9,8 @@ use oneiron::attempt_queue::{
 };
 use oneiron::compaction::output::{OutputRef, restore_output, store_output};
 use oneiron::wave_orchestration::{
-    MAX_WAVE_PLAN_TASKS, PlannedTask, VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND,
-    WAVE_PLAN_SCHEMA_VERSION, WaveOrchestrator, WavePlan, WavePlanRequest, WavePlanner,
+    PlannedTask, VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND, WAVE_PLAN_SCHEMA_VERSION,
+    WaveOrchestrator, WavePlan, WavePlanRequest, WavePlanner,
 };
 use oneiron::{
     ContentPart, EdgeActorClass, EntityId, Error, LlmMessage, LlmMessageRole, ResponseFormat,
@@ -105,7 +105,7 @@ fn output_schema() -> Value {
     json!({
         "type": "object", "additionalProperties": false, "required": ["tasks"],
         "properties": {"tasks": {
-            "type": "array", "minItems": 1, "maxItems": MAX_WAVE_PLAN_TASKS,
+            "type": "array", "minItems": 1,
             "items": {"type": "object", "additionalProperties": false,
                 "required": ["local_key", "label", "spec", "assignee_ref", "blocked_by"],
                 "properties": {

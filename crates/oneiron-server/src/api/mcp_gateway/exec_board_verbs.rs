@@ -13,6 +13,9 @@ use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 
+/// Named results an `execute_code` answer lists, newest first.
+const MCP_RUN_RESULT_CARDS: usize = 64;
+
 /// One durable REPL run under the authenticated connector actor. This door
 /// becomes wire-reachable only after the host verifies its QuickJS component.
 /// The engine owns all bridge calls, replay checkpoints and terminal markers.
@@ -120,6 +123,15 @@ pub(crate) async fn execute_mcp_execute_code(
             args.cache,
         ),
     });
+    // The run's named results, so a stored value or a stored answer can be
+    // found and read with `read_result`. They are released below with the
+    // rest of the answer, under its checks.
+    let (results, results_count) = server
+        .vault
+        .code_run_result_cards(&outcome.replay_record, MCP_RUN_RESULT_CARDS)
+        .map_err(|error| super::mcp_engine_error("execute_code result cards failed", error))?;
+    structured["results"] = json!(results);
+    structured["resultsCount"] = json!(results_count);
     if let Some(receipt) = &outcome.seat_receipt {
         structured["model_choice"] = json!(receipt);
     }
@@ -150,6 +162,89 @@ pub(crate) async fn execute_mcp_execute_code(
     #[cfg(test)]
     super::device_release::release_hook::run(server);
     super::device_release::mcp_release_run_result(server, actor, named.as_deref(), result)
+}
+
+/// One read of a result of the durable run `run_ref` names under this
+/// credential: its card, or a slice, search, query or chunks page of it. No
+/// model is called and no run is entered. The run id is the credential's own
+/// derivation, never an id or digest a caller sends, and only that run's
+/// results resolve. The read is checked against the rows the run's answers
+/// were served from and the result's taint, as inside the run, and the
+/// answer is released as `execute_code`'s is, under its live credential.
+pub(crate) async fn execute_mcp_read_result(
+    server: &Arc<SyncServer>,
+    args: crate::mcp::McpReadResultToolArgs,
+    actor: &McpCallContext,
+) -> Result<Value, McpGatewayError> {
+    let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
+    let facet = args.facet.and_then(crate::mcp::McpResultFacet::facet);
+    let locality = actor.locality();
+    let vault = Arc::clone(&server.vault);
+    let reference = args.reference.clone();
+    let input = Value::Object(args.input.clone().unwrap_or_default());
+    // A search or a table query scans up to its bound from disk, so it runs
+    // off the gateway's reactor.
+    let (reply, served) = tokio::task::spawn_blocking(move || {
+        let mut served = None;
+        let reply = vault.read_code_run_result(run_id, &reference, facet, input, |rows| {
+            served = Some(rows.map(<[oneiron::EntityId]>::to_vec));
+            if locality == oneiron::claim::CallerLocality::OnDevice {
+                return Ok(false);
+            }
+            rows.map_or(Ok(true), |rows| {
+                crate::device_local::withholds_retained(&vault, locality, rows, &[])
+            })
+        });
+        reply.map(|reply| (reply, served))
+    })
+    .await
+    .map_err(|_| {
+        McpGatewayError::new(
+            -32603,
+            "engine_error",
+            "read_result worker ended without a result",
+        )
+    })?
+    .map_err(|error| super::mcp_engine_error("read_result failed", error))?;
+    let health = if reply.get("denied").is_some() {
+        McpRetrievalHealth::Degraded
+    } else if reply["output"]["done"] == json!(false) {
+        McpRetrievalHealth::Partial
+    } else {
+        McpRetrievalHealth::Healthy
+    };
+    let help = vec![
+        "pass a reply's next back as input.cursor (search, query, chunks) or as the selection (slice) to read on".to_owned(),
+        "a chunk's ref is a range ref read_result takes as ref".to_owned(),
+    ];
+    let structured = json!({
+        "tool": crate::mcp::MCP_READ_RESULT_TOOL,
+        "schema_version": crate::mcp::MCP_CODE_RUN_SCHEMA_VERSION,
+        "run_ref": args.run_ref,
+        "run_id": run_id.to_hex(),
+        "ref": args.reference,
+        "facet": facet.map_or("describe", oneiron::code_run::ResultFacet::as_str),
+        "result": reply,
+        "actor": mcp_actor_result(actor),
+        "meta": actor.metadata(
+            health,
+            McpPageBudget::resolve(None, crate::mcp::McpPageSource::complete(1)),
+            help,
+            None,
+        ),
+    });
+    let result = mcp_endpoint_result(
+        server,
+        actor,
+        "read_result answered",
+        structured,
+        McpCarrierPolicy::Drain,
+    )
+    .await;
+    super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
+    // An unknown ref resolved nothing, so no rows were read.
+    let rows = served.unwrap_or_else(|| Some(Vec::new()));
+    super::device_release::mcp_release_run_result(server, actor, rows.as_deref(), result)
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {

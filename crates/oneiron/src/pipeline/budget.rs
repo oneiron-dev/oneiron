@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use heed::RoTxn;
 
+use crate::config::VectorEvidenceFloors;
 use crate::context_pack::ContextPackRetrievalBudget;
 use crate::embed::EmbeddingSpace;
 use crate::entity_id::EntityId;
@@ -275,7 +276,8 @@ pub(super) fn withhold_undisclosed(
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.drain(..) {
         let admitted = match metadata_cache.get(store, rtxn, &scored.id)? {
-            Some(meta) => clamp.admits(
+            Some(meta) => crate::context_pack::retained_copies::clamp_admits(
+                clamp,
                 store.base(),
                 rtxn,
                 &scored.id,
@@ -361,22 +363,49 @@ pub(super) struct VectorEvidence<'a> {
     /// by kind.
     pub(super) kind: Option<u8>,
     pub(super) score: f32,
+    /// Floors already resolved for the score: a declared space's
+    /// ([`media_space_floors`]).
+    pub(super) floors: Option<VectorEvidenceFloors>,
 }
 
-/// The floor a raw cosine in declared space `space` is judged by (OF-370):
+impl VectorEvidence<'_> {
+    fn floors(&self, floors: &NoMatchFloors) -> VectorEvidenceFloors {
+        self.floors
+            .unwrap_or_else(|| floors.resolve(self.space, self.kind))
+    }
+}
+
+/// RET-01's read of the declared spaces' hits (OF-370).
+#[derive(Debug, Clone, Default)]
+pub(super) struct MediaEvidence {
+    /// Hits at or above their space's floor: each one keeps the pack.
+    pub(super) kept: HashSet<EntityId>,
+    /// Hits under it, judged in their own space's list by its floors.
+    pub(super) weak: Vec<WeakMediaHit>,
+}
+
+/// One declared space's hit under that space's floor.
+#[derive(Debug, Clone)]
+pub(super) struct WeakMediaHit {
+    pub(super) id: EntityId,
+    pub(super) space: String,
+    pub(super) floors: VectorEvidenceFloors,
+    pub(super) score: f32,
+}
+
+/// The floors a raw cosine in declared space `space` is judged by (OF-370):
 /// the pair a host set for that kind there, then the space's own declared
 /// floors, then the vault's, the same pair the text index's scores fall back
 /// to.
-pub(super) fn media_space_floor(
+pub(super) fn media_space_floors(
     floors: &NoMatchFloors,
     space: &EmbeddingSpace,
     kind: Option<u8>,
-) -> f32 {
+) -> VectorEvidenceFloors {
     kind.and_then(|kind| floors.keyed.get(&space.id)?.get(&kind))
         .copied()
         .or(space.evidence)
         .unwrap_or(floors.pair)
-        .floor
 }
 
 /// Returns whether a context pack must withhold every candidate before
@@ -388,9 +417,11 @@ pub(super) fn media_space_floor(
 /// floors by kind. A folded MESSAGE's evidence is its TURN's.
 ///
 /// A declared space's hits are judged in their own space when the run reads
-/// them ([`media_space_floor`]): `media_evidence` holds every one at or above
-/// its floor, and a candidate among them is evidence that keeps the pack,
-/// whatever the text and vault-index lists hold (OF-370).
+/// them ([`media_space_floors`]): a candidate among `media_evidence`'s kept
+/// hits is evidence that keeps the pack, whatever the text and vault-index
+/// lists hold (OF-370). A candidate's weak hits join the vector tests as
+/// their own space's list, by that space's floors, and a media query that
+/// answered counts as a vector query.
 #[expect(
     clippy::too_many_arguments,
     reason = "RET-01 reads each channel's raw evidence beside the run's query shape and floors"
@@ -398,7 +429,7 @@ pub(super) fn media_space_floor(
 pub(super) fn context_pack_evidence_abstains(
     scores: &[ScoredEntity],
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
-    media_evidence: &HashSet<EntityId>,
+    media_evidence: &MediaEvidence,
     text_query: Option<&str>,
     has_vector_query: bool,
     space: &str,
@@ -413,7 +444,7 @@ pub(super) fn context_pack_evidence_abstains(
     }
     if scores
         .iter()
-        .any(|scored| media_evidence.contains(&scored.id))
+        .any(|scored| media_evidence.kept.contains(&scored.id))
     {
         return Ok(false);
     }
@@ -437,16 +468,30 @@ pub(super) fn context_pack_evidence_abstains(
                         space,
                         kind: kind.flatten(),
                         score: component.score,
+                        floors: None,
                     });
                 }
                 _ => {}
             }
         }
     }
+    let candidates: HashSet<&EntityId> = scores.iter().map(|scored| &scored.id).collect();
+    evidence.extend(
+        media_evidence
+            .weak
+            .iter()
+            .filter(|weak| candidates.contains(&weak.id))
+            .map(|weak| VectorEvidence {
+                space: &weak.space,
+                kind: None,
+                score: weak.score,
+                floors: Some(weak.floors),
+            }),
+    );
 
     Ok(vector_evidence_abstains(
         text_query.is_some(),
-        has_vector_query,
+        has_vector_query || !media_evidence.weak.is_empty(),
         has_keyword_hit,
         &mut evidence,
         floors,
@@ -470,10 +515,9 @@ pub(super) fn vector_evidence_abstains(
         && has_vector_query
         && !has_keyword_hit
         && !evidence.is_empty()
-        && evidence.iter().all(|scored| {
-            !scored.score.is_finite()
-                || scored.score < floors.resolve(scored.space, scored.kind).floor
-        });
+        && evidence
+            .iter()
+            .all(|scored| !scored.score.is_finite() || scored.score < scored.floors(floors).floor);
 
     absent_keyword_and_low_vector || vector_score_gaps_are_poor(evidence, floors)
 }
@@ -538,7 +582,7 @@ fn vector_score_gaps_are_poor(evidence: &mut [VectorEvidence<'_>], floors: &NoMa
 /// never discards another's strong match.
 fn vector_score_gap_is_poor(list: &[VectorEvidence<'_>], floors: &NoMatchFloors) -> Option<bool> {
     let strong = |scored: &VectorEvidence<'_>| {
-        scored.score.is_finite() && scored.score >= floors.resolve(scored.space, scored.kind).strong
+        scored.score.is_finite() && scored.score >= scored.floors(floors).strong
     };
     let top = list.first()?;
     let Some(next) = list.get(1) else {

@@ -1,11 +1,11 @@
 //! Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::str;
 
-use heed::{Env, RwTxn};
+use heed::{Env, RoTxn, RwTxn};
 
-use crate::batch::secret_scan;
+use crate::batch::{EntityMetadataHeader, secret_scan};
 use crate::error::{Error, RegistryError, Result};
 use crate::overlay_db::OverlayDb;
 use crate::registry::{
@@ -112,6 +112,37 @@ impl Store {
             return Ok(());
         }
         Err(Error::InvalidEntityType(entity_type))
+    }
+
+    /// Checkpoint restore copies entity rows raw, past every put door, so
+    /// their kinds are judged here before the restore transaction commits.
+    /// The rule is [`Self::validate_entity_type`]'s, against the IMAGE's own
+    /// dynamic registry: its `kind_reg:` rows, already copied into `txn`,
+    /// decoded under the loader's rules. This store's in-memory registry is
+    /// the pre-restore one and is never consulted. Pack-handle rows are left
+    /// to the pack map, which keeps an uninstalled kind's handle while rows
+    /// still name it.
+    pub(crate) fn validate_checkpoint_entity_kinds_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        rows: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<()> {
+        let registry_rows = REGISTRY
+            .iter_raw_from(self, txn, &[])?
+            .collect::<Result<Vec<_>>>()?;
+        let registry = build_structural_kind_registry(&registry_rows)?;
+        let mut kinds = BTreeSet::new();
+        for (_, raw) in rows {
+            let header = EntityMetadataHeader::parse(raw)
+                .ok_or(Error::CorruptedIndex("checkpoint entity header"))?;
+            kinds.insert(header.entity_type);
+        }
+        for kind in kinds {
+            if zone_of(kind) != TypeByteZone::PackHandle {
+                validate_registered_entity_type(kind, &registry)?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn validate_public_entity_type(&self, entity_type: u8) -> Result<()> {
@@ -319,10 +350,7 @@ pub(super) fn build_structural_kind_registry(
 /// release AFTER older releases already accepted arbitrary dynamic
 /// registrations of them. A persisted dynamic row colliding with one of
 /// these is legacy data from that window — tolerated at load, never
-/// corruption. COMPANION_REGISTER is deliberately NOT in this set: its
-/// static claim shipped together with dynamic registration itself, so only
-/// its own exact legacy shape (handled separately above) can exist
-/// legitimately and anything else at byte 64 stays fail-closed.
+/// corruption. Every other static collision stays fail-closed.
 const POST_DYNAMIC_STATIC_KIND_BYTES: &[u8] = &[crate::registry::ENTITY_TYPE_BLOB_ARTIFACT];
 
 fn is_post_dynamic_static_collision(registration: &StructuralKindRegistration) -> bool {
@@ -331,6 +359,22 @@ fn is_post_dynamic_static_collision(registration: &StructuralKindRegistration) -
             entity_type_registry_entry(*byte).and_then(|entry| entry.short_id_prefix)
                 == Some(registration.short_id_prefix.as_str())
         })
+}
+
+/// Static validation, then a dynamic registration in `registry`, honoured only
+/// inside the compiled-product zone. Pack handles are judged elsewhere.
+fn validate_registered_entity_type(
+    entity_type: u8,
+    registry: &HashMap<u8, StructuralKindRegistration>,
+) -> Result<()> {
+    if validate_static_entity_type(entity_type).is_ok() {
+        return Ok(());
+    }
+    if zone_of(entity_type) == TypeByteZone::CompiledProduct && registry.contains_key(&entity_type)
+    {
+        return Ok(());
+    }
+    Err(Error::InvalidEntityType(entity_type))
 }
 
 fn vault_meta_has_structural_kind_prefix(

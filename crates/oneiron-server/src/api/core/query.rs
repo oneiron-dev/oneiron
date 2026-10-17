@@ -2,12 +2,12 @@
 
 use super::super::SearchResponse;
 use super::super::core_engine_error;
-use super::super::{ContextPackMediaQuery, MediaSeed, embed_media_seeds};
 use super::super::default_limit;
 use super::super::json_payload;
 use super::super::scoped_read_for_core_auth;
 use super::super::search_fetch_limit;
 use super::super::search_meta;
+use super::super::{ContextPackMediaQuery, MediaSeed, embed_media_seeds};
 use super::write_shape::CORE_MAX_LIST_LIMIT;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -268,7 +268,14 @@ pub(crate) fn run_core_query(
     if !media.is_empty() {
         let media: Vec<_> = media
             .iter()
-            .map(|seed| (seed.space.as_str(), seed.kind, seed.vector.as_slice()))
+            .map(|seed| {
+                (
+                    seed.space.as_str(),
+                    seed.kind,
+                    seed.vector.as_slice(),
+                    seed.kinds.as_slice(),
+                )
+            })
             .collect();
         return scoped_read.search_seeded(query, vector, &media, limit, None);
     }

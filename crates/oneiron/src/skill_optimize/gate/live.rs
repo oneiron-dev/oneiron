@@ -5,15 +5,17 @@
 //! [`measure_skill_edit_goal_axes`] runs [`measure_goal_axes`] over the plan
 //! the skill's effective goal implies and keeps the report bound to the two
 //! bodies, the reserved evidence and the plan it measured. For a goal joined
-//! to a project's goal record, the gate takes each primary axis from that
-//! report instead of the replay: an inconclusive interval is a tie on that
-//! axis, never a gain, so overlapping bounds cannot reach admission. A report
-//! that no longer binds the scored basis is no report at all.
+//! to a project's goal record, the gate takes every axis that report measured
+//! instead of judging it again: each primary axis from its online interval
+//! (an inconclusive interval is a tie on that axis, never a gain, so
+//! overlapping bounds cannot reach admission), each offline floor and cost
+//! from the held-out pass, and human minutes from the live runs' person-time.
+//! A report that no longer binds the scored basis is no report at all.
 use super::*;
 use crate::error::ArtifactError;
+use crate::learning::honesty::HONESTY_AXIS;
 use crate::skill_optimize::{
-    GoalAxisBandit, GoalAxisPlan, GoalAxisReport, GoalAxisScorer, OnlineAxisOutcome,
-    measure_goal_axes,
+    AxisScores, GoalAxisBandit, GoalAxisPlan, GoalAxisReport, OnlineAxisOutcome, measure_goal_axes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +44,8 @@ fn key(proposal: &EntityId) -> Vec<u8> {
 }
 
 /// The plan a goal implies: primary axes online, floor and cost axes offline
-/// on the held-out set. Human minutes are measured on every case anyway.
+/// on the held-out set. Human minutes are measured on every live run anyway,
+/// and honesty is the gate's own audit, never a named score.
 pub(super) fn goal_axis_plan(definition: &GoalDefinition, pulls_per_axis: u32) -> GoalAxisPlan {
     let mut plan = GoalAxisPlan {
         offline: Vec::new(),
@@ -52,7 +55,9 @@ pub(super) fn goal_axis_plan(definition: &GoalDefinition, pulls_per_axis: u32) -
     for axis in &definition.axes {
         match axis.kind {
             GoalAxisKind::Primary => plan.online.push(axis.name.clone()),
-            GoalAxisKind::Floor | GoalAxisKind::Cost if axis.name != HUMAN_MINUTES => {
+            GoalAxisKind::Floor | GoalAxisKind::Cost
+                if axis.name != HUMAN_MINUTES && axis.name != HONESTY_AXIS =>
+            {
                 plan.offline.push(axis.name.clone());
             }
             GoalAxisKind::Floor | GoalAxisKind::Cost => {}
@@ -105,7 +110,7 @@ pub fn skill_goal_axis_plan(
 pub fn measure_skill_edit_goal_axes(
     vault: &Vault,
     proposal: &EntityId,
-    scorer: &dyn GoalAxisScorer,
+    scorer: &dyn HeldOutReplayNotes,
     bandit: &dyn GoalAxisBandit,
     pulls_per_axis: u32,
 ) -> Result<GoalAxisReport> {
@@ -154,9 +159,60 @@ pub fn measure_skill_edit_goal_axes(
         let bytes = rmp_serde::to_vec_named(&row)
             .map_err(|_| invalid("live goal-axis row encoding failed"))?;
         vault.store.vault_meta.put(txn, &key(proposal), &bytes)?;
-        Ok(())
+        // The live runs are measured: the trial routes no more of them.
+        crate::skill::close_exploration_trial_in_txn(
+            vault,
+            txn,
+            proposal,
+            crate::skill::ExplorationTrialClose::ReportStored,
+        )
     })?;
     Ok(report)
+}
+
+/// Whether the gate waits on a live measurement of `proposal`: its goal is
+/// joined to a project's goal record with primary axes, and no kept report
+/// binds both current bodies, the reserved evidence and the goal's plan.
+/// # Errors
+/// A proposal that is not an open optimizer proposal, an unreadable target or
+/// goal, or storage errors.
+pub fn skill_edit_needs_goal_axis_report(vault: &Vault, proposal: &EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let staged = vault.read_skill_record_in_txn(&txn, proposal)?;
+    require_open_optimizer_proposal(&staged)?;
+    let target = target_of(&staged)?;
+    let definition = goal_definition_in_txn(vault, &txn, &target)?;
+    let plan = goal_axis_plan(&definition, 0);
+    if definition.project.is_none() || plan.online.is_empty() {
+        return Ok(false);
+    }
+    let current = vault.read_skill_record_in_txn(&txn, &target)?;
+    let proposal_digest = skill_body_binding_digest(&staged)?;
+    let target_digest = skill_body_binding_digest(&current)?;
+    let evidence_digest = evidence_identity(&held_out_receipts_in_txn(vault, &txn, &target)?).1;
+    Ok(!load(vault, &txn, proposal)?.is_some_and(|row| {
+        binds(
+            &row,
+            &plan,
+            &proposal_digest,
+            &target_digest,
+            &evidence_digest,
+        )
+    }))
+}
+
+/// Whether `row` measured this exact basis on `plan`.
+fn binds(
+    row: &LiveAxesRow,
+    plan: &GoalAxisPlan,
+    proposal: &str,
+    target: &str,
+    evidence: &str,
+) -> bool {
+    row.plan_digest == plan_digest(plan)
+        && row.proposal_digest == proposal
+        && row.target_digest == target
+        && row.evidence_digest == evidence
 }
 
 /// The live report kept for `proposal`, if one was measured.
@@ -179,56 +235,117 @@ fn load(vault: &Vault, txn: &heed::RoTxn<'_>, proposal: &EntityId) -> Result<Opt
         .transpose()
 }
 
-/// Both bounds are validated into 0..=1, which an f32 holds.
+/// A score validated into 0..=1, which an f32 holds.
 #[allow(clippy::cast_possible_truncation)]
-fn midpoint(bounds: crate::skill_optimize::ConfidenceInterval) -> f32 {
-    f64::midpoint(bounds.lower, bounds.upper) as f32
+fn narrow(score: f64) -> f32 {
+    score as f32
 }
 
-/// The gate's vector for a project-bound goal: each online axis is taken from
-/// the live report bound to this exact basis. Other goals keep the replay.
+fn midpoint(bounds: crate::skill_optimize::ConfidenceInterval) -> f32 {
+    narrow(f64::midpoint(bounds.lower, bounds.upper))
+}
+
+/// Observed costs as scores, larger better: the cheaper arm scores 1 and the
+/// other the share of its time the cheaper arm took. No scale is assumed.
+fn cost_scores(minutes: AxisScores) -> (f32, f32) {
+    let least = minutes.before.min(minutes.after);
+    let score = |spent: f64| {
+        if spent > 0.0 {
+            narrow(least / spent)
+        } else {
+            1.0
+        }
+    };
+    (score(minutes.before), score(minutes.after))
+}
+
+/// The measured axes of a project-bound goal's vector, from the live report
+/// bound to this exact basis. The gate judges only the axes this leaves out,
+/// so nothing measured is judged again as a 0..1 score. Other goals measure
+/// nothing here and keep the replay. A failed offline preflight bound to the
+/// basis stands in for the report: its floors and costs are the measured axes.
 /// # Errors
-/// The retryable outcome while no bound report exists, or a report naming an
-/// axis the vector lacks.
-pub(super) fn overlay_live_axes(
+/// The retryable outcome while neither a bound report nor a bound failed
+/// preflight exists, or a row naming an axis the goal lacks.
+pub(super) fn live_axes(
     vault: &Vault,
     proposal: &EntityId,
     basis: &ScoredBasis,
     definition: &GoalDefinition,
-    mut axes: BTreeMap<String, GoalAxisScore>,
 ) -> Result<BTreeMap<String, GoalAxisScore>> {
+    let mut measured = BTreeMap::new();
     if definition.project.is_none() {
-        return Ok(axes);
+        return Ok(measured);
     }
     let plan = goal_axis_plan(definition, 0);
     if plan.online.is_empty() {
-        return Ok(axes);
+        return Ok(measured);
     }
     let txn = vault.store.env.read_txn()?;
     let row = load(vault, &txn, proposal)?;
     drop(txn);
-    let row = row
-        .filter(|row| {
-            row.plan_digest == plan_digest(&plan)
-                && row.proposal_digest == basis.proposal_digest
-                && row.target_digest == basis.target_digest
-                && row.evidence_digest == basis.evidence_digest
-        })
-        .ok_or(retry(
-            "a project goal's primary axes need a live measurement of this proposal first",
-        ))?;
-    for measured in &row.report.online {
-        let axis = axes
-            .get_mut(&measured.axis)
-            .ok_or(Error::CorruptedIndex(LABEL))?;
-        let before = midpoint(measured.before);
-        axis.before = before;
-        axis.after = match measured.outcome {
+    let Some(row) = row.filter(|row| {
+        binds(
+            row,
+            &plan,
+            &basis.proposal_digest,
+            &basis.target_digest,
+            &basis.evidence_digest,
+        )
+    }) else {
+        // A floor that regressed offline on this basis opened no trial: the
+        // failed preflight is the evidence, and the floor rejects.
+        return super::preflight::failed_preflight_axes(vault, proposal, basis, definition)?.ok_or(
+            retry("a project goal's primary axes need a live measurement of this proposal first"),
+        );
+    };
+    let kind = |name: &str| {
+        definition
+            .axes
+            .iter()
+            .find(|axis| axis.name == name)
+            .map(|axis| axis.kind)
+    };
+    for axis in &row.report.online {
+        let before = midpoint(axis.before);
+        let after = match axis.outcome {
             OnlineAxisOutcome::Inconclusive => before,
             OnlineAxisOutcome::CandidateBetter | OnlineAxisOutcome::IncumbentBetter => {
-                midpoint(measured.after)
+                midpoint(axis.after)
             }
         };
+        let kind = kind(&axis.axis).ok_or(Error::CorruptedIndex(LABEL))?;
+        measured.insert(
+            axis.axis.clone(),
+            GoalAxisScore {
+                kind,
+                before,
+                after,
+            },
+        );
     }
-    Ok(axes)
+    for (name, scores) in &row.report.offline {
+        let kind = kind(name).ok_or(Error::CorruptedIndex(LABEL))?;
+        measured.insert(
+            name.clone(),
+            GoalAxisScore {
+                kind,
+                before: narrow(scores.before),
+                after: narrow(scores.after),
+            },
+        );
+    }
+    // Unknown person-time on either arm is no measured difference: a tie.
+    if let Some(kind) = kind(HUMAN_MINUTES) {
+        let (before, after) = row.report.human_minutes.map_or((1.0, 1.0), cost_scores);
+        measured.insert(
+            HUMAN_MINUTES.to_owned(),
+            GoalAxisScore {
+                kind,
+                before,
+                after,
+            },
+        );
+    }
+    Ok(measured)
 }

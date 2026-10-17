@@ -69,7 +69,12 @@ impl Vault {
             let grant = decode_access_grant_body(&body)?;
             if let Some((grant_person, facet)) = grant.scope.companion_profile_refs()
                 && grant_person == *person_ref
-                && grant.allows_companion_profile_read(principal_ref, person_ref, facet.as_ref(), now)
+                && grant.allows_companion_profile_read(
+                    principal_ref,
+                    person_ref,
+                    facet.as_ref(),
+                    now,
+                )
             {
                 facets.insert(facet);
             }

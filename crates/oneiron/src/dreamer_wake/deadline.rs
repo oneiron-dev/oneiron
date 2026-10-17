@@ -20,6 +20,7 @@ type NowMsFn = Arc<dyn Fn() -> u64 + Send + Sync>;
 ///
 /// ONE-1288 ships the type + reads; the pinned 180s ceiling constant and
 /// finalize-window behavior are ONE-1305.
+#[derive(Clone)]
 pub struct WakePassDeadline {
     ceiling_ms: u64,
     elapsed_ms: NowMsFn,

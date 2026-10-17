@@ -5,7 +5,7 @@ use super::gmail::{
     MAX_GMAIL_THREAD_ID_BYTES, validate_gmail_id,
 };
 use super::mail_placement::MailPlacement;
-use super::{EmailProviderInbound, validate_email_inbound_metadata};
+use super::{EmailProviderInbound, EmailThreadHeaders, validate_email_inbound_metadata};
 use crate::channel_identity::MailboxAddr;
 use crate::error::Result;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -105,6 +105,10 @@ pub struct GmailMessageMetadata {
     pub internal_date_secs: u64,
     /// Provider labels classified into an engine placement fact.
     pub placement: MailPlacement,
+    /// The RFC threading headers, when the host wire read them. Gmail's own
+    /// thread id stays a payload ref; these join the passport graph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_headers: Option<EmailThreadHeaders>,
 }
 
 impl GmailMessageMetadata {
@@ -130,7 +134,15 @@ impl GmailMessageMetadata {
             from: from.into(),
             internal_date_secs,
             placement,
+            thread_headers: None,
         }
+    }
+
+    /// Attaches the host-parsed RFC threading headers.
+    #[must_use]
+    pub fn with_thread_headers(mut self, headers: EmailThreadHeaders) -> Self {
+        self.thread_headers = Some(headers);
+        self
     }
 
     /// Selects a provider-classified placement.
@@ -167,7 +179,7 @@ impl GmailMessageMetadata {
             HeaderMailbox::Parsed(mailbox) => mailbox.to_addr_spec(),
             HeaderMailbox::Unparsed { .. } => String::new(),
         };
-        let inbound = EmailProviderInbound::new(
+        let mut inbound = EmailProviderInbound::new(
             format!("{GMAIL_EVENT_ID_PREFIX}{message_id}"),
             self.to,
             envelope_from,
@@ -175,6 +187,7 @@ impl GmailMessageMetadata {
         )
         .with_payload_ref(format!("{GMAIL_THREAD_PAYLOAD_PREFIX}{thread_id}"))
         .with_header_mailbox(self.from);
+        inbound.thread_headers = self.thread_headers;
         validate_email_inbound_metadata(&inbound)?;
         Ok(inbound)
     }

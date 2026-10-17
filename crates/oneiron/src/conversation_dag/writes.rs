@@ -5,11 +5,13 @@ use super::graph::{
     require_type,
 };
 use super::migration::migrate_in_txn;
+use super::policy::{self, AppendFailure};
 use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
+use crate::memory::{Memory, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 use heed::RwTxn;
@@ -94,7 +96,8 @@ fn stamp_body(
 }
 
 /// The summary association is stamped only by the summary door. Reply
-/// revisions are captured from the target body in this transaction.
+/// revisions are captured from the target body, and a quote's anchor pinned,
+/// in this transaction.
 pub(crate) fn append_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -203,10 +206,17 @@ pub(crate) fn append_in_txn(
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
-    // Validate all recipients before minting the record. Addressing is never a
+    // The record id is the citation a quote pins under.
+    let id = vault.store.clock.entity_id()?;
+    let quote = input
+        .quote
+        .map(|quote| super::quote::prove_in_txn(vault, txn, input, quote, id))
+        .transpose()?;
+    let reply_to = super::quote::reply_target(input.reply_to, quote.as_ref())?;
+    // Validate all recipients before writing the record. Addressing is never a
     // room-membership or audience test: a non-member may be mentioned.
     let mut seen = std::collections::HashSet::new();
-    if input.reply_to.is_some() {
+    if reply_to.is_some() {
         if input.address != AddressMode::Broadcast {
             return Err(invalid("reply cannot also use direct addressing"));
         }
@@ -244,20 +254,18 @@ pub(crate) fn append_in_txn(
     else {
         return Err(invalid("record body must be a map"));
     };
-    if let Some(asking) = input.reply_to {
+    if let Some(asking) = reply_to {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;
         entries.extend([
             (Value::from("addr"), Value::from("reply")),
             (
                 Value::from("reply_to"),
-                Value::Map(vec![
-                    (Value::from("record"), Value::from(asking.to_hex())),
-                    (
-                        Value::from("revision"),
-                        Value::from(blake3::hash(&asking_body).to_hex().to_string()),
-                    ),
-                ]),
+                super::quote::reply_pointer(
+                    asking,
+                    blake3::hash(&asking_body).to_hex().to_string(),
+                    quote.as_ref(),
+                ),
             ),
         ]);
         if let Some(summary) = summary {
@@ -286,8 +294,10 @@ pub(crate) fn append_in_txn(
     body.clear();
     rmpv::encode::write_value(&mut body, &Value::Map(entries))
         .map_err(|_| invalid("record encode failed"))?;
-    let id = vault.store.clock.entity_id()?;
     super::policy::check_append_policy(vault, txn, &id, input, &body)?;
+    if let Some(quote) = &quote {
+        super::quote::pin_in_txn(vault, txn, quote, input.actor)?;
+    }
     let fields: Vec<_> = input
         .text
         .iter()
@@ -312,7 +322,7 @@ pub(crate) fn append_in_txn(
             value(input.learned_at),
         );
     }
-    if let Some(asking) = input.reply_to {
+    if let Some(asking) = reply_to {
         batch = batch.edge_with_value_fields(
             &id,
             EdgeKind::RepliesTo,
@@ -329,6 +339,11 @@ pub(crate) fn append_in_txn(
             input.conversation,
         )?;
     }
+    // OF-529: the writer passes the room's participation gate; a person new
+    // to an ordinary room joins it by this write, and an agent speaks only
+    // when addressed, tasked or offered on what it answers.
+    let joined =
+        super::participation::admit_append_in_txn(vault, txn, input, id, thread, reply_to)?;
     batch.apply(txn)?;
     if let Some(project) = project_scope {
         crate::workspace_roster::settle_leader_chat_record(
@@ -347,6 +362,7 @@ pub(crate) fn append_in_txn(
         &id,
         input.session,
     )?;
+    joined.record_in_txn(vault, txn, vault.store.clock.now_recorded_at())?;
     if input.advance {
         HEAD.put(&vault.store, txn, &input.conversation, &id)?;
         if let Some(parent) = input.parent {
@@ -393,9 +409,25 @@ pub(super) fn set_head_in_txn(
 }
 
 impl Vault {
-    /// Appends one immutable TURN and atomically updates topology and membership.
-    pub fn append_dag_record(&self, input: &AppendRecord) -> Result<AppendedRecord> {
-        self.with_write_txn_grouped(|txn| append_in_txn(self, txn, input, None, false))
+    /// Appends one immutable TURN and atomically updates topology and
+    /// membership. `writer` is the caller's bound surface, the byline `input`
+    /// names (OF-063): every typed ref the append names (conversation,
+    /// parent, reply target, quoted MESSAGE and its TURN, session and
+    /// recipients) must read for it in the append's own transaction. The
+    /// first that does not aborts the whole append, is receipted, and is
+    /// refused as an invented reference naming its field.
+    pub fn append_dag_record(
+        &self,
+        writer: &Memory<'_>,
+        input: &AppendRecord,
+    ) -> MemoryResult<AppendedRecord> {
+        let lane = policy::open_append(self, writer, policy::APPEND_ROW, input)?;
+        let refs = policy::append_references(input, None);
+        let appended = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
+            policy::require_append_references_in_txn(self, &lane, txn, input, &refs)?;
+            Ok(append_in_txn(self, txn, input, None, false)?)
+        });
+        policy::settle_append(writer, policy::APPEND_ROW, appended)
     }
 
     /// Explicit fork selection. Rewrites canonical marks on both old and new paths.

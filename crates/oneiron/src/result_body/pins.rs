@@ -93,8 +93,6 @@ impl crate::Vault {
     /// leaves its row and file alone. A reader takes it before the read
     /// transaction that finds the body's row and holds it until the file is
     /// closed.
-    // Result body readers take it from lookup through close (OF-597).
-    #[allow(dead_code)]
     pub(crate) fn pin_result_body(&self, digest: [u8; 32]) -> ResultBodyPin {
         self.result_body_pins.pin(Some(digest))
     }
@@ -102,8 +100,6 @@ impl crate::Vault {
     /// Pins every result body at once, for a reader that finds its bodies
     /// inside its read transaction (a checkpoint snapshot, an export). Taken
     /// before that transaction opens, held until its last file is closed.
-    // The checkpoint snapshot and the document export take it (OF-597).
-    #[allow(dead_code)]
     pub(crate) fn pin_all_result_bodies(&self) -> ResultBodyPin {
         self.result_body_pins.pin(None)
     }

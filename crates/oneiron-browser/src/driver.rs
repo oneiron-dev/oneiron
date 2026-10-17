@@ -9,13 +9,15 @@
 use crate::cdp::Pipe;
 use crate::outline::{self, Line};
 use crate::{
-    BrowserDriver, BrowserError, ClickInput, ExpectInput, ExpectOutput, FindInput, FindOutput,
-    Observation, ObserveInput, OpenInput, Row, ScreenshotInput, ScreenshotOutput, SelectInput,
-    TypeInput, WaitForInput, WaitForOutput,
+    BrowserDriver, BrowserError, ClickInput, CropInput, ExpectInput, ExpectOutput, FindInput,
+    FindOutput, ImageOutput, Observation, ObserveInput, OpenInput, PointInput, Row,
+    ScreenshotInput, ScreenshotOutput, SelectInput, TypeInput, ViewInput, WaitForInput,
+    WaitForOutput, ZoomInput,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
+use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 const REACTION: Duration = Duration::from_millis(600);
@@ -40,8 +42,46 @@ pub(crate) struct CdpDriver {
     target: String,
     seq: u64,
     history: VecDeque<(u64, HashMap<String, Row>)>,
-    media: VecDeque<(String, Vec<u8>)>,
+    media: VecDeque<Held>,
     wait_cap: Duration,
+}
+
+/// An image the driver holds: its content ref, its PNG bytes and what of
+/// the page it shows.
+struct Held {
+    image: String,
+    png: Vec<u8>,
+    frame: Frame,
+}
+
+/// What a held image shows: a viewport rectangle in CSS pixels, on the page
+/// at `url` scrolled to `scroll`, as it was when the screenshot was taken.
+/// A crop or zoom shows the part of its source's frame it cut.
+#[derive(Clone, Debug)]
+struct Frame {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+    scroll: (f64, f64),
+    url: String,
+}
+
+impl Frame {
+    /// The frame of the (`x`, `y`, `width`, `height`) region of an image of
+    /// `image` pixels that shows this frame.
+    fn region(&self, image: (u32, u32), x: u32, y: u32, width: u32, height: u32) -> Self {
+        let across = self.width / f64::from(image.0.max(1));
+        let down = self.height / f64::from(image.1.max(1));
+        Self {
+            left: self.left + f64::from(x) * across,
+            top: self.top + f64::from(y) * down,
+            width: f64::from(width) * across,
+            height: f64::from(height) * down,
+            scroll: self.scroll,
+            url: self.url.clone(),
+        }
+    }
 }
 
 impl CdpDriver {
@@ -133,8 +173,13 @@ impl CdpDriver {
         }
     }
 
-    fn observation(&mut self, since: Option<u64>) -> Result<Observation, BrowserError> {
-        let rows: Vec<Row> = self.lines()?.into_iter().map(|line| line.row).collect();
+    /// The page's URL as it is now.
+    pub(crate) fn url(&self) -> Result<String, BrowserError> {
+        Ok(self.page_info()?.0)
+    }
+
+    /// The page's URL and title as they are now.
+    fn page_info(&self) -> Result<(String, String), BrowserError> {
         let info = self.pipe.call(
             None,
             "Target.getTargetInfo",
@@ -142,6 +187,18 @@ impl CdpDriver {
             Instant::now() + CALL,
         )?;
         let info = info.get("targetInfo").unwrap_or(&Value::Null);
+        let field = |name| {
+            info.get(name)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned()
+        };
+        Ok((field("url"), field("title")))
+    }
+
+    fn observation(&mut self, since: Option<u64>) -> Result<Observation, BrowserError> {
+        let rows: Vec<Row> = self.lines()?.into_iter().map(|line| line.row).collect();
+        let (url, title) = self.page_info()?;
         self.seq += 1;
         let current: HashMap<String, Row> = rows
             .iter()
@@ -171,19 +228,14 @@ impl CdpDriver {
         }
         Ok(Observation {
             seq: self.seq,
-            url: info
-                .get("url")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-            title: info
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
+            url,
+            title,
             full,
             rows: shown,
             removed,
+            receipt: None,
+            library: Vec::new(),
+            no_tree: false,
         })
     }
 
@@ -200,8 +252,153 @@ impl CdpDriver {
     pub(crate) fn image(&self, image: &str) -> Option<&[u8]> {
         self.media
             .iter()
-            .find(|(id, _)| id == image)
-            .map(|(_, png)| png.as_slice())
+            .find(|held| held.image == image)
+            .map(|held| held.png.as_slice())
+    }
+
+    /// Holds `png`, showing `frame`, under its content ref; returns ref,
+    /// width, height, bytes.
+    fn remember(
+        &mut self,
+        png: Vec<u8>,
+        frame: Frame,
+    ) -> Result<(String, u32, u32, u64), BrowserError> {
+        let (width, height) = png_dimensions(&png)
+            .ok_or_else(|| BrowserError::Protocol("image is not a PNG".to_owned()))?;
+        let image = format!("blake3:{}", blake3::hash(&png).to_hex());
+        let bytes = png.len() as u64;
+        self.media.push_back(Held {
+            image: image.clone(),
+            png,
+            frame,
+        });
+        if self.media.len() > MEDIA {
+            self.media.pop_front();
+        }
+        Ok((image, width, height, bytes))
+    }
+
+    fn held(&self, image: &str) -> Result<(Vec<u8>, Frame), BrowserError> {
+        self.media
+            .iter()
+            .find(|held| held.image == image)
+            .map(|held| (held.png.clone(), held.frame.clone()))
+            .ok_or_else(|| BrowserError::NoImage(image.to_owned()))
+    }
+
+    /// The page's scroll offset as it is now, in CSS pixels.
+    fn scroll_offset(&self) -> Result<(f64, f64), BrowserError> {
+        let scroll = self.page(
+            "Runtime.evaluate",
+            json!({"expression": "[scrollX, scrollY]", "returnByValue": true}),
+        )?;
+        let at = |axis: usize| {
+            scroll
+                .pointer("/result/value")
+                .and_then(|value| value.get(axis))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+        };
+        Ok((at(0), at(1)))
+    }
+
+    /// The viewport point, in CSS pixels, at fractions `x`, `y` of a held
+    /// image, while the page still shows what the image does: the same URL,
+    /// scrolled the same.
+    pub(crate) fn point(&self, input: &PointInput) -> Result<(f64, f64), BrowserError> {
+        let (_, frame) = self.held(&input.image)?;
+        if !(0.0..=1.0).contains(&input.x) || !(0.0..=1.0).contains(&input.y) {
+            return Err(BrowserError::Input(
+                "a point is two fractions of its image, each from 0 to 1".to_owned(),
+            ));
+        }
+        let scroll = self.scroll_offset()?;
+        let (url, _) = self.page_info()?;
+        if url != frame.url
+            || (scroll.0 - frame.scroll.0).abs() >= 1.0
+            || (scroll.1 - frame.scroll.1).abs() >= 1.0
+        {
+            return Err(BrowserError::StaleImage(input.image.clone()));
+        }
+        let x = frame.left + input.x * frame.width;
+        let y = frame.top + input.y * frame.height;
+        Ok((
+            x.clamp(0.0, f64::from(WIDTH) - 1.0),
+            y.clamp(0.0, f64::from(HEIGHT) - 1.0),
+        ))
+    }
+
+    /// The outline row at viewport point (`x`, `y`): the row read from the
+    /// element there, or from its nearest ancestor that makes one. None when
+    /// no row covers the point.
+    pub(crate) fn row_at(&self, x: f64, y: f64) -> Result<Option<Row>, BrowserError> {
+        let hit = self.page(
+            "DOM.getNodeForLocation",
+            json!({"x": x.round() as i64, "y": y.round() as i64, "ignorePointerEventsNone": true}),
+        )?;
+        let Some(hit) = hit.get("backendNodeId").and_then(Value::as_u64) else {
+            return Ok(None);
+        };
+        let tree = self.page("Accessibility.getFullAXTree", json!({}))?;
+        let nodes = tree
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        let lines = outline::lines(nodes);
+        let by_id: HashMap<&str, &Value> = nodes
+            .iter()
+            .filter_map(|node| Some((node.get("nodeId")?.as_str()?, node)))
+            .collect();
+        let backend = |node: &Value| node.get("backendDOMNodeId").and_then(Value::as_u64);
+        let mut node = nodes.iter().find(|node| backend(*node) == Some(hit));
+        // An ancestor walk, bounded as the outline's depth is not.
+        for _ in 0..256 {
+            let Some(current) = node else {
+                break;
+            };
+            if let Some(at) = backend(current)
+                && let Some(line) = lines.iter().find(|line| line.backend_node == Some(at))
+            {
+                return Ok(Some(line.row.clone()));
+            }
+            node = current
+                .get("parentId")
+                .and_then(Value::as_str)
+                .and_then(|id| by_id.get(id).copied());
+        }
+        Ok(None)
+    }
+
+    /// A left click at viewport point (`x`, `y`).
+    fn mouse_click(&self, x: f64, y: f64) -> Result<(), BrowserError> {
+        for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
+            self.page(
+                "Input.dispatchMouseEvent",
+                json!({"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1}),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Clicks at viewport point (`x`, `y`), then returns the settled page.
+    pub(crate) fn click_point(&mut self, x: f64, y: f64) -> Result<Observation, BrowserError> {
+        self.act(|driver| driver.mouse_click(x, y))
+    }
+
+    /// Blacks out password, card and one-time-code fields, or restores them.
+    /// A stored screenshot is masked like an observation: no secret field's
+    /// value reaches the image.
+    fn mask_secrets(&self, mask: bool) -> Result<(), BrowserError> {
+        let script = if mask {
+            "document.querySelectorAll('input[type=password],input[autocomplete^=\"cc-\"],input[autocomplete=\"one-time-code\"]').forEach(e => { e.dataset.oneironMask = e.style.cssText; e.style.setProperty('background', '#000', 'important'); e.style.setProperty('color', '#000', 'important'); e.style.setProperty('-webkit-text-security', 'disc', 'important'); })"
+        } else {
+            "document.querySelectorAll('[data-oneiron-mask]').forEach(e => { e.style.cssText = e.dataset.oneironMask; delete e.dataset.oneironMask; })"
+        };
+        self.page(
+            "Runtime.evaluate",
+            json!({"expression": script, "returnByValue": true}),
+        )?;
+        Ok(())
     }
 
     /// The DOM node behind `target` on the page as it is now.
@@ -329,15 +526,12 @@ impl BrowserDriver for CdpDriver {
         if hit != Value::Bool(true) {
             return Err(BrowserError::Covered(input.target));
         }
-        self.act(|driver| {
-            for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
-                driver.page(
-                    "Input.dispatchMouseEvent",
-                    json!({"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1}),
-                )?;
-            }
-            Ok(())
-        })
+        self.click_point(x, y)
+    }
+
+    fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
+        let (x, y) = self.point(&input)?;
+        self.click_point(x, y)
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
@@ -417,34 +611,148 @@ impl BrowserDriver for CdpDriver {
         Ok(ExpectOutput { met, row })
     }
 
-    fn screenshot(&mut self, _: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
-        let shot = self.page("Page.captureScreenshot", json!({"format": "png"}))?;
+    fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
+        let scroll = self.scroll_offset()?;
+        self.mask_secrets(true)?;
+        let captured = self.page("Page.captureScreenshot", json!({"format": "png"}));
+        let restored = self.mask_secrets(false);
+        let shot = captured?;
+        restored?;
         let data = shot.get("data").and_then(Value::as_str).unwrap_or("");
         let png = base64::engine::general_purpose::STANDARD
             .decode(data)
             .map_err(|e| BrowserError::Protocol(e.to_string()))?;
-        let dimension = |at: usize| {
-            png.get(at..at + 4)
-                .and_then(|b| b.try_into().ok())
-                .map(u32::from_be_bytes)
+        let (url, title) = self.page_info()?;
+        let frame = Frame {
+            left: 0.0,
+            top: 0.0,
+            width: f64::from(WIDTH),
+            height: f64::from(HEIGHT),
+            scroll,
+            url: url.clone(),
         };
-        let (Some(width), Some(height)) = (dimension(16), dimension(20)) else {
-            return Err(BrowserError::Protocol("screenshot is not a PNG".to_owned()));
-        };
-        let image = format!("blake3:{}", blake3::hash(&png).to_hex());
-        let bytes = png.len() as u64;
-        self.media.push_back((image.clone(), png));
-        if self.media.len() > MEDIA {
-            self.media.pop_front();
-        }
+        let (image, width, height, bytes) = self.remember(png, frame)?;
         Ok(ScreenshotOutput {
             image,
             media_type: "image/png".to_owned(),
             width,
             height,
             bytes,
+            trigger: input.trigger,
+            url,
+            title,
         })
     }
+
+    fn view(&mut self, input: ViewInput) -> Result<ImageOutput, BrowserError> {
+        let (png, _) = self.held(&input.image)?;
+        let (width, height) = png_dimensions(&png)
+            .ok_or_else(|| BrowserError::Protocol("held image is not a PNG".to_owned()))?;
+        Ok(ImageOutput {
+            image: input.image.clone(),
+            media_type: "image/png".to_owned(),
+            width,
+            height,
+            bytes: png.len() as u64,
+            source: input.image,
+        })
+    }
+
+    fn crop(&mut self, input: CropInput) -> Result<ImageOutput, BrowserError> {
+        let source = input.image.clone();
+        let (png, frame) = self.held(&input.image)?;
+        let region = crop_region(&png, input.x, input.y, input.width, input.height)?;
+        let frame = frame.region(
+            png_dimensions(&png).unwrap_or_default(),
+            input.x,
+            input.y,
+            input.width,
+            input.height,
+        );
+        let (image, width, height, bytes) = self.remember(encode_png(&region)?, frame)?;
+        Ok(ImageOutput {
+            image,
+            media_type: "image/png".to_owned(),
+            width,
+            height,
+            bytes,
+            source,
+        })
+    }
+
+    fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError> {
+        let source = input.image.clone();
+        let (png, frame) = self.held(&input.image)?;
+        let region = crop_region(&png, input.x, input.y, input.width, input.height)?;
+        let frame = frame.region(
+            png_dimensions(&png).unwrap_or_default(),
+            input.x,
+            input.y,
+            input.width,
+            input.height,
+        );
+        let scale = input
+            .scale
+            .unwrap_or_else(|| (f64::from(WIDTH) / f64::from(input.width.max(1))).min(4.0) as f32);
+        if !scale.is_finite() || !(0.1..=8.0).contains(&scale) {
+            return Err(BrowserError::Input(format!(
+                "zoom scale {scale} is outside 0.1 to 8"
+            )));
+        }
+        let width = ((input.width as f32 * scale).round() as u32).clamp(1, 4096);
+        let height = ((input.height as f32 * scale).round() as u32).clamp(1, 4096);
+        let zoomed = region.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+        let (image, width, height, bytes) = self.remember(encode_png(&zoomed)?, frame)?;
+        Ok(ImageOutput {
+            image,
+            media_type: "image/png".to_owned(),
+            width,
+            height,
+            bytes,
+            source,
+        })
+    }
+
+    fn image_bytes(&self, image: &str) -> Option<Vec<u8>> {
+        self.image(image).map(<[u8]>::to_vec)
+    }
+}
+
+/// A PNG's width and height from its IHDR, when the bytes are a PNG.
+pub(crate) fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    let dimension = |at: usize| png.get(at..at + 4)?.try_into().ok().map(u32::from_be_bytes);
+    Some((dimension(16)?, dimension(20)?))
+}
+
+/// The (`x`, `y`, `width`, `height`) region of a held PNG.
+pub(crate) fn crop_region(
+    png: &[u8],
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<image::DynamicImage, BrowserError> {
+    let image = image::load_from_memory(png).map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    if width == 0
+        || height == 0
+        || x.checked_add(width).is_none_or(|end| end > image.width())
+        || y.checked_add(height).is_none_or(|end| end > image.height())
+    {
+        return Err(BrowserError::Input(format!(
+            "region {x},{y} {width}x{height} does not fit the {}x{} image",
+            image.width(),
+            image.height()
+        )));
+    }
+    Ok(image.crop_imm(x, y, width, height))
+}
+
+pub(crate) fn encode_png(image: &image::DynamicImage) -> Result<Vec<u8>, BrowserError> {
+    let mut out = Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, image::ImageFormat::Png)
+        .map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    Ok(out.into_inner())
 }
 
 fn str_field(value: &Value, name: &str) -> Result<String, BrowserError> {

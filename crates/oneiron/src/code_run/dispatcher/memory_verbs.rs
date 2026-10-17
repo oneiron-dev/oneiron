@@ -72,6 +72,14 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait
             | SelfEffect::TasksRefuse
+            // A callable skill loads against the canonical vault and the
+            // running attempt's lease, and records its invocation there.
+            | SelfEffect::SkillsCall
+            // Leader advice and a pattern load read the canonical vault on
+            // the leader's lease and stamp her attempt's manifest there.
+            | SelfEffect::Leader
+            // A team spawns canonical children and writes a canonical receipt.
+            | SelfEffect::Team
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
@@ -96,7 +104,13 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::Express
             // A fold is the run's own view of its own log: its ledger rides
             // the room's route into the overlay and evaporates with it.
-            | SelfEffect::Fold => Ok(()),
+            | SelfEffect::Fold
+            // A reader child, its finding and a wait over children are the
+            // run's own job rows on the same route: they evaporate with the
+            // room, and their spend scopes hold units and ids, no content.
+            | SelfEffect::ReaderSpawn
+            | SelfEffect::ReaderReport
+            | SelfEffect::TasksWaitSet => Ok(()),
         }
     }
 

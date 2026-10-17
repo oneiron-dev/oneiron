@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build two real QuickJS components. Never installs a compiler or fetches tools.
+"""Build three real QuickJS components. Never installs a compiler or fetches tools.
 
 Required: WASI_SDK_PATH (wasi-sdk 27), wit-bindgen 0.46.0, wasm-tools 1.239.0.
 The only download is the hash-pinned upstream QuickJS source archive.
@@ -43,6 +43,32 @@ def tool_version_matches(tool, version, reported):
     fields = reported.split()
     return (len(fields) >= 2 and fields[0] in {tool, tool + "-cli"}
             and fields[1] == version)
+
+
+def build_component(sdk, source, stage, guest, world, defines, component):
+    """Link one guest over the patched QuickJS into a validated component."""
+    wasm = stage / f"{world}.core.wasm"
+    command = [Path(sdk) / "bin/clang", "--sysroot=" + str(Path(sdk) / "share/wasi-sysroot"),
+               "-O2", "-DNDEBUG", "-DEMSCRIPTEN", '-DCONFIG_VERSION="2025-09-13"',
+               "-fwrapv", "-ffunction-sections", "-fdata-sections", "-mexec-model=reactor",
+               "-Wl,--gc-sections", "-Wl,-z,stack-size=524288", "-Wl,--initial-memory=2097152",
+               "-Wl,--max-memory=33554432", "-I" + str(source), "-I" + str(stage)]
+    command += defines
+    wrappers = ["fd_write", "fd_read", "fd_close", "fd_seek", "fd_fdstat_get",
+                "environ_sizes_get", "environ_get", "args_sizes_get", "args_get",
+                "clock_time_get", "random_get", "proc_exit"]
+    command += ["-Wl,--wrap=__wasi_" + name for name in wrappers]
+    command += [HERE / guest, HERE / "libc_denials.c", stage / f"{world}.c", stage / f"{world}_component_type.o"]
+    command += [source / name for name in ["quickjs.c", "dtoa.c", "libregexp.c", "libunicode.c", "cutils.c"]]
+    command += ["-lm", "-o", wasm]
+    run(command)
+    # No WASI adapter is used. Any ambient import is a build failure.
+    wat = run(["wasm-tools", "print", wasm], capture_output=True, text=True).stdout
+    modules = set(re.findall(r'\(import "([^"]+)"', wat))
+    if modules - {"$root"}: raise SystemExit(f"refusing ambient core imports: {modules}")
+    run(["wasm-tools", "component", "new", wasm, "-o", component])
+    run(["wasm-tools", "validate", component])
+    return {"file":component.name, "sha256":sha(component), "bytes":component.stat().st_size}
 
 
 def main():
@@ -102,35 +128,28 @@ def main():
         run(["python3", HERE / "generate_bridge.py", ROOT / "crates/oneiron/wit/generated/code-run.mjs", stage / "bridge.h"])
         # Numeric C initializer is encoding- and quoting-independent.
         (stage / "bootstrap.h").write_text("static const char bootstrap[] = {" + ",".join(str(v) for v in bootstrap.encode()) + ",0};\n")
-        wasm = stage / "guest.core.wasm"
-        command = [Path(sdk) / "bin/clang", "--sysroot=" + str(Path(sdk) / "share/wasi-sysroot"),
-                   "-O2", "-DNDEBUG", "-DEMSCRIPTEN", '-DCONFIG_VERSION="2025-09-13"',
-                   "-fwrapv", "-ffunction-sections", "-fdata-sections", "-mexec-model=reactor",
-                   "-Wl,--gc-sections", "-Wl,-z,stack-size=524288", "-Wl,--initial-memory=2097152",
-                   "-Wl,--max-memory=33554432", "-I" + str(source), "-I" + str(stage)]
-        if tier == "foreign": command.append("-DONEIRON_FOREIGN")
-        wrappers = ["fd_write", "fd_read", "fd_close", "fd_seek", "fd_fdstat_get",
-                    "environ_sizes_get", "environ_get", "args_sizes_get", "args_get",
-                    "clock_time_get", "random_get", "proc_exit"]
-        command += ["-Wl,--wrap=__wasi_" + name for name in wrappers]
-        command += [HERE / "guest.c", HERE / "libc_denials.c", stage / "guest.c", stage / "guest_component_type.o"]
-        command += [source / name for name in ["quickjs.c", "dtoa.c", "libregexp.c", "libunicode.c", "cutils.c"]]
-        command += ["-lm", "-o", wasm]
-        run(command)
-        # No WASI adapter is used. Any ambient import is a build failure.
-        wat = run(["wasm-tools", "print", wasm], capture_output=True, text=True).stdout
-        modules = set(re.findall(r'\(import "([^"]+)"', wat))
-        if modules - {"$root"}: raise SystemExit(f"refusing ambient core imports: {modules}")
-        component = out / f"quickjs-{tier}.wasm"
-        run(["wasm-tools", "component", "new", wasm, "-o", component])
-        run(["wasm-tools", "validate", component])
-        artifacts[tier] = {"file":component.name, "sha256":sha(component), "bytes":component.stat().st_size}
+        defines = ["-DONEIRON_FOREIGN"] if tier == "foreign" else []
+        artifacts[tier] = build_component(sdk, source, stage, "guest.c", "guest", defines, out / f"quickjs-{tier}.wasm")
+    # The hook guest: its own three-import world (scoped read, ai.verdict,
+    # outcome return),
+    # none of the code-mode SDK, the same interpreter and denied libc.
+    hook_wit = ROOT / "crates/oneiron/wit/hook/hook.wit"
+    stage = out / "hook"
+    stage.mkdir(exist_ok=True)
+    shutil.copyfile(hook_wit, stage / "hook.wit")
+    run(["wit-bindgen", "c", "--world", "hook", "--out-dir", stage, stage / "hook.wit"])
+    hook_bootstrap = (HERE / "hook_bootstrap.js").read_text()
+    (stage / "hook_bootstrap.h").write_text("static const char hook_bootstrap[] = {" + ",".join(str(v) for v in hook_bootstrap.encode()) + ",0};\n")
+    artifacts["hook"] = build_component(sdk, source, stage, "hook_guest.c", "hook", [], out / "quickjs-hook.wasm")
+    artifacts["hook"].update({"world":"oneiron:hook/hook@1.0.0", "wit_sha256":sha(hook_wit)})
     manifest = {"schema_version":1, "component_name":"oneiron.plain-js.quickjs-component", "world":"oneiron:code-run/guest@1.0.0",
                 "engine":"quickjs-2025-09-13-2", "upstream_url":URL,
                 "upstream_sha256":SOURCE_SHA256, "toolchain":versions, "patched_quickjs_sha256":sha(source / "quickjs.c"),
                 "patched_dtoa_sha256":sha(source / "dtoa.c"),
                 "wit_sha256":sha(ROOT / "crates/oneiron/wit/code-run.wit"),
-                "sources":{p.name:sha(p) for p in [HERE / "guest.c", HERE / "libc_denials.c", HERE / "bootstrap.js", HERE / "generate_bridge.py", HERE / "build.py"]},
+                "sources":{p.name:sha(p) for p in [HERE / "guest.c", HERE / "libc_denials.c", HERE / "bootstrap.js",
+                                                 HERE / "hook_guest.c", HERE / "hook_bootstrap.js",
+                                                 HERE / "generate_bridge.py", HERE / "build.py"]},
                 "artifacts":artifacts}
     shutil.copyfile(source / "LICENSE", out / "LICENSE")
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

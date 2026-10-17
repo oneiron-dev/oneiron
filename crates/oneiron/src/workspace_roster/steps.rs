@@ -65,51 +65,22 @@ pub(super) fn validate_workspace_references(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
 ) -> Result<()> {
-    let workspace = &intent.workspace;
     require_kind(
         vault,
         &intent.person_ref,
         ENTITY_TYPE_PERSON,
         "member person_ref must name a live PERSON",
     )?;
-    require_kind(
-        vault,
-        &workspace.org_ref,
-        ENTITY_TYPE_ORG,
-        "workspace org_ref must name a live ORG",
-    )?;
+    {
+        let txn = vault.store.env.read_txn()?;
+        validate_workspace_preset_in_txn(vault, &txn, &intent.workspace)?;
+    }
     require_kind(
         vault,
         &intent.work_facet_ref,
         ENTITY_TYPE_FACET,
         "member work_facet_ref must name a live FACET",
     )?;
-    require_kind(
-        vault,
-        &workspace.house_actor_ref,
-        ENTITY_TYPE_AGENT_DEF,
-        "house_actor_ref must name a live AGENT_DEF",
-    )?;
-    let house = vault
-        .get_agent_definition(&workspace.house_actor_ref)?
-        .ok_or_else(|| invalid("house_actor_ref must name a seeded AGENT_DEF"))?;
-    let seeded = house
-        .logical_id
-        .as_deref()
-        .map(crate::agent_def::legacy_logical_id_row)
-        .transpose()?
-        .flatten();
-    if seeded != Some(workspace.house_actor_ref) {
-        return Err(invalid("house_actor_ref must name a seeded AGENT_DEF"));
-    }
-    if let Some(identity_ref) = workspace.house_identity_ref {
-        require_kind(
-            vault,
-            &identity_ref,
-            ENTITY_TYPE_CHANNEL_IDENTITY,
-            "house_identity_ref must name a live CHANNEL_IDENTITY",
-        )?;
-    }
     match &intent.companion {
         CompanionChoice::Work(companion) => require_kind(
             vault,
@@ -173,6 +144,55 @@ pub(super) fn validate_workspace_references(
                 "caller-supplied entity id is occupied by a different kind",
             ));
         }
+    }
+    Ok(())
+}
+
+/// The workspace half of step 1, in `txn`: the preset's own shape, its
+/// `ORG`, its seeded house `AGENT_DEF` and its optional `CHANNEL_IDENTITY`.
+/// Member references are checked only by the onboarding that names them.
+pub(super) fn validate_workspace_preset_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    preset: &WorkspaceRosterPreset,
+) -> Result<()> {
+    preset.validate()?;
+    let require = |id: &EntityId, expected: u8, reason: &'static str| -> Result<()> {
+        if vault.get_entity_type_in_txn(txn, id)? != Some(expected) {
+            return Err(invalid(reason));
+        }
+        Ok(())
+    };
+    require(
+        &preset.org_ref,
+        ENTITY_TYPE_ORG,
+        "workspace org_ref must name a live ORG",
+    )?;
+    require(
+        &preset.house_actor_ref,
+        ENTITY_TYPE_AGENT_DEF,
+        "house_actor_ref must name a live AGENT_DEF",
+    )?;
+    let house = vault
+        .store
+        .port_entity_record(txn, &preset.house_actor_ref)?
+        .ok_or_else(|| invalid("house_actor_ref must name a seeded AGENT_DEF"))?;
+    let house = crate::agent_def::decode_agent_definition(&house.body)?;
+    let seeded = house
+        .logical_id
+        .as_deref()
+        .map(crate::agent_def::legacy_logical_id_row)
+        .transpose()?
+        .flatten();
+    if seeded != Some(preset.house_actor_ref) {
+        return Err(invalid("house_actor_ref must name a seeded AGENT_DEF"));
+    }
+    if let Some(identity_ref) = preset.house_identity_ref {
+        require(
+            &identity_ref,
+            ENTITY_TYPE_CHANNEL_IDENTITY,
+            "house_identity_ref must name a live CHANNEL_IDENTITY",
+        )?;
     }
     Ok(())
 }
@@ -474,6 +494,14 @@ pub(super) fn read_onboarding_mailbox_in_txn(
     }
     let existing =
         crate::channel_identity::decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    // Channel, address and binding are facts on the identity's claims; the
+    // delegated grant stays on the row.
+    let facts = crate::channel_identity::channel_identity_facts_in_txn(
+        &vault.store,
+        txn,
+        &mailbox.identity_ref,
+    )?
+    .ok_or_else(|| invalid("identity_ref is already bound to a different mailbox"))?;
     let stamp = existing.state_changed_at();
     let valid_time = match existing.state() {
         ChannelIdentityState::Requested => stamp == intent.occurred_at,
@@ -483,8 +511,9 @@ pub(super) fn read_onboarding_mailbox_in_txn(
         _ => false,
     };
     if !existing.is_delegated()
-        || existing.assignment_key() != AssignmentKey::of(&mailbox.channel, &mailbox.address)
-        || existing.binding() != ChannelIdentityBinding::agent(intent.actor_ref)
+        || AssignmentKey::of(&facts.channel, &facts.address_or_handle)
+            != AssignmentKey::of(&mailbox.channel, &mailbox.address)
+        || facts.binding != ChannelIdentityBinding::agent(intent.actor_ref)
         || existing.grant()
             != Some(&DelegatedGrant::new(
                 &mailbox.custody_name,
@@ -541,7 +570,18 @@ pub(super) fn record_roster_member(
             return Ok(());
         }
         MEMBER.put(&vault.store, wtxn, &key, &row)?;
-        Ok(())
+        // Brought or born, the companion follows her member into the rooms
+        // the member stands in, filed only when the member or the companion
+        // herself writes this step (OF-417).
+        let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        super::workplace_join::file_companion_rooms_in_txn(
+            vault,
+            wtxn,
+            intent.person_ref,
+            intent.companion.person_ref(),
+            *writer,
+            now,
+        )
     })
 }
 

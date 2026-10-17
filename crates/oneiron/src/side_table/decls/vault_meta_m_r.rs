@@ -248,13 +248,23 @@ side_tables! {
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:
     /// string.
     SKILL_HUB_PACK_PREDICATE: VaultMeta b"pack.predicate.v1/" Raw;
+    /// One owner's guided setup of one exact pack source: custody refs, consent receipt refs and
+    /// per-connection check results (OF-378). Key: pack name "/" hex content hash "/" principal
+    /// digest.
+    SKILL_HUB_PACK_SETUP: VaultMeta b"pack.setup.v1/" Named;
     /// Alias minted for one skill from a pack. Key: id16 + blake3(JSON hub ref).
     SKILL_HUB_PACK_SKILL_ALIAS: VaultMeta b"pack.skill-alias.v1/" Raw;
+    /// A bundled skill the owner's pack removal retired, and the pack that removed it; the pack's
+    /// next install brings it back (OF-519). Key: id16.
+    SKILL_HUB_PACK_SKILL_REMOVED: VaultMeta b"pack.skill-removed.v1/" Raw;
     /// Configured publisher provenance for a staged pack. Key: id16 + blake3(JSON hub ref).
     SKILL_HUB_PACK_SOURCE_ALIAS: VaultMeta b"pack.source-alias.v1/" LegacyJson;
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;
     /// never synced or imported. Key: ().
     PACK_BYTE_MAP_LOCAL_HEAD: VaultMeta b"pack_byte_map:local_head:v1" Raw;
+    /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
+    /// on. Key: id16 (PERSON).
+    PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
@@ -290,6 +300,9 @@ side_tables! {
     PORTS_WITHDRAWN: VaultMeta b"ports:withdrawn:v1:" Raw;
     /// Community snapshot rows: meta, node:hex32, members:hex32. Key: string.
     PPR_COMMUNITY_CACHE: VaultMeta b"ppr_community_cache:v0:" Raw;
+    /// Where one project ask went: its project, placing TASK and ask (content, not authority).
+    /// Key: id16 (ask).
+    PROJECT_ASK: VaultMeta b"project.ask.v1/" Named;
     /// An owner question about a parent cycle past its world bound (OF-520), local. Key: id16
     /// (the cycle's first project).
     PROJECT_CYCLE_QUESTION: VaultMeta b"project.cycle_question.v1/" Named;
@@ -329,6 +342,18 @@ side_tables! {
     PROJECT_ORIGIN_MESSAGE: VaultMeta b"project.origin_message.v1/" Raw;
     /// The project a room thread was converted into. Key: id16 (room id) + id16 (thread id).
     PROJECT_ORIGIN_THREAD: VaultMeta b"project.origin_thread.v1/" Raw;
+    /// A host-held project card (OF-501): the card, its conversation, the agent that drafted it
+    /// and its state. Key: blake3 hash32 of the card id.
+    PROJECT_PROPOSAL_CARD: VaultMeta b"project.proposal.card.v1/" Named;
+    /// The source message of each card shown in one conversation. Key: id16 (conversation) +
+    /// blake3 hash32 of the card id.
+    PROJECT_PROPOSAL_CONVERSATION: VaultMeta b"project.proposal.conversation.v1/" Raw;
+    /// A conversation's latest person turn awaiting the project question. Key: id16
+    /// (conversation).
+    PROJECT_PROPOSAL_PENDING: VaultMeta b"project.proposal.pending.v1/" Named;
+    /// The project question's yes, or its ask of a person, on one source message, with its
+    /// decision receipt. Key: id16 (source message).
+    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
     /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
     /// (revision).
     PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;
@@ -366,6 +391,9 @@ side_tables! {
     PROVENANCE_BODY_RELEASED: VaultMeta b"provenance:body_released:v1:" Named;
     /// One row's immutable birth envelope (Rule A made_by). Key: id16.
     PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named;
+    /// The local secret that keys a destination's withheld-ref handles (Q26 = B). Key: `()`. Never
+    /// shipped.
+    PROVENANCE_WITHHELD_SECRET: VaultMeta b"provenance:withheld_secret:v1:" Raw;
     /// Disposable cache: which PERSON actor currently represents one provider key. Key: bytes32
     /// (sha256 of provider key).
     PROVIDER_ACTOR_INDEX: VaultMeta b"provider_confidence/actor/v1\0" Raw;
@@ -403,6 +431,10 @@ side_tables! {
     RECEIPT_ARCHIVE_SOURCE_RETIRED: VaultMeta b"receipt/archive-source-retired/v1\0" Raw;
     /// Receipt-family index backfill marker. Key: ().
     RECEIPT_FAMILY_INDEX_VERSION: VaultMeta b"receipt_family_index:v1:version" Raw;
+    /// One recovery kit this vault issued: its homes, passphrase cost, coverage, root, and
+    /// whether the owner re-entered its pieces (OF-173). Never a piece, point, tag, passphrase
+    /// or seed. Key: hex(kit id).
+    RECOVERY_KIT: VaultMeta b"recovery_kit:v1:" Named;
     /// Rebuildable projection row: the head set a merged/split identity shell currently resolves to.
     /// Key: id16 (shell id).
     IDENTITY_REDIRECT: VaultMeta b"redirect:v1:" Raw;
@@ -446,6 +478,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
+    RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
@@ -481,6 +515,28 @@ side_tables! {
     /// Chronological index of every turn in a room, walked for paged message history. Key: id16
     /// (room) + u64be (at) + id16 (turn).
     ROOMS_HISTORY: VaultMeta b"rooms.history.v1/" Raw;
+    /// A room's stored host (OF-528): the latest pin, by someone the room's grant allows, or
+    /// handoff, by the host it replaced. Latest write wins; it grants no scope, role or admission.
+    /// Key: id16 (room).
+    ROOMS_HOST_PIN: VaultMeta b"rooms.host_pin.v1/" Named;
+    /// One room-join intent's receipt (OF-531): the request, each party's recorded answer, the three
+    /// consents as last decided, and the participation a Ready decision committed. Key: string (hex64
+    /// join ref).
+    ROOMS_JOIN: VaultMeta b"rooms.join.v1/" LegacyJson;
+    /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
+    /// subject hex "/" branch hex or "-").
+    ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
+    /// One offer card (OF-530): who asks, what, the cost, the join it files and its state, with the
+    /// host's answer that settled it. Key: string (hex64 offer id).
+    ROOMS_OFFER: VaultMeta b"rooms.offer.v1/" LegacyJson;
+    /// The offer card current for one agent in one room or thread. Key: string (room hex "/" branch
+    /// hex or "-" "/" agent hex).
+    ROOMS_OFFER_CURRENT: VaultMeta b"rooms.offer_current.v1/" LegacyJson;
+    /// One participation fact (OF-529): who took part in a room or one of its threads, how and since
+    /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
+    /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
+    /// or task id, or an offer id's digest).
+    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;

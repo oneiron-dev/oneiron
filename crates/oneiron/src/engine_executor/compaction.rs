@@ -15,10 +15,10 @@ use std::time::Instant;
 
 use crate::code_run::{CodeRunBridgeCall, CodeRunHistoryTurn};
 use crate::compaction::{
-    CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
+    CompactHooks, CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionWatermark, CompactionWindowMessage,
-    EpochPlacement, FoldLedger, GatedCompaction, fold_handle, gate_compaction,
+    EpochPlacement, FoldLedger, GatedCompaction, escape_compacted_text, gate_compaction,
 };
 use crate::entity_id::EntityId;
 use crate::tokenizer::count_context_pack_tokens;
@@ -50,12 +50,16 @@ struct LiveSeat {
     hot_steps: u64,
     spawn: Arc<dyn CompactionSpawn>,
     flight: Option<Receiver<FlightOutcome>>,
+    /// The in-flight epoch pass's `host.compact` chain, for its post-hooks
+    /// once the keyframe lands.
+    hooks: CompactHooks,
     /// Set for the rest of one `run` call when its pass ended without a swap.
     held: Option<CompactionSuppression>,
     last_feed: Option<(Instant, u64)>,
-    /// The run's rows live in an off-record room's overlay, where its epochs
-    /// land too.
-    overlay: bool,
+    /// The run writes through a room it is bound to on a recording route:
+    /// an off-record room's overlay, or a room on record at entry, under its
+    /// saver. Its epochs land along that same route.
+    session_bound: bool,
 }
 
 enum PassOutcome {
@@ -71,6 +75,8 @@ enum PassOutcome {
 pub(super) struct Flight {
     pub(super) epoch: Option<CompactionRequest>,
     pub(super) folds: Vec<FoldJob>,
+    /// The epoch pass's `host.compact` chain past its pre-hooks.
+    pub(super) hooks: CompactHooks,
 }
 
 /// One mark of a batch, sealed: its request, and what its stub lists beside
@@ -98,6 +104,8 @@ struct FlightOutcome {
 pub(super) struct FinishedFlight {
     pub(super) epoch: Option<Result<GatedCompaction, CompactionSuppression>>,
     pub(super) folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
+    /// The epoch pass's `host.compact` chain, for its post-hooks.
+    pub(super) hooks: CompactHooks,
 }
 
 /// What a caller can know about a run's compaction after a call.
@@ -166,9 +174,10 @@ impl RunCompaction {
                 hot_steps,
                 spawn,
                 flight: None,
+                hooks: CompactHooks::default(),
                 held: None,
                 last_feed: None,
-                overlay: false,
+                session_bound: false,
             })),
             report,
         }
@@ -184,6 +193,15 @@ impl RunCompaction {
         matches!(self.seat, Seat::Live(_))
     }
 
+    /// The agent profile's output decay (Docs Q13, agent-runtime-v1 #d7),
+    /// when the seat is live and its profile names one.
+    pub(super) fn output_decay(&self) -> Option<crate::compaction::output::OutputDecayPolicy> {
+        match &self.seat {
+            Seat::Live(seat) => seat.driver.memory_profile().output_decay,
+            Seat::Off => None,
+        }
+    }
+
     /// The run credential's world and facet: its epoch summaries are born
     /// there, as its other records are. `None` (a vault-wide run) is base
     /// reality and the vault's default facet.
@@ -195,18 +213,19 @@ impl RunCompaction {
 
     /// Binds the seat to the room a session-bound run writes along `target`,
     /// the route it captured at entry. An off-record room's run compacts into
-    /// the room's overlay (agent-runtime-v1 §d7). An anonymous room keeps
-    /// nothing to land a summary in, and a room already on record at entry
-    /// writes through its saver, which no epoch mint reaches: both stay raw.
+    /// the room's overlay (agent-runtime-v1 §d7); a room already on record at
+    /// entry compacts into base under its saver, as its other writes land
+    /// (Docs Q17). An anonymous room keeps nothing to land a summary in, so it
+    /// stays raw.
     pub(super) fn bind_room(&mut self, target: crate::session_overlay::RouteTarget) {
         use crate::session_overlay::RouteTarget;
         match target {
-            RouteTarget::Overlay => {
+            RouteTarget::Overlay | RouteTarget::Base => {
                 if let Seat::Live(seat) = &mut self.seat {
-                    seat.overlay = true;
+                    seat.session_bound = true;
                 }
             }
-            RouteTarget::Discard | RouteTarget::Base => {
+            RouteTarget::Discard => {
                 *self = Self::off(CompactionOff::OffRecordRun);
             }
         }
@@ -214,9 +233,9 @@ impl RunCompaction {
 
     /// A new `run` call is a new turn: a turn-scoped hold ends. A run off
     /// canonical storage compacts only when [`Self::bind_room`] bound it to
-    /// an off-record room's overlay.
+    /// its room's recording route.
     pub(super) fn begin_turn(&mut self, on_record: bool) {
-        if !on_record && !matches!(&self.seat, Seat::Live(seat) if seat.overlay) {
+        if !on_record && !matches!(&self.seat, Seat::Live(seat) if seat.session_bound) {
             *self = Self::off(CompactionOff::OffRecordRun);
             return;
         }
@@ -245,6 +264,7 @@ impl RunCompaction {
             },
         };
         seat.flight = None;
+        let hooks = std::mem::take(&mut seat.hooks);
         self.report.in_flight = false;
         let epoch = outcome.epoch.map(|outcome| match outcome {
             PassOutcome::Accepted(gated) => Ok(*gated),
@@ -283,7 +303,11 @@ impl RunCompaction {
                 (job, answer)
             })
             .collect();
-        Some(FinishedFlight { epoch, folds })
+        Some(FinishedFlight {
+            epoch,
+            folds,
+            hooks,
+        })
     }
 
     /// The pass did not swap: the run keeps its raw window, and this reason
@@ -362,6 +386,7 @@ impl RunCompaction {
                     Ok(Flight {
                         epoch: request,
                         folds,
+                        hooks,
                     }) => {
                         if epoch.is_some() && request.is_none() {
                             seat.driver.abandon();
@@ -384,6 +409,7 @@ impl RunCompaction {
                                 let _ = sender.send(FlightOutcome { epoch, folds });
                             }));
                             seat.flight = Some(receiver);
+                            seat.hooks = hooks;
                             self.report.in_flight = true;
                         }
                     }
@@ -606,6 +632,32 @@ pub(super) fn window_pins(window: &[crate::compaction::CompactionWindowMessage])
     pins
 }
 
+/// Docs Q13 (agent-runtime-v1 #d7 verbatim pins): adds the agent profile's
+/// literal pins that occur in `window`, after its failure pins, each once.
+/// A profile pin is kept only while `fits` still holds with it, so it never
+/// displaces a failure pin or cuts the window; the failure pins stay the
+/// mandatory ones.
+pub(super) fn add_profile_pins(
+    pins: &mut Vec<String>,
+    window: &[crate::compaction::CompactionWindowMessage],
+    literals: &[String],
+    fits: impl Fn(&[String]) -> bool,
+) {
+    for literal in literals {
+        if pins.contains(literal)
+            || !window
+                .iter()
+                .any(|message| message.content.contains(literal.as_str()))
+        {
+            continue;
+        }
+        pins.push(literal.clone());
+        if !fits(pins) {
+            pins.pop();
+        }
+    }
+}
+
 /// The bridge positions `calls` spoke at: each call that emitted a bubble.
 /// A position no call spoke at names none of the run's records, whatever
 /// sits at its id. The trailing fallback speaks only once the run completes,
@@ -614,16 +666,6 @@ pub(super) fn speech_orders(calls: &[CodeRunBridgeCall]) -> impl Iterator<Item =
     calls
         .iter()
         .filter_map(CodeRunBridgeCall::emitted_speech_order)
-}
-
-/// Frame marks a summary may not forge: the record marks and this frame.
-pub(super) fn escape_compacted_text(text: &str) -> String {
-    text.replace("<exec>", r"<\exec>")
-        .replace("</exec>", r"<\/exec>")
-        .replace("<console>", r"<\console>")
-        .replace("</console>", r"<\/console>")
-        .replace("<compacted", r"<\compacted")
-        .replace("</compacted", r"<\/compacted")
 }
 
 /// One epoch's steps as the model reads them after a swap: the accepted
@@ -700,9 +742,7 @@ pub(super) fn epoch_frame(
         }
         return Ok(Some(Some(crate::LlmMessage {
             role: crate::LlmMessageRole::User,
-            content: vec![ContentPart::Text {
-                text: fold.stub.clone(),
-            }],
+            content: vec![ContentPart::Text { text: fold.stub() }],
         })));
     };
     if seq as u64 != row.first() {
@@ -735,45 +775,6 @@ pub(super) fn epoch_frame(
             ),
         }],
     })))
-}
-
-/// The most ids a stub lists itself; `describe({fold})` lists them all.
-const STUB_IDS: usize = 64;
-
-/// A fold's one stub, written once when its batch lands and kept byte for
-/// byte, so the cached log holds: its handle and span, the accepted summary
-/// (model output), the ids its turns name that the summary does not, and a
-/// handle to every result the span covers.
-pub(super) fn fold_stub(job: &FoldJob, summary: &str) -> String {
-    let mut stub = format!(
-        "⟨{} · t{}–t{}⟩ {}",
-        fold_handle(job.fold),
-        job.from,
-        job.through,
-        escape_compacted_text(summary)
-    );
-    let ids: Vec<&str> = job
-        .ids
-        .iter()
-        .map(String::as_str)
-        .filter(|id| !summary.contains(id))
-        .collect();
-    if !ids.is_empty() {
-        stub.push_str("\nids: ");
-        stub.push_str(&ids[..ids.len().min(STUB_IDS)].join(", "));
-        if ids.len() > STUB_IDS {
-            stub.push_str(&format!(
-                " and {} more (describe({{fold: \"{}\"}}))",
-                ids.len() - STUB_IDS,
-                fold_handle(job.fold)
-            ));
-        }
-    }
-    for handle in &job.handles {
-        stub.push('\n');
-        stub.push_str(handle);
-    }
-    stub
 }
 
 /// Every entity id the window's text names, in order.

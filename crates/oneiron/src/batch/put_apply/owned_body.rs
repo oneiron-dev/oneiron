@@ -21,7 +21,7 @@ pub(super) fn guard_storage_owned_body(
     crate::scope_summary::validate_summary_put(store, wtxn, id, entity_type, data)?;
     crate::origin::lfs::guard_lfs_asset_put(store, wtxn, id, entity_type, data)?;
     #[cfg(feature = "sync")]
-    crate::entity_doc::guard_record_put(store, wtxn, id, data)?;
+    crate::entity_doc::guard_record_put(store, wtxn, id, metadata, data)?;
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::conversation::validate_put_in_txn(store, wtxn, *id, data, replicated)?;
     }

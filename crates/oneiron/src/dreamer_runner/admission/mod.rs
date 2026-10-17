@@ -3,6 +3,7 @@
 //! Admission is ONE `RwTxn` chain: ready-scan, budget read/top-up, queue
 //! lease, and the optional durable started-milestone claim co-commit.
 
+mod buckets;
 mod settlement;
 mod validation;
 use self::validation::validate_admission_input;
@@ -24,8 +25,10 @@ use super::codec::{
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
     DREAMER_NOTE_REVIEW_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
-    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_TASK_REALIZE_ATTEMPT_KIND,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_LENS_ATTEMPT_KIND,
+    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::milestone::apply_milestone_claim_in_txn;
 use super::store::{DreamerRunnerStore, decode_dreamer_attempt_status};
@@ -236,6 +239,46 @@ impl DreamerRunnerStore<'_> {
         self.admit_next_kind(DREAMER_NOTE_REVIEW_ATTEMPT_KIND, input)
     }
 
+    /// Atomically admits the next queued resident dreaming (OF-490). No home
+    /// gate: each child writes only its own resident's diary.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own admission errors.
+    pub fn admit_next_resident_dream(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, input)
+    }
+
+    /// Atomically admits the next queued realization of a Dreamer-lane TASK.
+    /// Its lease takes the TASK on the highway in the same transaction. No
+    /// home gate: its one write is the NOTE its TASK's result names.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own admission errors.
+    pub fn admit_next_task_realize(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_TASK_REALIZE_ATTEMPT_KIND, input)
+    }
+
+    /// Atomically admits the next queued weave lens render (OF-499). No home
+    /// gate: its one write is the render on its own period's row.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own admission errors.
+    pub fn admit_next_weave_lens(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_WEAVE_LENS_ATTEMPT_KIND, input)
+    }
+
     /// Atomically admits the next queued Coach heal attempt for a host Coach.
     ///
     /// Per-device, like SKILL-OPT: the attempt's only output is a proposal.
@@ -364,10 +407,13 @@ impl DreamerRunnerStore<'_> {
         queue_kind: &str,
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerKindAdmissionResult> {
-        let Some(candidate_attempt_id) = self
-            .attempts
-            .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
-        else {
+        let candidate = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
+            self.ready_macro_candidate_in_txn(wtxn, &input)?
+        } else {
+            self.attempts
+                .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
+        };
+        let Some(candidate_attempt_id) = candidate else {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::Empty,
                 budget_exhausted_candidate: None,
@@ -414,15 +460,20 @@ impl DreamerRunnerStore<'_> {
             });
         }
 
-        let claim = crate::ports::JobQueue::port_job_claim(
-            self.vault,
-            wtxn,
-            Some(queue_kind),
-            ClaimAttempt {
-                lease_owner: input.lease_owner,
-                now: input.now,
-            },
-        )?;
+        let request = ClaimAttempt {
+            lease_owner: input.lease_owner,
+            now: input.now,
+        };
+        let claim = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
+            crate::ports::JobQueue::port_job_claim_id(
+                self.vault,
+                wtxn,
+                candidate_attempt_id,
+                request,
+            )?
+        } else {
+            crate::ports::JobQueue::port_job_claim(self.vault, wtxn, Some(queue_kind), request)?
+        };
         let ClaimOutcome::Claimed(attempt) = claim else {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::Empty,
@@ -480,6 +531,9 @@ impl DreamerRunnerStore<'_> {
         if let Some(milestone) = input.started_milestone {
             apply_milestone_claim_in_txn(self.vault, wtxn, &attempt, milestone)?;
         }
+
+        // OF-220: the TASK this try realizes is taken on the task highway.
+        crate::task_verb::highway_runner::accept_leased_task_in_txn(self.vault, wtxn, &attempt)?;
 
         let status = decode_dreamer_attempt_status(attempt)?;
 

@@ -41,6 +41,9 @@ pub(super) enum BaseGuards {
         /// The project whose leader chat admitted this witness; its records
         /// are settled after the landing's effect.
         leader_project: Option<EntityId>,
+        /// The room thread reply's quote the room guard proved (OF-460): the
+        /// TURN is minted with it, or a stored one must already carry it.
+        quoted: Option<crate::conversation_dag::QuotedReply>,
     },
 }
 
@@ -370,7 +373,7 @@ impl Memory<'_> {
         }
         let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
         super::reject_erased_person_in_txn(self.vault, wtxn, plan.conversation_id, person_author)?;
-        crate::workspace_roster::admit_room_witness(
+        let quoted = crate::workspace_roster::admit_room_witness(
             self.vault,
             wtxn,
             self.actor,
@@ -417,17 +420,21 @@ impl Memory<'_> {
             mint_conversation: current_conversation.is_none(),
             person_author,
             leader_project,
+            quoted,
         })
     }
 
     /// Stages the admitted turn into base: one batch, its text ops, the open
-    /// session's activity bump and the turn's session membership.
+    /// session's activity bump and the turn's session membership. A minted
+    /// quoted reply also takes its `Parent` and `RepliesTo` edges and its
+    /// citation pin here, in the TURN's own write (OF-460).
     pub(super) fn stage_in_base(
         &self,
         plan: &WitnessPlan<'_>,
         admission: &WitnessAdmission<'_>,
         sink: &BaseSink<'_>,
         mint_conversation: bool,
+        quoted: Option<&crate::conversation_dag::QuotedReply>,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> MemoryResult<()> {
         let mut batch = self.vault.batch_in();
@@ -455,20 +462,31 @@ impl Memory<'_> {
                         body,
                     )
                     .edge(&plan.turn_id, EdgeKind::ChildOf, &plan.conversation_id, 1.0);
+                if let Some(quoted) = quoted {
+                    batch = quoted.edges(batch, &plan.turn_id, plan.learned_at);
+                }
             }
             // Only a genuinely new child re-dirties an established TURN. A
             // byte-identical deterministic MESSAGE retry is a transcript no-op;
             // moving the TURN watermark on every CAS retry would make
-            // idempotency observable downstream.
+            // idempotency observable downstream. A pinned DAG TURN is never
+            // re-put: its new MESSAGE children land under it unchanged, and
+            // the same-transaction re-dirty below moves it (OF-460).
             AdmittedTurn::Existing(record) if admission.has_new_messages() => {
-                let redirtied_at = plan.learned_at.max(record.learned_at.saturating_add(1));
-                batch = batch.put(
+                if !crate::conversation_dag::record_is_append_only_in_txn(
+                    &self.vault.store,
+                    wtxn,
                     &plan.turn_id,
-                    ENTITY_TYPE_TURN,
-                    record.occurred,
-                    redirtied_at,
-                    &record.body,
-                );
+                )? {
+                    let redirtied_at = plan.learned_at.max(record.learned_at.saturating_add(1));
+                    batch = batch.put(
+                        &plan.turn_id,
+                        ENTITY_TYPE_TURN,
+                        record.occurred,
+                        redirtied_at,
+                        &record.body,
+                    );
+                }
             }
             AdmittedTurn::Existing(_) => {}
         }
@@ -498,6 +516,9 @@ impl Memory<'_> {
             }
         }
         batch.apply(wtxn)?;
+        if let (Some(quoted), AdmittedTurn::Mint { .. }) = (quoted, &admission.turn) {
+            quoted.pin_in_txn(self.vault, wtxn)?;
+        }
         // The re-put moves the TURN only to `old + 1`, which a scope cursor a
         // later TURN advanced can already be past; the re-dirty carrier puts it
         // past every cursor in this same commit.
@@ -538,11 +559,24 @@ impl Memory<'_> {
         // RT-03 (ONE-1685): a witnessed turn bumps the open session's
         // activity clock — atomically with the turn write, so a crash
         // cannot record the turn without the bump.
-        let bumped_session = crate::session_lifecycle::bump_open_session_activity_in_txn(
-            &self.vault.store,
-            wtxn,
-            plan.learned_at,
-        )?;
+        let session_key = match self.session_key {
+            Some(key) => Some(key),
+            None => crate::identity::read_machine_id_in_txn(self.vault, wtxn)?.map(|machine| {
+                crate::session_lifecycle::SessionKey {
+                    actor: self.actor,
+                    machine,
+                }
+            }),
+        };
+        let bumped_session = match session_key {
+            Some(key) => crate::session_lifecycle::bump_open_session_activity_in_txn(
+                &self.vault.store,
+                wtxn,
+                key,
+                plan.learned_at,
+            )?,
+            None => None,
+        };
         // DREAM-008 (ONE-1250): the TURN → SESSION membership fact, in THIS
         // transaction for the same reason the bump is — a crash cannot record
         // a turn without its sitting, so the compaction handoff door can prove
@@ -562,25 +596,35 @@ impl Memory<'_> {
     }
 
     /// The base receipt, read in the transaction `txn` that wrote the turn:
-    /// canonical short ids, hex when none exists.
+    /// canonical short ids, hex when none exists, and the typed refs of the
+    /// TURN and MESSAGEs built from the ids the plan holds, with no read.
     pub(super) fn base_receipt_in_txn(
         &self,
         plan: &WitnessPlan<'_>,
         txn: &heed::RoTxn<'_>,
     ) -> MemoryResult<WitnessReceipt> {
-        let short_ref = |id: &EntityId| -> MemoryResult<String> {
-            Ok(self
-                .short_ref_of_in_txn(txn, id)?
-                .unwrap_or_else(|| id.to_hex()))
-        };
         let mut message_short_ids = Vec::with_capacity(plan.messages.len());
+        let mut messages = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
-            message_short_ids.push(short_ref(&planned.id)?);
+            let short = self.short_ref_of_in_txn(txn, &planned.id)?;
+            messages.push(crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_MESSAGE,
+                &planned.id,
+                short.as_deref(),
+            ));
+            message_short_ids.push(short.unwrap_or_else(|| planned.id.to_hex()));
         }
+        let turn_short = self.short_ref_of_in_txn(txn, &plan.turn_id)?;
         Ok(WitnessReceipt {
-            turn_short_id: short_ref(&plan.turn_id)?,
+            turn: Some(crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_TURN,
+                &plan.turn_id,
+                turn_short.as_deref(),
+            )),
+            turn_short_id: turn_short.unwrap_or_else(|| plan.turn_id.to_hex()),
             message_short_ids,
             receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),
+            messages,
         })
     }
 

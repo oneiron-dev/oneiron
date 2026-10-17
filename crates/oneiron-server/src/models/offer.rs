@@ -5,7 +5,7 @@ use std::sync::Arc;
 use oneiron::ModelId;
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::media::AiOperation;
-use oneiron::llm::run_admission::{KeyCustody, OfferBinding, OfferRoute, Payer};
+use oneiron::llm::run_admission::{KeyCustody, OfferBinding, OfferRoute};
 
 use crate::config::models::{ProviderConfig, ProviderKind};
 
@@ -18,12 +18,13 @@ pub struct ServedOffer {
     pub backend: Arc<dyn SingleRouteBackend>,
 }
 
-/// The offer `[models]` binds for `model` on `provider`. A `key_env` key is
-/// the owner's own and sits in this process, not behind the credential
+/// The offer `[models]` binds for `model` on `provider`. Unless the host
+/// explicitly names another payer, a `key_env` key is the owner's own. It
+/// sits in this process, not behind the credential
 /// broker, so it is held at T1: a declared run refuses it unless the owner
 /// allows that offer. A `key_secret` key stays in the vault's custody and
 /// only the credential broker sends it, so it is at T0. A provider with no
-/// key is the vault's own server. A reranker's offer names the rerank
+/// key defaults to the vault's own server. A reranker's offer names the rerank
 /// protocol as its adapter, so a chat permit never starts a rerank call at
 /// the same origin, nor the reverse.
 pub(super) fn provider_offer(
@@ -51,15 +52,11 @@ pub(super) fn provider_offer(
         model,
         route,
         locality: provider.locality,
-        payer: if credential_binding.is_some() {
-            Payer::CustomerKey
-        } else {
-            Payer::Local
-        },
+        payer: provider.payer,
         credential_binding,
         catalog_revision: Some(provider.revision.clone()),
         custody,
-        rates: Vec::new(),
+        rates: provider.rates.clone(),
     })
 }
 
@@ -88,5 +85,10 @@ fn adapter(kind: ProviderKind) -> &'static str {
         ProviderKind::AnthropicCompat => "anthropic-compat",
         ProviderKind::LocalOpenaiCompat => "local-openai-compat",
         ProviderKind::Oneironer => "oneironer",
+        ProviderKind::Cartesia => "cartesia",
+        ProviderKind::Elevenlabs => "elevenlabs",
+        ProviderKind::Voxcpm2 => "voxcpm2",
+        ProviderKind::Gemini => "gemini",
+        ProviderKind::Soniox => "soniox",
     }
 }

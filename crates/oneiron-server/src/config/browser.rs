@@ -52,6 +52,14 @@ const fn default_wait_cap_ms() -> u32 {
 
 impl BrowserConfig {
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
+        // The browser guest is an isolated box on a fleet host. It never
+        // runs on the owner's Mac, container VM or not.
+        #[cfg(target_os = "macos")]
+        {
+            anyhow::bail!(
+                "the browser guest never runs on this host; serve from a fleet Linux host"
+            );
+        }
         if !self.runtime.is_absolute() {
             anyhow::bail!("browser.runtime must be an absolute path to a container CLI");
         }
@@ -84,6 +92,9 @@ impl BrowserConfig {
                 tmpfs_mib: self.tmpfs_mib,
             },
             wait_cap: Duration::from_millis(self.wait_cap_ms.into()),
+            // The floor: a press per send. A run's door resolves the real
+            // policy from the vault's standing grants before any call.
+            policy: oneiron_browser::SendPolicy::default(),
             fixture: None,
         }
     }

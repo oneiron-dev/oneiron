@@ -50,8 +50,8 @@ pub use budget::{
 };
 pub use promotion::{
     CampaignPromotionReceipt, ConfirmationOutcome, ConfirmationReceipt, HeldOutCall,
-    PromotionBasis, PromotionDisposition, promote_measured, promotion_basis,
-    research_incumbent, research_promotions, reserve_confirmation,
+    PromotionBasis, PromotionDisposition, promote_measured, promotion_basis, research_incumbent,
+    research_promotions, reserve_confirmation,
 };
 
 /// One bound campaign, keyed by its root attempt.
@@ -557,8 +557,67 @@ pub fn research_rounds(vault: &Vault, root: AttemptId) -> Result<Vec<SelectionRe
         .collect())
 }
 
+/// Every bound campaign's root, in root order: the scheduler's worklist.
+/// # Errors
+/// Storage errors.
+pub fn bound_research_roots(vault: &Vault) -> Result<Vec<AttemptId>> {
+    let txn = vault.store.env.read_txn()?;
+    BINDING
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .map(|(root, _)| AttemptId::from_bytes(&root))
+        .collect()
+}
+
+/// Whether the scheduler should run [`select_next`] for this campaign now:
+/// it has an eligible measured branch, no round stopped it, and its last
+/// round either paused on budget or saw a different branch set than the
+/// campaign holds now. A campaign with nothing new since its last round
+/// waits; the scheduler never re-rules unchanged evidence.
+/// # Errors
+/// Storage errors.
+pub fn research_round_due(vault: &Vault, root: AttemptId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let nodes = nodes_in_txn(vault, &txn, root)?;
+    let last = ROUND
+        .scan_from(&vault.store, &txn, root.as_bytes())?
+        .into_iter()
+        .map(|(_, round)| round)
+        .last();
+    let eligible: BTreeSet<[u8; 16]> = nodes
+        .values()
+        .filter(|node| {
+            node.search.is_some()
+                && node.invalid.is_none()
+                && !pruned_lineage(&nodes, &node.attempt)
+        })
+        .map(|node| *node.attempt.as_bytes())
+        .collect();
+    if eligible.is_empty() {
+        return Ok(false);
+    }
+    Ok(match last {
+        None => true,
+        Some(round) => match round.step {
+            ResearchStep::StoppedPlateau | ResearchStep::StoppedOracle => false,
+            ResearchStep::PausedBudget => true,
+            ResearchStep::Fork { .. } | ResearchStep::EscalatePlateau => {
+                round
+                    .branches
+                    .iter()
+                    .map(|branch| *branch.attempt.as_bytes())
+                    .collect::<BTreeSet<_>>()
+                    != eligible
+            }
+        },
+    })
+}
+
 /// Whether this node or any recorded ancestor was pruned.
-pub(super) fn pruned_lineage(nodes: &BTreeMap<[u8; 16], ExperimentNode>, attempt: &AttemptId) -> bool {
+pub(super) fn pruned_lineage(
+    nodes: &BTreeMap<[u8; 16], ExperimentNode>,
+    attempt: &AttemptId,
+) -> bool {
     let mut stack = vec![*attempt];
     let mut seen = BTreeSet::new();
     while let Some(next) = stack.pop() {
@@ -594,12 +653,19 @@ fn ancestors_or_self(
 
 /// The child must be an existing attempt of the campaign's run, enqueued
 /// under one of `parents` on the run tree.
-fn check_child(vault: &Vault, binding: &ResearchBinding, child: AttemptId, parents: &[AttemptId]) -> Result<()> {
+fn check_child(
+    vault: &Vault,
+    binding: &ResearchBinding,
+    child: AttemptId,
+    parents: &[AttemptId],
+) -> Result<()> {
     let record = AttemptQueue::new(vault)
         .get(child)?
         .ok_or(invalid("the experiment attempt is missing"))?;
     if record.run_id.as_deref() != Some(binding.run_id.as_str()) {
-        return Err(invalid("the experiment attempt is not on the campaign's run"));
+        return Err(invalid(
+            "the experiment attempt is not on the campaign's run",
+        ));
     }
     let parent = crate::run_tree::effective_parent(&record);
     if !parent.is_some_and(|parent| parents.contains(&parent)) {
@@ -610,7 +676,12 @@ fn check_child(vault: &Vault, binding: &ResearchBinding, child: AttemptId, paren
     Ok(())
 }
 
-fn put_new_node(vault: &Vault, root: AttemptId, node: &ExperimentNode, parents: &[AttemptId]) -> Result<()> {
+fn put_new_node(
+    vault: &Vault,
+    root: AttemptId,
+    node: &ExperimentNode,
+    parents: &[AttemptId],
+) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         let key = (*root.as_bytes(), *node.attempt.as_bytes());
         if NODE.contains(&vault.store, txn, &key)? {
@@ -631,15 +702,20 @@ fn put_new_node(vault: &Vault, root: AttemptId, node: &ExperimentNode, parents: 
 /// # Errors
 /// An unbound campaign, an unknown, pruned or wrong-state parent, a child not
 /// under that parent on the run, a recorded child, or storage errors.
-pub fn record_fork(vault: &Vault, root: AttemptId, input: ForkInput, at: u64) -> Result<ExperimentNode> {
+pub fn record_fork(
+    vault: &Vault,
+    root: AttemptId,
+    input: ForkInput,
+    at: u64,
+) -> Result<ExperimentNode> {
     let binding = binding(vault, root)?;
     input.candidate.validate()?;
     let txn = vault.store.env.read_txn()?;
     let nodes = nodes_in_txn(vault, &txn, root)?;
     drop(txn);
-    let parent = nodes
-        .get(input.parent.as_bytes())
-        .ok_or(invalid("the fork parent is not an experiment of this campaign"))?;
+    let parent = nodes.get(input.parent.as_bytes()).ok_or(invalid(
+        "the fork parent is not an experiment of this campaign",
+    ))?;
     if pruned_lineage(&nodes, &input.parent) {
         return Err(invalid("a pruned branch takes no new experiments"));
     }
@@ -680,7 +756,12 @@ pub fn record_fork(vault: &Vault, root: AttemptId, input: ForkInput, at: u64) ->
 /// parents, an unmeasured, buggy or pruned parent, an ancestor common to not
 /// every parent, an overlap under the floor, a child not under a parent on
 /// the run, a missing, retracted or rejected claim, or storage errors.
-pub fn record_weave(vault: &Vault, root: AttemptId, input: WeaveInput, at: u64) -> Result<ExperimentNode> {
+pub fn record_weave(
+    vault: &Vault,
+    root: AttemptId,
+    input: WeaveInput,
+    at: u64,
+) -> Result<ExperimentNode> {
     let binding = binding(vault, root)?;
     input.candidate.validate()?;
     let crossover = binding.config.knobs.merge_crossover;
@@ -701,20 +782,26 @@ pub fn record_weave(vault: &Vault, root: AttemptId, input: WeaveInput, at: u64) 
         || input.validation_overlap < crossover.min_validation_overlap
         || input.validation_overlap > 1.0
     {
-        return Err(invalid("the weave's validation overlap is under the campaign floor"));
+        return Err(invalid(
+            "the weave's validation overlap is under the campaign floor",
+        ));
     }
     let txn = vault.store.env.read_txn()?;
     let nodes = nodes_in_txn(vault, &txn, root)?;
     drop(txn);
     for parent in &input.parents {
-        let node = nodes
-            .get(parent.as_bytes())
-            .ok_or(invalid("a weave parent is not an experiment of this campaign"))?;
+        let node = nodes.get(parent.as_bytes()).ok_or(invalid(
+            "a weave parent is not an experiment of this campaign",
+        ))?;
         if node.search.is_none() || node.invalid.is_some() || pruned_lineage(&nodes, parent) {
-            return Err(invalid("a weave parent must be measured, sound and unpruned"));
+            return Err(invalid(
+                "a weave parent must be measured, sound and unpruned",
+            ));
         }
         if !ancestors_or_self(&nodes, parent).contains(input.common_ancestor.as_bytes()) {
-            return Err(invalid("the common ancestor is not an ancestor of every parent"));
+            return Err(invalid(
+                "the common ancestor is not an ancestor of every parent",
+            ));
         }
     }
     check_child(vault, &binding, input.child, &input.parents)?;
@@ -800,8 +887,15 @@ pub fn record_search_measurement(
     evidence: SearchEvidence,
 ) -> Result<ExperimentNode> {
     let binding = binding(vault, root)?;
-    check_measurement(&binding.config, &evidence.measurement, &binding.config.splits.search)?;
-    bounded(&evidence.estimator_version, "search evidence names its estimator")?;
+    check_measurement(
+        &binding.config,
+        &evidence.measurement,
+        &binding.config.splits.search,
+    )?;
+    bounded(
+        &evidence.estimator_version,
+        "search evidence names its estimator",
+    )?;
     bounded_refs(&evidence.receipt_refs, true)?;
     if !evidence.confirmed_hits.is_finite()
         || evidence.confirmed_hits < 0.0
@@ -838,7 +932,11 @@ pub fn record_held_out_measurement(
     at: u64,
 ) -> Result<ExperimentNode> {
     let binding = binding(vault, root)?;
-    check_measurement(&binding.config, &measurement, &binding.config.splits.held_out)?;
+    check_measurement(
+        &binding.config,
+        &measurement,
+        &binding.config.splits.held_out,
+    )?;
     bounded_refs(&receipt_refs, true)?;
     update_node(vault, root, attempt, |node| {
         if node.held_out.is_some() || node.invalid.is_some() {
@@ -868,7 +966,9 @@ pub fn record_invalid_experiment(
 ) -> Result<ExperimentNode> {
     binding(vault, root)?;
     if attempt == root {
-        return Err(invalid("the incumbent root is not an experiment to mark buggy"));
+        return Err(invalid(
+            "the incumbent root is not an experiment to mark buggy",
+        ));
     }
     bounded(reason, "a buggy node names a bounded reason")?;
     bounded_refs(&evidence_refs, true)?;
@@ -921,7 +1021,9 @@ pub fn prune_branch(
                 .zip(reward(node))
                 .is_some_and(|(winner, loser)| winner > loser);
             if !beats {
-                return Err(invalid("the dominating branch must be measured, live and better"));
+                return Err(invalid(
+                    "the dominating branch must be measured, live and better",
+                ));
             }
         }
         PruneReason::FloorRegression { axis } => {
@@ -932,7 +1034,9 @@ pub fn prune_branch(
                 .iter()
                 .any(|row| row.name == *axis && row.role == MetricRole::Floor)
             {
-                return Err(invalid("a floor regression names a floor axis of the ruler"));
+                return Err(invalid(
+                    "a floor regression names a floor axis of the ruler",
+                ));
             }
         }
         PruneReason::GainBelowFloor | PruneReason::Stopped { .. } => {}
@@ -1049,7 +1153,11 @@ pub fn select_next(
         SelectionDecision::EscalatePlateau => ResearchStep::EscalatePlateau,
         SelectionDecision::StoppedOracle => ResearchStep::StoppedOracle,
     };
-    let policy = selection_policy_for(vault, &binding.config.campaign_id, binding.holder.as_deref())?;
+    let policy = selection_policy_for(
+        vault,
+        &binding.config.campaign_id,
+        binding.holder.as_deref(),
+    )?;
     let round = u64::try_from(rounds.len()).map_err(|_| invalid("round count overflow"))?;
     let receipt = SelectionReceipt {
         root,
@@ -1071,7 +1179,9 @@ pub fn select_next(
     };
     vault.with_write_txn_grouped(|txn| {
         if ROUND.contains(&vault.store, txn, &(*root.as_bytes(), round))? {
-            return Err(invalid("another selection round committed first; select again"));
+            return Err(invalid(
+                "another selection round committed first; select again",
+            ));
         }
         ROUND.put(&vault.store, txn, &(*root.as_bytes(), round), &receipt)?;
         Ok(receipt)

@@ -2,6 +2,21 @@
 
 **Long-context AI memory for agents, built around a local Rust vault.**
 
+## Agent quickstart: install, connect, remember
+
+From this checkout on a Linux/macOS development host:
+
+```sh
+python3 examples/agent-quickstart/quickstart.py --keep-running
+```
+
+Installs the engine, starts a fresh authenticated vault, saves and recalls an
+agent-private memory over HTTP, and connects MCP. No account, API key, model,
+or manual pairing. Needs Python 3.11+, curl 7.76+, and Rust/native build tools.
+It prints the URL, stop command, and ready MCP config with absolute paths for
+Claude Code, Codex, or OpenCode. See [setup and repair](./docs/agent-setup.md)
+and the [complete example](./examples/agent-quickstart/).
+
 ## Why
 
 Agents need useful memory across sessions, not just a longer prompt.
@@ -82,38 +97,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `Vault::open` can create a vault. On Linux, `Vault::open_existing` opens only an
 initialized vault and never creates one.
 
-## Install and build from source
+## Manual installation from source
 
-Use the Rust toolchain pinned in [rust-toolchain.toml](./rust-toolchain.toml).
-From the repository root:
-
-```sh
-cargo build --locked -p oneiron --release
-cargo install --locked --path crates/oneiron-server
-```
-
-This installs two binaries, `oneiron-server` and `oneiron`. They run the same CLI.
-
-Use a separate, new vault and config for this **development-only** daemon
-example. It selects no embedding backend and binds an unauthenticated server
-to loopback:
+The [agent quickstart](./examples/agent-quickstart/) installs and connects in
+one run. To install only the CLI, use the Rust toolchain pinned in
+[rust-toolchain.toml](./rust-toolchain.toml), from the repository root:
 
 ```sh
-oneiron-server init ./server-vault --config ./oneiron-server.toml --embedder none
-oneiron-server doctor ./server-vault --config ./oneiron-server.toml
-oneiron-server serve --config ./oneiron-server.toml --host 127.0.0.1 \
-  --insecure-allow-unauthenticated
+cargo install --locked --path crates/oneiron-server --bin oneiron
 ```
 
-This assumes no `ONEIRON_*` overrides. Existing vaults need matching storage,
-analyzer, and vector settings. Serve refuses unauthenticated mode on any host
-but loopback; a shared or network-facing vault sets an auth secret. For
-authenticated setup, start with
-`oneiron-server token bootstrap --help` and the
-[authentication reference](./oneiron.skills.md#authentication).
+This installs `oneiron` in Cargo's bin directory. Without `--bin oneiron`, the
+package also installs `oneiron-server` (the same CLI) and `oneiron-broker`.
+Oneiron is pre-release; this path uses source builds rather than assuming a
+published package or release binary. For the exact noninteractive init, agent
+credential, serve and first-memory calls, see [agent setup](./docs/agent-setup.md).
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
-Oneiron is pre-release. This README uses source builds rather than assuming a
-published package or release binary.
 
 ## Crates
 
@@ -130,7 +129,7 @@ to its modules and source files. It does not cover the macOS app.
 | [oneiron-napi](./crates/oneiron-napi) | Native Node.js bindings. |
 | [oneiron-py](./crates/oneiron-py) | Native Python extension. |
 | [oneiron-remote](./crates/oneiron-remote) | Shared embedded and remote SDK backend. |
-| [oneiron-uniffi](./crates/oneiron-uniffi) | Definition-only UniFFI interface contract. |
+| [oneiron-uniffi](./crates/oneiron-uniffi) | UniFFI binding of the SDK verb table over the shared `OneironClient` (embedded and remote). |
 | [oneiron-android](./crates/oneiron-android) | JNI/Kotlin ownership adapter. |
 | [oneiron-llm-anthropic](./crates/oneiron-llm-anthropic) | Anthropic Messages adapter. |
 | [oneiron-llm-gemini](./crates/oneiron-llm-gemini) | Gemini adapter. |

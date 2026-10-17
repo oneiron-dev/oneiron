@@ -2,14 +2,8 @@
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::error::RecordError;
-use crate::side_table::HexId;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::store::Store;
-
-/// Existence check against the deletion module's local hard-delete marker
-/// (`dt:`, `crate::deletion::LOCAL_HARD_DELETE_PREFIX`) — not owned by this
-/// module; only presence is read here, so no value shape commitment is made.
-const HARD_DELETE_MARKERS: SideTable<HexId, (), Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 fn invalid() -> Error {
     RecordError::InvalidProjectBody("invalid project or ancestry").into()
@@ -24,7 +18,7 @@ pub(super) fn dependency(
     kind: u8,
 ) -> Result<ProjectRecord> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-        if HARD_DELETE_MARKERS.contains(store, txn, &HexId(id))? {
+        if store.port_deletion_marked(txn, DeletionMarker::HardDelete, &id)? {
             return Err(invalid());
         }
         return Err(RecordError::ProjectDependencyPending.into());
@@ -38,8 +32,7 @@ pub(super) fn dependency(
         // A soft-erased parent is terminal, not an out-of-order arrival.
         return Err(invalid());
     }
-    rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
-        .map_err(|_| Error::CorruptedIndex("project dependency body"))
+    record(store, txn, id, kind)?.ok_or(Error::CorruptedIndex("project dependency body"))
 }
 
 /// The project a home-room body names. A derived room id carries no order
@@ -81,17 +74,24 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     }
     refs.extend(body.goal.iter());
     refs.extend(body.born_from.iter());
+    refs.extend(body.wrapper_task.iter());
     refs.extend(body.budget.iter());
     for list in [
         &body.board,
         &body.roster,
         &body.sessions,
-        &body.tasks,
         &body.branches,
         &body.skill_forks,
-        &body.asks,
     ] {
         if list.len() > 4096 || list.iter().collect::<BTreeSet<_>>().len() != list.len() {
+            return Err(invalid());
+        }
+        refs.extend(list);
+    }
+    // TASK-bearing lists grow with use, so no count refuses them (rule 5);
+    // `normalize_project_body` counts them against a threshold row.
+    for list in [&body.tasks, &body.asks] {
+        if list.iter().collect::<BTreeSet<_>>().len() != list.len() {
             return Err(invalid());
         }
         refs.extend(list);
@@ -218,6 +218,17 @@ pub(crate) fn normalize_project_body(
     if body.parents.contains(&id.to_hex()) {
         return Err(invalid());
     }
+    // A project's tasks and asks are kept however many; past the threshold
+    // row the board's check is raised for the project.
+    let mut tasks = crate::scan_check::ScanCount::start(
+        store,
+        txn,
+        crate::scan_check::EngineScan::ProjectTaskRows,
+        id.as_bytes(),
+    )?;
+    tasks.rows(body.tasks.len());
+    tasks.rows(body.asks.len());
+    tasks.defer(store);
     body.depth = match crate::gate::project_depth::birth_for_project(store, txn, id)? {
         Some((_, birth)) => birth.depth,
         None if crate::gate::project_depth::implicit_birth_applies(store, txn, posture, id)? => {
@@ -257,15 +268,17 @@ pub(crate) fn reconcile_project_rooms(
         if header.entity_type != project_kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
             continue;
         }
-        let body: ProjectRecord = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
-            .map_err(|_| Error::CorruptedIndex("project projection body"))?;
+        let body: ProjectRecord = record(store, txn, *id, project_kind)?
+            .ok_or(Error::CorruptedIndex("project projection body"))?;
         // The card's provenance is a MESSAGE, not just a parseable entity ID.
         // Missing replicated dependencies are retryable by the sync entity pass;
         // a wrong kind or erased source is terminal at every write door.
         if let Some(source) = &body.born_from {
             let source = EntityId::from_hex(source).map_err(|_| invalid())?;
-            let Some(message) = store.entities.get(txn, source.as_bytes())? else {
-                if HARD_DELETE_MARKERS.contains(store, txn, &HexId(source))? {
+            let Some(message) =
+                crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &source)?
+            else {
+                if store.port_deletion_marked(txn, DeletionMarker::HardDelete, &source)? {
                     return Err(invalid());
                 }
                 return Err(RecordError::ProjectDependencyPending.into());

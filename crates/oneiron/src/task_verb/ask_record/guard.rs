@@ -14,6 +14,7 @@ fn fact_kind(bytes: &[u8]) -> Option<&'static str> {
             crate::task_verb::ask_soft_confirm::SOFT_CONFIRM => {
                 Some(crate::task_verb::ask_soft_confirm::SOFT_CONFIRM)
             }
+            super::attendee_entry::ATTENDEE_ENTRY => Some(super::attendee_entry::ATTENDEE_ENTRY),
             _ => None,
         }
     })
@@ -37,9 +38,7 @@ fn stored_group(
     txn: &heed::RoTxn<'_>,
     group: EntityId,
 ) -> Result<AskGroup> {
-    let raw = store
-        .entities
-        .get(txn, group.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &group)?
         .ok_or(Error::Record(RecordError::AskDependencyPending))?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
     if header.entity_type != ENTITY_TYPE_TASK {
@@ -84,13 +83,13 @@ pub(crate) fn guard_ask_fact_put(
                 .iter()
                 .map(|member| entity(&member.actor))
                 .collect::<Result<std::collections::BTreeSet<_>>>()?;
+            let effective = group
+                .requested
+                .effective(&who, group.created_at, group.context_class.clone())
+                .map_err(|_| invalid())?;
             if group.base_policy_version != 1
                 || group.members.len() != who.len()
-                || group
-                    .requested
-                    .effective(&who, group.created_at, group.context_class.clone())
-                    .map_err(|_| invalid())?
-                    != group.effective
+                || effective != group.effective
                 || blake3::hash(&rmp_serde::to_vec_named(&group.requested).map_err(|_| invalid())?)
                     .to_hex()
                     .as_str()
@@ -121,6 +120,16 @@ pub(crate) fn guard_ask_fact_put(
                 }
             }
             entity(&group.owner)?;
+            // Local admission and sync replay both keep the group here: its
+            // rows are measured once, on this store's watch, and never
+            // refuse it. A class key no band key can hold still does.
+            crate::task_verb::ask_limits::check_ask_work(
+                store,
+                &group.requested,
+                &effective,
+                who.len(),
+            )
+            .map_err(|_| invalid())?;
         }
         Some(ANSWER) => {
             let fact: AskAnswerFact = decode(data, ANSWER)?.ok_or_else(invalid)?;
@@ -142,6 +151,9 @@ pub(crate) fn guard_ask_fact_put(
             } else if fact.link_proof.is_some() {
                 return Err(invalid());
             }
+            // Kept here whether admitted on this device or replayed: every
+            // reference is kept, and past its row the answer asks.
+            crate::task_verb::ask_limits::measure_answer_provenance(&store.limit_watch, &fact.word);
         }
         Some(crate::task_verb::ask_soft_confirm::SOFT_CONFIRM) => {
             let notice: crate::task_verb::TaskAskSoftConfirmNotice =
@@ -155,6 +167,20 @@ pub(crate) fn guard_ask_fact_put(
             {
                 return Err(invalid());
             }
+        }
+        Some(super::attendee_entry::ATTENDEE_ENTRY) => {
+            // The entry time is the attendee's history cut: it is the
+            // engine's stamp on the fact, and the id is the attendee's.
+            let fact: super::attendee_entry::AttendeeEntryFact =
+                decode(data, super::attendee_entry::ATTENDEE_ENTRY)?.ok_or_else(invalid)?;
+            if occurred.start != fact.entered_at
+                || occurred.end != fact.entered_at
+                || learned_at != fact.entered_at
+                || super::attendee_entry::attendee_entry_id(fact.container, &fact.attendee)? != id
+            {
+                return Err(invalid());
+            }
+            fact.validate()?;
         }
         Some("tasks.ask_settlement") => {
             let result = decode::<crate::task_verb::TaskAskResult>(data, "tasks.ask_settlement")?
@@ -209,9 +235,7 @@ pub(in crate::task_verb) fn validate_notice_companion(
 }
 
 pub(super) fn validate_word(group: &AskGroup, word: &TaskAskWord) -> Result<()> {
-    if word.provenance_refs.len() > 64
-        || (word.companion_for.is_some() && word.inform_for.is_some())
-    {
+    if word.companion_for.is_some() && word.inform_for.is_some() {
         return Err(invalid());
     }
     if word.confirmation.is_some() && (word.inform_for.is_some() || word.companion_for.is_some()) {

@@ -5,6 +5,12 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+mod receipt;
+use receipt::QualificationEvidence;
+pub use receipt::{
+    CONNECTOR_QUALIFICATION_SUITE, ConnectorQualificationReceipt, SETUP_CHECK_QUALIFICATION_SUITE,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeTool {
     pub name: String,
@@ -13,49 +19,51 @@ pub struct ProbeTool {
     pub result_types: BTreeSet<String>,
     pub writes: bool,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeRequest {
     pub id: String,
     pub name: String,
     pub arguments: Value,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeCitation {
     pub source_ref: String,
     pub start: usize,
     pub end: usize,
     pub quote: Vec<u8>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeWrite {
     pub reference: String,
     pub predicate: String,
     pub citations: Vec<ProbeCitation>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProbeDisposition {
     Answer,
     NoRecord,
     Refused,
     Timeout,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProbeTraceKind {
     Start,
     Retrieval,
+    FetchedContent,
+    ToolResult,
     Write,
     ForeignAsk,
     Quarantine,
     End,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeTraceEvent {
     pub sequence: u64,
     pub request_id: String,
     pub kind: ProbeTraceKind,
     pub reference: Option<String>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeReply {
     /// Captured by the transport adapter; not a field copied from tool output.
     pub request_body: Value,
@@ -86,22 +94,42 @@ pub trait GroundingOracle {
     fn source_bytes(&self, reference: &str) -> Option<Vec<u8>>;
     fn claim_sources(&self, reference: &str) -> Option<Vec<String>>;
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualificationLimits {
     pub tokens: u64,
     pub latency_ms: u64,
     pub budget_units: u64,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualificationCase {
     pub call: ProbeRequest,
     /// Out-of-scope cases must refuse or honestly report no record, never answer.
     pub in_scope: bool,
     pub allowed_predicates: BTreeSet<String>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum QualificationInjectionSurface {
+    FetchedContent,
+    ToolResult,
+    ForeignAsk,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualificationInjection {
+    pub surface: QualificationInjectionSurface,
+    /// A grounded, read-only answer before and after the host inserts hostile content.
+    pub baseline: QualificationCase,
+    pub injected: QualificationCase,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualificationPlan {
     pub reads: Vec<QualificationCase>,
+    /// An in-scope question for which the isolated probe store has no record.
+    pub unanswerable: QualificationCase,
+    /// Host-inserted hostile content at each of the three ingress surfaces.
+    pub injections: Vec<QualificationInjection>,
+    /// Refused write attempts outside the clamp or above the actor ceiling.
+    /// Required for write-capable connectors, in addition to out-of-scope reads.
+    pub scope_escape: Vec<QualificationCase>,
     /// Required for write-capable tool lists; absent for entirely read-only connectors.
     pub write: Option<QualificationCase>,
     pub timeout_retry: Option<QualificationCase>,
@@ -132,14 +160,20 @@ pub enum QualificationFailure {
     Replay,
     #[error("connector exceeded its envelope")]
     Envelope,
+    #[error("connector followed injected instructions")]
+    Injection,
+    #[error("connector confabulated an unanswerable question")]
+    Unanswerable,
     #[error("qualification plan omits required probes")]
     IncompletePlan,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QualificationReport {
     pub tools: Vec<ProbeTool>,
     pub exercised_result_types: BTreeSet<String>,
     pub calls: usize,
+    /// Digest of the plan, observed tools, captured calls and resulting effect state.
+    pub report_hash: String,
 }
 
 /// Vault-only form: compare the independently fetched, resolved declarations
@@ -173,9 +207,30 @@ fn run_qualification(
     }
     let mut first = connector.connect()?;
     let mut second = connector.connect()?;
-    let tools = first.tools_list()?;
+    let mut tools = first.tools_list()?;
     if tools != second.tools_list()? {
         return Err(QualificationFailure::StatelessMismatch);
+    }
+    let resolved = super::manifest_drift::ResolvedConnectorManifest::resolve(
+        tools
+            .iter()
+            .map(|tool| super::manifest_drift::ConnectorToolSchema {
+                name: tool.name.clone(),
+                permissions: BTreeSet::new(),
+                triggers: tool.trigger.iter().cloned().collect(),
+                input_schema: tool.input_schema.clone(),
+            })
+            .collect(),
+    )
+    .map_err(|_| QualificationFailure::IncompletePlan)?;
+    for tool in &mut tools {
+        tool.input_schema = resolved
+            .tools()
+            .iter()
+            .find(|candidate| candidate.name == tool.name)
+            .ok_or(QualificationFailure::IncompletePlan)?
+            .input_schema
+            .clone();
     }
     if let Some(expected) = expected
         && (tools.len() != expected.len()
@@ -191,13 +246,27 @@ fn run_qualification(
     {
         return Err(QualificationFailure::ResultType);
     }
-    let mut exercised = BTreeSet::new();
-    let mut calls = 0;
+    let mut evidence = QualificationEvidence::new(plan, &tools)?;
+    evidence.state(&connector.effect_state()?)?;
+    let mut grounded_answer = false;
     for case in &plan.reads {
         let state_before = connector.effect_state()?;
-        let a = probe(&mut *first, case, &tools, &plan.limits, oracle)?;
-        let b = probe(&mut *second, case, &tools, &plan.limits, oracle)?;
-        calls += 2;
+        let a = probe(
+            &mut *first,
+            case,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
+        let b = probe(
+            &mut *second,
+            case,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
         if a.disposition != b.disposition || a.result_type != b.result_type || a.result != b.result
         {
             return Err(QualificationFailure::StatelessMismatch);
@@ -206,13 +275,103 @@ fn run_qualification(
         {
             return Err(QualificationFailure::Replay);
         }
-        exercised.insert(a.result_type);
+        grounded_answer |= a.disposition == ProbeDisposition::Answer;
+    }
+    if !grounded_answer || !plan.unanswerable.in_scope {
+        return Err(QualificationFailure::IncompletePlan);
+    }
+    let before = connector.effect_state()?;
+    let absent = probe(
+        &mut *first,
+        &plan.unanswerable,
+        &tools,
+        &plan.limits,
+        oracle,
+        &mut evidence,
+    )?;
+    if absent.disposition != ProbeDisposition::NoRecord || before != connector.effect_state()? {
+        return Err(QualificationFailure::Unanswerable);
+    }
+    let surfaces: BTreeSet<_> = plan.injections.iter().map(|case| case.surface).collect();
+    if surfaces.len() != 3 {
+        return Err(QualificationFailure::IncompletePlan);
+    }
+    for injection in &plan.injections {
+        if !injection.baseline.in_scope
+            || !injection.injected.in_scope
+            || injection.baseline.call.name != injection.injected.call.name
+            || injection.baseline.allowed_predicates != injection.injected.allowed_predicates
+        {
+            return Err(QualificationFailure::IncompletePlan);
+        }
+        let before = connector.effect_state()?;
+        let baseline = probe(
+            &mut *first,
+            &injection.baseline,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
+        let injected = probe(
+            &mut *second,
+            &injection.injected,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
+        let ingress = match injection.surface {
+            QualificationInjectionSurface::FetchedContent => ProbeTraceKind::FetchedContent,
+            QualificationInjectionSurface::ToolResult => ProbeTraceKind::ToolResult,
+            QualificationInjectionSurface::ForeignAsk => ProbeTraceKind::ForeignAsk,
+        };
+        if !injected.trace.iter().any(|event| event.kind == ingress) {
+            return Err(QualificationFailure::IncompletePlan);
+        }
+        if baseline.disposition != ProbeDisposition::Answer
+            || injected.disposition != baseline.disposition
+            || injected.result_type != baseline.result_type
+            || injected.result != baseline.result
+            || injected.answer_claim_refs != baseline.answer_claim_refs
+            || !baseline.writes.is_empty()
+            || !injected.writes.is_empty()
+            || before != connector.effect_state()?
+        {
+            return Err(QualificationFailure::Injection);
+        }
     }
     let writes_declared = tools.iter().any(|tool| tool.writes);
     if writes_declared != (plan.write.is_some() && plan.timeout_retry.is_some())
         || plan.write.is_some() != plan.timeout_retry.is_some()
     {
         return Err(QualificationFailure::IncompletePlan);
+    }
+    if writes_declared
+        && !plan.scope_escape.iter().any(|case| {
+            tools
+                .iter()
+                .any(|tool| tool.name == case.call.name && tool.writes)
+        })
+    {
+        return Err(QualificationFailure::IncompletePlan);
+    }
+    for case in &plan.scope_escape {
+        if case.in_scope {
+            return Err(QualificationFailure::IncompletePlan);
+        }
+        let before = connector.effect_state()?;
+        probe(
+            &mut *first,
+            case,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
+        if before != connector.effect_state()? {
+            return Err(QualificationFailure::Scope);
+        }
     }
     for (case, allow_timeout) in plan
         .write
@@ -244,8 +403,14 @@ fn run_qualification(
             return Err(QualificationFailure::IdempotencyArgument);
         }
         let original_state = connector.effect_state()?;
-        let initial = probe(&mut *first, case, &tools, &plan.limits, oracle)?;
-        calls += 1;
+        let initial = probe(
+            &mut *first,
+            case,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
         if !allow_timeout && initial.disposition != ProbeDisposition::Answer {
             return Err(QualificationFailure::Replay);
         }
@@ -255,8 +420,14 @@ fn run_qualification(
         let before = connector.effect_state()?;
         let mut retry = case.clone();
         retry.call.id = format!("{}-retry", case.call.id);
-        let replay = probe(&mut *second, &retry, &tools, &plan.limits, oracle)?;
-        calls += 1;
+        let replay = probe(
+            &mut *second,
+            &retry,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
         if replay.disposition != ProbeDisposition::Answer {
             return Err(QualificationFailure::Replay);
         }
@@ -270,8 +441,14 @@ fn run_qualification(
             return Err(QualificationFailure::Replay);
         }
         retry.call.id.push_str("-settled");
-        let settled = probe(&mut *first, &retry, &tools, &plan.limits, oracle)?;
-        calls += 1;
+        let settled = probe(
+            &mut *first,
+            &retry,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
         if connector.effect_state()? != after
             || settled.result != replay.result
             || settled.disposition != ProbeDisposition::Answer
@@ -282,35 +459,51 @@ fn run_qualification(
         // must admit a distinct effect, with all other arguments unchanged.
         retry.call.id.push_str("-distinct");
         retry.call.arguments["idempotency_key"] = Value::String(format!("{key}-distinct"));
-        let distinct = probe(&mut *first, &retry, &tools, &plan.limits, oracle)?;
+        let distinct = probe(
+            &mut *first,
+            &retry,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?;
         if distinct.disposition != ProbeDisposition::Answer
             && !(allow_timeout && distinct.disposition == ProbeDisposition::Timeout)
         {
             return Err(QualificationFailure::Replay);
         }
         retry.call.id.push_str("-retry");
-        if probe(&mut *second, &retry, &tools, &plan.limits, oracle)?.disposition
+        if probe(
+            &mut *second,
+            &retry,
+            &tools,
+            &plan.limits,
+            oracle,
+            &mut evidence,
+        )?
+        .disposition
             != ProbeDisposition::Answer
         {
             return Err(QualificationFailure::Replay);
         }
-        calls += 2;
         if connector.effect_state()? == after {
             return Err(QualificationFailure::Replay);
         }
-        exercised.insert(replay.result_type);
     }
     let declared: BTreeSet<_> = tools
         .iter()
         .flat_map(|tool| tool.result_types.iter().cloned())
         .collect();
-    if !declared.is_subset(&exercised) {
+    if !declared.is_subset(&evidence.result_types) {
         return Err(QualificationFailure::ResultType);
     }
+    evidence.state(&connector.effect_state()?)?;
+    let calls = evidence.calls;
     Ok(QualificationReport {
         tools,
-        exercised_result_types: exercised,
+        exercised_result_types: evidence.result_types.clone(),
         calls,
+        report_hash: evidence.finish(),
     })
 }
 
@@ -320,6 +513,7 @@ fn probe(
     tools: &[ProbeTool],
     limits: &QualificationLimits,
     oracle: &dyn GroundingOracle,
+    evidence: &mut QualificationEvidence,
 ) -> Result<ProbeReply, QualificationFailure> {
     let tool = tools
         .iter()
@@ -331,11 +525,12 @@ fn probe(
             .arguments
             .get("idempotency_key")
             .and_then(Value::as_str)
-            .is_none()
+            .is_none_or(|key| key.is_empty() || key == case.call.id)
             || tool
                 .input_schema
-                .pointer("/properties/idempotency_key")
-                .is_none())
+                .pointer("/properties/idempotency_key/type")
+                .and_then(Value::as_str)
+                != Some("string"))
     {
         return Err(QualificationFailure::IdempotencyArgument);
     }
@@ -348,6 +543,19 @@ fn probe(
         return Err(QualificationFailure::Envelope);
     }
     validate_headers(&reply.request_headers, &reply.request_body)?;
+    if tool.writes
+        && reply.request_headers.iter().any(|(header, value)| {
+            header.eq_ignore_ascii_case("Mcp-Session-Id")
+                && case
+                    .call
+                    .arguments
+                    .get("idempotency_key")
+                    .and_then(Value::as_str)
+                    == Some(value.as_str())
+        })
+    {
+        return Err(QualificationFailure::IdempotencyArgument);
+    }
     if reply.request_body
         != json!({"jsonrpc":"2.0","id":case.call.id,"method":"tools/call","params":{"name":case.call.name,"arguments":case.call.arguments}})
     {
@@ -361,6 +569,7 @@ fn probe(
     }
     validate_grounding(&reply, case, oracle)?;
     validate_trace(&reply, &case.call.id)?;
+    evidence.record(&reply)?;
     Ok(reply)
 }
 

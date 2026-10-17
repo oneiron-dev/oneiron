@@ -52,6 +52,9 @@ oneiron-container = { path = "../oneiron-container" }
 oneiron-browser = { path = "../oneiron-browser", features = ["driver"] }
 # This install's this-device-only key slots (world privacy P6b).
 oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
+# The seal task (OF-415): the seal organ behind the organ host, and the
+# file-backed seal key.
+oneiron-organ-host = { path = "../oneiron-organ-host" }
 # The Dreamer's starter motor: the server owns the wake supervisor and the
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).
@@ -61,9 +64,14 @@ oneiron-linear = { version = "0.1.0", path = "../oneiron-linear" }
 # only; this crate supplies the HTTP transport (models/openai.rs and
 # models/anthropic.rs).
 oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
+oneiron-llm-gemini = { version = "0.1.0", path = "../oneiron-llm-gemini" }
 oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
+# The System One seat on the host's decision ladder (decision_host.rs).
+oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
 # The paired-machine mesh listener (OF-535), behind the `mesh` feature.
 oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh"] }
+# The model route on the mesh listener (OF-575), with it.
+oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
 loro = "1.10"
 axum = { version = "0.8", features = ["ws"] }
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
@@ -72,7 +80,7 @@ axum = { version = "0.8", features = ["ws"] }
 hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.26"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 zstd = "0.13"
 serde = { workspace = true }
@@ -203,4 +211,4 @@ default = ["code-sandbox-wasmtime"]
 code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]
 # The paired-machine mesh listener (OF-535); off by default, and on only when
 # the host also names a bind address.
-mesh = ["dep:oneiron-mesh-transport"]
+mesh = ["dep:oneiron-llm-own-server", "dep:oneiron-mesh-transport"]

@@ -4,11 +4,13 @@
 use super::graph::{
     CANONICAL, conversation_of, edge_ids, invalid, read_id, require_member, require_type,
 };
+use super::policy::{self, AppendFailure};
 use super::thread_projection::{chain_in_txn, selected_thread_in_txn};
 use super::{AppendRecord, AppendedRecord};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::memory::{Memory, MemoryResult};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -199,11 +201,12 @@ fn roots_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Vec<E
     let conversation = conversation_of(&vault.store, txn, &trunk)?;
     let canonical = read_id(&vault.store, txn, CANONICAL, &trunk)?;
     let mut roots = Vec::new();
+    // A thread hangs off its trunk on Parent; its reply targets may point anywhere.
     for child in edge_ids(
         &vault.store,
         txn,
         &trunk,
-        EdgeKind::RepliesTo,
+        EdgeKind::Parent,
         true,
         MAX_ANCESTOR_DEPTH,
     )? {
@@ -211,8 +214,8 @@ fn roots_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Vec<E
             continue;
         }
         require_member(&vault.store, txn, &conversation, &child)?;
-        if edge_ids(&vault.store, txn, &child, EdgeKind::RepliesTo, false, 2)? != [trunk] {
-            return Err(invalid("record needs exactly one reply target"));
+        if super::graph::parent(&vault.store, txn, &child)? != Some(trunk) {
+            return Err(invalid("record needs exactly one Parent"));
         }
         if Some(child) != canonical && super::graph::is_thread_record(&vault.store, txn, &child)? {
             roots.push(child);
@@ -236,8 +239,24 @@ pub struct Thread {
 const THREAD_DIRTY: SideTable<EntityId, [u8; 1], Raw> =
     SideTable::new(&side_table::CONVERSATION_DAG_THREAD_META_DIRTY);
 
-/// Invalidates the cached projection of a reply's target and every ancestor.
-/// Called before edge removal and after edge/body materialization, in the same transaction.
+/// Whether `record` is a thread record; `None` while its body has not arrived.
+fn thread_kind(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Option<bool>> {
+    match super::graph::is_thread_record(store, txn, record) {
+        Ok(thread) => Ok(Some(thread)),
+        Err(Error::EntityNotFound) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Invalidates the cached projection along a thread chain: `start` and each
+/// Parent ancestor up to the first that is not a thread record (its trunk).
+/// A record whose body has not arrived may still be a thread record, so the
+/// walk goes on past it. Called before edge removal and after edge/body
+/// materialization, in the same transaction.
 pub(crate) fn invalidate_thread_meta(
     store: &crate::store::Store,
     txn: &mut RwTxn<'_>,
@@ -253,18 +272,16 @@ pub(crate) fn invalidate_thread_meta(
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
         THREAD_DIRTY.put(store, txn, &id, &[1])?;
-        let parents = edge_ids(store, txn, &id, EdgeKind::RepliesTo, false, 2)?;
-        cursor = match parents.as_slice() {
-            [] => None,
-            [parent] => Some(*parent),
-            _ => return Err(invalid("record needs exactly one reply target")),
-        };
+        if thread_kind(store, txn, &id)? == Some(false) {
+            break;
+        }
+        cursor = super::graph::parent(store, txn, &id)?;
     }
     Ok(())
 }
 
-/// Folds every trunk's thread projection again from the retained reply
-/// edges. Thread meta is a derived cache: a checkpoint never carries it, so a
+/// Folds every trunk's thread projection again from the retained thread
+/// Parent edges. Thread meta is a derived cache: a checkpoint never carries it, so a
 /// restore rebuilds it here instead of trusting copied rows. A trunk whose
 /// chain does not fold stays dirty, and its first read reports the error a
 /// live vault would. Returns the number of trunks rebuilt.
@@ -275,11 +292,22 @@ pub(crate) fn rebuild_thread_meta_projection_in_txn(
     let mut trunks = std::collections::BTreeSet::new();
     for row in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&vault.store, txn)? {
         let (key, _) = row?;
-        if key.len() == 33 && key[16] == EdgeKind::RepliesTo as u8 {
-            trunks.insert(
-                EntityId::from_bytes(key[17..].try_into().map_err(|_| invalid("reply edge"))?)
-                    .map_err(|_| invalid("reply edge"))?,
-            );
+        if key.len() == 33 && key[16] == EdgeKind::Parent as u8 {
+            let id = |bytes: &[u8]| -> Result<EntityId> {
+                EntityId::from_bytes(bytes.try_into().map_err(|_| invalid("parent edge"))?)
+                    .map_err(|_| invalid("parent edge"))
+            };
+            // Only a thread record's Parent names a trunk; one that does not
+            // fold is still rebuilt, so its trunk stays dirty below.
+            match thread_kind(&vault.store, txn, &id(&key[..16])?) {
+                Ok(Some(false)) => {}
+                Err(error @ (Error::Storage(_) | Error::MapFull | Error::Io(_))) => {
+                    return Err(error);
+                }
+                _ => {
+                    trunks.insert(id(&key[17..])?);
+                }
+            }
         }
     }
     let mut rebuilt = 0;
@@ -293,23 +321,23 @@ pub(crate) fn rebuild_thread_meta_projection_in_txn(
     Ok(rebuilt)
 }
 
-/// A replayed TURN body may arrive after its RepliesTo edge.
+/// A replayed TURN body may arrive after its Parent edge, and a record's
+/// thread replies before its own body.
 pub(crate) fn invalidate_thread_meta_for_turn_put(
     store: &crate::store::Store,
     txn: &mut RwTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
-    if !edge_ids(store, txn, &id, EdgeKind::RepliesTo, false, 2)?.is_empty()
-        || !edge_ids(
-            store,
-            txn,
-            &id,
-            EdgeKind::RepliesTo,
-            true,
-            MAX_ANCESTOR_DEPTH,
-        )?
-        .is_empty()
-    {
+    let mut chained = thread_kind(store, txn, &id)? != Some(false);
+    if !chained {
+        for child in edge_ids(store, txn, &id, EdgeKind::Parent, true, MAX_ANCESTOR_DEPTH)? {
+            if thread_kind(store, txn, &child)? == Some(true) {
+                chained = true;
+                break;
+            }
+        }
+    }
+    if chained {
         invalidate_thread_meta(store, txn, id)?;
     }
     Ok(())
@@ -360,9 +388,23 @@ impl Vault {
         })
     }
 
-    /// Continues the reply chain without changing the conversation HEAD.
-    pub fn reply_in_thread(&self, trunk: EntityId, input: &AppendRecord) -> Result<AppendedRecord> {
-        self.with_write_txn_grouped(|txn| {
+    /// Continues the thread chain on Parent without changing the conversation
+    /// HEAD. The reply target stays the caller's (or the quoted message's
+    /// TURN), so a thread reply may answer a trunk message; absent both, it
+    /// answers the chain's tip. `writer` binds it as it binds
+    /// [`Vault::append_dag_record`] (OF-063): the trunk and every typed ref
+    /// must read for the writer, and so must the parent this door picks, in
+    /// the reply's own transaction.
+    pub fn reply_in_thread(
+        &self,
+        writer: &Memory<'_>,
+        trunk: EntityId,
+        input: &AppendRecord,
+    ) -> MemoryResult<AppendedRecord> {
+        let lane = policy::open_append(self, writer, policy::REPLY_ROW, input)?;
+        let refs = policy::append_references(input, Some(trunk));
+        let replied = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
+            policy::require_append_references_in_txn(self, &lane, txn, input, &refs)?;
             require_member(&self.store, txn, &input.conversation, &trunk)?;
             let mut target = trunk;
             let conversation = conversation_of(&self.store, txn, &trunk)?;
@@ -370,9 +412,22 @@ impl Vault {
             if let Some(last) = candidates.last() {
                 target = *last;
             }
+            // The tip is chosen in this transaction, so a concurrent reply
+            // never puts an unchecked parent under the writer.
+            if target != trunk
+                && let Some(pointer) = policy::unresolved_append_reference_in_txn(
+                    &lane,
+                    txn,
+                    &[("/parent".to_owned(), target)],
+                )?
+            {
+                return Err(AppendFailure::Unresolved(pointer));
+            }
             let mut input = input.clone();
             input.parent = Some(target);
-            input.reply_to = Some(target);
+            if input.reply_to.is_none() && input.quote.is_none() {
+                input.reply_to = Some(target);
+            }
             input.advance = false;
             let appended = super::append_in_txn(self, txn, &input, None, true)?;
             // A nested reply also changes the ancestor trunk's meta line.
@@ -380,7 +435,7 @@ impl Vault {
             let mut visited = HashSet::new();
             while let Some(id) = cursor {
                 if !visited.insert(id) || visited.len() > MAX_ANCESTOR_DEPTH {
-                    return Err(Error::IndexOverflow("conversation_dag_walk"));
+                    return Err(Error::IndexOverflow("conversation_dag_walk").into());
                 }
                 rebuild_thread_meta_in_txn(self, txn, id)?;
                 if !super::graph::is_thread_record(&self.store, txn, &id)? {
@@ -393,6 +448,7 @@ impl Vault {
                 rebuild_thread_meta_in_txn(self, txn, trunk)?;
             }
             Ok(appended)
-        })
+        });
+        policy::settle_append(writer, policy::REPLY_ROW, replied)
     }
 }

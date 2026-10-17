@@ -12,7 +12,7 @@ use super::codec_core::{
     encode_vector, map_entries, read_body, require_schema_version, required_value, validate_keys,
     write_body,
 };
-use super::math_keys::{corrupt_voice_row, validate_voice_vector};
+use super::math_keys::{corrupt_voice_row, require_session_key, validate_voice_vector};
 use super::types::{
     VoiceAttributionEvidence, VoicePrintCalibration, VoicePrintRecordV1, VoiceResolvedSegment,
     VoiceSessionRosterV1,
@@ -35,7 +35,7 @@ pub(super) const PRINT_KEYS: [&str; 14] = [
     "print_generation",
 ];
 
-const ROSTER_KEYS: [&str; 7] = [
+const ROSTER_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,
     "voice_session_ref",
     "recording_id",
@@ -43,9 +43,10 @@ const ROSTER_KEYS: [&str; 7] = [
     "known_threshold",
     "segments",
     "created_at",
+    "roster_revision",
 ];
 
-const SEGMENT_KEYS: [&str; 7] = [
+const SEGMENT_KEYS: [&str; 8] = [
     "segment_id",
     "start_ms",
     "end_ms",
@@ -53,6 +54,7 @@ const SEGMENT_KEYS: [&str; 7] = [
     "subject_ref",
     "contact_ref",
     "evidence",
+    "speaker_key",
 ];
 
 const EVIDENCE_ENROLLED_KEYS: [&str; 5] = [
@@ -295,12 +297,18 @@ fn encode_resolved_segment(segment: &VoiceResolvedSegment) -> Value {
             Value::from(SEGMENT_KEYS[6]),
             encode_evidence(&segment.evidence),
         ),
+        (
+            Value::from(SEGMENT_KEYS[7]),
+            Value::from(segment.speaker_key.clone()),
+        ),
     ])
 }
 
 fn decode_resolved_segment(value: &Value) -> Result<VoiceResolvedSegment> {
     let entries = map_entries(value)?;
     validate_keys(entries, &SEGMENT_KEYS)?;
+    let speaker_key = decode_str(required_value(entries, SEGMENT_KEYS[7])?)?;
+    require_session_key(&speaker_key, "voice speaker key").map_err(|_| corrupt_voice_row())?;
     Ok(VoiceResolvedSegment {
         segment_id: decode_str(required_value(entries, SEGMENT_KEYS[0])?)?,
         start_ms: decode_u64(required_value(entries, SEGMENT_KEYS[1])?)?,
@@ -309,6 +317,7 @@ fn decode_resolved_segment(value: &Value) -> Result<VoiceResolvedSegment> {
         subject_ref: decode_optional_entity_ref(required_value(entries, SEGMENT_KEYS[4])?)?,
         contact_ref: decode_optional_entity_ref(required_value(entries, SEGMENT_KEYS[5])?)?,
         evidence: decode_evidence(required_value(entries, SEGMENT_KEYS[6])?)?,
+        speaker_key,
     })
 }
 
@@ -342,6 +351,10 @@ pub(super) fn encode_roster(roster: &VoiceSessionRosterV1) -> Result<Vec<u8>> {
             ),
         ),
         (Value::from(ROSTER_KEYS[6]), Value::from(roster.created_at)),
+        (
+            Value::from(ROSTER_KEYS[7]),
+            Value::from(roster.roster_revision),
+        ),
     ]);
     write_body(&value)
 }
@@ -357,6 +370,10 @@ pub(super) fn decode_roster(bytes: &[u8]) -> Result<VoiceSessionRosterV1> {
         .iter()
         .map(decode_resolved_segment)
         .collect::<Result<Vec<_>>>()?;
+    let roster_revision = decode_u64(required_value(entries, ROSTER_KEYS[7])?)?;
+    if roster_revision == 0 {
+        return Err(corrupt_voice_row());
+    }
     Ok(VoiceSessionRosterV1 {
         voice_session_ref: decode_str(required_value(entries, ROSTER_KEYS[1])?)?,
         recording_id: decode_str(required_value(entries, ROSTER_KEYS[2])?)?,
@@ -364,5 +381,6 @@ pub(super) fn decode_roster(bytes: &[u8]) -> Result<VoiceSessionRosterV1> {
         known_threshold: decode_f32(required_value(entries, ROSTER_KEYS[4])?)?,
         segments,
         created_at: decode_u64(required_value(entries, ROSTER_KEYS[6])?)?,
+        roster_revision,
     })
 }

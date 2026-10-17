@@ -24,6 +24,10 @@ pub enum SelfCall {
     /// The agent's own refusal of the run's bound TASK, through her refusal
     /// dial (OF-533). The TASK comes from the host binding.
     TasksRefuse(SelfTaskRefuseCall),
+    /// `self.skills.call` (OF-353): one agent-callable skill, run as a step
+    /// of its own under the running attempt's lease, with the caller's host
+    /// as its bridge. The lease, executor and runtime are the host's.
+    SkillsCall(SelfSkillCall),
     /// Fixture for `vault.search(...)`.
     MemorySearch(SelfMemorySearchCall),
     /// Internal fixture proving dispatcher-stamped writes use the batch/gate path.
@@ -70,6 +74,22 @@ pub enum SelfCall {
     /// `self.fold`, `self.compact`, `self.unfold`, `self.folds` and
     /// `describe({fold})`: the run's own log (ARCH-0067 §2.2).
     Fold(crate::compaction::SelfFoldCall),
+    /// `self.spawn`: one reader child over a result of the run, queued on
+    /// the run's route (ARCH-0079 #reader-forks). The parent run is the
+    /// bridge call's.
+    ReaderSpawn(Box<super::reader::SelfReaderSpawnCall>),
+    /// `tasks.update({task_ref, resultRef})` from a reader child: its
+    /// finding, one of its own stored results.
+    ReaderReport(super::reader::SelfReaderReportCall),
+    /// `self.team.start` and `self.team.record` (OF-540): a pattern-skill
+    /// run's own team. The leader is the bound attempt.
+    Team(crate::team::SelfTeamCall),
+    /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
+    TasksWaitSet(super::reader::TaskWaitSetCall),
+    /// `self.leader.advice` and `self.leader.pattern` (OF-389): the bound
+    /// leader's top shapes, and the pattern she picked from them, on the
+    /// host's planner binding. The lease and the skills are the host's.
+    Leader(SelfLeaderCall),
 }
 
 impl SelfCall {
@@ -82,6 +102,7 @@ impl SelfCall {
             Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
             Self::TasksRefuse(_) => SelfEffect::TasksRefuse,
+            Self::SkillsCall(_) => SelfEffect::SkillsCall,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
             Self::MemoryWriteFixture(_) => SelfEffect::MemoryWriteFixture,
             Self::MemoryPutClaim(_) => SelfEffect::MemoryPutClaim,
@@ -100,6 +121,11 @@ impl SelfCall {
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
             Self::AgentVerb(_) => SelfEffect::AgentVerb,
             Self::Fold(_) => SelfEffect::Fold,
+            Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
+            Self::ReaderReport(_) => SelfEffect::ReaderReport,
+            Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
+            Self::Leader(_) => SelfEffect::Leader,
+            Self::Team(_) => SelfEffect::Team,
         }
     }
 
@@ -136,6 +162,8 @@ pub enum SelfEffect {
     TasksWait,
     /// The agent's own refusal of its bound TASK (OF-533).
     TasksRefuse,
+    /// An agent-callable skill run on the caller's lease (OF-353).
+    SkillsCall,
     MemorySearch,
     MemoryWriteFixture,
     MemoryPutClaim,
@@ -166,6 +194,16 @@ pub enum SelfEffect {
     AgentVerb,
     /// A fold verb on the run's own log, answered by its fold ledger.
     Fold,
+    /// A reader child queued over one of the run's results.
+    ReaderSpawn,
+    /// A reader child's finding.
+    ReaderReport,
+    /// A wait over the run's reader children.
+    TasksWaitSet,
+    /// The bound leader's advice or pattern load (OF-389).
+    Leader,
+    /// A team run the bound agent leads: its start or its receipt.
+    Team,
 }
 
 impl SelfEffect {
@@ -178,6 +216,7 @@ impl SelfEffect {
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
             Self::TasksRefuse => "tasks.refuse",
+            Self::SkillsCall => "self.skills.call",
             Self::MemorySearch => "self.memory.search",
             Self::MemoryWriteFixture => "self.memory.write_fixture",
             Self::MemoryPutClaim => "self.memory.put_claim",
@@ -197,6 +236,11 @@ impl SelfEffect {
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
             Self::AgentVerb => "self.verbs.call",
             Self::Fold => "self.fold",
+            Self::ReaderSpawn => "self.spawn",
+            Self::ReaderReport => "tasks.update",
+            Self::TasksWaitSet => "tasks.wait_set",
+            Self::Leader => "self.leader",
+            Self::Team => "self.team",
         }
     }
 
@@ -217,6 +261,7 @@ impl SelfEffect {
             | Self::TasksAsk
             | Self::TasksWait
             | Self::TasksRefuse
+            | Self::SkillsCall
             | Self::MemorySearch
             | Self::MemoryWriteFixture
             | Self::MemoryPutClaim
@@ -231,6 +276,8 @@ impl SelfEffect {
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
             Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
+            Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Leader => None,
+            Self::Team => None,
         }
     }
 
@@ -493,12 +540,17 @@ pub const AGENT_VERB_SESSION_BOUND: &str = "agent_verb_session_bound";
 /// verb's claims carry the run's `Generated` source, lineage and provenance,
 /// never a source the guest's input names. Its answer lists the rows the
 /// verb served, as its other doors list them for release.
+///
+/// The door binds `invocation`, the call's step's id, as the logical verb
+/// the row's verb hooks fire once for (ARCH-0080 §3). The outer `Err` is
+/// only a hook's stop (`Error::VerbHook`); every refusal is the inner one.
 pub trait AgentVerbDoor: Send + Sync {
     fn call(
         &self,
         call: &SelfAgentVerbCall,
         origin: &crate::memory::HostWriteOrigin,
-    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal>;
+        invocation: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>>;
 
     /// Admits one call the run serves itself, before it runs. The host's
     /// ceiling and credential bind these as they bind [`Self::call`], so a run
@@ -567,6 +619,34 @@ pub enum SelfDispatchOutcome {
     Fold(String),
     /// What the agent's dial made of her refusal.
     TaskRefusal(SelfTaskRefusalResult),
+    /// What one callable skill returned.
+    SkillCall(SelfSkillCallResult),
+    /// A queued reader child.
+    ReaderSpawn(super::reader::ReaderSpawnReceipt),
+    /// A reader child's finding, kept.
+    ReaderReport(super::reader::ReaderReportReceipt),
+    /// One reduction of a wait over the run's reader children.
+    TaskWaitSet(super::reader::TaskWaitSetResult),
+    /// The leader's advice or loaded pattern, as JSON.
+    Leader(String),
+    /// A team run's start or receipt (OF-540).
+    Team(crate::team::TeamRunAnswer),
+}
+
+/// `self.skills.call(...)`: the skill and the arguments its call contract
+/// takes. No lease, executor or runtime comes from the guest.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfSkillCall {
+    pub skill: EntityId,
+    pub args: serde_json::Value,
+}
+
+/// What one callable skill returned: JSON its contract's `returns` shape
+/// admitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfSkillCallResult {
+    pub skill: EntityId,
+    pub output: serde_json::Value,
 }
 
 /// `tasks.refuse(...)`. The reason stays the caller's string until the
@@ -729,9 +809,68 @@ pub struct SelfAgentDefinitionPutResult {
 /// No parent/run/actor fields are accepted from guest code.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfAgentSpawnCall {
-    pub target: crate::agent_dispatch::AgentDispatchTarget,
+    /// The agent or workflow to run. Unset, the spawn needs the host's
+    /// planner to pick its seat.
+    pub target: Option<crate::agent_dispatch::AgentDispatchTarget>,
     pub context: crate::agent_dispatch::AgentSpawnContext,
     pub intent_key: String,
+    /// OF-541: what the spawner asks the planner for. With the host's
+    /// planner and the agent's lease, the host places the spawn's type and
+    /// plans its seat, which replaces `target`. Otherwise `target` runs.
+    pub ask: Option<SelfSpawnAsk>,
+}
+
+/// A spawn's ask in the spawner's words (ARCH-0079 #spawn): the need and
+/// the knobs she seeds or pins. The host places the type, so this is a
+/// [`crate::agent_dispatch::SpawnNeed`] without its stamp.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SelfSpawnAsk {
+    pub need: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub care: Option<crate::agent_dispatch::CareLevel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<crate::agent_dispatch::SpawnOverride<crate::llm::ModelId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<crate::agent_dispatch::SpawnOverride<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern:
+        Option<crate::agent_dispatch::SpawnOverride<crate::agent_dispatch::CoordinationPattern>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_cap_units: Option<crate::agent_dispatch::SpawnOverride<u64>>,
+}
+
+impl SelfSpawnAsk {
+    /// The planner's need: this ask at the type the host placed.
+    #[must_use]
+    pub fn into_need(
+        self,
+        type_ref: crate::task_type::TaskTypeRef,
+    ) -> crate::agent_dispatch::SpawnNeed {
+        crate::agent_dispatch::SpawnNeed {
+            need: self.need,
+            care: self.care,
+            notes: self.notes,
+            type_ref,
+            model: self.model,
+            width: self.width,
+            pattern: self.pattern,
+            budget_cap_units: self.budget_cap_units,
+        }
+    }
+}
+
+/// The bound leader's calls (OF-389). Guest text selects; it never names a
+/// lease, a task or a principal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelfLeaderCall {
+    /// Her top `top` team shapes, the host's count when unset. Advice
+    /// only: no work starts.
+    Advice { top: Option<u32> },
+    /// Load the pattern workflow she picked from the advice. Selecting a
+    /// pattern is not a spawn.
+    Pattern { skill: EntityId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -14,8 +14,8 @@ use super::response::{
     run_context_pack_builder,
 };
 use super::{
-    RoomAudience, narrow_to_reader, reader_optional_memory, resolve_core_disclosure,
-    resolve_core_interlocutor_set,
+    RoomAudience, narrow_to_reader, reader_optional_memory, resolve_core_disclosure_with_once,
+    resolve_core_interlocutor_set, spend_core_once_disclosures,
 };
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -88,11 +88,13 @@ pub(crate) async fn run_context_pack(
     let principal = auth
         .principal_ref()
         .and_then(|id| oneiron::EntityId::from_hex(id).ok());
-    let room_members = req
+    let room_id = req
         .conversation_id
         .as_deref()
+        .map(|room| super::super::parse_entity_id_param(room, "conversation_id"))
+        .transpose()?;
+    let room_members = room_id
         .map(|room| {
-            let room = super::super::parse_entity_id_param(room, "conversation_id")?;
             server
                 .vault
                 .room_audience_members_under(&scoped_read, room, principal)
@@ -206,14 +208,6 @@ pub(crate) async fn run_context_pack(
             tracing::error!(kind = ?error.kind(), "core context-pack scoped read setup failed");
             core_engine_error("core context-pack scoped read setup failed", error)
         })?;
-    // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
-    // response, so the response can never describe a different clamp than
-    // the one applied (design §11 rule 6).
-    let disclosure = resolve_core_disclosure(
-        &server.vault,
-        interlocutors.as_ref(),
-        room.as_ref().map(|room| room.reader.is_some()),
-    )?;
     // Embedded once everything free is checked: it is a paid call. On the
     // one-space preset the text query is embedded into the text slot's space.
     let media = embed_media_seeds(server, media, query).await?;
@@ -244,9 +238,12 @@ pub(crate) async fn run_context_pack(
             &seed.space,
             seed.kind,
             &seed.vector,
-            &[],
+            &seed.kinds,
             candidate_limit,
         );
+    }
+    if let Some(affect) = req.query_affect {
+        builder = builder.query_affect(affect.vad()?);
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
@@ -256,6 +253,25 @@ pub(crate) async fn run_context_pack(
         candidate_limit,
         req.limit,
         max_neighbors,
+    )?;
+    // OF-365: the owner's once answers for a contact present are spent here,
+    // after every request check, and reach this assembly alone.
+    let once = spend_core_once_disclosures(
+        &server.vault,
+        interlocutors.as_ref(),
+        room_id,
+        req.interlocutors
+            .as_ref()
+            .and_then(|controls| controls.voice_session_ref.as_deref()),
+    )?;
+    // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
+    // response, so the response can never describe a different clamp than
+    // the one applied (design §11 rule 6).
+    let disclosure = resolve_core_disclosure_with_once(
+        &server.vault,
+        interlocutors.as_ref(),
+        room.as_ref().map(|room| room.reader.is_some()),
+        &once,
     )?;
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());

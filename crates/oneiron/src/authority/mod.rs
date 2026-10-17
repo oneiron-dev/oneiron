@@ -47,13 +47,17 @@ mod fold_project;
 mod fold_resume;
 mod fold_schedule;
 mod fold_state;
+mod guest_revoke;
 mod handoff_equivocation;
+mod history_coverage;
 mod history_transfer;
 mod host_actor;
 mod host_re_root;
 mod import_order;
 mod ingest_observation;
 mod install_fold;
+mod invocation_slip;
+mod left_notices;
 mod log_budget;
 mod log_structure;
 mod machine_claims;
@@ -80,6 +84,7 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+mod task_actor;
 mod vault_api;
 mod world_key_fold;
 mod world_key_support;
@@ -105,21 +110,21 @@ pub use oneiron_authority::authority::{
     AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
     CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
     CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
-    DeviceAuthority, FEDERATION_PACT_DOMAIN,
-    FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
-    FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
-    FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
-    GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MACHINE_SEEN_WORLD_EDITS_MAX, MAX_PACT_SCOPE_BYTES, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerHandover,
-    OwnerHandoverCause, OwnerRootRecord, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
-    ROLE_RECOVERY, ReadLocation, RecoveryRootId, SealedCopies, SlipClaims, SlipMintAction,
-    WORLD_MODEL_ROUTE_MAX_BYTES, WORLD_MODEL_ROUTES_MAX, WorldKeyWrapsRecord, WorldPrivacy,
-    WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
-    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
-    genesis_vault_id, machine_profile_proof_transcript, sign_federation_pact_gesture,
-    validate_authority_log_entry_body_bytes, verify_authority_signature,
+    DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
+    FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
+    FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus,
+    FoldedDevice, GENESIS_FRAGILE_FLAG, GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX, MAX_PACT_SCOPE_BYTES,
+    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ModelOrder,
+    OWNER_HANDOVER_REF_MAX, OwnerHandover, OwnerHandoverCause, OwnerRootRecord, ROLE_ADMIN,
+    ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, ReadLocation, RecoveryRootId, SealedCopies,
+    SlipClaims, SlipMintAction, WORLD_MODEL_ROUTE_MAX_BYTES, WORLD_MODEL_ROUTES_MAX,
+    WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
+    authority_log_entity_id, authority_log_entity_id_from_hash, authority_transcript,
+    decode_authority_log_entry_body, encode_authority_log_entry_body, federation_pact_transcript,
+    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript,
+    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
+    verify_authority_signature,
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
@@ -137,9 +142,11 @@ pub use fold_state::*;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
+pub use history_coverage::{AuthorityHistoryCoverage, AuthorityHistoryRequest};
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
+pub use invocation_slip::InvocationSlipBinding;
 pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
@@ -165,6 +172,7 @@ pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::HostSlipIssuer;
+pub(crate) use task_actor::TaskActorVerb;
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.

@@ -4,7 +4,8 @@ use super::super::manifest_drift::{
     ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
 };
 use super::super::qualification::{
-    GroundingOracle, ProbeTool, QualificationConnector, QualificationPlan, qualify_connector,
+    ConnectorQualificationReceipt, GroundingOracle, ProbeTool, QualificationConnector,
+    QualificationPlan, qualify_connector_with_schemas,
 };
 use super::super::record::{
     ConnectorKeyRecord, ConnectorKeyStatus, PendingConnectorManifest, invalid_body,
@@ -36,19 +37,36 @@ pub struct ProbeManifestQualifier<'a> {
 
 impl ConnectorManifestQualifier for ProbeManifestQualifier<'_> {
     fn qualify(&self, manifest: &ResolvedConnectorManifest, revision: &str) -> Result<String> {
+        validate_protocol_revision(revision)?;
+        manifest.validate_snapshot()?;
         let declared = self
             .connector
             .connect()
             .and_then(|mut connection| connection.tools_list())
             .map_err(|_| probe_failure())?;
         ensure_declared(manifest, &declared)?;
-        let report = qualify_connector(self.connector, self.plan, self.oracle)
-            .map_err(|_| probe_failure())?;
+        let expected = manifest
+            .tools()
+            .iter()
+            .map(|tool| {
+                (
+                    tool.name.clone(),
+                    (
+                        tool.input_schema.clone(),
+                        tool.triggers.iter().next().cloned(),
+                    ),
+                )
+            })
+            .collect();
+        let report =
+            qualify_connector_with_schemas(self.connector, self.plan, self.oracle, Some(&expected))
+                .map_err(|_| probe_failure())?;
         ensure_declared(manifest, &report.tools)?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"connector-manifest-qualification-v1");
         hasher.update(&manifest.hash()?);
         hasher.update(revision.as_bytes());
+        hasher.update(report.report_hash.as_bytes());
         hasher.update(
             &u64::try_from(report.calls)
                 .unwrap_or(u64::MAX)
@@ -172,6 +190,12 @@ impl Vault {
                         return Err(Error::ConcurrentWrite("connector manifest candidate"));
                     }
                     let reverted = ConnectorKeyRecord {
+                        qualification_receipt: Some(ConnectorQualificationReceipt::new(
+                            report,
+                            revision.to_owned(),
+                            manifest_hash,
+                            at,
+                        )?),
                         pending_manifest: None,
                         status: ConnectorKeyStatus::Active,
                         status_changed_at: Some(at),
@@ -237,6 +261,11 @@ impl Vault {
         let candidate_id = *candidate_hasher.finalize().as_bytes();
         let first = record.retained_manifest.is_none();
         let staged = ConnectorKeyRecord {
+            qualification_receipt: if drift.requires_reregistration || first {
+                None
+            } else {
+                record.qualification_receipt.clone()
+            },
             pending_manifest: Some(PendingConnectorManifest {
                 candidate_id,
                 manifest: manifest.clone(),
@@ -289,6 +318,15 @@ impl Vault {
             // A strict permission subset or removed tool is a proved narrow.
             // It takes effect after successful qualification, without an
             // unnecessary owner re-consent prompt.
+            record.qualification_receipt = Some(ConnectorQualificationReceipt::new(
+                pending
+                    .qualification_report_hash
+                    .clone()
+                    .ok_or_else(|| invalid_body("connector qualification report missing"))?,
+                pending.protocol_revision.clone(),
+                pending.manifest.hash()?,
+                at,
+            )?);
             record.retained_manifest = Some(pending.manifest.clone());
             record.protocol_revision = Some(pending.protocol_revision.clone());
             record.pending_manifest = None;
@@ -348,6 +386,12 @@ impl Vault {
             return Err(invalid_body("connector qualification report changed"));
         }
         let approved = ConnectorKeyRecord {
+            qualification_receipt: Some(ConnectorQualificationReceipt::new(
+                expected_report_hash.to_owned(),
+                pending.protocol_revision.clone(),
+                expected_manifest_hash,
+                at,
+            )?),
             protocol_revision: Some(pending.protocol_revision.clone()),
             retained_manifest: Some(pending.manifest.clone()),
             pending_manifest: None,
@@ -384,7 +428,8 @@ impl Vault {
 
     /// Tool callers must use this door before auto-fire. An unknown tool or
     /// a changed row cannot reuse the prior stamp; a revision change closes
-    /// the whole key until re-registration and re-consent.
+    /// the whole key until re-registration and re-consent. A slate row set to
+    /// `always ask` or `never allow` never auto-fires either.
     pub fn connector_tool_requires_confirmation(&self, id: &EntityId, tool: &str) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         let record =
@@ -392,7 +437,9 @@ impl Vault {
         if record.status != ConnectorKeyStatus::Active {
             return Ok(true);
         }
-        Ok(record.tool_requires_confirmation(tool))
+        Ok(record.tool_requires_confirmation(tool)
+            || super::super::connector_tool_setting_in_txn(&self.store, &txn, &record, tool)?
+                >= crate::connector_key::SlateDisposition::AlwaysAsk)
     }
 }
 

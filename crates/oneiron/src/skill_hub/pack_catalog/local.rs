@@ -4,7 +4,7 @@
 use super::admission::{PACK_INSTALL, PackCommit, pack_permissions, refuse_engine_namespace};
 use super::{
     PackAdapter, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackInstallStatus,
-    PackKind, PackSource,
+    PackKind, PackQualification, PackQualifier, PackSource, PackTree,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::skill_hub::{HubFile, HubPin, HubRef};
@@ -15,7 +15,9 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 pub const LOCAL_PACK_NAME: &str = "local";
 /// The `hub_ref` an owner's put records: the verb, not a hub.
 const PUT_REF: &str = "vault.packs.put";
-const LOCAL_PACK_MD: &str = "---\nname: local\ndescription: This vault's own hooks. It never publishes to a hub.\nversion: 1\nkind: capability\n---\n";
+// A plain manifest scalar may not hold `'` (`manifest::scalar`), so no
+// apostrophe in the description.
+const LOCAL_PACK_MD: &str = "---\nname: local\ndescription: The hooks of this vault. It never publishes to a hub.\nversion: 1\nkind: capability\n---\n";
 
 fn put_ref(source: &PackSource) -> Result<HubRef> {
     Ok(HubRef {
@@ -32,37 +34,65 @@ impl Vault {
     /// `vault.packs.put`: the owner installs a pack folder, or replaces the
     /// one installed under its name. The put is the consent for its hooks.
     /// A script adapter still lands Candidate until its sandbox qualifies it.
+    /// Organ builds in the folder are held as blob assets of the source.
     pub fn put_pack(
         &self,
         owner: &AuthenticatedOwner,
         files: Vec<HubFile>,
     ) -> Result<PackInstallDisposition> {
-        let source = PackSource::from_files(files)?;
-        refuse_engine_namespace(&source)?;
-        let hub = put_ref(&source)?;
+        let tree = PackSource::from_tree(files)?;
+        self.put_pack_source(owner, tree, None)
+    }
+
+    /// Owner-authored connectors use the same source-bound qualification as
+    /// hub installs. The owner put supplies consent, not a wire-probe bypass.
+    pub fn put_qualified_pack(
+        &self,
+        owner: &AuthenticatedOwner,
+        files: Vec<HubFile>,
+        qualifier: &dyn PackQualifier,
+    ) -> Result<PackInstallDisposition> {
+        let tree = PackSource::from_tree(files)?;
+        refuse_engine_namespace(&tree.source)?;
+        let qualification = qualifier.qualify(&tree.source)?;
+        super::qualify::validate_qualification(&tree.source, &qualification)?;
+        self.put_pack_source(owner, tree, Some(qualification))
+    }
+
+    fn put_pack_source(
+        &self,
+        owner: &AuthenticatedOwner,
+        tree: PackTree,
+        qualification: Option<PackQualification>,
+    ) -> Result<PackInstallDisposition> {
+        let source = &tree.source;
+        refuse_engine_namespace(source)?;
+        let hub = put_ref(source)?;
         // The put is the owner's consent, advisories included: the tree's OSV
         // row is evidence on its hash, and holds nothing here.
-        let advisories = self.pack_advisories(&source, false, crate::unix_seconds_now())?;
-        self.with_write_txn_grouped(|txn| {
+        let advisories = self.pack_advisories(source, false, crate::unix_seconds_now())?;
+        let disposition = self.with_write_txn_grouped(|txn| {
             let holder = owner.revalidate_in_txn(self, txn)?.to_hex();
             let at = crate::unix_seconds_now();
             let occurred = TimeRange { start: at, end: at };
-            let source_id = self.stage_pack_source_in_txn(txn, &source, occurred, at)?;
-            self.scan_and_ingest_pack_source_in_txn(txn, &source, occurred, at)?;
+            let source_id = self.stage_pack_source_in_txn(txn, source, occurred, at)?;
+            self.hold_organ_builds_in_txn(txn, &source_id, &tree, occurred, at)?;
+            self.scan_and_ingest_pack_source_in_txn(txn, source, occurred, at)?;
             self.ingest_pack_advisories_in_txn(txn, &advisories, occurred, at)?;
-            if let Some(reason) = self.screen_pack_in_txn(txn, &source, &[], &holder)? {
+            if let Some(reason) = self.screen_pack_in_txn(txn, source, &[], &holder)? {
                 return Ok(PackInstallDisposition::Blocked { reason });
             }
             let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
-            let permissions = pack_permissions(&source, prior.as_ref())?;
+            let permissions = pack_permissions(source, prior.as_ref())?;
             let verdict = PackFitVerdict {
                 fits: true,
                 rules_hit: false,
-                code_auto_install: !matches!(source.manifest.adapter, Some(PackAdapter::Script(_))),
+                code_auto_install: qualification.is_some()
+                    || !matches!(source.manifest.adapter, Some(PackAdapter::Script(_))),
             };
             let disposition = self.commit_pack_install_in_txn(
                 txn,
-                &source,
+                source,
                 &PackCommit {
                     source_id,
                     hub: &hub,
@@ -70,14 +100,19 @@ impl Vault {
                     foreign: None,
                     verdict,
                     permissions: &permissions,
-                    qualification: None,
+                    qualification: qualification.as_ref(),
                 },
             )?;
             if matches!(disposition, PackInstallDisposition::Installed(_)) {
-                self.bind_pack_hooks_in_txn(txn, owner, source_id, &source)?;
+                self.bind_pack_hooks_in_txn(txn, owner, source_id, source)?;
             }
             Ok(disposition)
-        })
+        })?;
+        // The bindings changed once the put committed.
+        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+            self.verb_hook_bindings_changed();
+        }
+        Ok(disposition)
     }
 }
 
@@ -113,6 +148,7 @@ pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
             publisher: "vault".to_owned(),
             permissions: pack_permissions(&source, None)?,
             qualification_report_hash: None,
+            connector_qualification: None,
             runtime: None,
             sections: Vec::new(),
             predicates: Vec::new(),

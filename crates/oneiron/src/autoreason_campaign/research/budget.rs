@@ -149,7 +149,9 @@ fn reserve(
     if let Some(attempt) = attempt
         && !nodes_in_txn(vault, &txn, root)?.contains_key(attempt.as_bytes())
     {
-        return Err(invalid("the reservation's attempt is not an experiment of this campaign"));
+        return Err(invalid(
+            "the reservation's attempt is not an experiment of this campaign",
+        ));
     }
     let fits = |read: &ResearchBudgetRead| match line {
         ResearchReservationLine::Work { .. } => {
@@ -279,7 +281,9 @@ pub fn settle_research_work(
                 RsiSettlement::Spent(actual)
             }
             ResearchReservationLine::Exploration => {
-                vault.settle_rsi_exploration(id, actual).map_err(rsi_error)?;
+                vault
+                    .settle_rsi_exploration(id, actual)
+                    .map_err(rsi_error)?;
                 RsiSettlement::Exposure(actual)
             }
         })

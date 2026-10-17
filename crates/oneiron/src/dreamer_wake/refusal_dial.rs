@@ -5,13 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Vault;
 use crate::agent_def::{RefusalDomain, resolve_refusal};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+use crate::error::{ClaimError, Error, Result};
 use crate::side_table::{self, Named, SideTable};
+use crate::{Vault, WriteActor};
 
 const SEEN: SideTable<EntityId, SeenDial, Named> =
     SideTable::new(&side_table::DREAMER_REFUSAL_DIAL_SEEN);
@@ -29,7 +28,8 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// Storage errors; the diary door's refusal.
+    /// Storage errors; a diary write that fails other than by the agent's
+    /// standing.
     pub fn note_refusal_dial_change(&self, agent: EntityId) -> Result<bool> {
         let Some(definition) = self.get_agent_definition(&agent)? else {
             return Ok(false);
@@ -38,7 +38,11 @@ impl Vault {
         let current = SeenDial(
             DOMAINS
                 .iter()
-                .map(|domain| resolve_refusal(&definition, kind, *domain).as_str().to_owned())
+                .map(|domain| {
+                    resolve_refusal(&definition, kind, *domain)
+                        .as_str()
+                        .to_owned()
+                })
                 .collect(),
         );
         {
@@ -47,36 +51,47 @@ impl Vault {
                 return Ok(false);
             }
         }
-        // The seen row moves first, in its own commit, so two wakes racing
-        // over one change write one note.
-        let before = self.with_write_txn(|txn| {
+        // The seen row and the note commit in one write, so two wakes racing
+        // over one change write one note and a failed write leaves the move
+        // to the next wake. A note the agent's standing refuses rolls back
+        // alone: the move is seen and the wake writes no note.
+        self.with_write_txn(|txn| {
             let before = SEEN.get(&self.store, txn, &agent)?;
-            if before.as_ref() != Some(&current) {
-                SEEN.put(&self.store, txn, &agent, &current)?;
+            if before.as_ref() == Some(&current) {
+                return Ok(false);
             }
-            Ok(before)
-        })?;
-        let Some(before) = before.filter(|before| *before != current) else {
-            return Ok(false);
-        };
-        let moved: Vec<String> = DOMAINS
-            .iter()
-            .zip(before.0.iter().zip(&current.0))
-            .filter(|(_, (was, now))| was != now)
-            .map(|(domain, (was, now))| format!("{} from {was} to {now}", domain.as_str()))
-            .collect();
-        self.memory(agent, EdgeActorClass::Agent)
-            .author_note(&NoteWriteEnvelope {
-                kind: NoteKind::Diary,
-                scope: NoteScope::ActorPrivate { owner_ref: agent },
-                markdown: format!(
+            SEEN.put(&self.store, txn, &agent, &current)?;
+            let Some(before) = before else {
+                return Ok(false);
+            };
+            let moved: Vec<String> = DOMAINS
+                .iter()
+                .zip(before.0.iter().zip(&current.0))
+                .filter(|(_, (was, now))| was != now)
+                .map(|(domain, (was, now))| format!("{} from {was} to {now}", domain.as_str()))
+                .collect();
+            let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            let mut savepoint = self.store.env.nested_write_txn(txn)?;
+            match crate::memory::append_agent_diary_in_txn(
+                self,
+                &mut savepoint,
+                WriteActor::new(agent, EdgeActorClass::Agent),
+                format!(
                     "My refusal dial changed since I last woke: {}.",
                     moved.join("; ")
                 ),
-                source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
-                mask: None,
-            })
-            .map_err(|error| Error::InvalidConfig(format!("refusal dial diary note: {error}")))?;
-        Ok(true)
+                at,
+            ) {
+                Ok(_) => {
+                    savepoint.commit()?;
+                    Ok(true)
+                }
+                Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => {
+                    drop(savepoint);
+                    Ok(false)
+                }
+                Err(error) => Err(error),
+            }
+        })
     }
 }

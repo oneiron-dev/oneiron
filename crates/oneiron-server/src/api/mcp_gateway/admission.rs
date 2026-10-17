@@ -52,6 +52,10 @@ pub(crate) fn mcp_admit_scoped_call(
         McpValidatedToolArgs::ExecuteCode(_) => {
             return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_EXECUTE_CODE_TOOL, "name");
         }
+        // It reads only what execute_code ran, so it is admitted as that is.
+        McpValidatedToolArgs::ReadResult(_) => {
+            return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_READ_RESULT_TOOL, "name");
+        }
         McpValidatedToolArgs::Verb(verb) => verb,
     };
     mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
@@ -79,6 +83,18 @@ pub(crate) fn mcp_admit_scoped_verb(
     actor: &McpCallContext,
 ) -> Result<(), McpGatewayError> {
     mcp_admit_bound_tool(actor, tool.name)?;
+    mcp_admit_verb_scope(server, tool, arguments, actor)
+}
+
+/// A verb a bound host operation runs on its own behalf: a browser batch's
+/// routine decisions are `ai.verdict` calls. The batch's own binding carries
+/// it, so only the verb's scope is admitted here, never a tool binding.
+pub(crate) fn mcp_admit_step_verb(
+    server: &Arc<SyncServer>,
+    tool: crate::mcp::McpGeneratedVerbTool,
+    arguments: &crate::mcp::McpVerbArguments,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
     mcp_admit_verb_scope(server, tool, arguments, actor)
 }
 
@@ -181,6 +197,7 @@ fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
     match args {
         McpValidatedToolArgs::Setup(_) => crate::mcp::MCP_SETUP_TOOL,
         McpValidatedToolArgs::ExecuteCode(_) => crate::mcp::MCP_EXECUTE_CODE_TOOL,
+        McpValidatedToolArgs::ReadResult(_) => crate::mcp::MCP_READ_RESULT_TOOL,
         McpValidatedToolArgs::Verb(verb) => verb.tool.name,
     }
 }
@@ -315,20 +332,27 @@ fn mcp_task_in_world(
     scope: &crate::mcp::McpConnectorScope,
     id: &oneiron::EntityId,
 ) -> Result<bool, McpGatewayError> {
-    use oneiron::federation::{ScopeAxis, ScopeId};
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
     let Some(position) = vault
         .record_scope(id)
         .map_err(|error| mcp_engine_error("mcp scope record read failed", error))?
     else {
         return Ok(false);
     };
-    let inside = |stamped: &ScopeAxis<ScopeId>, ceiling: Option<oneiron::EntityId>| {
-        ceiling.is_none_or(|ceiling| {
-            !stamped.is_bottom()
-                && stamped.is_narrowing_of(&ScopeAxis::Some([ScopeId(ceiling)].into()))
-        })
+    let Some(ceiling) = scope.world_ref else {
+        return Ok(true);
     };
-    Ok(inside(&position.worlds, scope.world_ref))
+    // The registration's world and the TASK's birth position, each as a
+    // world-only Scope, in the one Scope order.
+    let stamped = Scope {
+        worlds: position.worlds,
+        ..Scope::top()
+    };
+    let registered = Scope {
+        worlds: ScopeAxis::Some([ScopeId(ceiling)].into()),
+        ..Scope::top()
+    };
+    Ok(!stamped.worlds.is_bottom() && stamped.is_narrowing_of(&registered))
 }
 
 /// Narrows the TASKS rows to the credential's registered world/facet and its
@@ -420,9 +444,16 @@ fn mcp_row_position_inside(
     else {
         return Ok(false);
     };
+    // Positional: the row's world/facet stamp against the slip's world/facet
+    // projection, never the slip's other bounds.
+    let projection = |worlds, facets| oneiron::federation::Scope {
+        worlds,
+        facets,
+        ..oneiron::federation::Scope::top()
+    };
+    let stamped = projection(position.worlds, position.facets);
     Ok(granted.is_none_or(|granted| {
-        position.worlds.is_narrowing_of(&granted.worlds)
-            && position.facets.is_narrowing_of(&granted.facets)
+        stamped.is_narrowing_of(&projection(granted.worlds.clone(), granted.facets.clone()))
     }))
 }
 

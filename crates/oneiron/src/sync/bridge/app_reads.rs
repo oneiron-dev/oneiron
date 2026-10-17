@@ -59,6 +59,8 @@ pub fn scoped_subscription_receipts(
             }
             output.push(MemoryReceipt {
                 receipt_ref: format!("gate:{}", row.decision_id.to_hex()),
+                kind: crate::receipt::ReceiptKind::Gate.as_str().to_owned(),
+                fields: std::collections::BTreeMap::new(),
                 outcome: row.outcome,
                 created_at: row.created_at,
                 reason_codes: row.reason_codes,
@@ -66,6 +68,7 @@ pub fn scoped_subscription_receipts(
                 actor_ref: row.actor_ref,
                 content_kind: row.content_kind,
                 claim_ref: row.claim_id.map(|id| bytes_to_hex_lower(&id)),
+                claim: None,
             });
             if output.len() == limit {
                 return Ok(output);

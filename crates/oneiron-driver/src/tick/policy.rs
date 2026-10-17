@@ -72,7 +72,14 @@ impl<T: TickSource> TickSource for WakePolicyTicks<'_, T> {
             }
         }
     }
-    fn take_buffered_session_hint(&mut self) -> Option<(crate::SessionHint, Option<u64>, u64)> {
+    fn take_buffered_session_hint(
+        &mut self,
+    ) -> Option<(
+        oneiron::session_lifecycle::SessionKey,
+        crate::SessionHint,
+        Option<u64>,
+        u64,
+    )> {
         self.inner.take_buffered_session_hint()
     }
     fn take_buffered_session_hint_carrier(&mut self) -> Option<super::SessionHintCarrier> {

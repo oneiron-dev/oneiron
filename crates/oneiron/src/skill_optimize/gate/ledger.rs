@@ -225,7 +225,13 @@ pub(super) fn record_verdict_in_txn(
     rmpv::encode::write_value(&mut encoded, &row)
         .map_err(|_| invalid("skill edit verdict MessagePack encode failed"))?;
     VERDICTS.put(&vault.store, wtxn, &verdict.id, &encoded)?;
-    Ok(())
+    // A ruling ends the proposal's live trial; admission stays this gate's.
+    crate::skill::close_exploration_trial_in_txn(
+        vault,
+        wtxn,
+        &verdict.proposal,
+        crate::skill::ExplorationTrialClose::VerdictRecorded,
+    )
 }
 
 fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {

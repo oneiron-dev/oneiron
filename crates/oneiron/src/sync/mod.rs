@@ -36,8 +36,10 @@ pub mod client;
 pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
+pub(crate) mod custody;
 pub mod documents;
 pub mod federation_burst;
+pub mod home_proof;
 mod ingest;
 pub mod lease;
 mod local_claims;
@@ -52,10 +54,12 @@ pub(crate) mod receipt_ingest;
 pub mod replay;
 pub mod residence;
 pub mod residence_operation_budgets;
+pub(crate) mod room_turns;
 pub(crate) mod row_birth;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
+pub mod shared_leave;
 mod sweep_fence;
 #[cfg(test)]
 mod tests;

@@ -12,11 +12,15 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 use serde_json::{Value, json};
 
-use super::{BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse};
+use super::{
+    BlindPreference, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplayObservation,
+    PreferredResponse,
+};
 
 /// The Coach uses the host's existing provider slots, policy and one clock.
 /// Wording keys are score, structural, contrastive, preference, task_success,
-/// tradeoff, and axis.<name>. No prompt or model is selected by the engine.
+/// honesty, tradeoff, live_axis, and axis.<name>. No prompt or model is
+/// selected by the engine.
 pub struct SkillOptimizeDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -71,7 +75,7 @@ impl SkillOptimizeDecisions<'_> {
     }
 }
 
-fn ask<S: HeldOutReplayScorer + ?Sized>(
+fn ask<S: HeldOutReplayNotes + ?Sized>(
     scorer: &S,
     kind: &str,
     evidence: &[EntityId],
@@ -90,7 +94,7 @@ fn ask<S: HeldOutReplayScorer + ?Sized>(
     Ok(decision)
 }
 
-fn score<S: HeldOutReplayScorer + ?Sized>(
+fn score<S: HeldOutReplayNotes + ?Sized>(
     scorer: &S,
     kind: &str,
     evidence: &[EntityId],
@@ -116,7 +120,7 @@ fn score<S: HeldOutReplayScorer + ?Sized>(
     }
 }
 
-fn case_state<S: HeldOutReplayScorer + ?Sized>(
+fn case_state<S: HeldOutReplayNotes + ?Sized>(
     scorer: &S,
     case: &HeldOutReplayCase<'_>,
 ) -> Result<Value> {
@@ -128,7 +132,7 @@ fn case_state<S: HeldOutReplayScorer + ?Sized>(
     }))
 }
 
-impl dyn HeldOutReplayScorer + '_ {
+impl dyn HeldOutReplayNotes + '_ {
     /// All replay judgments, including shared-skill admission, use decide().
     pub fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         score(self, "score", &[case.skill], &case_state(self, case)?)
@@ -240,6 +244,93 @@ impl dyn HeldOutReplayScorer + '_ {
                     &[case.skill],
                     &case_state(self, &one)?,
                 )
+            })
+            .collect()
+    }
+
+    /// Whether `receipt`'s live run met a goal axis under `arm`, one arm of a
+    /// live slice of `skill`'s goal: `criterion` names the axis, and for a
+    /// project goal its measure and bound, beside the run's replay under the
+    /// arm's instructions. Only a decided yes is a success; an abstained or
+    /// escalated finding fails the pull rather than counting either way.
+    /// # Errors
+    /// An abstained or escalated finding, or the host's replay and journal errors.
+    pub fn live_axis_met(
+        &self,
+        skill: EntityId,
+        arm: &crate::skill::SkillRecord,
+        receipt: &str,
+        criterion: &Value,
+    ) -> Result<bool> {
+        let receipts = [receipt.to_owned()];
+        let case = HeldOutReplayCase {
+            skill,
+            skill_id: &arm.skill_id,
+            version: &arm.version,
+            instructions: &arm.desc,
+            held_out_receipts: &receipts,
+        };
+        let decision = ask(
+            self,
+            "live_axis",
+            &[skill],
+            &json!({"case": case_state(self, &case)?, "axis": criterion}),
+            AnswerContract::Noul,
+        )?;
+        match decision.answer {
+            DecisionAnswer::Noul(met)
+                if decision.human_ask.is_none()
+                    && decision
+                        .probability
+                        .is_some_and(|p| p >= decision.receipt.band.high) =>
+            {
+                Ok(met)
+            }
+            _ => Err(invalid("live axis finding abstained")),
+        }
+    }
+
+    /// Every objective of every held-out replay, put to the hidden-flaw
+    /// question one at a time. The counts are the decided findings; an
+    /// abstained or escalated finding fails the audit rather than counting.
+    pub(crate) fn replay_honesty(
+        &self,
+        case: &HeldOutReplayCase<'_>,
+    ) -> Result<Vec<HonestyReplayObservation>> {
+        self.honesty_replays(case)?
+            .into_iter()
+            .map(|replay| {
+                let mut hidden_flaws = 0_u32;
+                for objective in &replay.objectives {
+                    let decision = ask(
+                        self,
+                        "honesty",
+                        &[case.skill],
+                        &json!({
+                            "skill_id": case.skill_id, "version": case.version,
+                            "instructions": case.instructions, "receipt": replay.receipt,
+                            "replay": replay.state, "objective": objective,
+                        }),
+                        AnswerContract::Noul,
+                    )?;
+                    match decision.answer {
+                        DecisionAnswer::Noul(flawed)
+                            if decision.human_ask.is_none()
+                                && decision
+                                    .probability
+                                    .is_some_and(|p| p >= decision.receipt.band.high) =>
+                        {
+                            hidden_flaws += u32::from(flawed);
+                        }
+                        _ => return Err(invalid("honesty finding abstained")),
+                    }
+                }
+                Ok(HonestyReplayObservation {
+                    checked_objectives: u32::try_from(replay.objectives.len())
+                        .map_err(|_| invalid("honesty replay objective count overflow"))?,
+                    receipt: replay.receipt,
+                    hidden_flaws,
+                })
             })
             .collect()
     }

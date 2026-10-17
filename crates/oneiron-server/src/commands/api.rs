@@ -167,7 +167,11 @@ pub(crate) fn request_for_command(
         // nothing else, so the media type is this module's, not the caller's.
         ApiCommand::Call { verb, data } => Ok(CurlRequest {
             method: "POST".to_owned(),
-            url: format!("{base}/v1/core/memory/verbs/{}", percent_encoded(&verb)),
+            url: if verb == oneiron::feedback::REPORT_VERB {
+                format!("{base}/v1/core/facade/report")
+            } else {
+                format!("{base}/v1/core/memory/verbs/{}", percent_encoded(&verb))
+            },
             body: Some(read_body(&data)?),
             content_type: Some(JSON_CONTENT_TYPE.to_owned()),
         }),

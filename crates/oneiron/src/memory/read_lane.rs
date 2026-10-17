@@ -41,6 +41,17 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// The key every read verb on this handle reads under: its proof's, its
+    /// locality's and its room turn's. A verb hook a call fires reads
+    /// through it, capped by the hook's grant (ARCH-0080 §3).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_lane`] refuses.
+    pub fn read_key(&self) -> MemoryResult<ScopedReadActorKey> {
+        self.in_room_turn(self.actor_read_key()?)
+    }
+
     /// The bound actor's own read, without a bound room turn's ceiling: what
     /// its grants alone admit. A room read checks it beside membership; it
     /// never serves a row inside a turn.
@@ -93,6 +104,17 @@ impl Memory<'_> {
             .require_access_grants(Some(self.actor))
         };
         Ok(key)
+    }
+
+    /// How a serving door hands the bound actor a file stored with keys in
+    /// it (OF-560): the vault owner's own key reads the stored bytes, every
+    /// other actor a copy with each key overwritten.
+    pub(crate) fn secret_sight(&self) -> MemoryResult<crate::secret_custody::SecretSight> {
+        Ok(if self.identity_read_key()?.reads_as_vault_owner() {
+            crate::secret_custody::SecretSight::Owner
+        } else {
+            crate::secret_custody::SecretSight::Masked
+        })
     }
 
     /// Of `ids`, the ones a handle bound to a read credential reads, each

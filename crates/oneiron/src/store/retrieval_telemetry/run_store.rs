@@ -509,6 +509,9 @@ fn stage_retrieval_run_with_visibility(
     published: bool,
 ) -> Result<()> {
     record.state.validate()?;
+    if let Some(trace) = &record.policy_trace {
+        trace.validate()?;
+    }
     if let Some(existing) = RETRIEVAL_RUN.get(target, &*wtxn, &record.run_id)? {
         super::turn_index::delete(target, wtxn, &existing)?;
         delete_retrieval_trace_fork_indexes_for_run(target, wtxn, record.run_id)?;
@@ -702,6 +705,11 @@ pub(in crate::store) fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunR
         .state
         .validate()
         .map_err(|_| Error::CorruptedIndex("retrieval run state"))?;
+    if let Some(trace) = &record.policy_trace {
+        trace
+            .validate()
+            .map_err(|_| Error::CorruptedIndex("retrieval policy trace"))?;
+    }
     Ok(record)
 }
 
@@ -740,11 +748,10 @@ pub(super) fn retrieval_outcomes_for_run_in_txn(
     Ok(records)
 }
 
-pub(super) fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
-    if outcome.key.is_empty()
-        || outcome.key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
-        || !outcome
-            .key
+pub(super) fn vet_retrieval_outcome_key(key: &str) -> Result<()> {
+    if key.is_empty()
+        || key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
+        || !key
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
     {
@@ -753,6 +760,11 @@ pub(super) fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
                 .to_owned(),
         ));
     }
+    Ok(())
+}
+
+pub(super) fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
+    vet_retrieval_outcome_key(&outcome.key)?;
     if let Some(reward) = outcome.reward
         && !reward.is_finite()
     {

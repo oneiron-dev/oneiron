@@ -8,14 +8,11 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::sync::client::{SyncClient, SyncEvent};
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
-use crate::sync::window::UpdateVerdict;
 
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
 
-use super::session::{
-    EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS, residence_update_frame,
-};
+use super::session::{EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS};
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
 
 impl SyncConnection {
@@ -38,16 +35,18 @@ impl SyncConnection {
             .presence
             .subscribe_frames();
 
-        // Debounce state: buffer local edits and flush after 50ms of quiet
-        let debounce_ms = self.config.client_config.sync_debounce_ms as u64;
+        // One node tick after its first edit; a busy writer cannot postpone it.
+        let debounce_ms = u64::from(self.config.client_config.sync_debounce_ms).max(1);
         let mut debounce_buffer: Vec<LocalUpdate> = Vec::new();
+        let mut document_buffer: Vec<Vec<u8>> = Vec::new();
         let mut debounce_deadline: Option<Instant> = None;
         let mut ephemeral_housekeeping =
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // One residence upkeep at a time (authority catch-up, then the sealed
         // relay), on its own sockets, off this loop.
-        let mut sealed_relay = tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
+        let mut sealed_relay =
+            tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
         // A residence-mode switch closes this socket; the next connect sends
@@ -56,6 +55,7 @@ impl SyncConnection {
         if *mode_rx.borrow_and_update() != client.config.residence_mode {
             return LoopExit::Disconnected("residence mode changed".into());
         }
+        let mut left_rx = self.left.subscribe();
 
         loop {
             // Compute sleep future for debounce timer
@@ -203,9 +203,9 @@ impl SyncConnection {
                             })();
                             match subscribed {
                                 Ok(true) => {
-                                    if let Err(error) = write.send(Message::Binary(frame.into())).await {
-                                        return LoopExit::Disconnected(error.to_string());
-                                    }
+                                    document_buffer.push(frame);
+                                    debounce_deadline.get_or_insert_with(||
+                                        Instant::now() + Duration::from_millis(debounce_ms));
                                 }
                                 // Offline editing before admission, or on text a
                                 // device-only world keeps here, stays journaled.
@@ -229,7 +229,8 @@ impl SyncConnection {
                         }
                         Some(local_update) => {
                             debounce_buffer.push(local_update);
-                            debounce_deadline = Some(Instant::now() + Duration::from_millis(debounce_ms));
+                            debounce_deadline.get_or_insert_with(||
+                                Instant::now() + Duration::from_millis(debounce_ms));
                         }
                         None => {
                             // Channel closed — application is shutting down
@@ -242,85 +243,14 @@ impl SyncConnection {
                 _ = debounce_sleep, if debounce_deadline.is_some() => {
                     debounce_deadline = None;
 
-                    // Drain the buffer — take ownership to avoid borrow conflicts
-                    let mut failed_at = None;
-                    let pending: Vec<LocalUpdate> = std::mem::take(&mut debounce_buffer);
-
-                    let opened = client.config.residence_mode == crate::sync::SyncResidenceMode::Opened;
-                    let mut queued_count = 0;
-                    for (i, local_update) in pending.iter().enumerate() {
-                        match client.update_verdict(&local_update.window_key, &local_update.update_bytes) {
-                            UpdateVerdict::Portable => {}
-                            // A world flagged device-only since this commit keeps
-                            // it; the window's next export reads the flag again.
-                            UpdateVerdict::Withheld => {
-                                queued_count += usize::from(opened);
-                                continue;
-                            }
-                            // Bytes that cannot be read in full wait, unsent, in
-                            // the queue for the next replay to judge again.
-                            UpdateVerdict::Uninspectable => {
-                                if let Err(e) = self.queue.push(&local_update.window_key, &local_update.update_bytes) {
-                                    failed_at = Some((i, format!("Durable residence queue failed: {e}")));
-                                    break;
-                                }
-                                queued_count += usize::from(opened);
-                                continue;
-                            }
-                        }
-                        let seq = if opened {
-                            match self.queue.push(&local_update.window_key, &local_update.update_bytes) {
-                                Ok(seq) => {
-                                    queued_count += 1;
-                                    Some(seq)
-                                }
-                                Err(e) => {
-                                    failed_at = Some((i, format!("Durable residence queue failed: {e}")));
-                                    break;
-                                }
-                            }
-                        } else {
-                            None
-                        };
-                        let encoded = match seq {
-                            Some(seq) => residence_update_frame(
-                                seq, &local_update.window_key, &local_update.update_bytes,
-                            ),
-                            None => transport::encode_window_sync(
-                                &local_update.window_key,
-                                window_sub_tags::UPDATE,
-                                &local_update.update_bytes,
-                            ).into_result(),
-                        };
-                        let wire_msg = match encoded {
-                            Ok(frame) => frame,
-                            Err(e) => {
-                                failed_at = Some((i, format!("Encode failed: {e}")));
-                                break;
-                            }
-                        };
-
-                        let send_result = write.send(Message::Binary(wire_msg.into())).await;
-                        if let Err(e) = send_result {
-                            failed_at = Some((i, format!("Send failed: {e}")));
-                            break;
-                        }
-                    }
-
-                    if let Some((fail_idx, err)) = failed_at {
-                        // Queue all unsent updates (including the failed one)
-                        for local_update in &pending[if opened { queued_count } else { fail_idx }..] {
-                            let queue_result = self.queue.push(
-                                &local_update.window_key,
-                                &local_update.update_bytes,
-                            );
-                            if let Err(e) = queue_result {
-                                tracing::error!("Failed to persist update to offline queue: {e}");
-                            }
-                        }
-                        // Also flush any remaining debounce buffer
+                    if let Err(error) = self.flush_node_batch(
+                        &mut write, client, &mut debounce_buffer, &mut document_buffer,
+                    ).await {
                         flush_to_queue(&self.queue, &mut debounce_buffer);
-                        return LoopExit::Disconnected(err);
+                        return LoopExit::Disconnected(error);
+                    }
+                    if !debounce_buffer.is_empty() || !document_buffer.is_empty() {
+                        debounce_deadline = Some(Instant::now() + Duration::from_millis(debounce_ms));
                     }
                 }
 
@@ -334,8 +264,13 @@ impl SyncConnection {
                         sealed_task = Some(tokio::spawn(async move {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
-                            // (OF-469).
-                            if config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                            // (OF-469). Any machine whose rows name history it
+                            // lacks takes it too.
+                            if (config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                                || !manager
+                                    .vault()
+                                    .authority_missing_history()
+                                    .is_ok_and(|missing| missing.is_complete()))
                                 && let Err(error) =
                                     crate::sync::client::catch_up_authority(manager.vault(), &config)
                                         .await
@@ -344,6 +279,22 @@ impl SyncConnection {
                                 let _ = events.send(SyncEvent::Error(format!(
                                     "Authority catch-up failed: {error}"
                                 )));
+                            }
+                            // A machine those rows made mine gets each portable
+                            // credential's value sealed to it again (OF-422).
+                            let vault = std::sync::Arc::clone(manager.vault());
+                            match tokio::task::spawn_blocking(move || vault.reseal_custody_for_roster()).await {
+                                Ok(Ok(_)) => {}
+                                Ok(Err(error)) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Custody re-seal failed: {error}"
+                                    )));
+                                }
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Custody re-seal stopped: {error}"
+                                    )));
+                                }
                             }
                             match crate::sync::client::relay_sealed_windows(&manager, &config).await {
                                 Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
@@ -365,9 +316,11 @@ impl SyncConnection {
                     }
                     // Pinned artifact pointers this device still owes the server.
                     match client.due_artifact_publication_frames() {
-                        Ok(frames) => for frame in frames {
-                            if let Err(error) = write.send(Message::Binary(frame.into())).await {
-                                return LoopExit::Disconnected(error.to_string());
+                        Ok(frames) => {
+                            document_buffer.extend(frames);
+                            if !document_buffer.is_empty() {
+                                debounce_deadline.get_or_insert_with(||
+                                    Instant::now() + Duration::from_millis(debounce_ms));
                             }
                         },
                         Err(error) => { let _ = event_tx.send(SyncEvent::Error(format!("Artifact publication sync failed: {error}"))); }
@@ -386,6 +339,14 @@ impl SyncConnection {
                         let _ = write.send(Message::Close(None)).await;
                         return LoopExit::Disconnected("residence mode changed".into());
                     }
+                }
+
+                // A confirmed leave ends the lane for good (OF-158): what it
+                // buffered is queued, to be counted and discarded.
+                _ = left_rx.wait_for(|left| *left) => {
+                    flush_to_queue(&self.queue, &mut debounce_buffer);
+                    let _ = write.send(Message::Close(None)).await;
+                    return LoopExit::Shutdown;
                 }
 
                 // Shutdown signal

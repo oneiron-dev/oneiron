@@ -338,7 +338,7 @@ pub(crate) fn edge_belongs_to_window_in(
     let mut learned_at = [None, None];
     for (index, id) in [source, target].iter().enumerate() {
         let in_doc = crate::sync::loro_support::map_get_bytes(&entities, &id.to_hex());
-        let stored = vault.store.entities.get(txn, id.as_bytes())?;
+        let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, id)?;
         // A malformed peer carrier in a base doc is quarantined by the
         // entity pass. Keep the old deferred-edge behavior instead of
         // converting that remote rejection into local index corruption.
@@ -387,7 +387,7 @@ pub(crate) fn edge_belongs_to_window_in(
             return Ok(false);
         }
         worlds[index] = doc_world.or(stored_world);
-        let carrier = in_doc.as_deref().or(stored.as_deref());
+        let carrier = in_doc.as_deref().or(stored.as_deref().map(Vec::as_slice));
         learned_at[index] = carrier
             .and_then(crate::batch::EntityMetadataHeader::parse)
             .map(|header| header.learned_at);
@@ -427,11 +427,10 @@ pub(crate) fn tombstone_residence_in(
     id: &crate::EntityId,
     key: &WindowKey,
 ) -> crate::error::Result<TombstoneResidence> {
-    let mapped_key = format!("m:dw:{}", id.to_hex());
+    use crate::ports::{DeletionMarker, TombstoneStoreRead};
     let mapped = vault
         .store
-        .sync_state
-        .get(txn, &mapped_key)?
+        .port_deletion_marker(txn, DeletionMarker::WindowAddress, id)?
         .map(|raw| {
             std::str::from_utf8(&raw)
                 .ok()
@@ -439,7 +438,8 @@ pub(crate) fn tombstone_residence_in(
                 .ok_or(crate::Error::InvalidKey)
         })
         .transpose()?;
-    if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? {
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, id)?
+    {
         let header = crate::batch::EntityMetadataHeader::parse(&raw)
             .ok_or(crate::Error::CorruptedIndex("entity metadata"))?;
         // The existing protected-record gate owns this refusal. Residence

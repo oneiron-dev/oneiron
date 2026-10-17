@@ -19,7 +19,10 @@ mod manifest_drift;
 mod meter;
 pub mod qualification;
 mod record;
+mod setup;
 mod slate;
+mod slate_draft;
+mod slate_setting;
 mod txn;
 
 #[cfg(test)]
@@ -47,6 +50,12 @@ pub use self::record::{
     ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust,
     EffectorBudgetReservePolicy, EffectorBudgetWindow, PendingConnectorCharter,
     PendingConnectorManifest,
+};
+pub use self::setup::{
+    BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,
+    NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PackConnectionCheck,
+    PackConnectionEvidence, PackConnectionVerifier, ProviderConnectionChecks,
+    SLACK_AUTH_TEST_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 
@@ -94,9 +103,14 @@ use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 
 pub(crate) use self::txn::rebuild_checkpoint_connector_index;
 pub use slate::{
-    ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateOwnerOverride,
-    SlateRow, SlateToolManifest, draft_connector_slate,
+    ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateFacetNarrow,
+    SlateHolderNarrow, SlateOwnerOverride, SlateRow, SlateToolManifest,
 };
+pub use slate_draft::{
+    ConnectorSlateDelta, ConnectorSlateDrafter, ConnectorSlateRedraft, SlatePastRulings,
+    SlateTrait, draft_connector_slate, rule_draft_row,
+};
+pub(crate) use slate_setting::{connector_tool_setting_in_txn, effect_slate_always_allows};
 
 pub use manifest_drift::{
     ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,

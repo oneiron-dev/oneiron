@@ -243,8 +243,6 @@ impl Vault {
         now: u64,
     ) -> Result<SurfaceEventAdmission> {
         read.persist_grant_clock()?;
-        // A built-in channel's events arrive through its engine pack (OF-519).
-        self.require_builtin_channel_pack(&input.channel)?;
         self.with_write_txn_grouped(|txn| {
             let receipt = {
                 let rtxn: &heed::RoTxn<'_> = txn;

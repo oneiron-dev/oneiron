@@ -60,7 +60,9 @@
 mod codec;
 mod doors;
 mod floor;
+mod masked_files;
 mod owner_door;
+mod transition;
 mod types;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
@@ -78,12 +80,24 @@ mod floor_keys {
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::doors::{
-    SecretCustodyAdmission, put_secret_custody_in_txn, read_secret_custody_admission_in_txn,
-    read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
+    CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,
+    read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
+    refuse_bindings_wider_than_live_floor, register_custody_in_txn, resolve_secret_ref_in_txn,
+    restore_secret_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+pub use self::masked_files::SecretSight;
+pub(crate) use self::masked_files::{
+    KeySpan, MASKED_FILE_BAND, MaskedFile, filled, holds_masked_keys_in_txn, masked_file_in_txn,
+    put_masked_file_in_txn, sighted_bytes_in_txn,
+};
 pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
+};
+pub(crate) use self::transition::{
+    CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_transitions,
+    remember_custody_transition_in_txn, reseal_custody_transitions_in_txn,
+    write_custody_transition_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,

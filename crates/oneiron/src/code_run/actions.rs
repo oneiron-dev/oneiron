@@ -1,8 +1,13 @@
 //! One named verb registry for validated UI events and agent calls.
 //! Host factories build existing SelfCalls; only GatedActorWrite executes them.
+//!
+//! One action layer, two callers (OF-181): the app's buttons and an agent's
+//! calls name the same verbs, every row of the SDK verb table among them, and
+//! each runs through the one gated SDK the agent writes code against.
 use super::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord, GatedActorWrite, SelfCall,
-    SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfFailedResult,
+    AgentVerbDoor, CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord, GatedActorWrite,
+    SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher,
+    SelfFailedResult,
 };
 use crate::agent_def::AgentCeiling;
 use crate::claim::{PointRead, ScopedReadReceipt};
@@ -13,9 +18,11 @@ use crate::lens::{
     FiniteF64, GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedActionArg,
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
 };
+use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -87,6 +94,23 @@ pub struct ActionDispatch {
     pub outcome: SelfDispatchOutcome,
     pub read_receipt: ScopedReadReceipt,
 }
+impl ActionDispatch {
+    /// The outcome as the run's replay record spells it, as JSON for a host
+    /// reply.
+    pub fn outcome_value(&self) -> Result<serde_json::Value> {
+        let value = super::payload::self_dispatch_outcome_value(&self.outcome)?;
+        rmpv::ext::from_value(value).map_err(|_| invalid("action outcome encoding"))
+    }
+}
+/// What the host binds onto one action call, never the call's own body: the
+/// door its credential opens onto the SDK verb table and, when the host
+/// authenticated the owner on its own, that proof. Unbound, a verb-table or
+/// run-row action is refused and an owner action asks for the proof.
+#[derive(Clone, Default)]
+pub struct ActionHostBinding<'a> {
+    pub verb_door: Option<Arc<dyn AgentVerbDoor>>,
+    pub owner: Option<&'a AuthenticatedOwner>,
+}
 #[derive(Debug, Clone, Copy)]
 pub struct ActionBuildContext {
     pub effect_id: EntityId,
@@ -94,9 +118,18 @@ pub struct ActionBuildContext {
     pub frozen_unix_ms: u64,
 }
 pub type ActionFactory = fn(ActionBuildContext, &[ActionArgument]) -> Result<SelfCall>;
+/// How a registered verb becomes its call: a host factory, a row of the
+/// SDK verb table at its own name, or a memory run row as the typed call a
+/// code run makes.
+#[derive(Clone, Copy)]
+enum ActionBuild {
+    Factory(ActionFactory),
+    Verb(AgentVerb),
+    Run(RunVerb),
+}
 struct RegisteredVerb {
     definition: ActionVerbDefinition,
-    factory: ActionFactory,
+    build: ActionBuild,
 }
 #[derive(Default)]
 pub struct ActionRegistry {
@@ -121,16 +154,76 @@ impl ActionRegistry {
         definition: ActionVerbDefinition,
         factory: ActionFactory,
     ) -> Result<()> {
+        self.insert(definition, ActionBuild::Factory(factory))
+    }
+    fn insert(&mut self, definition: ActionVerbDefinition, build: ActionBuild) -> Result<()> {
         if self.verbs.contains_key(definition.id.as_str()) {
             return Err(invalid("duplicate action verb"));
         }
         self.verbs.insert(
             definition.id.as_str().to_owned(),
-            RegisteredVerb {
-                definition,
-                factory,
-            },
+            RegisteredVerb { definition, build },
         );
+        Ok(())
+    }
+    /// The app's whole table: the owner's wake policy, the resident's two
+    /// inference-policy actions, every row of the SDK verb table and the four
+    /// memory run rows. A host serves its buttons and its agents' calls from
+    /// this one table.
+    pub fn app() -> Result<Self> {
+        let mut registry = Self::default();
+        registry.register_dreamer_wake_policy()?;
+        registry.register_inference_defaults()?;
+        registry.register_sdk_verbs()?;
+        registry.register_memory_run_verbs()?;
+        Ok(registry)
+    }
+    /// Offers every row of the SDK verb table a host door answers, under the
+    /// row's own name. Each takes the row's whole JSON input as one text
+    /// argument and runs as [`SelfCall::AgentVerb`] through the door the host
+    /// binds, under that row's own scope, ceiling and gate, so an action holds
+    /// no authority the row's direct call lacks. Board, browser and
+    /// definition-only rows need a run or a socket of their own, and a row
+    /// whose name is no action id is one no lens can name; none is offered.
+    pub fn register_sdk_verbs(&mut self) -> Result<()> {
+        for verb in AgentVerb::ALL
+            .iter()
+            .copied()
+            .filter(|verb| verb.is_facade())
+        {
+            let Ok(id) = SelfUiActionId::new(verb.as_str()) else {
+                continue;
+            };
+            self.insert(
+                ActionVerbDefinition {
+                    id,
+                    args_schema: vec![ActionArgKind::Text],
+                    required_ceiling: AgentCeiling::Proposed,
+                },
+                ActionBuild::Verb(verb),
+            )?;
+        }
+        Ok(())
+    }
+    /// Offers the memory run rows (`vault.search`, `vault.claims.put`,
+    /// `vault.claims.supersede`, `vault.edges.put`) under their own names.
+    /// Each takes the row's whole JSON input as one text argument and runs as
+    /// the typed call a code run makes, at the action's frozen clock, under
+    /// the door the host binds: a search reads, and an edge's target is
+    /// checked, with the credential's read key, and claims and edges meet
+    /// their own gates. The other run rows act on their caller's live run,
+    /// which an action has none of; none is offered.
+    pub fn register_memory_run_verbs(&mut self) -> Result<()> {
+        for verb in super::run_verb_call::MEMORY_RUN_VERBS {
+            self.insert(
+                ActionVerbDefinition {
+                    id: SelfUiActionId::new(verb.as_str())?,
+                    args_schema: vec![ActionArgKind::Text],
+                    required_ceiling: AgentCeiling::Proposed,
+                },
+                ActionBuild::Run(verb),
+            )?;
+        }
         Ok(())
     }
     /// Install the resident's two governed inference-policy actions. Hosts opt
@@ -177,6 +270,24 @@ impl ActionRegistry {
         action: &GeneratedUiValidatedAction,
         idempotency_key: &str,
     ) -> Result<ActionDispatch> {
+        self.execute_ui_bound(
+            vault,
+            actor,
+            action,
+            idempotency_key,
+            ActionHostBinding::default(),
+        )
+    }
+    /// [`Self::execute_ui`] under the host's binding: its verb door and,
+    /// when it authenticated the owner on its own, that proof.
+    pub fn execute_ui_bound(
+        &self,
+        vault: &Vault,
+        actor: WriteActor,
+        action: &GeneratedUiValidatedAction,
+        idempotency_key: &str,
+        binding: ActionHostBinding<'_>,
+    ) -> Result<ActionDispatch> {
         let GeneratedUiValidatedAction::DeterministicTool { emitter, action } = action else {
             return Err(invalid("UI action is not a deterministic tool"));
         };
@@ -185,7 +296,21 @@ impl ActionRegistry {
             args: action.args().iter().map(ActionArgument::from_ui).collect(),
             idempotency_key: idempotency_key.to_owned(),
         };
-        self.execute(vault, actor, emitter, &call, None)
+        self.execute(vault, actor, emitter, &call, binding)
+    }
+    /// One call from either caller, as the host authenticated it: a person's
+    /// own app button (a human view) or an agent's call (an agent task). The
+    /// credential binds actor, principal and binding; the call names only
+    /// the verb, its arguments and its idempotency key.
+    pub fn execute_call(
+        &self,
+        vault: &Vault,
+        actor: WriteActor,
+        principal: &LensPrincipalBinding,
+        call: &AgentActionCall,
+        binding: ActionHostBinding<'_>,
+    ) -> Result<ActionDispatch> {
+        self.execute(vault, actor, principal, call, binding)
     }
     pub fn execute_agent(
         &self,
@@ -197,7 +322,7 @@ impl ActionRegistry {
         if principal.kind() != LensActingPrincipalKind::AgentTask {
             return Err(invalid("agent action requires an agent principal"));
         }
-        self.execute(vault, actor, principal, call, None)
+        self.execute(vault, actor, principal, call, ActionHostBinding::default())
     }
     /// Executes an agent chat action under an INDEPENDENT authenticated-owner
     /// witness bound by the host, never by a transcript or action argument.
@@ -212,7 +337,11 @@ impl ActionRegistry {
         if principal.kind() != LensActingPrincipalKind::AgentTask {
             return Err(invalid("agent action requires an agent principal"));
         }
-        self.execute(vault, actor, principal, call, Some(owner))
+        let binding = ActionHostBinding {
+            verb_door: None,
+            owner: Some(owner),
+        };
+        self.execute(vault, actor, principal, call, binding)
     }
     fn execute<'a>(
         &self,
@@ -220,9 +349,14 @@ impl ActionRegistry {
         actor: WriteActor,
         principal: &LensPrincipalBinding,
         request: &AgentActionCall,
-        owner: Option<&'a AuthenticatedOwner>,
+        binding: ActionHostBinding<'a>,
     ) -> Result<ActionDispatch> {
+        let ActionHostBinding { verb_door, owner } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
+        // Unbound, a run row would read past the caller's own read key.
+        if matches!(registered.build, ActionBuild::Run(_)) && verb_door.is_none() {
+            return Err(invalid("a run-row action runs only under a host's door"));
+        }
         let expected_kind = if actor.actor_class() == EdgeActorClass::Agent {
             LensActingPrincipalKind::AgentTask
         } else {
@@ -286,14 +420,18 @@ impl ActionRegistry {
             || crate::unix_seconds_now().saturating_mul(1000),
             |record| record.determinism.frozen_unix_ms,
         );
-        let call = (registered.factory)(
-            ActionBuildContext {
-                effect_id: run_id,
-                actor,
-                frozen_unix_ms: frozen,
-            },
-            &request.args,
-        )?
+        let call = match registered.build {
+            ActionBuild::Factory(factory) => factory(
+                ActionBuildContext {
+                    effect_id: run_id,
+                    actor,
+                    frozen_unix_ms: frozen,
+                },
+                &request.args,
+            )?,
+            ActionBuild::Verb(verb) => build_sdk_verb(verb, &request.args)?,
+            ActionBuild::Run(verb) => build_run_verb(verb, &request.args, frozen)?,
+        }
         .with_bridge_stamp(0, frozen);
         if matches!(call, SelfCall::WakePolicyWrite(_)) {
             let proof = owner.ok_or(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
@@ -326,6 +464,10 @@ impl ActionRegistry {
         let dispatcher = GatedActorWrite::new(vault, actor, run_id.to_hex())?;
         let dispatcher = match owner {
             Some(proof) => dispatcher.with_authenticated_owner(proof),
+            None => dispatcher,
+        };
+        let dispatcher = match verb_door {
+            Some(door) => dispatcher.with_agent_verb_door(door),
             None => dispatcher,
         };
         let result = dispatcher.dispatch_for_executor_run(
@@ -361,6 +503,27 @@ impl ActionRegistry {
             read_receipt,
         })
     }
+}
+fn build_sdk_verb(verb: AgentVerb, args: &[ActionArgument]) -> Result<SelfCall> {
+    let [ActionArgument::Text(input)] = args else {
+        return Err(invalid(
+            "verb-table action takes its JSON input as one text",
+        ));
+    };
+    let input = serde_json::from_str(input.as_str())
+        .map_err(|_| invalid("verb-table action input is not JSON"))?;
+    Ok(SelfCall::AgentVerb(SelfAgentVerbCall { verb, input }))
+}
+/// A memory run row's typed call, its defaults on the action's frozen clock
+/// in unix seconds, as a code run's own clock is.
+fn build_run_verb(verb: RunVerb, args: &[ActionArgument], frozen_unix_ms: u64) -> Result<SelfCall> {
+    let [ActionArgument::Text(input)] = args else {
+        return Err(invalid("run-row action takes its JSON input as one text"));
+    };
+    let input = serde_json::from_str(input.as_str())
+        .map_err(|_| invalid("run-row action input is not JSON"))?;
+    super::run_verb_call::memory_run_call(verb, input, frozen_unix_ms / 1000)?
+        .ok_or_else(|| invalid("this run row needs its caller's live run"))
 }
 fn build_inference_defaults_read(
     _: ActionBuildContext,

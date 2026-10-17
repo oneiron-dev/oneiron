@@ -18,8 +18,7 @@ use super::representation::{
 use super::{MAINTENANCE_QUEUE_KIND, invalid};
 use crate::claim::{PointRead, ScopedRead, ScopedReadActorKey, claim_evidence_admissible};
 use crate::dreamer_runner::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome,
+    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
@@ -296,7 +295,8 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
     if due.is_empty() {
         return Ok(());
     }
-    let envelope = proposals::run_tray_envelope(vault, STEWARDSHIP_FACET, attempt.status.attempt.id)?;
+    let envelope =
+        proposals::run_tray_envelope(vault, STEWARDSHIP_FACET, attempt.status.attempt.id)?;
     vault.with_write_txn_grouped(|txn| {
         for (person, value, evidence) in &due {
             proposals::emit_in_txn(
@@ -397,9 +397,11 @@ fn draft_request(
     };
     let value: serde_json::Value =
         serde_json::from_str(body.value.as_str().ok_or_else(invalid)?).map_err(|_| invalid())?;
-    let Some(rule) = rules.rules.iter().find(|rule| {
-        rule.person == person && value["rule"].as_str() == Some(rule.id.as_str())
-    }) else {
+    let Some(rule) = rules
+        .rules
+        .iter()
+        .find(|rule| rule.person == person && value["rule"].as_str() == Some(rule.id.as_str()))
+    else {
         return Ok(None);
     };
     let Some(route) = &rule.draft else {

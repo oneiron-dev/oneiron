@@ -4,9 +4,9 @@
 mod authority;
 mod index;
 mod sealed;
+pub(crate) use authority::catch_up_authority;
 pub use index::ResidenceIndexWindow;
 pub use sealed::SealedRelay;
-pub(crate) use authority::catch_up_authority;
 pub(crate) use sealed::relay_sealed_windows;
 
 use std::collections::HashSet;
@@ -133,6 +133,13 @@ struct PromotionReply {
     snapshot: String,
 }
 
+/// The home's version vector for one window (OF-534 demotion).
+#[derive(Deserialize)]
+struct WindowVvReply {
+    window: String,
+    vv: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchHit {
@@ -145,6 +152,8 @@ struct ResidenceRpc {
     socket: Socket,
     next_id: u64,
     timeout: Duration,
+    /// The machine the home proved on this socket's upgrade (OF-534 G7).
+    home: crate::authority::PeerMachine,
 }
 
 impl ResidenceRpc {
@@ -166,10 +175,13 @@ impl ResidenceRpc {
         // The upgrade proves the device's transport slip, as the sync
         // socket does, signed on the wall clock as it is; the bind below
         // then attenuates it to the actor.
+        let mut binding = None;
         if let Some(credential) = &config.transport_credential {
-            credential
-                .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
-                .map_err(|_| refused())?;
+            binding = Some(
+                credential
+                    .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
+                    .map_err(|_| refused())?,
+            );
         } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)
                 .parse()
@@ -182,13 +194,13 @@ impl ResidenceRpc {
             .mesh_dialer
             .as_deref()
             .filter(|_| config.residence_url() == config.server_url);
-        let mut socket = match tokio::time::timeout_at(
+        let (mut socket, response) = match tokio::time::timeout_at(
             deadline,
             crate::sync::carrier::connect_sync_socket(request, dialer),
         )
         .await
         {
-            Ok(Ok(socket)) => socket,
+            Ok(Ok(connected)) => connected,
             Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => return Err(refused()),
             Ok(Err(_)) | Err(_) => return Ok(None),
         };
@@ -228,6 +240,11 @@ impl ResidenceRpc {
                         socket,
                         next_id: 1,
                         timeout,
+                        home: crate::sync::home_proof::home_peer(
+                            vault,
+                            &response,
+                            binding.as_ref(),
+                        ),
                     }));
                 }
                 Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE) => continue,
@@ -306,8 +323,21 @@ impl ResidenceRpc {
 
 /// The home is a peer, so its promotion snapshot passes the same carrier
 /// admission as a raw window update before any byte reaches the window.
+#[cfg(test)]
 pub(super) fn import_promotion_snapshot(doc: &loro::LoroDoc, snapshot: &[u8]) -> bool {
     crate::sync::window::validate_window_update_locality(doc, snapshot).is_ok()
+        && doc.import(snapshot).is_ok()
+}
+
+/// [`import_promotion_snapshot`] with this vault to judge the custody
+/// transitions an own machine's promotion carries by (OF-422): without one,
+/// admission refuses every custody insert.
+fn import_promotion_snapshot_with(
+    vault: &crate::Vault,
+    doc: &loro::LoroDoc,
+    snapshot: &[u8],
+) -> bool {
+    crate::sync::window::validate_promotion_snapshot(vault, doc, snapshot).is_ok()
         && doc.import(snapshot).is_ok()
 }
 
@@ -415,12 +445,13 @@ impl SyncClient {
                     .get(txn, &format!("rp:w:{window}"))?
                     .is_some()
                 {
-                    if self
-                        .vault
-                        .store
-                        .entities
-                        .get(txn, item.as_bytes())?
-                        .is_none()
+                    if crate::ports::EntityStoreRead::port_entity_with_raw(
+                        &self.vault.store,
+                        txn,
+                        &item,
+                        |_| Ok(()),
+                    )?
+                    .is_none()
                     {
                         return Err(crate::Error::InvalidKey);
                     }
@@ -499,7 +530,7 @@ impl SyncClient {
                 "unpromoted window has local CRDT history",
             ));
         }
-        if !import_promotion_snapshot(&loaded.doc, &snapshot) {
+        if !import_promotion_snapshot_with(&self.vault, &loaded.doc, &snapshot) {
             self.manager.discard_window(window);
             return Err(refused());
         }
@@ -611,7 +642,7 @@ impl SyncClient {
             .decode(reply.snapshot)
             .map_err(|_| refused())?;
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
-            || !import_promotion_snapshot(&loaded.doc, &snapshot)
+            || !import_promotion_snapshot_with(&self.vault, &loaded.doc, &snapshot)
         {
             return Ok(false);
         }
@@ -628,6 +659,71 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         self.manager.notify_promotion(window);
         Ok(true)
+    }
+
+    /// Demote a promoted window back to thin (OF-534). The home's version
+    /// vector for the window must cover every op this device holds; then the
+    /// local replica goes, in bounded steps with the window closed, and its
+    /// items read through the thin cache again. The home keeps the window,
+    /// and a later first edit promotes it again. Controls, tombstoned and
+    /// pending rows stay. Not `complete` while the home lacks an op, a queued
+    /// write for the window waits, or a handle keeps the window open: call
+    /// again.
+    pub async fn demote_window(
+        &mut self,
+        window: &WindowKey,
+    ) -> Result<crate::sync::residence::WindowDemotion, TransportError> {
+        let storage = |e: crate::Error| TransportError::Storage(e.to_string());
+        if self.config.residence_mode != SyncResidenceMode::Opened
+            || self
+                .vault
+                .sync_state_get(&format!("rp:w:{window}"))
+                .map_err(storage)?
+                .is_none()
+        {
+            return Err(refused());
+        }
+        let budgets = residence_budgets(&self.vault)?;
+        let selector = self
+            .config
+            .residence_selector
+            .as_ref()
+            .ok_or_else(refused)?;
+        let selector = base64::engine::general_purpose::STANDARD
+            .encode(encode_sync_selector(selector).map_err(|_| refused())?);
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
+            return Err(TransportError::Storage("home node offline".into()));
+        };
+        let reply: WindowVvReply = serde_json::from_value(
+            rpc.request(
+                "residence.window.vv",
+                json!({ "window": window.as_str(), "selector": selector }),
+            )
+            .await?,
+        )
+        .map_err(|_| refused())?;
+        if reply.window != window.as_str() {
+            return Err(refused());
+        }
+        let home = base64::engine::general_purpose::STANDARD
+            .decode(reply.vv)
+            .ok()
+            .and_then(|bytes| loro::VersionVector::decode(&bytes).ok())
+            .ok_or_else(refused)?;
+        // A loaded window persists before it closes; one a handle still
+        // holds stays, and the demotion waits.
+        match self.manager.unload_window(window) {
+            Ok(_) => {}
+            Err(crate::Error::Sync(crate::error::SyncError::WindowBusy { .. })) => {
+                return Ok(crate::sync::residence::WindowDemotion::default());
+            }
+            Err(error) => return Err(storage(error)),
+        }
+        Ok(
+            crate::sync::residence::demote_resident_window(&self.vault, window, &home)
+                .map_err(storage)?
+                .unwrap_or_default(),
+        )
     }
 
     /// Read a previously fetched thin item. This cache has no writable Loro

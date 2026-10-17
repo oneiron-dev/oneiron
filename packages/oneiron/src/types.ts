@@ -148,6 +148,8 @@ export type MemoryItem = {
   world?: string
   facet?: string
   salience?: number
+  /** A conversation record's current reactions, one grouped line per glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item. */
+  reactions: string[]
   /** For a TURN item, the messages whose words the query matched, best first. */
   citedMessages: CitedMessage[]
   /** For a TURN or MESSAGE item, the conversation it is in (32 hex), when the reader may read it. */
@@ -163,6 +165,8 @@ export type CitedMessage = {
 /** What the requested scope excluded. */
 export type ScopeHonesty = {
   outOfScopeWorlds: string[]
+  /** The census stopped at its scan cap or at the answer's deadline, so a world past it may be missing. */
+  censusCapped: boolean
 }
 
 /** One time phrase read from a recall query. `used` narrowed the window; `unresolved` and `future` were skipped. */
@@ -175,7 +179,15 @@ export type TemporalHint = {
 }
 
 /** Retrieval accounting. */
+export type RerankReport =
+  | { status: "applied"; model: string; served_model?: string; candidates: number; calls: number }
+  | { status: "skipped"; reason: "no_reranker" | "no_candidates" | "deadline" | "device_only" }
+
 export type RetrievalMeta = {
+  quality: "full" | "degraded" | "passthrough"
+  degradation: ("ppr_cache_miss" | "embedding_timeout" | "bm25_stale" | "temporal_signal_skipped")[]
+  confidenceAdjustment: number
+  rerank?: RerankReport
   partial: boolean
   sparse?: boolean
   totalCandidates: number
@@ -187,7 +199,31 @@ export type RetrievalMeta = {
 }
 
 /** A full-vault render in one of the five pack serialization formats. */
-export type MemoryExport = { format: string; rendered: string }
+/** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
+export type MemoryExport = { format: string; archive: string; digest: string }
+
+/** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
+export type ReadScope = {
+  /** Admitted entity type bytes; absent means every registered type. */
+  entityTypes?: number[]
+  maxSensitivityBand: number
+  includeStale: boolean
+  minConfidence: number
+  minSalience: number
+  /** The scope admits nothing. */
+  denyAll: boolean
+}
+
+/** The mandatory receipt every read returns: what was asked, the actor's ceiling, what applied, and which axes narrowed. */
+export type ReadReceipt = {
+  requested: ReadScope
+  actorCeiling: ReadScope
+  applied: ReadScope
+  narrowedAxes: string[]
+  /** Stored rows this actor may not read. */
+  suppressedCount: number
+  replanHint: string[]
+}
 
 /** The engine `MemoryPack`, unchanged apart from field spelling. */
 export type MemoryPack = {

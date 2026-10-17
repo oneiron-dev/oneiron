@@ -2,7 +2,7 @@ use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
 use crate::agent_dispatch::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
+    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
@@ -24,6 +24,9 @@ use super::consts::{
     TASK_VERB_BODY_SUBKIND,
 };
 use super::consult_result::TaskVerbBody;
+use super::create_origin::{
+    TaskCreateOrigin, proposal_origin_in, require_creator_in_txn, task_create_origin_in_txn,
+};
 use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
 use super::create_validation::{
     ValidatedTaskCreate, human_route_refusal, task_create_proposal_value, task_route_dedupe_key,
@@ -135,20 +138,26 @@ impl Memory<'_> {
                 approval: ClaimApprovalStatus::Auto,
                 effected: true,
                 route: Some(route),
-            });
+                task_record: None,
+                proposal_record: None,
+            }
+            .with_record_refs());
         }
 
         // Authority ceilings still park proposals. Accounting never changes
         // admission: OF-520 makes this a count-with-receipt lane at every rate.
         let proposal_ref = match self.open_create_proposal_for_spec(spec, now)? {
             Some(existing) => existing,
+            // A bound creator rides beside the proposal, not inside its
+            // amendable value: approval lands under it (OF-532).
             None => {
-                self.persist_task_proposal(
+                self.persist_task_proposal_with_origin(
                     TASK_CREATE_PROPOSAL_PREDICATE,
                     task_create_proposal_value(spec, now),
                     self.actor(),
                     now,
                     provenance,
+                    self.task_host(),
                 )?
                 .0
             }
@@ -159,7 +168,10 @@ impl Memory<'_> {
             approval: ClaimApprovalStatus::Proposed,
             effected: false,
             route: None,
-        })
+            task_record: None,
+            proposal_record: None,
+        }
+        .with_record_refs())
     }
 
     /// A caller-chosen owner_ref does not certify who authored the
@@ -236,6 +248,10 @@ impl Memory<'_> {
     /// fails; it never quietly parks a duplicate. Every read failure
     /// propagates for the same reason: an unreadable index is not "nothing
     /// parked".
+    ///
+    /// And only one parked under the same creator (OF-532): the same ask
+    /// from another agent run, or from no run, lands under a different lease
+    /// tree, so it is a different proposal.
     fn open_create_proposal_for_spec(
         &self,
         spec: &TaskCreateSpec,
@@ -243,16 +259,18 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<EntityId>> {
         let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
         let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let origin = task_create_origin_in_txn(self, &rtxn, self.task_host())?;
         let actor = self.actor();
         let position = self.birth_position();
         let facet = match position.facet {
             Some(facet) => facet,
             None => crate::claim::default_facet_in(&self.vault().store, &rtxn)?,
         };
-        Ok(self
+        let mut unreadable = None;
+        let found = self
             .vault()
             .find_claim_for_subject_in_txn(&rtxn, &actor, |id, body| {
-                (body.predicate == TASK_CREATE_PROPOSAL_PREDICATE
+                let same_ask = body.predicate == TASK_CREATE_PROPOSAL_PREDICATE
                     && body.lifecycle == ClaimLifecycleStatus::Active
                     && body.approval == ClaimApprovalStatus::Proposed
                     // The writer identity the envelope stamped, not the subject
@@ -262,9 +280,22 @@ impl Memory<'_> {
                     && crate::claim::session_claim_producer(body) == Some(actor)
                     && body.world == position.claim_world()
                     && body.scope_facet == facet
-                    && create_proposal_identity(&body.value) == wanted)
-                    .then_some(*id)
-            })?)
+                    && create_proposal_identity(&body.value) == wanted;
+                if !same_ask || unreadable.is_some() {
+                    return None;
+                }
+                match proposal_origin_in(self.vault(), &rtxn, *id) {
+                    Ok(parked) => (parked == origin).then_some(*id),
+                    Err(error) => {
+                        unreadable = Some(error);
+                        None
+                    }
+                }
+            })?;
+        match unreadable {
+            Some(error) => Err(error),
+            None => Ok(found),
+        }
     }
 
     /// Mints one TASK entity plus the Owner authority fact proving who created
@@ -344,8 +375,11 @@ impl Memory<'_> {
             state: Some(TaskExecutionState::Queued),
             provenance: provenance.clone(),
             created_at: now,
+            type_ref: Some(validated.type_ref.clone()),
             refusal: None,
             brief,
+            subproject_ref: None,
+            team: None,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).
@@ -447,11 +481,31 @@ impl Memory<'_> {
     ///
     /// The match is exhaustive so a new assignee variant cannot silently
     /// default into Dreamer realization.
+    ///
+    /// A creator a host bound to this surface ([`Memory::with_task_host`])
+    /// is re-proved here, in the create's transaction; with none bound the
+    /// create is a root, carrying the conversation the host stamped, if any.
     pub(super) fn route_created_task_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         task_ref: EntityId,
         validated: &ValidatedTaskCreate,
+        now: u64,
+    ) -> MemoryResult<TaskRouteOutcome> {
+        let origin = task_create_origin_in_txn(self, &*wtxn, self.task_host())?;
+        self.route_created_task_with_origin_in_txn(wtxn, task_ref, validated, origin.as_ref(), now)
+    }
+
+    /// [`Self::route_created_task_in_txn`] under an origin already resolved:
+    /// a live binding's, a host-bound post's, or the one an approved
+    /// proposal or wave plan witnessed. `None` is an unstamped root; a root
+    /// witness carries only the conversation that started the work.
+    pub(super) fn route_created_task_with_origin_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: EntityId,
+        validated: &ValidatedTaskCreate,
+        origin: Option<&TaskCreateOrigin>,
         now: u64,
     ) -> MemoryResult<TaskRouteOutcome> {
         match validated.assignee {
@@ -462,16 +516,38 @@ impl Memory<'_> {
                     self.enqueue_task_realization_in_txn(wtxn, task_ref, &validated.spec, now)?;
                 Ok(TaskRouteOutcome::DreamerAttempt { attempt_ref })
             }
+            // OF-532: an agent's TASK runs inside its creator's lease tree.
+            // The creator attempt is the parent: dispatch inherits its spend
+            // scope (a hold of the calibrated expected spend, or a carve when
+            // the brief pins a budget), its project, its resource scope and
+            // its team stamp, and reserves the child in this transaction. No
+            // creator, no parent: a root, unmetered unless the brief pins a
+            // budget. The brief's pin is the only budget read; never prose.
             Some(TaskAssignee::AgentDef { agent_def_ref }) => {
+                if let Some(origin) = origin {
+                    require_creator_in_txn(self, &*wtxn, origin)?;
+                }
+                let budget = super::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
+                    .and_then(|body| body.brief)
+                    .and_then(|stored| stored.brief.constraints.pins.budget);
+                // OF-221: a root carries the conversation its witness kept;
+                // a child takes its parent's stored origin in dispatch.
                 let outcome = AgentDispatcher::new(self.vault()).dispatch_for_task_in_txn(
                     wtxn,
                     task_ref,
                     DispatchAgent {
                         target: AgentDispatchTarget::Custom(agent_def_ref),
-                        parent_attempt: None,
+                        parent_attempt: origin.and_then(TaskCreateOrigin::parent_attempt),
                         dedupe_key: Some(task_route_dedupe_key(task_ref)),
-                        run_id: None,
+                        run_id: origin.and_then(TaskCreateOrigin::run_id),
                         now,
+                    },
+                    AgentSpawnContext {
+                        project_ref: origin.and_then(TaskCreateOrigin::project_ref),
+                        type_ref: Some(validated.type_ref.clone()),
+                        budget,
+                        origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
+                        ..AgentSpawnContext::default()
                     },
                 )?;
                 // Dispatched and deduped-existing are ONE idempotent outcome: a
@@ -481,7 +557,7 @@ impl Memory<'_> {
                 else {
                     return Err(crate::error::Error::Artifact(
                         crate::error::ArtifactError::InvalidAgentDispatchInput(
-                            "root TASK dispatch unexpectedly proposed widening",
+                            "TASK dispatch unexpectedly proposed widening",
                         ),
                     )
                     .into());
@@ -494,11 +570,13 @@ impl Memory<'_> {
             // The synced TASK is the transport. A local attempt could never
             // reach an executor on another machine, so none is minted.
             Some(TaskAssignee::Peer { actor_ref }) => {
+                self.freeze_team_in_txn(wtxn, task_ref, origin, now)?;
                 Ok(TaskRouteOutcome::PeerSyncedOnly { actor_ref })
             }
             // A child is already running. The addressed TASK is its inbox input,
             // not permission to spawn a second executor for the same child.
             Some(TaskAssignee::Child { actor_ref }) => {
+                self.freeze_team_in_txn(wtxn, task_ref, origin, now)?;
                 Ok(TaskRouteOutcome::ChildAddressed { actor_ref })
             }
             // A person is not a worker. The TASK row and its follow-up cursor
@@ -521,6 +599,26 @@ impl Memory<'_> {
                 })
             }
         }
+    }
+
+    /// OF-540: a TASK an external taker realizes keeps the team run its
+    /// creator worked in, frozen on the synced TASK in its create's own
+    /// transaction, so it reaches the taker's node and outlives a delayed
+    /// approval; the taker's accept freezes it into its try. Never the
+    /// project's current pattern, and no live creator lease is asked for.
+    fn freeze_team_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        task_ref: EntityId,
+        origin: Option<&TaskCreateOrigin>,
+        now: u64,
+    ) -> MemoryResult<()> {
+        let Some(team) = origin.and_then(TaskCreateOrigin::team) else {
+            return Ok(());
+        };
+        let mut body = super::create_validation::task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+        body.team = Some(team.clone());
+        self.rewrite_task_in_txn(wtxn, task_ref, body, now)
     }
 
     /// Enqueues the one existing `tasks.realize` attempt for the Dreamer lane,

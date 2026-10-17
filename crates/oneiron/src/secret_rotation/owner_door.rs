@@ -32,6 +32,7 @@ impl Vault {
         new_value: &[u8],
         at: u64,
     ) -> Result<RotationReceipt> {
+        let _ = self.load_install_signing_if_minted();
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
         if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
@@ -40,8 +41,67 @@ impl Vault {
             )));
         }
         let receipt = self.rotate_secret_in_txn(&mut wtxn, secret_ref, new_value, at)?;
+        let transition = self.write_transition_of_in_txn(&mut wtxn, secret_ref, at)?;
         wtxn.commit()?;
+        self.mirror_transition(transition.as_ref());
         Ok(receipt)
+    }
+
+    /// Revokes a secret on the vault owner's behalf: [`Vault::revoke_secret`]
+    /// behind the owner proof, rechecked in the committing transaction. A
+    /// portable record's revocation reaches the owner's other machines as a
+    /// signed transition (OF-422).
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
+    /// the live owner's; otherwise every error [`Vault::revoke_secret`]
+    /// returns.
+    pub fn revoke_secret_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        secret_ref: &str,
+        at: u64,
+    ) -> Result<RotationReceipt> {
+        let _ = self.load_install_signing_if_minted();
+        let mut wtxn = self.store.env.write_txn()?;
+        let actor = owner.revalidate_in_txn(self, &wtxn)?;
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "only the vault owner revokes a secret",
+            )));
+        }
+        let receipt = self.revoke_secret_in_txn(&mut wtxn, secret_ref, at)?;
+        let transition = self.write_transition_of_in_txn(&mut wtxn, secret_ref, at)?;
+        wtxn.commit()?;
+        self.mirror_transition(transition.as_ref());
+        Ok(receipt)
+    }
+
+    /// The signed transition of the record `secret_ref` names, as it now
+    /// stands in `wtxn` (OF-422); none for a record that stays here.
+    fn write_transition_of_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        secret_ref: &str,
+        at: u64,
+    ) -> Result<Option<crate::secret_custody::CustodyTransition>> {
+        let Some(id) = resolve_secret_ref_in_txn(&self.store, wtxn, secret_ref)? else {
+            return Ok(None);
+        };
+        let Some(rec) = read_secret_custody_in_txn(&self.store, wtxn, &id)? else {
+            return Ok(None);
+        };
+        crate::secret_custody::write_custody_transition_in_txn(self, wtxn, id, &rec, at)
+    }
+
+    /// Mirrors a committed transition into the live windows.
+    fn mirror_transition(&self, transition: Option<&crate::secret_custody::CustodyTransition>) {
+        #[cfg(feature = "sync")]
+        if transition.is_some() {
+            self.refresh_custody_in_live_windows();
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = transition;
     }
 
     pub(super) fn rotate_secret_in_txn(

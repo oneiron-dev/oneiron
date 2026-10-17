@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::legal_hold::HoldActor;
 
 use super::super::erase::{stage_sweep_refs_in_txn, sweep_extras};
 use super::super::gate::{
@@ -55,10 +56,14 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, None, false)?;
+        let outcome = self
+            .delete_entity_with_reason_impl(id, reason, None, false)
+            .inspect_err(|_| self.flush_legal_hold_refusals_after_failure())?;
         // The dependents past the first batch go before the delete returns.
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        #[cfg(unix)]
+        self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
@@ -75,10 +80,14 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate), false)?;
+        let outcome = self
+            .delete_entity_with_reason_impl(id, reason, Some(gate), false)
+            .inspect_err(|_| self.flush_legal_hold_refusals_after_failure())?;
         // The dependents past the first batch go before the delete returns.
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        #[cfg(unix)]
+        self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
@@ -97,6 +106,8 @@ impl Vault {
         let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        #[cfg(unix)]
+        self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
@@ -220,15 +231,21 @@ impl Vault {
             id,
             None,
         );
-        // Hold the entire key partition, and refuse an unsafe explicit hard
-        // purge, before any tombstone can be published. The plain
-        // `delete_entity` door now defaults to a soft tombstone; an explicitly
-        // requested purge is never downgraded.
-        if reason.active_store_hard_purge_v1() {
+        // Refuse a held record, whoever deletes it (a soft scrub destroys
+        // body bytes too), and an unsafe explicit hard purge, before any
+        // tombstone can be published. The plain `delete_entity` door now
+        // defaults to a soft tombstone; an explicitly requested purge is
+        // never downgraded.
+        {
             let txn = self.store.env.read_txn()?;
-            self.store
-                .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
-            self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
+            let actor = gate
+                .as_ref()
+                .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor)
+                .privacy(reason == DeleteReason::GdprDelete);
+            self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
+            if reason.active_store_hard_purge_v1() {
+                self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
+            }
         }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
@@ -520,8 +537,7 @@ impl Vault {
             // OWN view — the refusal is actionable (nothing is on the wire) and
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
-            self.store
-                .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+            self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
             self.reject_held_redirect_shells_in_txn(&wtxn, id)?;
             if !authority_settled {
                 self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
@@ -639,8 +655,7 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
-        self.store
-            .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
+        self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
         if !authority_settled {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
         }

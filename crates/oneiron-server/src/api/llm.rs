@@ -49,6 +49,12 @@ fn route_selector_refusal(key: &str) -> Response {
         .into_response()
 }
 fn failure(error: LlmError) -> Response {
+    let (status, body) = failure_body(error);
+    (status, Json(body)).into_response()
+}
+/// A failed call's status and typed body, `{"error": {"code", "llm"}}`: the
+/// refusal before a stream starts, and a stream's last line once it has.
+fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
     use oneiron::{FatalLlmError, RetryableLlmError};
     let (status, code) = match &error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
@@ -80,7 +86,7 @@ fn failure(error: LlmError) -> Response {
             "answer": "POST /v1/ai/quota/{question}",
         });
     }
-    (status, Json(body)).into_response()
+    (status, body)
 }
 async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Response {
     if !auth.is_owner_grade() {
@@ -133,6 +139,25 @@ fn admit(
     if !auth.is_owner_grade() {
         return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
     }
+    admit_owner(server, request)
+}
+
+/// [`admit_owner`] for a connector's call through the OpenAI-compatible
+/// proxy (OF-445): the vault's inference policy for the model, on the raw
+/// routes' meter. The proxy has already authenticated its connector and
+/// narrowed the model to one `[models]` configures.
+pub(super) fn admit_proxied(
+    server: &SyncServer,
+    request: &mut LlmRequest,
+) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
+    admit_owner(server, request)
+}
+
+/// [`admit`] past the owner check: the call is the owner's.
+fn admit_owner(
+    server: &SyncServer,
+    request: &mut LlmRequest,
+) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
     // The request's model id picks the model and its route; a body field that
     // names another is refused before anything is reserved, with its row.
     if let Some(key) = request.route_selector_override() {
@@ -192,12 +217,15 @@ async fn generate(
         Err(e) => failure(e),
     }
 }
+/// A stream's last line when it fails once started: the same typed body a
+/// refusal before the stream gets, so credit spent mid-stream closes it
+/// with `quota_spent` and its question's pointer, not a bare cut.
 async fn send_error(
     send: &tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
     error: LlmError,
 ) {
-    let mut bytes = serde_json::to_vec(&serde_json::json!({"error":{"llm":error}}))
-        .expect("LLM error serializes");
+    let (_, body) = failure_body(error);
+    let mut bytes = serde_json::to_vec(&body).expect("LLM error serializes");
     bytes.push(b'\n');
     let _ = send.send(Ok(bytes)).await;
 }
@@ -261,3 +289,51 @@ async fn stream(
 
 #[cfg(test)]
 mod tests;
+
+/// Model calls from the owner's other machines over the mesh (OF-575 MESH:
+/// "a phone uses the MacBook's model"). The mesh admitted the peer as a
+/// paired machine of this vault, so its calls take the owner's admission,
+/// the same rungs as `/v1/llm/generate` and `/v1/llm/stream`.
+#[cfg(feature = "mesh")]
+pub(crate) struct MeshLlm(pub(crate) Arc<SyncServer>);
+
+#[cfg(feature = "mesh")]
+impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
+    fn serves(&self, model: &oneiron::ModelId) -> bool {
+        self.0.llm.is_some() && self.0.ai.model_locality(model).is_some()
+    }
+
+    fn generate(
+        &self,
+        _peer: oneiron::EntityId,
+        mut request: LlmRequest,
+    ) -> oneiron::LlmGenerateFuture<'static> {
+        let server = Arc::clone(&self.0);
+        Box::pin(async move {
+            let (ladder, run) =
+                admit_owner(&server, &mut request).map_err(|refused| refused_error(&refused))?;
+            ladder.generate(&run, request, None).await
+        })
+    }
+
+    fn stream(
+        &self,
+        _peer: oneiron::EntityId,
+        mut request: LlmRequest,
+    ) -> oneiron::LlmResult<oneiron::LlmStream<'static>> {
+        let (ladder, run) =
+            admit_owner(&self.0, &mut request).map_err(|refused| refused_error(&refused))?;
+        ladder.stream(&run, request, None)
+    }
+}
+
+/// An admission refusal as the error the asking node's transport returns.
+#[cfg(feature = "mesh")]
+fn refused_error(refused: &Response) -> LlmError {
+    use oneiron::{FatalLlmError, RetryableLlmError};
+    match refused.status() {
+        StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => FatalLlmError::Auth.into(),
+        StatusCode::SERVICE_UNAVAILABLE => RetryableLlmError::ServerError.into(),
+        _ => FatalLlmError::InvalidRequest.into(),
+    }
+}

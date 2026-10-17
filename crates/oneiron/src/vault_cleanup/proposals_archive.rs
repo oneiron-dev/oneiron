@@ -25,8 +25,17 @@ use uuid::Uuid;
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn cleanup_proposals(vault: &Vault) -> Result<Vec<CleanupProposal>> {
     let rtxn = vault.store.env.read_txn()?;
+    cleanup_proposals_in_txn(vault, &rtxn)
+}
+
+/// [`cleanup_proposals`] inside the caller's transaction, for the
+/// proactivity digest's snapshot.
+pub(crate) fn cleanup_proposals_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<CleanupProposal>> {
     PROPOSAL
-        .scan(&vault.store, &rtxn)?
+        .scan(&vault.store, rtxn)?
         .into_iter()
         .map(|(id, raw)| decode_proposal(id, &raw))
         .collect()
@@ -87,6 +96,15 @@ pub(super) fn accept_cleanup_proposal_in_txn(
     };
     put_digest_in_txn(vault, wtxn, &digest)?;
     PROPOSAL.delete(&vault.store, wtxn, proposal)?;
+    // The owner's answer is the proposal's review, and it reached a person.
+    crate::failure_ladder::oversight::reviewed_in_txn(
+        vault,
+        wtxn,
+        &row.id.to_hex(),
+        row.created_at,
+        mutation_recorded_at,
+        true,
+    )?;
     Ok(CleanupAcceptOutcome {
         proposal: row.id,
         archived: applied.archived,
@@ -98,6 +116,8 @@ pub(super) fn accept_cleanup_proposal_in_txn(
 /// Rejects an archive proposal. Nothing is archived and NO digest is written:
 /// a refusal is not a decision anyone needs a receipt for, and the ratified
 /// row's `receipt: false` is not a licence to receipt the refusal instead.
+/// The refusal still counts as the proposal's review in the oversight
+/// ledger.
 ///
 /// # Errors
 ///
@@ -112,14 +132,27 @@ pub(super) fn reject_cleanup_proposal_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     proposal: &EntityId,
 ) -> Result<()> {
+    let not_found = || {
+        Error::Maintenance(MaintenanceError::VaultCleanupProposalNotFound {
+            proposal: proposal.to_hex(),
+        })
+    };
+    let raw = PROPOSAL
+        .get(&vault.store, wtxn, proposal)?
+        .ok_or_else(not_found)?;
+    let row = decode_proposal(*proposal, &raw)?;
     if !PROPOSAL.delete(&vault.store, wtxn, proposal)? {
-        return Err(Error::Maintenance(
-            MaintenanceError::VaultCleanupProposalNotFound {
-                proposal: proposal.to_hex(),
-            },
-        ));
+        return Err(not_found());
     }
-    Ok(())
+    let reviewed_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    crate::failure_ladder::oversight::reviewed_in_txn(
+        vault,
+        wtxn,
+        &row.id.to_hex(),
+        row.created_at,
+        reviewed_at,
+        true,
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind
 
 mod anthropic;
 mod broker;
+mod broker_media;
 mod catalog;
 mod cooldown;
 mod decision_read;
@@ -38,6 +39,8 @@ mod driven;
 #[cfg(test)]
 mod fallback_tests;
 mod forward;
+mod gemini_media;
+mod hosted_speech;
 mod http;
 #[cfg(test)]
 mod kept_on_device_tests;
@@ -54,16 +57,21 @@ mod role_route;
 mod router;
 mod run_backend;
 mod served;
+pub(crate) mod soniox;
 mod sse;
 mod status;
 #[cfg(test)]
 mod tests;
+mod voice;
+mod voxcpm2_speech;
 mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaQuestion};
+use cooldown::FallbackRung;
+pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
+pub use hosted_speech::HostedCloner;
 pub use ladder::OfferLadder;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
@@ -77,7 +85,7 @@ pub use run_backend::RunBackend;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank};
-use ladder::LadderRung;
+use ladder::{LadderRung, SeatScope, Wire};
 use offer::provider_offer;
 use output_cap::OutputCap;
 
@@ -108,6 +116,7 @@ pub struct ModelRuntime {
     router: Option<Arc<ModelRouter>>,
     status: ModelsStatus,
     receipts: Arc<dyn RunReceiptSink>,
+    host: Option<Arc<HostAccount>>,
     /// The house model's decision read (`[models.decision_read]`).
     decision_read: Option<DecisionReadDoor>,
     /// The roles whose work never leaves the device.
@@ -128,6 +137,7 @@ impl ModelRuntime {
             router: None,
             status: ModelsStatus::unconfigured(),
             receipts: Arc::new(LoggedReceipts),
+            host: None,
             decision_read: None,
             stays_on_device: BTreeSet::new(),
             media: MediaRuntime::empty(),
@@ -144,17 +154,30 @@ impl ModelRuntime {
         self
     }
 
+    /// The live vault allocation used by every run this runtime serves.
+    #[must_use]
+    pub fn with_host_account(mut self, host: Arc<HostAccount>) -> Self {
+        self.media.set_host_account(Arc::clone(&host));
+        self.host = Some(host);
+        self
+    }
+
+    pub(crate) fn host_account(&self) -> Option<Arc<HostAccount>> {
+        self.host.clone()
+    }
+
     /// A run that declares nothing, on a meter its host built (see
     /// [`undeclared_run`]), with this runtime's receipts.
     #[must_use]
     pub fn undeclared_run(&self, run: impl Into<String>, meter: BudgetGuard) -> RunAdmission {
-        undeclared_run(run, meter, Arc::clone(&self.receipts))
+        undeclared_run(run, meter, self.host.clone(), Arc::clone(&self.receipts))
     }
 
     /// A declared run (ARCH-0053 `#run-declaration`) on its own line, over
     /// this runtime's models: its teachers, connectors and budget, as the host
     /// that starts it states them. `host` is the account whose allocation
-    /// pays host-paid offers. Its paid keys must sit at T0 unless the owner
+    /// pays host-paid offers; `None` uses this runtime's live host account.
+    /// Its paid keys must sit at T0 unless the owner
     /// allowed an offer at T1; a `key_env` key is at T1.
     #[must_use]
     pub fn declared_run(
@@ -164,7 +187,12 @@ impl ModelRuntime {
         host: Option<Arc<HostAccount>>,
     ) -> DeclaredRun {
         DeclaredRun::new(
-            RunAdmission::new(run, declaration, host, Arc::clone(&self.receipts)),
+            RunAdmission::new(
+                run,
+                declaration,
+                host.or_else(|| self.host.clone()),
+                Arc::clone(&self.receipts),
+            ),
             self.router.clone(),
         )
     }
@@ -195,11 +223,12 @@ impl ModelRuntime {
         };
         let mut status = ModelsStatus::default();
         let mut built = BTreeMap::new();
-        // One broker for every `key_secret` provider, made only if one exists.
+        // One broker for every `key_secret` provider, chat or media, made
+        // only if one exists.
         let brokered = config
             .providers
             .values()
-            .any(|provider| provider.key_secret.is_some() && provider.kind.generates());
+            .any(|provider| provider.key_secret.is_some());
         let site =
             brokered.then(|| broker::BrokerSite::new(config).map_err(|error| error.to_string()));
         for (name, provider) in &config.providers {
@@ -240,6 +269,7 @@ impl ModelRuntime {
             }
         }
         let mut router = ModelRouter::default();
+        let mut fallbacks = Vec::new();
         for (rerank, backends) in [(false, &built), (true, &rerankers)] {
             for (name, backend) in backends {
                 let provider = &config.providers[name];
@@ -254,11 +284,21 @@ impl ModelRuntime {
                         // chat route; the reranker reaches it through its seat.
                         && !(rerank && router.served(&rung.model).is_some())
                     {
-                        router.insert(
-                            rung.model.clone(),
-                            provider.locality,
-                            Arc::new(OfferLadder::bare(rung, Arc::clone(&rests))),
-                        );
+                        let wire = if rerank { Wire::Rerank } else { Wire::Chat };
+                        let ladder = Arc::new(OfferLadder::bare(rung, Arc::clone(&rests)).scoped(
+                            SeatScope {
+                                wire,
+                                ..SeatScope::default()
+                            },
+                        ));
+                        if !rerank {
+                            fallbacks.push(FallbackRung {
+                                provider: name.clone(),
+                                model: ladder.model().clone(),
+                                ladder: Arc::downgrade(&ladder),
+                            });
+                        }
+                        router.insert(ladder.model().clone(), provider.locality, ladder);
                     }
                 }
             }
@@ -301,11 +341,21 @@ impl ModelRuntime {
             } else {
                 SeatState::Ready
             };
+            let scope = SeatScope {
+                wire: if *role == ModelRole::Reranker {
+                    Wire::Rerank
+                } else {
+                    Wire::Chat
+                },
+                stays_on_device: stays,
+                configured: ladder.len(),
+            };
             if let Some(seat) = seat_for(
                 *role,
                 ladder_locality(&rungs, config),
                 rungs,
                 Arc::clone(&rests),
+                scope,
             ) {
                 router.insert(seat.model.clone(), seat.locality, Arc::clone(&seat.ladder));
                 status.seats.push(SeatStatus::new(
@@ -321,7 +371,18 @@ impl ModelRuntime {
                     .push(SeatStatus::new(*role, None, state, rung_status));
             }
         }
-        let media = MediaRuntime::build(config, &rests, &mut status.seats);
+        let media = MediaRuntime::build(
+            config,
+            &rests,
+            &mut status.seats,
+            site.as_ref(),
+            keys.as_ref(),
+        );
+        // Each chat model the router serves, and each media seat's rung, is
+        // one a parked offer's calls may fall back to once the owner names
+        // it (`use_fallback`).
+        fallbacks.extend(media.fallback_rungs());
+        rests.offer_fallbacks(fallbacks);
         status.configured = true;
         // A read blocks on the runtime its reader was built on; a build with
         // none has no reader.
@@ -339,6 +400,7 @@ impl ModelRuntime {
             router: (!router.is_empty()).then(|| Arc::new(router)),
             status,
             receipts: Arc::new(LoggedReceipts),
+            host: None,
             decision_read,
             stays_on_device: config.stays_on_device.clone(),
             media,
@@ -360,6 +422,13 @@ impl ModelRuntime {
         &self.media
     }
 
+    /// Hears each stable recovery of an offer whose provider was down
+    /// (OF-305), for the memory work its outage stopped.
+    #[must_use]
+    pub fn recoveries(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.rests.recoveries()
+    }
+
     /// The owner's open quota questions (OF-305): each offer parked on a
     /// spent usage window or spent credit, and the choices it offers.
     #[must_use]
@@ -368,10 +437,17 @@ impl ModelRuntime {
     }
 
     /// The owner's answer to quota question `id`; a top-up or pay-as-you-go
-    /// puts its offer back in rotation now. `false` when no such question is
-    /// open or it offers no such choice.
-    pub fn answer_quota(&self, id: &str, choice: QuotaChoice) -> oneiron::Result<bool> {
-        self.rests.answer(id, choice)
+    /// puts its offer back in rotation now, and `use_fallback` sends its
+    /// calls to `fallback`, one of the question's fallbacks, while it is
+    /// parked. `false` when no such question is open, it offers no such
+    /// choice, or it offers no such fallback.
+    pub fn answer_quota(
+        &self,
+        id: &str,
+        choice: QuotaChoice,
+        fallback: Option<&str>,
+    ) -> oneiron::Result<bool> {
+        self.rests.answer(id, choice, fallback)
     }
 
     /// The seat for `role`, when at least one of its rungs can serve.
@@ -391,6 +467,28 @@ impl ModelRuntime {
     pub fn status(&self) -> &ModelsStatus {
         &self.status
     }
+
+    /// [`Self::status`] with each built rung's live health, and each seat's
+    /// state worked out from it (OF-305). A seat whose offers' providers are
+    /// down shows Down, and one with an offer on probation shows Recovering.
+    /// A limit hold shows on its rung, apart from the outage state. Read-only:
+    /// it takes no probation slot, probes nothing and rebuilds nothing.
+    #[must_use]
+    pub fn live_status(&self) -> ModelsStatus {
+        let mut status = self.status.clone();
+        for seat in &mut status.seats {
+            let ladder = self
+                .seats
+                .iter()
+                .find(|(role, _)| role_key(**role) == seat.role)
+                .map(|(_, built)| &built.ladder)
+                .or_else(|| self.media.seat_ladder(&seat.role));
+            if let Some(ladder) = ladder {
+                seat.live(ladder.health());
+            }
+        }
+        status
+    }
 }
 
 /// A run that declares nothing, on a meter its host built: the vault's
@@ -402,6 +500,7 @@ impl ModelRuntime {
 pub fn undeclared_run(
     run: impl Into<String>,
     meter: BudgetGuard,
+    host: Option<Arc<HostAccount>>,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> RunAdmission {
     let line = BudgetLine {
@@ -409,7 +508,7 @@ pub fn undeclared_run(
         reserve_units: meter.reserve_units(),
         unit: LeaseUnit::tokens(),
     };
-    RunAdmission::with_meter(run, RunDeclaration::undeclared(line), meter, None, receipts)
+    RunAdmission::with_meter(run, RunDeclaration::undeclared(line), meter, host, receipts)
 }
 
 /// One provider's wire backend. Each sends one request per call (its
@@ -462,8 +561,16 @@ fn build_provider(
             ))
         }
         // The tagger slot's worker is the consumer of this kind; it never
-        // answers generate calls, so no LLM backend is built for it.
-        ProviderKind::Oneironer => return Ok(None),
+        // answers generate calls, so no LLM backend is built for it. A
+        // media-only provider's only client is its media rung's.
+        ProviderKind::Oneironer
+        | ProviderKind::Cartesia
+        | ProviderKind::Elevenlabs
+        | ProviderKind::Voxcpm2
+        | ProviderKind::Gemini
+        | ProviderKind::Soniox => {
+            return Ok(None);
+        }
     };
     Ok(Some(backend))
 }
@@ -477,7 +584,7 @@ fn build_reranker(
     // it would carry no key, while its offer says the broker holds one.
     if provider.key_secret.is_some() {
         anyhow::bail!(
-            "a reranker cannot use a key_secret key yet: the credential broker sends chat calls only"
+            "a reranker cannot use a key_secret key yet: the credential broker has no rerank shape"
         );
     }
     let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
@@ -583,6 +690,7 @@ fn seat_for(
     locality: ModelLocality,
     rungs: Vec<LadderRung>,
     rests: Arc<OfferCooldowns>,
+    scope: SeatScope,
 ) -> Option<Seat> {
     if rungs.is_empty() {
         return None;
@@ -600,15 +708,15 @@ fn seat_for(
     let model = ModelId::new(format!("seat/{}@{revision}", role_key(role))).ok()?;
     let mut alone: BTreeMap<ModelId, Arc<OfferLadder>> = BTreeMap::new();
     for rung in &rungs {
-        alone
-            .entry(rung.model.clone())
-            .or_insert_with(|| Arc::new(OfferLadder::pinned(rung.clone(), Arc::clone(&rests))));
+        alone.entry(rung.model.clone()).or_insert_with(|| {
+            Arc::new(OfferLadder::pinned(rung.clone(), Arc::clone(&rests)).scoped(scope))
+        });
     }
     Some(Seat {
         role,
         model: model.clone(),
         locality,
-        ladder: Arc::new(OfferLadder::seat(model, rungs, rests)),
+        ladder: Arc::new(OfferLadder::seat(model, rungs, rests).scoped(scope)),
         rungs: alone,
     })
 }

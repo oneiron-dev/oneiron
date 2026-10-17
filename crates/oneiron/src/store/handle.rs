@@ -281,6 +281,9 @@ pub struct StoreCore {
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
     pub(crate) limit_watch: crate::limit_ask::LimitWatch,
+    /// Where this vault's queued code-run reader children are woken, none
+    /// until a host installs one ([`crate::Vault::set_reader_job_runner`]).
+    pub(crate) reader_job_runner: RwLock<Option<Arc<dyn crate::code_run::ReaderJobRunner>>>,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -294,6 +297,9 @@ pub struct StoreCore {
     pub(crate) diagnostics: Diagnostics,
     /// Bounded, content-addressed L2 render cache. Never persisted.
     pub(crate) l2_base_cache: Mutex<crate::context_pack::L2BaseCache>,
+    /// Legal-hold refusals waiting for their hold log: the refusing
+    /// transaction rolls back (OF-470). Never persisted.
+    pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
     /// Content-free, per-vault digest deadline invalidation. The host
     /// subscribes before reading its first deadline; no process-global timer.
     pub(crate) proactivity_updates: tokio::sync::watch::Sender<u64>,

@@ -17,7 +17,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
-use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_TURN};
 use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
@@ -62,6 +62,19 @@ pub(crate) fn reverse_rematerialize_for_sealing(
     reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Nothing)
 }
 
+/// [`reverse_rematerialize`] for only the `rows` a local commit just wrote,
+/// not the window's whole learned range: each one this window holds (by its
+/// learned month and world) is mirrored as a cold open would mirror it, so a
+/// live window gets a write made after it loaded (the live mirror).
+pub(crate) fn reverse_rematerialize_rows(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    rows: &std::collections::BTreeSet<EntityId>,
+) -> Result<u32> {
+    reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Unknown, Some(rows))
+}
+
 /// [`reverse_rematerialize`], packing every row except those of a world
 /// `withhold` names. Promotion authority packs them all: it asks what a grant
 /// covers and exports nothing. A residence read for a proved machine packs
@@ -71,6 +84,18 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     doc: &LoroDoc,
     window_key: &WindowKey,
     withhold: super::Withhold<'_>,
+) -> Result<u32> {
+    reverse_rematerialize_scan(vault, doc, window_key, withhold, None)
+}
+
+/// The reverse pass over the window's learned range, or over `only` (each
+/// row kept when its learned time falls in the window's month).
+fn reverse_rematerialize_scan(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    withhold: super::Withhold<'_>,
+    only: Option<&std::collections::BTreeSet<EntityId>>,
 ) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
@@ -91,8 +116,18 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     // world window would duplicate every other project's payload into it.
     let mut entities_in_range = Vec::new();
     let mut base_edge_sources = Vec::new();
-    for id in vault.entities_in_learned_range(start_ts, end_ts)? {
+    let scanned = match only {
+        None => vault.entities_in_learned_range(start_ts, end_ts)?,
+        Some(rows) => rows.iter().copied().collect(),
+    };
+    for id in scanned {
         if let Some(raw) = vault.get_raw_unsealed(&id)? {
+            if only.is_some()
+                && !EntityMetadataHeader::parse(&raw)
+                    .is_some_and(|header| (start_ts..end_ts).contains(&header.learned_at))
+            {
+                continue;
+            }
             let belongs = super::types::entity_belongs_to_window(&raw, window_key);
             let retained = if belongs {
                 false
@@ -298,15 +333,6 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             continue;
         }
 
-        if skip_companion_register_sync_mirror(&raw) {
-            let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
-            if removed {
-                super::egress::require_history_free_window(vault, window_key)?;
-            }
-            wrote_any |= removed;
-            continue;
-        }
-
         // Presence alone decides for ordinary rows (delete-wins and remote
         // history are not rewritten here). ONE-1604-D1 adds one exception:
         // a validated local AUTHORITY_LOG row DOMINATES any occupant of its
@@ -384,6 +410,16 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             {
                 wrote_any = true;
             }
+            // OF-522: a TURN's room row rides beside its carrier the same
+            // way, and is refreshed when only the row changed.
+            if window_key.world().is_none()
+                && EntityMetadataHeader::parse(&raw)
+                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::room_turns::mirror_room_turn(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
         }
 
         backfill_sources.push(*id);
@@ -395,7 +431,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     for id in base_edge_sources {
         if window_packing_excludes_entity(vault, &device_only, &id)?
             || !local_claim_sync_allowed(vault, &id)?
-            || local_entity_is_unsyncable_companion(vault, &id)?
+            || local_entity_is_unsyncable(vault, &id)?
         {
             continue;
         }
@@ -403,7 +439,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     }
 
     // PHASE 2 — edge backfill for every source that cleared phase 1's gates
-    // (egress door, tombstone, unsyncable-companion, missing local row). Ordered
+    // (egress door, tombstone, unsyncable, missing local row). Ordered
     // after ALL dominance sweeps, so an edge with local backing is always
     // re-inserted, whatever the `learned_at` order of its endpoints.
     for id in &backfill_sources {
@@ -432,7 +468,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
                 continue;
             }
             if !local_claim_sync_allowed(vault, &edge.target)?
-                || local_entity_is_unsyncable_companion(vault, &edge.target)?
+                || local_entity_is_unsyncable(vault, &edge.target)?
             {
                 continue;
             }
@@ -471,8 +507,8 @@ pub(in crate::sync) fn reverse_rematerialize_with(
                     || window_packing_excludes_entity(vault, &device_only, target)?
                     || !local_claim_sync_allowed(vault, &source)?
                     || !local_claim_sync_allowed(vault, target)?
-                    || local_entity_is_unsyncable_companion(vault, &source)?
-                    || local_entity_is_unsyncable_companion(vault, target)?
+                    || local_entity_is_unsyncable(vault, &source)?
+                    || local_entity_is_unsyncable(vault, target)?
                     || !super::types::edge_belongs_to_window(vault, &source, target, window_key)?
                 {
                     continue;
@@ -504,23 +540,16 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     // every revision learned since (Astra #1434 F2).
     wrote_any |= super::project_history::carry_project_history(vault, doc)?;
 
+    // OF-422: the owner-signed custody transitions this vault wrote that ride
+    // this window, never a custody row.
+    wrote_any |= crate::sync::custody::mirror_custody_transitions(vault, doc, window_key)?;
+
     // Commit all bridge writes with origin tag
     if wrote_any {
         let origin = bridge::origin_for_mirrors(&mirror_sources)?;
         doc.commit_with(CommitOptions::new().origin(&origin));
     }
     Ok(count)
-}
-
-pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> bool {
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return false;
-    };
-    header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-        || crate::companion::is_retired_identity_carrier(
-            header.entity_type,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-        )
 }
 
 /// Local-only rows: diagnostics, and every credential (custody is sealed from
@@ -578,11 +607,11 @@ pub(super) fn quarantine_outbound_protected_tombstones(
     Ok(true)
 }
 
-fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<bool> {
+fn local_entity_is_unsyncable(vault: &Vault, id: &EntityId) -> Result<bool> {
     let Some(raw) = vault.get_raw_unsealed(id)? else {
         return Ok(false);
     };
-    Ok(skip_companion_register_sync_mirror(&raw))
+    Ok(is_unsyncable_secret_custody(&raw))
 }
 
 /// Removes an entity's already-present CRDT body and every incident edge.

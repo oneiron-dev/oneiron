@@ -16,9 +16,12 @@ use std::sync::PoisonError;
 
 use loro::{LoroDoc, ValueOrContainer, VersionVector};
 
-use super::content::{MIRROR, SealedContentBinding, SealedContentKind, SealedResidenceContent};
+use super::content::{
+    MIRROR, SealedContentBinding, SealedContentId, SealedContentKind, SealedResidenceContent,
+};
 use super::refused;
 use crate::Vault;
+use crate::authority::{Destination, EffectiveRead};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::sync::WindowManager;
@@ -186,4 +189,93 @@ impl WindowManager {
         store_mirror(vault, world, window, &mirror)?;
         Ok(opened.binding)
     }
+
+    /// This machine's sealing-mirror version vector for `window`, encoded:
+    /// the `since` a sealed request states. Empty of operations when the
+    /// window has no mirror yet.
+    pub fn sealed_mirror_version_vector(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+    ) -> Result<Vec<u8>> {
+        let (mirror, _) = load_mirror(self.vault(), world, window)?;
+        Ok(doc_version_vector(&mirror))
+    }
+
+    /// A sealed packet of `window` for `destination`, or `None` when this
+    /// machine seals nothing for it: the world reads everywhere (its rows
+    /// travel readable), the destination may neither read the world nor
+    /// hold a sealed copy, or this machine may not read the world itself
+    /// (its shelved packets forward through
+    /// [`Vault::sealed_window_packets`] instead).
+    pub fn sealed_residence_content_for(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+        since: Option<&[u8]>,
+        destination: Destination,
+    ) -> Result<Option<SealedResidenceContent>> {
+        if window.world() != Some(world) {
+            return Err(refused("the window is not one of the world's"));
+        }
+        let vault = self.vault();
+        if vault.world_key(world).is_err() {
+            return Ok(None);
+        }
+        let may = {
+            let txn = vault.store.env.read_txn()?;
+            let fold = vault.authority_view_readonly_in_txn(&txn)?;
+            if fold.world_privacy(world).read == EffectiveRead::Everywhere {
+                return Ok(None);
+            }
+            fold.world_readable_on(world, destination)
+                || vault.sealed_copy_may_rest_on_in(&txn, world, destination)?
+        };
+        if !may {
+            return Ok(None);
+        }
+        self.export_sealed_residence_content(world, window, since)
+            .map(Some)
+    }
+
+    /// Takes one relayed sealed packet in: imported and materialized on a
+    /// machine that may read the world now, shelved unread where a sealed
+    /// copy may rest here, refused anywhere else. An update ahead of this
+    /// reader's mirror shelves too, so it can forward and retry once its
+    /// base lands.
+    pub fn take_sealed_residence_content(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+        packet: &SealedResidenceContent,
+    ) -> Result<SealedTake> {
+        if window.world() != Some(world) {
+            return Err(refused("the window is not one of the world's"));
+        }
+        let vault = self.vault();
+        if vault.world_key(world).is_ok()
+            && let Ok(binding) = self.import_sealed_residence_content(world, window, packet)
+        {
+            return Ok(SealedTake::Imported(binding));
+        }
+        {
+            let txn = vault.store.env.read_txn()?;
+            let here = vault.local_destination_in(&txn)?;
+            if !vault.sealed_copy_may_rest_on_in(&txn, world, here)? {
+                return Err(refused("a sealed copy of the world may not rest here"));
+            }
+        }
+        let id = vault.store_sealed_world_content(packet)?;
+        vault.note_sealed_window_packet(window.as_str(), &id)?;
+        Ok(SealedTake::Shelved(id))
+    }
+}
+
+/// What [`WindowManager::take_sealed_residence_content`] did with a packet.
+#[derive(Debug)]
+pub enum SealedTake {
+    /// Opened under the world's key and materialized here.
+    Imported(SealedContentBinding),
+    /// Kept unread on this node's shelf, for a reader to fetch.
+    Shelved(SealedContentId),
 }

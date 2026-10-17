@@ -1,8 +1,8 @@
 //! Qualification is a vault door: callers cannot submit a self-graded report.
 use crate::Vault;
 use crate::connector_key::qualification::{
-    GroundingOracle, QualificationConnector, QualificationFailure, QualificationPlan,
-    QualificationReport, qualify_connector_with_schemas,
+    ConnectorQualificationReceipt, GroundingOracle, QualificationConnector, QualificationFailure,
+    QualificationPlan, QualificationReport, qualify_connector_with_schemas,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -69,6 +69,7 @@ impl Vault {
             slate_ref: Some(next_slate_ref),
             admission_epoch,
             consent_required: expanded,
+            qualification_receipt: None,
             ..record
         };
         pending.validate()?;
@@ -116,7 +117,9 @@ impl Vault {
                 .ok_or_else(|| invalid_body("connector slate required"))?;
             let slate = read_connector_slate_in_txn(self, &txn, slate_id)?
                 .ok_or_else(|| invalid_body("connector slate missing"))?;
-            if record.consent_required && (slate.owner_actor().is_none() || slate.revision() == 0) {
+            if record.consent_required
+                && (slate.owner_actor().is_none() || slate.revision() == 0 || !slate.stamp_holds())
+            {
                 return Err(invalid_body("connector slate not consented for qualification").into());
             }
             (
@@ -144,7 +147,8 @@ impl Vault {
         }
         let slate = read_connector_slate_in_txn(self, &wtxn, expected_slate_id)?
             .ok_or_else(|| invalid_body("connector slate missing"))?;
-        if record.consent_required && (slate.owner_actor().is_none() || slate.revision() == 0)
+        if record.consent_required
+            && (slate.owner_actor().is_none() || slate.revision() == 0 || !slate.stamp_holds())
             || slate.revision() != stamped_revision
             || slate.manifest_hash() != manifest_hash
             || slate.tool_names() != report.tools.iter().map(|tool| tool.name.as_str()).collect()
@@ -152,6 +156,12 @@ impl Vault {
             return Err(invalid_body("connector slate changed during qualification").into());
         }
         let active = ConnectorKeyRecord {
+            qualification_receipt: Some(ConnectorQualificationReceipt::new(
+                report.report_hash.clone(),
+                expected_revision.to_owned(),
+                manifest_hash,
+                at,
+            )?),
             status: ConnectorKeyStatus::Active,
             status_changed_at: Some(at),
             slate_revision: Some(slate.revision()),

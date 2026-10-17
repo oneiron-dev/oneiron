@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::error::Result;
 use crate::interlocutor::InterlocutorSet;
 use crate::policy_model::PolicyEnforcementAction;
+use crate::store::GateSystemNoticeRecord;
 
 use super::retrieval::invalid;
 use super::{SafeguardRequest, StopReason};
@@ -164,6 +165,10 @@ pub struct BrainRequest {
     pub session_ref: String,
     pub tools_enabled: bool,
     pub interlocutors: InterlocutorSet,
+    /// The session's audience revision these interlocutors were read at. An
+    /// audience change moves it; context assembled for an older revision is
+    /// rebuilt, never reused.
+    pub audience_revision: u64,
     pub tool_events: Vec<ToolEvent>,
     pub externally_tainted: bool,
 }
@@ -209,6 +214,12 @@ pub enum ControlEvent {
         action: PolicyEnforcementAction,
         receipt_ref: Option<String>,
         custom_tier_skipped: bool,
+    },
+    /// A safeguard's notice to the person, said by the client. Every one is
+    /// delivered, a stale sentence's too; none is silent.
+    Notice {
+        generation: GenerationEpoch,
+        notice: GateSystemNoticeRecord,
     },
 }
 

@@ -9,6 +9,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use oneiron::llm::media::wav::WavClip;
 use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
     MediaUsage,
@@ -190,7 +191,20 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             [("model", json!(wire)), ("input", json!(input))],
             &request.params,
         )?;
-        body.entry("voice".into()).or_insert_with(|| json!("alloy"));
+        match &request.voice {
+            // A typed voice is the call's one voice: a `voice` param beside
+            // it is refused, so a raw name never stands in for a banked
+            // identity.
+            Some(voice) => {
+                let id = voice.wire_id().ok_or(FatalLlmError::InvalidRequest)?;
+                if body.insert("voice".into(), json!(id)).is_some() {
+                    return Err(FatalLlmError::InvalidRequest.into());
+                }
+            }
+            None => {
+                body.entry("voice".into()).or_insert_with(|| json!("alloy"));
+            }
+        }
         let format = body
             .entry("response_format".into())
             .or_insert_with(|| json!("mp3"))
@@ -239,6 +253,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         if bytes.is_empty() || !request.references.is_empty() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        let measured_ms = WavClip::parse(bytes).map(|clip| clip.duration_ms());
         let mut body = with_params([("model", json!(wire))], &request.params)?;
         body.entry("response_format".into())
             .or_insert_with(|| json!("json"));
@@ -279,10 +294,16 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             .or_else(|| reply.get("duration"))
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
+        // A provider that reports neither is charged the length of the WAV
+        // it was sent, read from the audio's own header.
+        let audio_ms = match (seconds.max(0.0) * 1_000.0).ceil() as u64 {
+            0 => measured_ms.unwrap_or(0),
+            reported => reported,
+        };
         let usage = MediaUsage {
             input_tokens,
             output_tokens,
-            audio_ms: (seconds.max(0.0) * 1_000.0).ceil() as u64,
+            audio_ms,
             raw_provider: json!({ "usage": raw }),
             ..MediaUsage::default()
         };
@@ -522,6 +543,10 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async move {
+            // A voice is a speech call's alone.
+            if request.voice.is_some() && request.operation != AiOperation::Speech {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
             match request.operation {
                 AiOperation::Image => self.image(request, lease).await,
                 AiOperation::Speech => self.speech(request, lease).await,

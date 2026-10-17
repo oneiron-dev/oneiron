@@ -1,14 +1,19 @@
 //! Session-less signing ceremony. The public link carries the capability in its
-//! path; after loading, the client scrubs it and sends it only in POST bodies.
+//! fragment (`/sign#<token>`); after loading, the client scrubs it and sends it
+//! only in POST bodies. A call that also presents a vault credential is classed
+//! by it: an agent's Complete is an automated sign act, whoever's link it holds.
 use crate::server::SyncServer;
 mod editor_budget;
+pub(crate) mod hold_worker;
 mod presentation;
+#[cfg(unix)]
+pub(crate) mod seal_worker;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use oneiron::blob_artifact::esign::{EsignCapability, SigningAction};
+use oneiron::blob_artifact::esign::{EsignCapability, SigningAction, SigningCaller};
 use serde::Deserialize;
 use std::sync::Arc;
 #[derive(Deserialize)]
@@ -73,9 +78,12 @@ async fn action(
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
+    let Ok(caller) = signing_caller(&headers, &server) else {
+        return refused();
+    };
     match server
         .vault
-        .execute_signing_action(&token, &request.action, ip, ua)
+        .execute_signing_action_as(&token, &request.action, caller, ip, ua)
     {
         Ok(outcome) => (
             [
@@ -89,6 +97,24 @@ async fn action(
         Err(_) => refused(),
     }
 }
+/// Who the signing call shows itself to be. A browser signer sends no
+/// credential (the page posts with `credentials: "omit"`), so the capability
+/// stands alone; a call that presents one is classed by the actor class its
+/// credential binds, and only `human` is a person. A credential that does not
+/// verify is refused.
+fn signing_caller(headers: &HeaderMap, server: &SyncServer) -> Result<SigningCaller, ()> {
+    if !headers.contains_key(header::AUTHORIZATION) {
+        return Ok(SigningCaller::Bearer);
+    }
+    let auth =
+        crate::auth::CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
+            .map_err(|_| ())?;
+    Ok(match auth.actor_class() {
+        Some("human") => SigningCaller::Person,
+        _ => SigningCaller::Agent,
+    })
+}
+
 type NetworkPeer = Result<
     axum::extract::ConnectInfo<std::net::SocketAddr>,
     axum::extract::rejection::ExtensionRejection,

@@ -17,7 +17,9 @@ pub const OP_KIND_OWNER_HANDOVER: &str = "owner_handover";
 /// Longest act id, receipt id or role name an entry carries.
 pub const OWNER_HANDOVER_REF_MAX: usize = 128;
 const REQUIRED_KEYS: [&str; 5] = [OP_KEY_KIND, "shared_vault", "cause", "from", "receipt"];
-const OPTIONAL_KEYS: [&str; 3] = ["to", "from_keeps", "act"];
+const OPTIONAL_KEYS: [&str; 4] = ["to", "from_keeps", "act", "proof"];
+/// A proof digest is a BLAKE3 hash, lowercase hex.
+const PROOF_HEX_LEN: usize = 64;
 
 /// Why the Owner role moved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -66,6 +68,9 @@ pub struct OwnerHandover {
     pub from_keeps: Option<String>,
     /// The shared act the handover executes, when one did.
     pub act: Option<String>,
+    /// A proof-of-control handover's BLAKE3 (lowercase hex) of the proof of
+    /// organization control the host judged; never the proof itself.
+    pub proof: Option<String>,
     /// The execution receipt's id.
     pub receipt: String,
 }
@@ -86,10 +91,21 @@ impl OwnerHandover {
             !role.is_empty()
                 && role.len() <= OWNER_HANDOVER_REF_MAX
                 && role != "owner"
-                && role.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+                && role
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        });
+        // Only the host's proof-of-control judgement carries a proof digest.
+        let proof_ok = self.proof.as_deref().is_none_or(|proof| {
+            self.cause == OwnerHandoverCause::ProofOfControl
+                && proof.len() == PROOF_HEX_LEN
+                && proof
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         });
         if (needs_successor && !names_successor)
             || self.to == Some(self.from)
+            || !proof_ok
             || !refs_ok
             || !role_ok
         {
@@ -100,7 +116,7 @@ impl OwnerHandover {
 }
 
 /// Canonical field order: kind, shared_vault, cause, from, then `to`,
-/// `from_keeps` and `act` when present, then receipt.
+/// `from_keeps`, `act` and `proof` when present, then receipt.
 pub(super) fn owner_handover_value(handover: &OwnerHandover) -> Value {
     let mut entries = vec![
         (
@@ -123,6 +139,9 @@ pub(super) fn owner_handover_value(handover: &OwnerHandover) -> Value {
     if let Some(act) = &handover.act {
         entries.push((Value::from("act"), Value::from(act.as_str())));
     }
+    if let Some(proof) = &handover.proof {
+        entries.push((Value::from("proof"), Value::from(proof.as_str())));
+    }
     entries.push((
         Value::from("receipt"),
         Value::from(handover.receipt.as_str()),
@@ -144,6 +163,7 @@ pub(super) fn decode_owner_handover(entries: &[(Value, Value)]) -> Result<Author
         "to",
         "from_keeps",
         "act",
+        "proof",
         "receipt",
     ];
     let positions: Vec<_> = entries
@@ -174,6 +194,7 @@ pub(super) fn decode_owner_handover(entries: &[(Value, Value)]) -> Result<Author
             .then(|| text("from_keeps"))
             .transpose()?,
         act: present("act").then(|| text("act")).transpose()?,
+        proof: present("proof").then(|| text("proof")).transpose()?,
         receipt: text("receipt")?,
     };
     handover.validate()?;

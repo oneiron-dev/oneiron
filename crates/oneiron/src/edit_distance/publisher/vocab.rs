@@ -11,7 +11,20 @@ use crate::skill_attribution::AttributionVerdict;
 /// is a distinct type only because `AttributionVerdict` carries skill-routing
 /// semantics (which entity a verdict writes against) that the publisher's
 /// wire vocabulary must not inherit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum IssueCategory {
     /// The shipped artifact's own content was wrong.
     SkillDefect,

@@ -710,6 +710,12 @@ pub fn surface_peer_answer_digest(
 /// Where surviving candidates go. ONE-1290's promotion writer is the real
 /// implementation; tests stub it. This module never writes claims.
 pub trait ConsolidationSink {
+    /// A separate handle to the same fenced promotion door, for disjoint
+    /// MACRO bucket executors. Stateful host sinks may keep one executor.
+    fn fork(&self) -> Option<Box<dyn ConsolidationSink>> {
+        None
+    }
+
     fn accept(&mut self, candidates: Vec<PromotionCandidate>) -> Result<()>;
 
     /// A sealed executor result. Persisting sinks must consume its transaction

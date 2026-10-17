@@ -84,6 +84,16 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     }
     strict(snapshot.entity_blobs.iter().map(|row| row.id))?;
     strict(snapshot.retained_claim_worlds.iter().map(|row| row.id))?;
+    strict(snapshot.custody_transitions.iter().map(|row| row.id))?;
+    strict(snapshot.room_turns.iter().map(|row| row.id))?;
+    // Custody transitions ride base windows only (OF-422).
+    if snapshot.window.contains('@') && !snapshot.custody_transitions.is_empty() {
+        return Err(invalid("custody transition in a world window"));
+    }
+    // Room turn rows ride base windows only (OF-522).
+    if snapshot.window.contains('@') && !snapshot.room_turns.is_empty() {
+        return Err(invalid("room turn row in a world window"));
+    }
     strict(
         snapshot
             .base_edges
@@ -459,11 +469,16 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
                     .iter()
                     .filter(|(key, _)| key.as_str() != Some("entity_doc_ref"))
                     .collect();
+                if others
+                    .iter()
+                    .any(|(key, _)| key.as_str().is_some_and(crate::ports::is_metadata_field))
+                {
+                    return Err(invalid("editable metadata remains in the entity row"));
+                }
                 match &row.field {
                     None if others.is_empty() => {}
                     Some(field)
-                        if ["body", "text", "txt", "content", "markdown", "title"]
-                            .contains(&field.as_str())
+                        if crate::ports::is_text_field(field)
                             && !others
                                 .iter()
                                 .any(|(key, _)| key.as_str() == Some(field.as_str())) => {}
@@ -485,6 +500,14 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
 /// A causal row binds inside itself: every version leads to the head, pins
 /// quote their version, and forks, receipts and purges name carried versions.
 fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
+    strict(row.record_fields.iter())?;
+    if row.record_fields.iter().any(|field| {
+        !crate::ports::is_metadata_field(field) || row.field.as_deref() == Some(field.as_str())
+    }) || (row.field.is_none() && !row.record_fields.is_empty())
+    {
+        return Err(invalid("document native record fields"));
+    }
+    validate_document_metadata(&row.metadata, row.field.as_deref())?;
     let Some(history) = &row.history else {
         return Ok(());
     };
@@ -504,12 +527,13 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
         .len()
         .checked_sub(1)
         .ok_or(invalid("entity document history has no head"))?;
-    if texts[head] != row.text {
+    if texts[head] != row.text || history.versions[head].metadata != row.metadata {
         return Err(invalid("entity document head version"));
     }
     let mut reached = vec![false; texts.len()];
     reached[head] = true;
     for (index, version) in history.versions.iter().enumerate().rev() {
+        validate_document_metadata(&version.metadata, row.field.as_deref())?;
         if !reached[index] {
             return Err(invalid("entity document version is not before its head"));
         }
@@ -573,7 +597,11 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
             None if history.shallow && !pending => {}
             _ => return Err(invalid("entity document fork base")),
         }
-        if fork.output.is_some() != pending
+        if let Some(metadata) = &fork.output_metadata {
+            validate_document_metadata(metadata, row.field.as_deref())?;
+        }
+        if fork.output_metadata.is_some() != pending
+            || fork.output.is_some() != pending
             || fork.proposal_index >= fork.proposal_len
             || fork.proposal_len > 256
         {
@@ -588,6 +616,25 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
         if !version(purge.requested) || !version(purge.applied) {
             return Err(invalid("entity document purge version"));
         }
+    }
+    Ok(())
+}
+
+fn validate_document_metadata(
+    fields: &BTreeMap<String, Vec<u8>>,
+    body_field: Option<&str>,
+) -> Result<()> {
+    for (field, bytes) in fields {
+        if Some(field.as_str()) == body_field {
+            return Err(invalid("document body duplicated in metadata"));
+        }
+        let mut cursor = bytes.as_slice();
+        let value = rmpv::decode::read_value(&mut cursor)
+            .map_err(|_| invalid("document metadata encoding"))?;
+        if !cursor.is_empty() {
+            return Err(invalid("trailing document metadata bytes"));
+        }
+        crate::ports::validate_metadata(field, &value)?;
     }
     Ok(())
 }

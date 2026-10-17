@@ -244,15 +244,35 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.mesh_grant_permits_in_txn(&txn, machine, endpoint_key, alpn)
     }
+    /// Every MACHINE this vault's grants admit on `alpn` under its current
+    /// address key, in one snapshot, as a caller picks a peer to dial. A
+    /// row whose grant does not check out is left out, never an error.
+    pub fn mesh_machines_granted(&self, alpn: &[u8]) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let mut granted = Vec::new();
+        for id in
+            EntityStoreRead::port_entity_ids_by_type(&self.store, &txn, ENTITY_TYPE_MACHINE, None)?
+        {
+            let id = id?;
+            let Some(row) = self.mesh_machine_in_txn(&txn, id)? else {
+                continue;
+            };
+            if self
+                .mesh_grant_permits_in_txn(&txn, id, row.endpoint_key, alpn)
+                .unwrap_or(false)
+            {
+                granted.push(id);
+            }
+        }
+        Ok(granted)
+    }
     /// This install's MACHINE id and the seed of its mesh transport key, or
     /// `None` before it has a machine id (OF-535). The seed is derived from the
     /// machine key, the key a mesh binding pairs and a machine proof signs
     /// with, under the transport domain `oneiron-mesh-transport` derives
     /// with (`oneiron/mesh-transport-ed25519/v1`); the machine key never
     /// leaves the engine.
-    pub fn mesh_transport_seed(
-        &self,
-    ) -> Result<Option<(EntityId, zeroize::Zeroizing<[u8; 32]>)>> {
+    pub fn mesh_transport_seed(&self) -> Result<Option<(EntityId, zeroize::Zeroizing<[u8; 32]>)>> {
         self.load_install_signing_if_minted()?;
         let txn = self.store.env.read_txn()?;
         let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
@@ -521,6 +541,7 @@ impl Vault {
                 channels: Default::default(),
                 actor_class: None,
                 org_ref: None,
+                grant_ref: None,
             };
             let slip = self.mint_slip_in_txn(&mut txn, issuer, grant)?;
             claims.alpns.insert(alpn.to_vec(), slip.claims.slip_id);

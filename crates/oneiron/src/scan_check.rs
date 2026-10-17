@@ -109,17 +109,30 @@ pub enum EngineScan {
     RoomHistoryRows,
     /// The TASK rows one board assembly reads.
     TaskBoardRows,
+    /// One room's thread-children index rows a hang check walks, for one
+    /// room or parent turn.
+    RoomThreadChildRows,
+    /// The message-to-project origin index rows a hang check walks, for one
+    /// message.
+    MessageOriginRows,
+    /// A thread's bound and moved tasks, counted at bind and conversion.
+    ThreadTaskCensus,
+    /// The task and ask lists one PROJECT body's normalization reads.
+    ProjectTaskRows,
     /// The vault's inbound STOPs this replica has not projected yet, which
     /// each external send reads. A STOP the projector keeps refusing stays.
     PendingCommStops,
     /// The contact claims naming a party, which an external send reads when
     /// a party-wide opt-out stands for its party and no contact row held it.
     PartyContactClaims,
+    /// The soft-confirm notice deliveries one retry sweep's page reads,
+    /// settled ones included.
+    AskSoftConfirmDeliveryRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 39] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -152,8 +165,13 @@ impl EngineScan {
         Self::RoomPageRows,
         Self::RoomHistoryRows,
         Self::TaskBoardRows,
+        Self::RoomThreadChildRows,
+        Self::MessageOriginRows,
+        Self::ThreadTaskCensus,
+        Self::ProjectTaskRows,
         Self::PendingCommStops,
         Self::PartyContactClaims,
+        Self::AskSoftConfirmDeliveryRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -200,8 +218,13 @@ impl EngineScan {
             Self::RoomPageRows => "room_page_rows",
             Self::RoomHistoryRows => "room_history_rows",
             Self::TaskBoardRows => "task_board_rows",
+            Self::RoomThreadChildRows => "room_thread_child_rows",
+            Self::MessageOriginRows => "message_origin_rows",
+            Self::ThreadTaskCensus => "thread_task_census",
+            Self::ProjectTaskRows => "project_task_rows",
             Self::PendingCommStops => "pending_comm_stops",
             Self::PartyContactClaims => "party_contact_claims",
+            Self::AskSoftConfirmDeliveryRows => "ask_soft_confirm_delivery_rows",
         }
     }
 
@@ -239,8 +262,13 @@ impl EngineScan {
             Self::RoomPageRows => 36,
             Self::RoomHistoryRows => 37,
             Self::TaskBoardRows => 38,
+            Self::RoomThreadChildRows => 39,
+            Self::MessageOriginRows => 40,
+            Self::ThreadTaskCensus => 41,
+            Self::ProjectTaskRows => 42,
             Self::PendingCommStops => 64,
             Self::PartyContactClaims => 65,
+            Self::AskSoftConfirmDeliveryRows => 66,
         }]
     }
 }
@@ -300,6 +328,17 @@ impl ScanCount {
             threshold: threshold_in_txn(store, txn, scan)?,
             rows: 0,
         })
+    }
+
+    /// Starts counting `scan` of `scope` against `threshold`, for a scan
+    /// whose caller's own policy row names when it asks.
+    pub(crate) fn start_at(scan: EngineScan, scope: &[u8], threshold: u64) -> Self {
+        Self {
+            scan,
+            scope: scope.to_vec(),
+            threshold,
+            rows: 0,
+        }
     }
 
     /// Counts one row read.

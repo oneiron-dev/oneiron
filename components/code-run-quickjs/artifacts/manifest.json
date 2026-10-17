@@ -8,7 +8,7 @@
   "toolchain": {
     "wit-bindgen": "wit-bindgen-cli 0.46.0",
     "wasm-tools": "wasm-tools 1.239.0 (35f8671bc 2025-09-09)",
-    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /data/lanes/fl-big-results-bpp-aaa875/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /data/lanes/fl-big-results-bpp-aaa875/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
+    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /home/lexi/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /home/lexi/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
   },
   "patched_quickjs_sha256": "81d6e4a91d3167b307b7feca196da09bfecde996ebe360499d0f40d3c9c5640c",
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
@@ -16,20 +16,29 @@
   "sources": {
     "guest.c": "df292f54abcb0f2afe068ed663b3a41799ef77ed36e2c08fa077a90e7b14f512",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "6d68fd317f7335729f6b9719de70fbb8ffa7b4987de309888973a9c0b3a6334d",
+    "bootstrap.js": "d853c522ce5f15ecc9fcd4a42b9cb7b62ebb8a65d7abfd346da30644b98ef5e5",
+    "hook_guest.c": "7e65ba8fce7db9d63991003b9430f3bd451669ab10daaf07788a797ac74d3816",
+    "hook_bootstrap.js": "7647b9e3d05d4e0220b38f0f509dbd021eea47f1a0bf125550ba8f752958c8bb",
     "generate_bridge.py": "e099779784519585bf281f126c4db5630c10ca7b75f5efed94593b890436dcd2",
-    "build.py": "55329a943f412758400d4cc11927efd7453163bbb7baee9443f5744fd20bae6b"
+    "build.py": "3e8acec47db7860660a64823cfeb9040a85b3390de9097e99c52e317dabb517d"
   },
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "36462cc1e8dd80f27f232edb457fec180cb0985aaab0e7be067306d5f417ac05",
-      "bytes": 1050363
+      "sha256": "3aabb3c04756594ee414c6176de545f3089a1be23b12159333ca20c04d1b986b",
+      "bytes": 1054123
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "3392c3095f36866039a6f4578535f49385330212e77585465bb1c43326014412",
-      "bytes": 1042814
+      "sha256": "9a987a045fde8c203e337fac0ea4c2b14009f72a4513477578f09c11b320eee0",
+      "bytes": 1046574
+    },
+    "hook": {
+      "file": "quickjs-hook.wasm",
+      "sha256": "b331bdbb5af39a26b53e08cd75a0ba867c1810a08b12d011ba36036c605fdaea",
+      "bytes": 1019685,
+      "world": "oneiron:hook/hook@1.0.0",
+      "wit_sha256": "005f59f2f15c3df106341b1e069e42dc2a395f6da5fae91366b7ee2cb5f0d109"
     }
   }
 }

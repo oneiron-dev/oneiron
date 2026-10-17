@@ -7,7 +7,7 @@ use crate::attempt_queue::{
 };
 #[cfg(feature = "sync")]
 use crate::dreamer_runner::DreamerAttemptProgressProducer;
-use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope};
+use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 #[cfg(feature = "sync")]
@@ -85,6 +85,9 @@ pub enum WakePassStop {
     /// The pass worked through the head of a backlog larger than one wake
     /// prepares and met the rest, which waits for the next pass.
     BacklogLeft,
+    /// A `host.wake` pre-hook skipped the wake, or asked first (ARCH-0080
+    /// §5): the pass did nothing, and the hook's receipt keeps why.
+    HookSkipped,
 }
 
 /// Wake-pass tally.
@@ -119,11 +122,13 @@ pub enum DreamerAttemptExecution {
     },
     Park {
         reason: String,
+        cause: DreamerParkCause,
     },
     /// Checkpoint a stopped run after admitted calls have already spent units.
     /// The driver settles the wake reservation before parking the attempt.
     ParkWithSpend {
         reason: String,
+        cause: DreamerParkCause,
         completed_units: u64,
         /// Terminal step identities this checkpoint charges for the first time.
         /// Atomic with wake-budget settlement so replay cannot double debit.

@@ -17,7 +17,6 @@ impl	-	impl ActorBound<'_>	-	crates/oneiron/src/vault.rs
 + crates/oneiron/src/companion.rs	impl Vault
 
 ## edit
-crates/oneiron/src/batch.rs	let lookup = crate::vault::companion_record_key_lookup_in_txn(	let lookup = crate::companion::companion_record_key_lookup_in_txn(
 
 ## frag-edit
 

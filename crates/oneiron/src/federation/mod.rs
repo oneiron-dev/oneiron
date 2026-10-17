@@ -20,6 +20,7 @@ pub(crate) use coreference::share_consent_valid_at;
 mod grant;
 pub(crate) mod grant_policy;
 mod membership_gate;
+pub use membership_gate::MembershipStanding;
 pub use membership_gate::SharedVaultWrite;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;
@@ -33,13 +34,16 @@ mod pending_act;
 mod shared_act;
 mod shared_creation;
 pub use pending_act::{
-    ActExecution, PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
+    ActExecution, PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActPolicy,
+    SharedActPrecedence,
 };
 pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_act::{
-    DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, RemoveOwnerPlan, SharedActExecution,
-    SharedActExecutionReceipt, SharedActExport, SharedActKind, SharedActOutcome, SharedVaultChange,
+    DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
+    NOTIFICATION_PRODUCER_ERASE_ASK, RemoveOwnerPlan, SHARED_INVITATION_TTL_SECS,
+    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
+    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedVaultChange,
     SharedVaultDeletion, TransferOwnershipPlan,
 };
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
@@ -48,6 +52,7 @@ mod peer_authority;
 pub mod record_scope;
 mod relationships;
 mod stale;
+pub(crate) use stale::world_registered_to_pact_in;
 
 pub use self::coreference::{
     COREFERENCE_LINK_WEIGHT, CoreferenceStatus, coreference_share_consent,

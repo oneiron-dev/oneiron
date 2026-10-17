@@ -3,7 +3,10 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use super::field_set::{append_pack_attribution_fields, append_pack_manifest_fields};
+use super::field_set::{
+    append_pack_attribution_fields, append_pack_manifest_fields, append_task_type_fields,
+    append_team_receipt_fields,
+};
 #[cfg(test)]
 use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
 use super::kernel::{
@@ -71,7 +74,8 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
 /// Stamps the terminal pack or resident receipt in the transition's OWN
 /// write transaction. Complete, fail, retry-source finalization, queued/paused
 /// cancel, landing cancellation, force-cancel and abandon all call this seam.
-/// An attempt with no manifest, actor binding or attribution context mints no row.
+/// An attempt with no manifest, actor binding, attribution context or team-run
+/// stamp mints no row.
 ///
 /// Atomic with the state seal: a terminal attempt with a manifest or actor
 /// binding and no receipt (or the reverse) is not a reachable state. The row
@@ -83,12 +87,16 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     actor: &str,
 ) -> Result<()> {
     let receipt_id = attempt_pack_receipt_id(&record.id);
+    // OF-540: the team run the dispatch froze. A team attempt's outcome joins
+    // its run even when it carries no pack context.
+    let team = crate::agent_dispatch::attempt_team_stamp(record)?;
     // A typed or resident attempt has an attributable outcome even when it
     // loaded no skill. Generic jobs with no attribution context mint no row.
-    if record.manifest().is_empty()
-        && crate::skill::resident::receipt_resident_in_txn(store, wtxn, &receipt_id)?.is_none()
-        && !super::has_attempt_pack_attribution_in_txn(store, wtxn, record.id)?
-    {
+    let attributed = super::has_attempt_pack_attribution_in_txn(store, wtxn, record.id)?;
+    let pack = !record.manifest().is_empty()
+        || crate::skill::resident::receipt_resident_in_txn(store, wtxn, &receipt_id)?.is_some()
+        || attributed;
+    if !pack && team.is_none() {
         return Ok(());
     }
     let mut receipt = ReceiptRecord {
@@ -103,24 +111,42 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         policy_trace: Vec::new(),
         fields: BTreeMap::new(),
     };
-    if record
-        .manifest()
-        .iter()
-        .any(|entry| entry.kind == crate::attempt_queue::ManifestKind::Skill)
-        && record.executor_model.is_none()
-    {
-        return Err(Error::InvalidClaimBody(
-            "skill-bearing attempt requires executor model",
-        ));
+    // A team-only attempt invents no executor, judge or skill. An attempt with
+    // pack context always records its manifest; the attribution guard holds
+    // only when a host bound attribution (Engine ruling 10-17). An attempt no
+    // host attributed still closes, and its receipt carries no attribution, so
+    // the learning loop refuses to score it rather than the attempt failing to
+    // close.
+    if pack {
+        if record
+            .manifest()
+            .iter()
+            .any(|entry| entry.kind == crate::attempt_queue::ManifestKind::Skill)
+            && record.executor_model.is_none()
+        {
+            return Err(Error::InvalidClaimBody(
+                "skill-bearing attempt requires executor model",
+            ));
+        }
+        append_pack_manifest_fields(&mut receipt, record.manifest())?;
+        if attributed {
+            let attribution = super::take_attempt_pack_attribution_in_txn(store, wtxn, record.id)?;
+            if record.executor_model.as_deref() != Some(attribution.executor.as_str()) {
+                return Err(Error::InvalidClaimBody(
+                    "attempt executor disagrees with attribution stamp",
+                ));
+            }
+            append_pack_attribution_fields(&mut receipt, &attribution)?;
+        }
     }
-    let attribution = super::take_attempt_pack_attribution_in_txn(store, wtxn, record.id)?;
-    if record.executor_model.as_deref() != Some(attribution.executor.as_str()) {
-        return Err(Error::InvalidClaimBody(
-            "attempt executor disagrees with attribution stamp",
-        ));
+    // OF-543: the terminal spawn/task receipt carries the one type stamp
+    // the spawn was placed with.
+    if let Some(type_ref) = crate::agent_dispatch::attempt_task_type_ref(record) {
+        append_task_type_fields(&mut receipt, &type_ref)?;
     }
-    append_pack_manifest_fields(&mut receipt, record.manifest())?;
-    append_pack_attribution_fields(&mut receipt, &attribution)?;
+    if let Some(team) = &team {
+        append_team_receipt_fields(&mut receipt.fields, team);
+    }
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
 }

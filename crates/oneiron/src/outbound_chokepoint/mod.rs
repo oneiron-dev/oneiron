@@ -14,7 +14,8 @@ pub use fanout::FanoutApprovalMode;
 pub(crate) use fanout::{
     FanoutAdmission, FanoutApprovalChoice, FanoutApprovalError, FanoutApprovalRow,
     FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutHistory, FanoutPathology,
-    FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink, PeerRateSnapshot, admit_fanout_with_history,
+    FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink, FanoutWidthCheck, FanoutWidthClass,
+    PeerRateSnapshot, admit_fanout_with_history, answer_fanout_width_check,
     approve_and_resume_fanout, fanout_estimate, fanout_history_pathology, fanout_plan_digest,
 };
 
@@ -22,8 +23,9 @@ pub(crate) use self::admission::execute_outbound_effect;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use self::types::BEFORE_NEW_ADMISSION;
 pub(crate) use self::types::{
-    AdmissionCeiling, OutboundEffectCommand, OutboundEffectError, OutboundEffectResult,
-    OutboundTransport, PreparedAuthorization, PreparedEffect, frozen_call_hygiene_headers,
+    AdmissionCeiling, CoActorAdmission, OutboundEffectCommand, OutboundEffectError,
+    OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
+    frozen_call_hygiene_headers,
 };
 
 #[cfg(test)]

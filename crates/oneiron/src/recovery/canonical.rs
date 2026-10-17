@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
 use super::{decode_recovery_artifact, seal_recovery_artifact};
-use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE};
+use crate::deletion::PENDING_TOMBSTONE;
 use crate::error::{ArtifactError, Error, Result};
-use crate::side_table::HexId;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::{EntityId, Vault};
 
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
@@ -61,9 +61,13 @@ pub struct CanonicalTombstone {
 pub struct CanonicalEntityDocument {
     pub entity_id: [u8; 16],
     pub document_id: [u8; 16],
-    /// None is the legacy UTF-8 body; Some is the moved MessagePack text field.
+    /// None is a UTF-8 body; Some is the document's MessagePack body field.
     pub field: Option<String>,
     pub text: String,
+    /// Editable fields, each encoded as one MessagePack value.
+    pub metadata: BTreeMap<String, Vec<u8>>,
+    /// Native record fields projected by the immutable adapter at birth.
+    pub record_fields: Vec<String>,
     pub birth_actor: [u8; 16],
     pub birth_at: u64,
     /// The document's causal state, by value. Absent for a document with no
@@ -79,22 +83,32 @@ impl CanonicalEntityDocument {
             + self.document_id.len()
             + self.field.as_ref().map_or(0, String::len)
             + self.text.len()
+            + metadata_size(&self.metadata)
+            + self.record_fields.iter().map(String::len).sum::<usize>()
             + self.history.as_ref().map_or(0, |history| {
-                let versions = history
-                    .versions
-                    .iter()
-                    .map(|version| 16 + 4 * version.parents.len() + version.middle.len());
+                let versions = history.versions.iter().map(|version| {
+                    16 + 4 * version.parents.len()
+                        + version.middle.len()
+                        + metadata_size(&version.metadata)
+                });
                 let pins = history.pins.iter().map(|pin| 96 + pin.quote.len());
-                let forks = history
-                    .forks
-                    .iter()
-                    .map(|fork| 96 + fork.output.as_ref().map_or(0, String::len));
+                let forks = history.forks.iter().map(|fork| {
+                    96 + fork.output.as_ref().map_or(0, String::len)
+                        + fork.output_metadata.as_ref().map_or(0, metadata_size)
+                });
                 versions.sum::<usize>()
                     + pins.sum::<usize>()
                     + forks.sum::<usize>()
                     + 96 * (history.receipts.len() + history.purges.len())
             })
     }
+}
+
+fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
+    fields
+        .iter()
+        .map(|(field, value)| field.len() + value.len())
+        .sum()
 }
 
 /// The causal state of a generic EntityDoc, CRDT-independent: the retained
@@ -128,6 +142,7 @@ pub struct CanonicalDocumentVersion {
     /// Characters kept from its end.
     pub suffix: u32,
     pub middle: String,
+    pub metadata: BTreeMap<String, Vec<u8>>,
 }
 
 /// An immutable citation pin: the quoted span of one version, in characters.
@@ -189,6 +204,7 @@ pub struct CanonicalDocumentFork {
     pub base: Option<u32>,
     /// The retained output text of a pending fork.
     pub output: Option<String>,
+    pub output_metadata: Option<BTreeMap<String, Vec<u8>>>,
     pub proposal_index: u16,
     pub proposal_len: u16,
     pub proposal_settled: bool,
@@ -255,6 +271,7 @@ impl CanonicalEntityDocumentHistory {
             prefix: u32::try_from(prefix).map_err(|_| invalid("entity document version size"))?,
             suffix: u32::try_from(suffix).map_err(|_| invalid("entity document version size"))?,
             middle: new[prefix..new.len() - suffix].iter().collect(),
+            metadata: BTreeMap::new(),
         })
     }
 }
@@ -265,6 +282,24 @@ impl CanonicalEntityDocumentHistory {
 pub struct CanonicalShellWorld {
     pub id: [u8; 16],
     pub world: [u8; 16],
+}
+
+/// One room turn row a base window carries (OF-522), kept as the window holds
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalRoomTurn {
+    pub id: [u8; 16],
+    pub row: Vec<u8>,
+}
+
+/// One owner-signed custody transition a base window carries (OF-422): opaque
+/// signed and sealed bytes, kept as the window holds them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalCustodyTransition {
+    pub id: [u8; 16],
+    pub carrier: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,6 +346,14 @@ pub struct CanonicalSnapshot {
     /// an artifact with none encodes as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub suppressed_tasks: Vec<[u8; 16]>,
+    /// The base window's custody transitions (OF-422), by record id. Absent
+    /// when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custody_transitions: Vec<CanonicalCustodyTransition>,
+    /// The base window's room turn rows (OF-522), by turn id. Absent when
+    /// empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub room_turns: Vec<CanonicalRoomTurn>,
 }
 
 impl CanonicalSnapshot {
@@ -374,6 +417,8 @@ impl CanonicalSnapshot {
             "head_move_receipts",
             "note_forks",
             "note_proposals",
+            "custody",
+            "room_turns",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
@@ -383,15 +428,17 @@ impl CanonicalSnapshot {
             });
         }
         for doc in &self.entity_documents {
-            rows.push(CanonicalContainerManifest {
-                container_id: format!(
-                    "entity_doc/{}/body",
-                    crate::entity_id::bytes_to_hex_lower(&doc.entity_id)
-                ),
-                container_kind: "text".to_owned(),
-                schema_version: 1,
-                source_entity_id: Some(doc.entity_id),
-            });
+            for (name, kind) in [("body", "text"), ("meta", "map")] {
+                rows.push(CanonicalContainerManifest {
+                    container_id: format!(
+                        "entity_doc/{}/{name}",
+                        crate::entity_id::bytes_to_hex_lower(&doc.entity_id)
+                    ),
+                    container_kind: kind.to_owned(),
+                    schema_version: 1,
+                    source_entity_id: Some(doc.entity_id),
+                });
+            }
         }
         for doc in &self.doc_snapshots {
             for (name, kind) in [("body", "text"), ("note", "map"), ("authorship", "map")] {
@@ -429,9 +476,9 @@ fn mark_deleted_carriers_first(
             deleted.insert(*row?.0.id.as_bytes());
         }
         for row in &snapshot.entity_blobs {
-            if HARD_DELETE_MARKER
-                .get(&vault.store, &txn, &HexId(id(row.id)?))?
-                .is_some()
+            if vault
+                .store
+                .port_deletion_marked(&txn, DeletionMarker::HardDelete, &id(row.id)?)?
             {
                 deleted.insert(row.id);
             }
@@ -497,6 +544,8 @@ pub(crate) fn capture_canonical_window_within(
             "head_move_receipts",
             "note_forks",
             "note_proposals",
+            "custody",
+            "room_turns",
         ]
         .contains(&name.as_str())
     }) {
@@ -530,6 +579,8 @@ pub(crate) fn capture_canonical_window_within(
             .as_bytes(),
         },
         suppressed_tasks: Vec::new(),
+        custody_transitions: Vec::new(),
+        room_turns: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
@@ -552,6 +603,20 @@ pub(crate) fn capture_canonical_window_within(
             return Err(invalid("noncanonical edge key"));
         }
         snapshot.base_edges.push(edge);
+    }
+    for (key, row) in binary_rows_within(doc, "room_turns", budget)? {
+        snapshot.room_turns.push(CanonicalRoomTurn {
+            id: parse_id(&key)?,
+            row,
+        });
+    }
+    for (key, carrier) in binary_rows_within(doc, "custody", budget)? {
+        snapshot
+            .custody_transitions
+            .push(CanonicalCustodyTransition {
+                id: parse_id(&key)?,
+                carrier,
+            });
     }
     for (key, value) in binary_rows_within(doc, "tombstones", budget)? {
         snapshot.tombstones.push(CanonicalTombstone {
@@ -593,7 +658,11 @@ pub(crate) fn capture_canonical_window_within(
         .chain(snapshot.tombstones.iter().map(|row| row.id))
         .collect();
     for entity in candidates {
-        if let Some(value) = HARD_DELETE_MARKER.get(&vault.store, &txn, &HexId(id(entity)?))? {
+        if let Some(value) =
+            vault
+                .store
+                .port_deletion_marker(&txn, DeletionMarker::HardDelete, &id(entity)?)?
+        {
             if !crate::deletion::decode_tombstone_value(&value).is_hard() {
                 return Err(invalid("invalid hard delete marker"));
             }
@@ -622,8 +691,13 @@ pub(crate) fn capture_canonical_window_within(
         let entity = id(row.id)?;
         // Borrowed: only the stored row's header decides, so the body of a
         // projection under repair is never copied to answer it.
-        let stored = vault.store.entities.get(&txn, entity.as_bytes())?;
-        if crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, stored.as_deref())? {
+        let marked = match vault.store.port_entity_with_raw(&txn, &entity, |stored| {
+            crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, Some(stored))
+        })? {
+            Some(marked) => marked,
+            None => crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, None)?,
+        };
+        if marked {
             return Err(invalid("deleted row without its tombstone"));
         }
     }
@@ -774,8 +848,11 @@ pub(crate) fn capture_canonical_window_within(
             {
                 continue;
             }
-            let mapping = format!("m:dw:{}", id(entity.id)?.to_hex());
-            if vault.store.sync_state.get(&txn, &mapping)?.as_deref() != Some(window.as_bytes())
+            if vault
+                .store
+                .port_deletion_marker(&txn, DeletionMarker::WindowAddress, &id(entity.id)?)?
+                .as_deref()
+                != Some(window.as_bytes())
                 && carried.get(&id(entity.id)?.to_hex()).map(Vec::as_slice)
                     != Some(world.as_bytes().as_slice())
             {
@@ -839,6 +916,12 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     }
     for edge in &snapshot.base_edges {
         insert(&doc, "edges", &edge.key()?, &edge.value)?;
+    }
+    for row in &snapshot.custody_transitions {
+        insert(&doc, "custody", &id(row.id)?.to_hex(), &row.carrier)?;
+    }
+    for row in &snapshot.room_turns {
+        insert(&doc, "room_turns", &id(row.id)?.to_hex(), &row.row)?;
     }
     for tombstone in &snapshot.tombstones {
         insert(

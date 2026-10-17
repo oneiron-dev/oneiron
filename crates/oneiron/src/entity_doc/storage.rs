@@ -1,4 +1,4 @@
-//! Transactional entity-document storage and row-pointer migration.
+//! Transactional entity-document storage, editable fields and immutable row pointers.
 
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -7,6 +7,8 @@ use crate::ports::EntityStoreRead;
 use crate::ports::{
     DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
 };
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -15,10 +17,10 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-/// Location of the original editable text. Other MessagePack fields stay intact.
+/// Location of the body text. Editable metadata shares its owning document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextField {
-    /// A legacy body containing only UTF-8 text.
+    /// A body containing only UTF-8 text.
     Utf8Body,
     /// A named UTF-8 string in a MessagePack map.
     MapField(String),
@@ -50,7 +52,11 @@ pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     Ok(value)
 }
 
-pub(super) fn require_live(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<()> {
+pub(super) fn require_live(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
     match live_entity_row_in_txn(store, txn, entity)? {
         LiveEntityRow::Live { entity_type, .. }
             if entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY =>
@@ -61,7 +67,11 @@ pub(super) fn require_live(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) ->
     }
 }
 
-pub(super) fn head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Head> {
+pub(super) fn head(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Head> {
     require_live(store, txn, entity)?;
     let h = ENTITY_DOC_HEAD
         .get(store, txn, &HexId(*entity))?
@@ -72,7 +82,11 @@ pub(super) fn head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<
     Ok(h)
 }
 
-pub(super) fn load(store: &Store, txn: &RoTxn<'_>, h: &Head) -> Result<EntityDoc> {
+pub(super) fn load(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    h: &Head,
+) -> Result<EntityDoc> {
     let slot = DocumentSlot::from_hex(&h.document)?;
     let bytes = store
         .port_document_row(txn, slot, DocumentRow::Snapshot)?
@@ -119,26 +133,9 @@ pub(super) fn persist(
     crate::batch::secret_scan::scan_metadata_field(&doc.text())?;
     vault.ensure_text_index_trusted()?;
     crate::vault::ensure_text_index_manifest_matches_wtxn(store, txn, &vault.analyzer)?;
-    let indexed = crate::bm25::index_text(
-        store,
-        txn,
-        &vault.analyzer,
-        entity,
-        &[(
-            match &h.field {
-                TextField::Utf8Body => "body".to_owned(),
-                TextField::MapField(field) => field.clone(),
-            },
-            doc.text(),
-        )],
-    );
-    match indexed {
-        // The document is the record and its search entry is not: text past the analyzer
-        // ceiling is still written, restored and migrated, and is left out of search (H6).
-        Err(Error::Store(StoreError::IndexedTextTooLarge { .. })) => {
-            crate::bm25::deindex_text(store, txn, entity)?;
-        }
-        result => result?,
+    let birth = h.generation == 0;
+    if birth {
+        index_document(vault, txn, entity, h, doc)?;
     }
     h.generation = h
         .generation
@@ -159,12 +156,62 @@ pub(super) fn persist(
     }
     store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
+    crate::vault::entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::dreamer_wake::mark_on_publication_in_txn(store, txn, entity)?;
     }
     Ok(())
+}
+
+fn index_document(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    head: &Head,
+    doc: &EntityDoc,
+) -> Result<()> {
+    let fields = document_text_fields(doc, &head.field)?;
+    match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, entity, &fields) {
+        // A large document remains authoritative even when it is not searchable.
+        Err(Error::Store(StoreError::IndexedTextTooLarge { .. })) => {
+            crate::bm25::deindex_text(&vault.store, txn, entity)?;
+        }
+        Ok(()) => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
+pub(crate) fn document_text_fields(
+    doc: &EntityDoc,
+    field: &TextField,
+) -> Result<Vec<(String, String)>> {
+    let mut fields = vec![(
+        match field {
+            TextField::Utf8Body => "body".to_owned(),
+            TextField::MapField(field) => field.clone(),
+        },
+        doc.text(),
+    )];
+    for (field, value) in doc.metadata()? {
+        let text = match value {
+            rmpv::Value::String(text) => text.as_str().map(str::to_owned),
+            rmpv::Value::Array(values) if field == "tags" => Some(
+                values
+                    .iter()
+                    .filter_map(rmpv::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            _ => None,
+        };
+        if let Some(text) = text {
+            fields.push((field, text));
+        }
+    }
+    Ok(fields)
 }
 
 /// Whether `doc` holds other text than the document stored for `entity`.
@@ -226,7 +273,7 @@ impl Vault {
             }
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             if let TextField::MapField(name) = field
-                && !["body", "text", "txt", "content", "markdown", "title"].contains(&name.as_str())
+                && !super::metadata::is_text_field(name)
             {
                 return Err(invalid("only text fields can move to the document plane"));
             }
@@ -246,7 +293,7 @@ impl Vault {
                     ));
                 }
             }
-            let (initial, pointer) = replace_text(body, field, &entity.to_hex())?;
+            let (initial, metadata, pointer) = replace_text(body, field, &entity.to_hex())?;
             crate::origin::lfs::guard_lfs_asset_put(
                 &self.store,
                 txn,
@@ -254,7 +301,13 @@ impl Vault {
                 header.entity_type,
                 &pointer,
             )?;
-            let doc = EntityDoc::open(*entity, &initial, birth_actor, header.occurred_start)?;
+            let doc = EntityDoc::open_with_metadata(
+                *entity,
+                &initial,
+                &metadata,
+                birth_actor,
+                header.occurred_start,
+            )?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
             // The immutable envelope, type/time indexes and other body fields do
             // not change. The only replaced bytes are text -> head pointer.
@@ -267,6 +320,15 @@ impl Vault {
                 header.entity_type,
                 body,
                 &pointer,
+            )?;
+
+            stamp_document_birth(
+                &self.store,
+                txn,
+                entity,
+                birth_actor,
+                header.occurred_start,
+                "entity_doc.migrate_text",
             )?;
 
             let mut h = Head {
@@ -284,8 +346,33 @@ impl Vault {
     }
 }
 
-fn replace_text(body: &[u8], field: &TextField, doc: &str) -> Result<(String, Vec<u8>)> {
-    let (text, mut fields) = match field {
+/// Rule A at a document birth: the row's birth is the birth actor and time
+/// its first commit records, unless the door that wrote the row stamped one.
+/// Only a person's birth is named here; anyone else's names no input, so it
+/// stays unknown.
+pub(super) fn stamp_document_birth(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    actor: WriteActor,
+    at: u64,
+    door: &str,
+) -> Result<()> {
+    let class = MadeByClass::of_writer(actor.actor_class());
+    match RowBirth::written(actor, class, door, &[], &[], at) {
+        Some(birth) => {
+            crate::provenance::birth::stamp_birth_if_absent_in_txn(store, txn, entity, &birth)
+        }
+        None => Ok(()),
+    }
+}
+
+fn replace_text(
+    body: &[u8],
+    field: &TextField,
+    doc: &str,
+) -> Result<(String, std::collections::BTreeMap<String, Vec<u8>>, Vec<u8>)> {
+    let (text, fields) = match field {
         TextField::Utf8Body => (
             std::str::from_utf8(body)
                 .map_err(|_| invalid("body is not UTF-8 text"))?
@@ -329,11 +416,27 @@ fn replace_text(body: &[u8], field: &TextField, doc: &str) -> Result<(String, Ve
     {
         return Err(invalid("record already carries a text pointer"));
     }
+    let mut metadata = std::collections::BTreeMap::new();
+    let mut core = Vec::new();
+    for (key, value) in fields {
+        if let Some(name) = key.as_str()
+            && super::metadata::is_metadata_field(name)
+        {
+            super::metadata::validate_metadata(name, &value)?;
+            let bytes = super::metadata::encode_value(&value)?;
+            if metadata.insert(name.to_owned(), bytes).is_some() {
+                return Err(invalid("duplicated editable metadata field"));
+            }
+        } else {
+            core.push((key, value));
+        }
+    }
+    let mut fields = core;
     fields.push((rmpv::Value::from("entity_doc_ref"), rmpv::Value::from(doc)));
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("document pointer encoding"))?;
-    Ok((text, out))
+    Ok((text, metadata, out))
 }
 
 /// Batch/replay chokepoint: an active text plane cannot be bypassed by a blob put.
@@ -341,12 +444,20 @@ pub(crate) fn guard_record_put(
     store: &Store,
     txn: &RoTxn<'_>,
     entity: &EntityId,
+    metadata: (u8, crate::TimeRange, u64),
     data: &[u8],
 ) -> Result<()> {
     if ENTITY_DOC_HEAD.contains(store, txn, &HexId(*entity))? {
         let old = crate::ports::EntityStoreRead::port_entity_raw(store, txn, entity)?
             .ok_or(Error::EntityNotFound)?;
-        if old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data) {
+        let header = EntityMetadataHeader::parse(&old)
+            .ok_or(Error::CorruptedIndex("entity document owner header"))?;
+        if header.entity_type != metadata.0
+            || header.occurred_start != metadata.1.start
+            || header.occurred_end != metadata.1.end
+            || header.learned_at != metadata.2
+            || old.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
+        {
             return Err(invalid(
                 "editable text must be changed through its entity document",
             ));
@@ -425,7 +536,11 @@ pub(super) fn drop_document(store: &Store, txn: &mut RwTxn<'_>, document: &str) 
 
 /// A migrated record keeps the EntityDoc codec, even when it is a NOTE.
 /// Errors and malformed heads must not fall through to another document codec.
-pub(crate) fn has_record_head(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<bool> {
+pub(crate) fn has_record_head(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<bool> {
     ENTITY_DOC_HEAD.contains(store, txn, &HexId(*entity))
 }
 
@@ -455,7 +570,7 @@ pub(crate) fn record_head_bytes(
 /// Read-only view for existing typed record readers; the durable row retains
 /// only the pointer and immutable fields, never a second copy of the text.
 pub(crate) fn resolve_record_body(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     entity: &EntityId,
     body: &[u8],
@@ -464,8 +579,38 @@ pub(crate) fn resolve_record_body(
         return Ok(body.to_vec());
     };
     require_live(store, txn, entity)?;
-    let text = load(store, txn, &h)?.text();
-    body_with_text(&h.field, body, text)
+    let doc = load(store, txn, &h)?;
+    body_with_document(&h.field, body, &doc)
+}
+
+/// The common document, not a second revision-owned text document.
+pub(crate) fn record_document(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    frontier: Option<&[u8]>,
+) -> Result<Option<EntityDoc>> {
+    if !has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    let h = head(store, txn, entity)?;
+    let doc = load(store, txn, &h)?;
+    match frontier {
+        Some(frontier) => doc.fork(frontier).map(Some),
+        None => Ok(Some(doc)),
+    }
+}
+
+pub(crate) fn record_body_at(
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    body: &[u8],
+    frontier: &[u8],
+) -> Result<Vec<u8>> {
+    let h = head(store, txn, entity)?;
+    let doc = load(store, txn, &h)?.fork(frontier)?;
+    body_with_document(&h.field, body, &doc)
 }
 
 /// One state of an entity's document, as [`record_body_history_in_txn`]
@@ -520,29 +665,51 @@ pub(crate) fn record_body_history_in_txn(
         if states.iter().any(|state| state.frontier == pin) {
             continue;
         }
-        let Ok(text) = doc.text_at(&frontier) else {
+        let Ok(version) = doc.fork(&frontier) else {
             continue;
         };
         states.push(RetainedBody {
             frontier: pin,
-            body: body_with_text(&h.field, body, text)?,
+            body: body_with_document(&h.field, body, &version)?,
         });
     }
     Ok(Some(states))
 }
 
-/// A pointer row's `body` with `text` back in the field its document holds.
-fn body_with_text(field: &TextField, body: &[u8], text: String) -> Result<Vec<u8>> {
+/// A typed read projection of the body and metadata at one document version.
+pub(super) fn body_with_document(
+    field: &TextField,
+    body: &[u8],
+    doc: &EntityDoc,
+) -> Result<Vec<u8>> {
     match field {
-        TextField::Utf8Body => Ok(text.into_bytes()),
+        TextField::Utf8Body => Ok(doc.text().into_bytes()),
         TextField::MapField(field) => {
             let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
                 .map_err(|_| Error::CorruptedIndex("document pointer row"))?;
             let rmpv::Value::Map(mut fields) = value else {
                 return Err(Error::CorruptedIndex("document pointer row"));
             };
-            fields.retain(|(key, _)| key.as_str() != Some("entity_doc_ref"));
-            fields.push((rmpv::Value::from(field.as_str()), rmpv::Value::from(text)));
+            fields.retain(|(key, _)| {
+                key.as_str() != Some("entity_doc_ref")
+                    && key.as_str() != Some(field.as_str())
+                    && !key.as_str().is_some_and(super::metadata::is_metadata_field)
+            });
+            fields.push((
+                rmpv::Value::from(field.as_str()),
+                rmpv::Value::from(doc.text()),
+            ));
+            let record_fields = doc.record_fields()?;
+            for (key, value) in doc.metadata()? {
+                if key == *field {
+                    return Err(Error::CorruptedIndex(
+                        "body field duplicated in document metadata",
+                    ));
+                }
+                if record_fields.contains(&key) {
+                    fields.push((rmpv::Value::from(key), value));
+                }
+            }
             let mut out = Vec::new();
             rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
                 .map_err(|_| invalid("document view encoding"))?;

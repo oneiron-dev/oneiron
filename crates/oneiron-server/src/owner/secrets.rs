@@ -418,3 +418,62 @@ impl From<oneiron::secret_rotation::RotationReceipt> for Rotated {
         }
     }
 }
+
+/// Reads a revoke request, `{"name"}`, into the secret's custody name. It
+/// carries no value, but the body goes through [`OwnedBody`] all the same,
+/// under the same limit as the others.
+pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RevokeFields {
+        name: String,
+    }
+    let body = OwnedBody::read(body).await?;
+    let fields: RevokeFields = serde_json::from_slice(&body.0).map_err(|_| invalid_body())?;
+    secret_name(fields.name)
+}
+
+/// Revokes a secret on the owner's behalf (OF-422): the record goes terminal
+/// and every lease over it is revoked, stamped on the vault clock as a
+/// rotation is. The receipt reads as a rotation's does, with
+/// `from_generation` equal to `to_generation`: nothing replaced the value.
+pub(crate) fn revoke(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    name: &str,
+) -> OwnerResult<Rotated> {
+    Ok(vault
+        .revoke_secret_as_owner(owner, name, vault.now_recorded_at())?
+        .into())
+}
+
+/// What signing a secret's custody with the owner anchor did (OF-422).
+#[derive(Debug, Serialize)]
+pub(crate) struct AnchorSigned {
+    pub(crate) name: String,
+    /// Whether a transition was written. None is, for a record that stays
+    /// on its device (device bound, cross-vault or "this device only"), or a
+    /// value no machine of the owner's here can open.
+    pub(crate) signed: bool,
+}
+
+/// Signs the current custody transition of the portable secret `name` with
+/// the owner anchor of `seed`, the recovery root this vault pins (OF-422):
+/// the owner's door for an install that cannot sign as one of the owner's
+/// machines. The record keeps its generation, status and value. The engine
+/// refuses any origin but this machine, so no route reaches it; the seed is
+/// the caller's to wipe.
+pub(crate) fn sign_with_anchor(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    origin: oneiron::authority::EditOrigin,
+    seed: &oneiron::world_keys::RecoveryRootSeed,
+    name: &str,
+) -> OwnerResult<AnchorSigned> {
+    let signed =
+        vault.sign_custody_with_anchor(owner, origin, seed, name, vault.now_recorded_at())?;
+    Ok(AnchorSigned {
+        name: name.to_owned(),
+        signed,
+    })
+}

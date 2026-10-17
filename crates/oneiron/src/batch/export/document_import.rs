@@ -1,4 +1,4 @@
-//! Validating JSON import through ordinary admission doors, never sync replay.
+//! Validating archive import through ordinary admission doors, never sync replay.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
@@ -22,19 +22,20 @@ use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 
 impl Vault {
-    /// Validates a JSON document and its seven-part shape without writing anything.
-    /// The returned data remains untrusted. A manifest is not an approval grant.
-    pub fn read_whole_vault_json(&self, bytes: &[u8]) -> Result<WholeVaultDocument> {
-        let document: WholeVaultDocument = serde_json::from_slice(bytes)
-            .map_err(|_| invalid("invalid whole-vault document JSON"))?;
-        document.validate(self)?;
-        Ok(document)
+    /// Validates a whole-vault archive (OF-222) and the document its records
+    /// assemble into, without writing anything. The returned data remains
+    /// untrusted. A manifest is not an approval grant.
+    pub fn read_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultDocument> {
+        let archive = super::read_vault_archive(bytes)?;
+        archive.document.validate(self)?;
+        Ok(archive.document)
     }
 
-    /// Reimports a JSON export atomically. IDs, times, ordinary body fields and
+    /// Reimports a whole-vault archive atomically, into a fresh vault or
+    /// beside rows it already holds. IDs, times, ordinary body fields and
     /// public edges survive. Ordinary claims become Imported + Proposed (Rejected
     /// stays Rejected); lifecycle and scope are retained. Expression histories
-    /// require [`Self::import_whole_vault_json_with_actor`] and a local Auto grant.
+    /// require [`Self::import_whole_vault_archive_with_actor`] and a local Auto grant.
     /// Skills return as candidates;
     /// agent definitions are disabled and proposed until locally reviewed.
     ///
@@ -45,28 +46,33 @@ impl Vault {
     /// The manifest explicitly marks hub configuration and foreign skill signals
     /// archive-only. They are never restored as local policy or trusted verdicts;
     /// imported file bundles run the native scanner and Candidate admission door.
-    pub fn import_whole_vault_json(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_json_as(bytes, None)
+    pub fn import_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_archive_as(bytes, None)
     }
 
     /// Imports with a current local actor authenticated by the host. Never use
     /// an actor taken from the archive. The actor must already exist locally.
     /// Expression preferences require a local Imported-source Auto grant; this
     /// argument confers no grant and cannot restore foreign author authority.
-    pub fn import_whole_vault_json_with_actor(
+    pub fn import_whole_vault_archive_with_actor(
         &self,
         bytes: &[u8],
         actor: &WriteActor,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_json_as(bytes, Some(actor))
+        self.import_whole_vault_archive_as(bytes, Some(actor))
     }
 
-    fn import_whole_vault_json_as(
+    fn import_whole_vault_archive_as(
         &self,
         bytes: &[u8],
         actor: Option<&WriteActor>,
     ) -> Result<WholeVaultImportReceipt> {
-        let mut document = self.read_whole_vault_json(bytes)?;
+        let super::VaultArchive {
+            mut document,
+            secrets,
+            result_files,
+        } = super::read_vault_archive(bytes)?;
+        document.validate(self)?;
         if actor.is_none()
             && document
                 .entities()
@@ -88,7 +94,7 @@ impl Vault {
             .collect::<Result<_>>()?;
         // Run result bodies are written whole before any row names them; the
         // rows commit with the rest below, or not at all.
-        let staged_results = stage_run_results(self, &document.run_results)?;
+        let staged_results = stage_run_results(self, &document.run_results, &result_files)?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
@@ -336,6 +342,8 @@ impl Vault {
         }
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
+        let (restored_secrets, unchanged_secrets, missing_secrets) =
+            restore_secrets_in_txn(self, &mut wtxn, &secrets, &document)?;
         wtxn.commit()?;
         Ok(WholeVaultImportReceipt {
             authority,
@@ -350,6 +358,9 @@ impl Vault {
                 .collect(),
             imported_results,
             withheld_results,
+            restored_secrets,
+            unchanged_secrets,
+            missing_secrets,
         })
     }
 }
@@ -361,29 +372,26 @@ impl Vault {
 fn stage_run_results(
     vault: &Vault,
     results: &ExportRunResults,
+    files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<BTreeMap<[u8; 32], crate::code_run::FinishedOutput>> {
-    let contents: BTreeMap<&str, &str> = results
-        .bodies
-        .iter()
-        .filter_map(|body| Some((body.blake3.as_str(), body.content.as_deref()?)))
-        .collect();
     let mut staged = BTreeMap::new();
     for output in results.runs.iter().flat_map(|run| &run.outputs) {
-        let digest = parse_digest(&output.blake3)?;
+        let Some(blake3) = &output.blake3 else {
+            continue;
+        };
+        let digest = parse_digest(blake3)?;
         if staged.contains_key(&digest) {
             continue;
         }
-        let Some(content) = contents.get(output.blake3.as_str()) else {
+        let Some(body) = files.get(blake3.as_str()) else {
             continue;
         };
-        if content.len() as u64 != output.bytes
-            || *blake3::hash(content.as_bytes()).as_bytes() != digest
-        {
+        if body.len() as u64 != output.bytes || *blake3::hash(body).as_bytes() != digest {
             return Err(invalid("run result body does not match its digest"));
         }
         staged.insert(
             digest,
-            vault.stage_code_run_output(output.path.clone(), content.as_bytes())?,
+            vault.stage_code_run_output(output.path.clone(), body)?,
         );
     }
     Ok(staged)
@@ -392,6 +400,67 @@ fn stage_run_results(
 /// Writes each run's results whose bodies came back as that run's
 /// occurrences; a result the export withheld stays a manifest in the
 /// archive. Returns the counts of both.
+/// The owner's own archive's custody records, each restored under its own id
+/// through the custody registration door, in the import's transaction. A
+/// record already here byte for byte is unchanged; any other collision is
+/// refused, never overwritten. A record the archive carried as its handle
+/// only is returned as a missing secret to re-enter.
+fn restore_secrets_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    secrets: &[super::ArchiveSecretCustody],
+    document: &WholeVaultDocument,
+) -> Result<(
+    usize,
+    usize,
+    Vec<crate::secret_custody::SecretCustodyMetadata>,
+)> {
+    use base64::Engine as _;
+    let rows: BTreeSet<&str> = document.entities().map(|row| row.id.as_str()).collect();
+    let mut seen = BTreeSet::new();
+    let (mut restored, mut unchanged, mut missing) = (0, 0, Vec::new());
+    for secret in secrets {
+        let id = parse_id(&secret.id)?;
+        if !seen.insert(id) || rows.contains(secret.id.as_str()) {
+            return Err(invalid("archive custody record id appears twice"));
+        }
+        if secret.metadata.name != secret.name {
+            return Err(invalid(
+                "archive custody record name disagrees with its metadata",
+            ));
+        }
+        let Some(body) = &secret.body else {
+            missing.push(secret.metadata.clone());
+            continue;
+        };
+        let body = base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .map_err(|_| invalid("invalid archive custody record body"))?;
+        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
+        if record.metadata() != secret.metadata {
+            return Err(invalid("archive custody record disagrees with its body"));
+        }
+        if let Some(existing) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
+        {
+            if existing.get(ENTITY_METADATA_HEADER_LEN..) == Some(body.as_slice())
+                && EntityMetadataHeader::parse(&existing).is_some_and(|header| {
+                    header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                })
+            {
+                unchanged += 1;
+                continue;
+            }
+            return Err(invalid(
+                "import ID collides with a different custody record",
+            ));
+        }
+        crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)?;
+        restored += 1;
+    }
+    Ok((restored, unchanged, missing))
+}
+
 fn put_run_results_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -402,7 +471,11 @@ fn put_run_results_in_txn(
     for run in &results.runs {
         let run_id = parse_id(&run.run_id)?;
         for output in &run.outputs {
-            let Some(finished) = staged.get(&parse_digest(&output.blake3)?) else {
+            let Some(blake3) = &output.blake3 else {
+                withheld += 1;
+                continue;
+            };
+            let Some(finished) = staged.get(&parse_digest(blake3)?) else {
                 withheld += 1;
                 continue;
             };

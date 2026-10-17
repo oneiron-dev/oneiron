@@ -35,8 +35,27 @@ pub enum SigningOutcome {
         item_count: usize,
     },
     AwaitingSeal,
-    HumanActionRequired,
+    /// D6: the signing dial does not open this automated sign act, so the
+    /// call is held for its role chain's answer, never dropped.
+    HeldForOwner {
+        held_at: u64,
+    },
     ConsentRequired,
+}
+
+/// Who a signing call shows itself to be (OF-415). The capability proves
+/// access to a recipient's turn, not who holds the link: only a vault
+/// credential the call presents says that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SigningCaller {
+    /// No credential: the capability alone, as a browser signer brings it.
+    Bearer,
+    /// A verified credential bound to a person.
+    Person,
+    /// A verified credential not shown to be a person: an agent, the
+    /// system, or one that binds no actor class. Its sign act is automated
+    /// whatever the recipient's flag says.
+    Agent,
 }
 
 pub const ESIGN_SEAL_ATTEMPT_KIND: &str = "esign.seal";
@@ -79,6 +98,53 @@ pub(super) fn enqueue_seal(
     )?;
     Ok(())
 }
+/// Lands one recipient's Complete on `state`: the signed event, the notice
+/// to each recipient it promotes, and the seal once the chain is ready.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn sign(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: EntityId,
+    state: &EsignState,
+    recipient: &str,
+    next: &Option<String>,
+    actor: EsignAuditActor,
+    now: u64,
+) -> Result<()> {
+    let advanced = append(
+        vault,
+        txn,
+        document,
+        EsignEvent::Signed {
+            recipient: recipient.to_owned(),
+            next: next.clone(),
+        },
+        actor,
+        now,
+    )?;
+    let promoted = advanced
+        .recipients
+        .iter()
+        .filter(|(id, progress)| {
+            progress.signing == SigningStatus::Ready
+                && state.recipients[*id].signing != SigningStatus::Ready
+        })
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    super::lifecycle::notify(
+        vault,
+        txn,
+        document,
+        &advanced,
+        "pending",
+        &promoted,
+        super::lifecycle::NoticeTrigger {
+            dispatch_ref: None,
+            now,
+        },
+    )?;
+    enqueue_seal(vault, txn, document, now)
+}
 impl Vault {
     /// No session or identity cookie. The capability proves access; explicit
     /// consent and the independently owner-controlled D6 dial authorize action.
@@ -87,6 +153,21 @@ impl Vault {
         &self,
         token: &EsignCapability,
         action: &SigningAction,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<SigningOutcome> {
+        self.execute_signing_action_as(token, action, SigningCaller::Bearer, ip, user_agent)
+    }
+
+    /// [`Self::execute_signing_action`] by a caller that showed who it is. An
+    /// agent's Complete is an automated sign act: on a recipient the law
+    /// keeps with a natural person it is refused, and elsewhere the D6 dial
+    /// decides, holding what it does not open.
+    pub fn execute_signing_action_as(
+        &self,
+        token: &EsignCapability,
+        action: &SigningAction,
+        caller: SigningCaller,
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<SigningOutcome> {
@@ -220,48 +301,43 @@ impl Vault {
                     if !consent {
                         return Ok(SigningOutcome::ConsentRequired);
                     }
-                    if recipient.automated
+                    let automated = recipient.automated || caller == SigningCaller::Agent;
+                    if automated && recipient.natural_person.is_some() {
+                        return Err(invalid(
+                            "a natural-person recipient signs in person, never through an agent",
+                        ));
+                    }
+                    if automated
                         && !automated_signing_allowed(
                             self,
                             txn,
                             recipient.principal_ref.as_deref(),
                         )?
                     {
-                        return Ok(SigningOutcome::HumanActionRequired);
-                    }
-                    let advanced = append(
-                        self,
-                        txn,
-                        document,
-                        EsignEvent::Signed {
-                            recipient: recipient.id,
-                            next: next.clone(),
-                        },
-                        actor,
-                        now,
-                    )?;
-                    let promoted = advanced
-                        .recipients
-                        .iter()
-                        .filter(|(id, progress)| {
-                            progress.signing == SigningStatus::Ready
-                                && state.recipients[*id].signing != SigningStatus::Ready
-                        })
-                        .map(|(id, _)| id.clone())
-                        .collect::<Vec<_>>();
-                    super::lifecycle::notify(
-                        self,
-                        txn,
-                        document,
-                        &advanced,
-                        "pending",
-                        &promoted,
-                        super::lifecycle::NoticeTrigger {
-                            dispatch_ref: None,
+                        // D6 redirects the sign act up its role chain.
+                        // Only a call that would land now is held.
+                        state.clone().apply(
+                            &EsignEvent::Signed {
+                                recipient: recipient.id.clone(),
+                                next: next.clone(),
+                            },
                             now,
-                        },
-                    )?;
-                    enqueue_seal(self, txn, document, now)?;
+                        )?;
+                        let held = super::escalation::hold(
+                            self,
+                            txn,
+                            document,
+                            &state.document.title,
+                            &recipient,
+                            next,
+                            &actor,
+                            now,
+                        )?;
+                        return Ok(SigningOutcome::HeldForOwner {
+                            held_at: held.held_at,
+                        });
+                    }
+                    sign(self, txn, document, &state, &recipient.id, next, actor, now)?;
                     return Ok(SigningOutcome::AwaitingSeal);
                 }
                 SigningAction::Reject { reason } => {

@@ -10,7 +10,7 @@ use oneiron::provenance::made_by::{
 };
 use oneiron::{EntityId, Vault, WriteActor};
 
-use crate::host::OrganOutcome;
+use crate::outcome::OrganOutcome;
 
 impl OrganOutcome {
     /// The made_by envelope this call gives what it made: `actor` ran it,

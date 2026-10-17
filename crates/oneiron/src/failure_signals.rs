@@ -1,7 +1,8 @@
 //! Content-free, versioned tier-1 agent failure counts. This taxonomy is not
 //! the failure ladder's retry-routing class or a detector's repair tier.
 //! The two FIX6 code-fix exports, the Coach's invented examples and candidate
-//! fixes' results, live in the `code_fix` child beside them.
+//! fixes' results, live in the `code_fix` child beside them, and the
+//! `delivery` child sends both to the deployment's publisher.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,15 +12,23 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 mod code_fix;
+mod delivery;
+mod live;
 pub(crate) mod policy;
 mod verbatim;
 mod witness;
 pub use code_fix::{
     CODE_FIX_MAX_CANDIDATE_ID_BYTES, CODE_FIX_MAX_MESSAGE_BYTES, CODE_FIX_MAX_MESSAGES,
     CODE_FIX_MAX_NOTE_BYTES, CODE_FIX_RECORD_VERSION, CandidateFix, CandidateFixResult,
-    CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FixOutcome,
-    InventedExampleDraft, InventedFailureExample, InventedMessage, InventedRole, ReplayRun,
-    ScrubRun, ShadowRun,
+    CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FailureSource,
+    FixOutcome, InventedExampleDraft, InventedFailureExample, InventedMessage, InventedRole,
+    ReplayRun, ScrubRun, ShadowRun,
+};
+pub(crate) use code_fix::{failed_case_in, failure_source_in};
+pub use delivery::{
+    FAILURE_SIGNAL_BATCH_VERSION, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB,
+    FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport,
+    FailureSignalTransportRequest,
 };
 pub use verbatim::{CODE_FIX_LINE_WORDS, CODE_FIX_SPAN_WORDS};
 pub use witness::Tier1Observation;
@@ -59,6 +68,9 @@ pub enum FailureClassV1 {
 pub enum AgentKind {
     System,
     Custom,
+    /// The observation names no affected agent (a detector's diagnostic).
+    /// Exported in clear as `unattributed`; it never carries an agent ref.
+    Unattributed,
 }
 
 /// The closed, content-free surface vocabulary. A new surface needs a reviewed
@@ -315,6 +327,22 @@ impl FailureSignalCounts {
             })
             .collect())
     }
+
+    fn ack(&self, delivered: &[Tier1FailureCount]) -> Result<()> {
+        let mut counts = self
+            .counts
+            .lock()
+            .map_err(|_| Error::InvariantViolation("failure signal counters poisoned"))?;
+        for row in delivered {
+            if let Some(count) = counts.get_mut(&row.dimensions) {
+                *count = count.saturating_sub(row.count);
+                if *count == 0 {
+                    counts.remove(&row.dimensions);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn executed_model(
@@ -441,7 +469,17 @@ impl crate::Vault {
         // source check is complete; release its snapshot before resolving the
         // seeded AGENT_DEF through the ordinary vault reader.
         drop(rtxn);
-        let registered_agent = if input.agent_kind == AgentKind::System {
+        let registered_agent = if input.agent_kind == AgentKind::Unattributed {
+            if input.agent_ref.is_some() {
+                return Err(Error::InvalidConfig(
+                    "unattributed failure signal cannot name an agent".into(),
+                ));
+            }
+            Some(VersionedComponent {
+                name: live::UNATTRIBUTED.into(),
+                version: live::UNATTRIBUTED.into(),
+            })
+        } else if input.agent_kind == AgentKind::System {
             let id = input.agent_ref.ok_or(Error::InvalidConfig(
                 "system failure signal requires seeded agent id".into(),
             ))?;
@@ -512,6 +550,13 @@ impl crate::Vault {
             .diagnostics
             .failure_signals
             .export(self.config.failure_signals)
+    }
+
+    /// Takes counts the host delivered out of the aggregate, so the next
+    /// export carries only what was counted since. A count recorded between
+    /// the export and this ack stays for the next one.
+    pub fn ack_tier1_failure_counts(&self, delivered: &[Tier1FailureCount]) -> Result<()> {
+        self.store.diagnostics.failure_signals.ack(delivered)
     }
 
     /// Registers a producer's witness. Once the map has doubled since the

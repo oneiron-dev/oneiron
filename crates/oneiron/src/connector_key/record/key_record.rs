@@ -1,6 +1,7 @@
 //! Key and catalog registry shapes: status, call class, catalog entry, key spec/record with validate, charter data shapes.
 
 use crate::connector_key::manifest_drift::{ConnectorManifestDrift, ResolvedConnectorManifest};
+use crate::connector_key::qualification::ConnectorQualificationReceipt;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -230,6 +231,8 @@ pub struct ConnectorKeyRecord {
     pub admission_epoch: u64,
     /// Whether this admission requires a new owner decision on expanded rows.
     pub consent_required: bool,
+    /// Successful suite evidence, committed atomically with activation.
+    pub qualification_receipt: Option<ConnectorQualificationReceipt>,
     /// Last approved fully resolved manifest; never overwritten by a proposal.
     pub retained_manifest: Option<ResolvedConnectorManifest>,
     /// Candidate awaiting qualification and graded owner re-consent.
@@ -275,6 +278,7 @@ impl ConnectorKeyRecord {
             slate_revision: None,
             admission_epoch: 0,
             consent_required: false,
+            qualification_receipt: None,
             retained_manifest: None,
             pending_manifest: None,
         }
@@ -383,6 +387,27 @@ impl ConnectorKeyRecord {
                 || self.consent_required)
         {
             return Err(invalid_body("active catalog key lacks qualification"));
+        }
+        if let Some(receipt) = &self.qualification_receipt {
+            receipt.validate()?;
+            if self.protocol_revision.as_deref() != Some(receipt.protocol_revision.as_str())
+                || receipt.qualified_at < self.registered_at
+                || self.catalog.is_none()
+                    && self
+                        .retained_manifest
+                        .as_ref()
+                        .is_some_and(|manifest| manifest.hash().ok() != Some(receipt.manifest_hash))
+            {
+                return Err(invalid_body(
+                    "connector qualification receipt does not bind key",
+                ));
+            }
+        }
+        if self.status == ConnectorKeyStatus::Active
+            && (self.catalog.is_some() || self.retained_manifest.is_some())
+            && self.qualification_receipt.is_none()
+        {
+            return Err(invalid_body("active connector lacks qualification receipt"));
         }
         if let Some(manifest) = &self.retained_manifest {
             manifest.validate_snapshot()?;

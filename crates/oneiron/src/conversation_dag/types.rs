@@ -48,6 +48,26 @@ pub enum AddressMode {
     Direct,
 }
 
+/// A transient quote selection over one MESSAGE: the half-open range
+/// `start..end` of Unicode scalar values (Rust `char`s, never UTF-8 bytes or
+/// UTF-16 units) in the message's current text. The append turns it into an
+/// engine-issued anchor: cursors on the message's document or, for an atomic
+/// message, the span bound to its text's hash. Bare offsets are never kept.
+/// A room speak carries it on the wire as `{ message, start, end }`, never
+/// with a caller's cursors, hash or pin.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct QuoteSpan {
+    /// The quoted MESSAGE (not the TURN that holds it).
+    pub message: EntityId,
+    /// First quoted scalar.
+    pub start: u32,
+    /// One past the last quoted scalar.
+    pub end: u32,
+}
+
 /// Input to the append-only conversation record door.
 #[derive(Debug, Clone)]
 pub struct AppendRecord {
@@ -57,6 +77,9 @@ pub struct AppendRecord {
     pub parent: Option<EntityId>,
     /// Reply target; its content revision is captured in the append transaction.
     pub reply_to: Option<EntityId>,
+    /// Quoted span. The reply then answers the TURN holding the quoted
+    /// MESSAGE; a `reply_to` naming another record is refused.
+    pub quote: Option<QuoteSpan>,
     /// Addressing only; reply_to selects the separate reply mode.
     pub address: AddressMode,
     /// Named people; they need not be room members.

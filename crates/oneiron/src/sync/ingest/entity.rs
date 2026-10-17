@@ -3,9 +3,9 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
-use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
     ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD,
     ENTITY_TYPE_REDACTION_AUDIT,
 };
@@ -81,9 +81,6 @@ pub(in crate::sync) enum EntityStep {
     /// Nothing to write: a delete gate holds, the local bytes already match, or the kind never
     /// replicates.
     Skip,
-    /// A retired identity carrier (a companion register row). It stays local, and its carrier
-    /// and every edge touching it must leave the shared document.
-    LocalOnlyCompanion(EntityId),
     /// The replicated row was written.
     Materialized(EntityId),
     /// A delete-protected engine row passed its door (and was written when `wrote`). Its `dt:`
@@ -203,8 +200,7 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
     } else {
         // Rule A: the row's carried birth lands in the savepoint that
         // admitted the row, or not at all.
-        if !matches!(step, EntityStep::LocalOnlyCompanion(_))
-            && let Some(doc) = ctx.carrier_doc()
+        if let Some(doc) = ctx.carrier_doc()
             && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
             && crate::vault::live_entity_row_in_txn(&ctx.vault.store, &savepoint, &id)?.is_live()
         {
@@ -378,6 +374,9 @@ fn admit(
         )?;
         return Ok(EntityStep::Skip);
     }
+    if withdrawn_generation_here(ctx, wtxn, &id, header, &blob[ENTITY_METADATA_HEADER_LEN..]) {
+        return Ok(EntityStep::Skip);
+    }
     // NOTE replay may not discharge or outlive an unproven purge retry (the old native NOTE
     // lane's pending-delete fence).
     if header.entity_type == ENTITY_TYPE_NOTE
@@ -386,13 +385,6 @@ fn admit(
         return Ok(EntityStep::Skip);
     }
     let data = &blob[ENTITY_METADATA_HEADER_LEN..];
-    if crate::companion::is_retired_identity_carrier(header.entity_type, data) {
-        tracing::warn!(
-            entity = %id.to_hex(),
-            "sync ingest: refused local-only companion register materialization"
-        );
-        return Ok(EntityStep::LocalOnlyCompanion(id));
-    }
     if header.entity_type == ENTITY_TYPE_DIAGNOSTIC {
         // T1 observations and eligibility receipts are local to their account: replay may not
         // revive a remote detector's local observations.
@@ -427,6 +419,20 @@ fn admit(
             );
             return Ok(EntityStep::Skip);
         }
+    }
+    // A federation peer may not turn an agent definition back on (Docs Q04). Window admission
+    // judged the row in a read txn; a local revocation may have committed since, so the writer
+    // txn judges it again.
+    if header.entity_type == ENTITY_TYPE_AGENT_DEF
+        && crate::sync::ingest::in_peer_import(vault)
+        && crate::agent_def::agent_definition_put_widens_in_txn(&vault.store, wtxn, &id, data)?
+    {
+        return Ok(refuse(
+            Some(id),
+            Error::Artifact(crate::error::ArtifactError::InvalidAgentDefBody(
+                "a federation peer cannot turn an agent definition back on",
+            )),
+        ));
     }
     // Pack remote preflight: a malformed REMOTE envelope is refused here, before the name-based
     // remap reads the local map. `InvalidPackByteMap` stays unclassified, so a later one from
@@ -530,11 +536,10 @@ fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bo
         .local_hard_delete_marker_exists_in_txn(txn, id)
         .and_then(|hard| {
             Ok(hard
-                || crate::deletion::ROW_DELETION_FENCE.contains(
-                    &ctx.vault.store,
-                    txn,
-                    &crate::side_table::HexId(*id),
-                )?)
+                || ctx
+                    .vault
+                    .store
+                    .port_deletion_marked(txn, DeletionMarker::RowFence, id)?)
         });
     match marked {
         Ok(false) => false,
@@ -554,6 +559,50 @@ fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bo
             true
         }
     }
+}
+
+/// A withdrawn generation stays withdrawn (OF-013): a body of that generation or older that is
+/// not its content-free keyframe never materializes, while the sweep's `hw:` row waits and after
+/// its fence replaces the row, and a keyframe never stands over a newer generation held here. A
+/// newer generation materializes as any body does. A failed read fails closed.
+fn withdrawn_generation_here(
+    ctx: &IngestCtx<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    header: &EntityMetadataHeader,
+    data: &[u8],
+) -> bool {
+    let store = &ctx.vault.store;
+    let cutoff = match crate::deletion::withdrawn_generation_cutoff_in_txn(store, txn, id) {
+        Ok(Some(cutoff)) => cutoff,
+        Ok(None) => return false,
+        Err(err) => {
+            tracing::warn!(
+                entity = %id.to_hex(),
+                error = %err,
+                "sync ingest: withdrawn generation read failed, failing closed"
+            );
+            return true;
+        }
+    };
+    if header.learned_at > cutoff {
+        return false;
+    }
+    let words = !crate::compaction::is_withdrawn_keyframe(data);
+    let newer_here = store.port_entity_raw(txn, id).map_or(true, |local| {
+        local
+            .as_deref()
+            .and_then(EntityMetadataHeader::parse)
+            .is_some_and(|local| local.learned_at > header.learned_at)
+    });
+    if words || newer_here {
+        tracing::warn!(
+            entity = %id.to_hex(),
+            "sync ingest: body of a withdrawn generation, refusing materialization"
+        );
+        return true;
+    }
+    false
 }
 
 /// The REDACTION_AUDIT door (ONE-1134, ONE-1140). Receipts are immutable audit records

@@ -1,4 +1,7 @@
 //! Native mail fulfillment adapter. MTA, JMAP, DNS and DKIM stay in the host.
+pub mod pack;
+pub use pack::{NativeMailPack, PreparedNativeMailSend};
+
 use super::shared_validate::{
     normalize_domain, normalize_email_address, split_email_address,
     validate_email_inbound_metadata, validate_provision_intent,
@@ -9,8 +12,8 @@ use super::{
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, SelfHeldShape,
-    decode_channel_identity_body,
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFacts, ChannelIdentityFulfillment,
+    SelfHeldShape, decode_channel_identity_body,
 };
 use crate::channel_identity_lifecycle::{ChannelIdentityLifecycleVerb, ProvisionIntent};
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
@@ -28,6 +31,7 @@ use crate::surface_event::{
     InboundSurfaceEventInput, SurfaceCounterpartyStamp, SurfaceEventAdmission,
 };
 use crate::{EntityId, Error, Result, Vault};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeMailRunMode {
@@ -84,13 +88,11 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         let invalid = || Error::InvalidConfig("invalid native-mail send envelope".into());
         let identity_ref = request.channel_identity_ref.ok_or_else(invalid)?;
-        let identity = vault
-            .get_channel_identity(&identity_ref)?
-            .ok_or_else(invalid)?;
+        let identity = native_mail_identity(vault, identity_ref)?.ok_or_else(invalid)?;
         if request.intent.channel != "email"
             || request.intent.verb != "send"
-            || identity.address_or_handle() != self.address_for_identity(identity_ref)
-            || identity.binding().actor_ref() != request.actor.actor_entity_ref
+            || identity.facts.address_or_handle != self.address_for_identity(identity_ref)
+            || identity.facts.binding.actor_ref() != request.actor.actor_entity_ref
         {
             return Err(invalid().into());
         }
@@ -111,51 +113,21 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
     ) -> Result<ConsentReceipt> {
         let invalid = || Error::InvalidConfig("invalid native-mail send envelope".into());
         let identity_ref = request.channel_identity_ref.ok_or_else(invalid)?;
-        let identity = vault
-            .get_channel_identity(&identity_ref)?
-            .ok_or_else(invalid)?;
+        let identity = native_mail_identity(vault, identity_ref)?.ok_or_else(invalid)?;
         let Some(actor) = request.actor.actor_entity_ref else {
             return Err(invalid());
         };
         if request.intent.channel != "email"
             || request.intent.verb != "send"
             || request.intent_ref.trim().is_empty()
-            || identity.address_or_handle() != self.address_for_identity(identity_ref)
-            || !identity.may_send()
-            || identity.binding().actor_ref() != Some(actor)
+            || identity.facts.address_or_handle != self.address_for_identity(identity_ref)
+            || !identity.custody.may_send()
+            || identity.facts.binding.actor_ref() != Some(actor)
             || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
         {
             return Err(invalid());
         }
-        let canonical = CanonicalMailSend::from_request(request)?;
-        let effect = ExternalEffectGateInput {
-            actor: GateActor {
-                actor_class: request.actor.actor_class.clone(),
-                actor_ref: request.actor.actor_ref.clone(),
-                delegation_grant_ref: None,
-            },
-            provenance: GateProvenanceHandles {
-                actor_entity_ref: Some(actor),
-                mail_content_ref: request.intent.content_ref.clone(),
-                ..GateProvenanceHandles::default()
-            },
-            verb: "send".into(),
-            channel: "email".into(),
-            channel_identity_ref: Some(identity_ref),
-            counterparty: Some(canonical.recipient),
-            brief_ref: canonical.brief_ref,
-            send_ref: Some(request.intent_ref.clone()),
-            standing_grant_ref: None,
-            scoped_mcp_call: None,
-            counterparty_first_touch: None,
-            counterparty_opted_out: false,
-            counterparty_opt_out_receipt_reason: None,
-            has_opted_in: request.gate.has_opted_in,
-            has_permission: request.gate.has_permission,
-            policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
-        };
-        let digest = crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)?;
-        vault.approve_once(owner, digest)
+        approve_canonical_mail_send_once(vault, owner, request, identity_ref, actor)
     }
 
     /// CID-5 health is a prerequisite for OFFERING cold-recipient autonomy,
@@ -168,16 +140,15 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         identity_ref: EntityId,
     ) -> Result<Option<RampScope>> {
         let txn = vault.store.env.read_txn()?;
-        let identity = vault.get_channel_identity_in_txn(&txn, &identity_ref)?;
-        let Some(identity) = identity else {
+        let Some(identity) = native_mail_identity_in_txn(&vault.store, &txn, identity_ref)? else {
             return Ok(None);
         };
-        if identity.address_or_handle() != self.address_for_identity(identity_ref)
-            || !identity.may_send()
+        if identity.facts.address_or_handle != self.address_for_identity(identity_ref)
+            || !identity.custody.may_send()
         {
             return Ok(None);
         }
-        let Some(actor) = identity.binding().actor_ref() else {
+        let Some(actor) = identity.facts.binding.actor_ref() else {
             return Ok(None);
         };
         if !native_mail_reputation_earned(vault, &txn, identity_ref)? {
@@ -198,6 +169,8 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
 
     /// Production ingress: verified bytes -> untrusted semantic envelope ->
     /// identity quarantine gate -> durable, idempotent surface-event handoff.
+    /// Mail with threading headers joins its thread and is handed to
+    /// propose/confirm (INB-05, CC-the-agent).
     pub fn accept_webhook(
         &self,
         vault: &Vault,
@@ -209,8 +182,9 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
             return Err(Error::InvalidConfig("mail webhook too large".into()));
         }
         let verified = self.host.verify_webhook(body, headers)?;
+        let thread = verified.thread_headers.clone();
         let input = self.parse_inbound(ChannelIdentityProviderInbound::Email(verified))?;
-        vault.enqueue_inbound_surface_event(input, now)
+        vault.enqueue_inbound_email(input, thread.as_ref(), now)
     }
 }
 impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> {
@@ -275,19 +249,80 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
         if self.address_for_identity(id) != format!("{local}@{domain}") {
             return Err(Error::InvalidConfig("noncanonical mailbox".into()));
         }
-        let (_, sender_domain) = split_email_address(&mail.envelope_from)?;
-        let sender = normalize_email_address(&mail.envelope_from, &sender_domain)?;
+        let sender = split_email_address(&mail.envelope_from)
+            .and_then(|(_, domain)| normalize_email_address(&mail.envelope_from, &domain));
+        let counterparty = match sender {
+            Ok(sender) => SurfaceCounterpartyStamp::unknown(format!("email:{sender}")),
+            Err(_) => SurfaceCounterpartyStamp::unparsed(
+                "email",
+                Sha256::digest(mail.envelope_from.as_bytes()).into(),
+            ),
+        };
         let mut event = InboundSurfaceEventInput::new(
             mail.provider_event_id,
             "email",
             self.address_for_identity(id),
-            SurfaceCounterpartyStamp::unknown(format!("email:{sender}")),
+            counterparty,
             mail.received_at,
             true,
         );
         event.payload_ref = mail.payload_ref;
         Ok(event)
     }
+}
+
+/// Owner approval for exactly one canonical mail send: the shared tail of the
+/// native-mail and member-mailbox (OF-374) approve doors. Each door checks its
+/// own sender shape first; this composes the one digest the Gate's mail lane
+/// looks up, so the owner approves the exact operation dispatch re-evaluates.
+/// A changed recipient, content or logical send ref is a different digest.
+pub(crate) fn approve_canonical_mail_send_once(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    request: &OutboundDispatchRequest,
+    identity_ref: EntityId,
+    actor: EntityId,
+) -> Result<ConsentReceipt> {
+    let digest = canonical_mail_send_digest(request, identity_ref, actor)?;
+    vault.approve_once(owner, digest)
+}
+
+/// The canonical mail operation's approve-once digest for one checked send
+/// envelope: the key both owner doors mint and the Gate's mail lane reads.
+pub(crate) fn canonical_mail_send_digest(
+    request: &OutboundDispatchRequest,
+    identity_ref: EntityId,
+    actor: EntityId,
+) -> Result<crate::consent::EffectDigest> {
+    let invalid = || Error::InvalidConfig("invalid mail send envelope".into());
+    let canonical = CanonicalMailSend::from_request(request)?;
+    let effect = ExternalEffectGateInput {
+        actor: GateActor {
+            actor_class: request.actor.actor_class.clone(),
+            actor_ref: request.actor.actor_ref.clone(),
+            delegation_grant_ref: None,
+        },
+        provenance: GateProvenanceHandles {
+            actor_entity_ref: Some(actor),
+            mail_content_ref: request.intent.content_ref.clone(),
+            ..GateProvenanceHandles::default()
+        },
+        verb: "send".into(),
+        channel: "email".into(),
+        channel_identity_ref: Some(identity_ref),
+        counterparty: Some(canonical.recipient),
+        brief_ref: canonical.brief_ref,
+        send_ref: Some(request.intent_ref.clone()),
+        standing_grant_ref: None,
+        scoped_mcp_call: None,
+        counterparty_first_touch: None,
+        counterparty_opted_out: false,
+        counterparty_opt_out_receipt_reason: None,
+        has_opted_in: request.gate.has_opted_in,
+        has_permission: request.gate.has_permission,
+        policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
+    };
+    crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)
 }
 
 /// One stable logical mail send, independent of approval availability and
@@ -481,7 +516,7 @@ pub(crate) fn is_native_mail_sender_in_txn(
     identity_ref: EntityId,
 ) -> Result<bool> {
     Ok(native_mail_identity_in_txn(store, txn, identity_ref)?
-        .is_some_and(|identity| identity.may_send()))
+        .is_some_and(|identity| identity.custody.may_send()))
 }
 
 /// The Gate requires a live identity belonging to its authenticated actor,
@@ -492,8 +527,11 @@ pub(crate) fn native_mail_actor_may_send_in_txn(
     identity_ref: EntityId,
     actor: Option<EntityId>,
 ) -> Result<bool> {
-    Ok(native_mail_identity_in_txn(store, txn, identity_ref)?
-        .is_some_and(|identity| identity.may_send() && identity.binding().actor_ref() == actor))
+    Ok(
+        native_mail_identity_in_txn(store, txn, identity_ref)?.is_some_and(|identity| {
+            identity.custody.may_send() && identity.facts.binding.actor_ref() == actor
+        }),
+    )
 }
 
 /// Structural sender binding survives Released/Quarantine for terminal replay,
@@ -506,11 +544,41 @@ pub(crate) fn is_native_mail_identity_in_txn(
     Ok(native_mail_identity_in_txn(store, txn, identity_ref)?.is_some())
 }
 
+/// A native-mail identity: its facts (channel, address, binding) from its
+/// `channel_identity.*` heads, its custody (`may_send`) from the local row.
+struct NativeMailIdentity {
+    facts: ChannelIdentityFacts,
+    custody: ChannelIdentity,
+}
+
+/// [`native_mail_identity_in_txn`] on a fresh snapshot, for the send doors.
+fn native_mail_identity(
+    vault: &Vault,
+    identity_ref: EntityId,
+) -> Result<Option<NativeMailIdentity>> {
+    let txn = vault.store.env.read_txn()?;
+    native_mail_identity_in_txn(&vault.store, &txn, identity_ref)
+}
+
 fn native_mail_identity_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity_ref: EntityId,
-) -> Result<Option<ChannelIdentity>> {
+) -> Result<Option<NativeMailIdentity>> {
+    // Recognition reads the identity's channel and address heads (OF-272);
+    // the row is read for its custody only.
+    let Some(facts) =
+        crate::channel_identity::channel_identity_facts_in_txn(store, txn, &identity_ref)?
+    else {
+        return Ok(None);
+    };
+    if facts.channel != "email"
+        || !facts
+            .address_or_handle
+            .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
+    {
+        return Ok(None);
+    }
     let Some(raw) = store
         .port_entity_record(txn, &identity_ref)?
         .map(|row| row.encode())
@@ -522,15 +590,8 @@ fn native_mail_identity_in_txn(
     if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
         return Ok(None);
     }
-    let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    if identity.channel() != "email"
-        || !identity
-            .address_or_handle()
-            .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
-    {
-        return Ok(None);
-    }
-    Ok(Some(identity))
+    let custody = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    Ok(Some(NativeMailIdentity { facts, custody }))
 }
 
 /// Called only by the external-effect Gate on its own transaction. The
@@ -561,7 +622,7 @@ pub(crate) fn native_mail_cold_send_in_txn(
     let Some(identity) = native_mail_identity_in_txn(store, txn, identity_ref)? else {
         return Ok(false);
     };
-    if identity.binding().actor_ref() != Some(actor) || !identity.may_send() {
+    if identity.facts.binding.actor_ref() != Some(actor) || !identity.custody.may_send() {
         return Ok(false);
     }
     Ok(policy
@@ -615,7 +676,7 @@ pub(crate) fn native_mail_reputation_earned(
     };
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let Some(row) =
-        policy.native_mail_policy_for(identity.binding().actor_ref(), Some(identity_ref))
+        policy.native_mail_policy_for(identity.facts.binding.actor_ref(), Some(identity_ref))
     else {
         return Ok(false);
     };

@@ -248,6 +248,11 @@ fn forward_with_recovery(
         })?;
     }
     edge_pass::run(&ctx, &mut ledger)?;
+    // OF-422: the owner-signed custody transitions the window carries.
+    crate::sync::custody::apply_custody_map(vault, doc, window_key);
+    // OF-522: the room turn rows the window carries, before its tombstones,
+    // so a room deleted in this window takes its rows with it.
+    crate::sync::room_turns::apply_room_turn_map(vault, doc, window_key);
     // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
     // Parent obligation left by a different window whose doc is not loaded.
     vault.with_write_txn_grouped(|txn| super::bridge::retry_in_txn(vault, txn))?;

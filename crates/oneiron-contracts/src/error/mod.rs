@@ -8,6 +8,7 @@ mod artifact;
 mod claim;
 mod code;
 mod gate;
+mod hook;
 mod maintenance;
 mod off_record;
 mod record;
@@ -17,10 +18,11 @@ mod secret;
 mod store;
 mod sync;
 
-pub use self::artifact::ArtifactError;
+pub use self::artifact::{ArtifactError, LiveDeckRefusal};
 pub use self::claim::ClaimError;
 pub use self::code::CodeError;
 pub use self::gate::{GateDenial, GateDenialOutcome, GateDenialReason, GateError};
+pub use self::hook::VerbHookStop;
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
 pub use self::record::RecordError;
@@ -43,6 +45,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum ErrorKind {
     Storage,
+    /// A verb hook skipped or asked, or a blocking one failed safe.
+    VerbHookStopped,
     Io,
     DimensionMismatch,
     InvalidVector,
@@ -63,7 +67,6 @@ pub enum ErrorKind {
     ConnectorKeyAlreadyExists,
     ChannelIdentityAlreadyExists,
     CounterpartyContactAlreadyExists,
-    CompanionRecordAlreadyExists,
     ConcurrentWrite,
     ArithmeticOverflow,
     InvariantViolation,
@@ -117,6 +120,8 @@ pub enum ErrorKind {
     AnnotationThreadNotFound,
     InvalidEditManifest,
     EditRoundtripFailed,
+    /// The live deck body refused; the error carries the docedit refusal.
+    LiveDeckRefused,
     EditProposalAlreadySettled,
     EditProposalStale,
     SettleNotAuthorized,
@@ -303,6 +308,7 @@ pub enum ErrorKind {
     ProjectDependencyPending,
     ProjectRevisionCollision,
     ProjectRevisionWrite,
+    IdentityUnsettled,
     ProjectHistoryOverBudget,
     ProjectAuthorityUnresolved,
     InvalidConversationBody,
@@ -386,6 +392,9 @@ pub enum Error {
     /// Internal state violated an invariant that should be preserved by the crate.
     #[error("invariant violation: {0}")]
     InvariantViolation(&'static str),
+    /// A verb hook stopped the verb (ARCH-0080 §3).
+    #[error("{0}")]
+    VerbHook(Box<VerbHookStop>),
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
@@ -564,6 +573,7 @@ impl Error {
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
+            Self::VerbHook(_) => ErrorKind::VerbHookStopped,
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
@@ -600,6 +610,12 @@ impl Error {
             Self::Artifact(
                 ArtifactError::SkillEditGateRetry(_) | ArtifactError::OverlayLimit { .. },
             ) => true,
+            // The deck head moved past the preflight: a fresh preflight is the
+            // whole remedy.
+            Self::Artifact(ArtifactError::LiveDeckRefused {
+                refusal: LiveDeckRefusal::HeadAdvanced,
+                ..
+            }) => true,
             // Transient by construction: the refusal clears once the last
             // external window handle drops (ONE-1150).
             #[cfg(feature = "sync")]

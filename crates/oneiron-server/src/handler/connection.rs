@@ -61,6 +61,9 @@ async fn ws_upgrade_handler(
     let session_jti = auth.jti().map(str::to_owned);
     // The binding door proved the machine with the upgrade's own slip proof.
     let machine = machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0);
+    // The home answers with its own machine over that same proof, so the
+    // device judges its sends for this machine (OF-534 G6/G7).
+    let home_proof = home_proof_header(&headers, server.vault().as_ref());
 
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");
@@ -71,13 +74,41 @@ async fn ws_upgrade_handler(
     // that — it bounds inbound reads only — so the outbound side is held by
     // [`GuardedTransport::fits_below_write_through`], which refuses per frame
     // in release builds.
-    Ok(ws
+    let mut response = ws
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
         .on_upgrade(move |socket| {
             handle_connection(socket, server, conn_id, session_jti, locality, machine)
-        }))
+        })
+        .into_response();
+    if let Some(value) = home_proof {
+        response
+            .headers_mut()
+            .insert(oneiron::sync::home_proof::HOME_PROOF_HEADER, value);
+    }
+    Ok(response)
+}
+
+/// This install's machine proof answering the upgrade whose slip proof
+/// `headers` carry, or `None`: no slip proof, or no machine of this vault
+/// here yet. A proof that cannot be made leaves the device judging this home
+/// as an unknown destination, as before.
+fn home_proof_header(
+    headers: &HeaderMap,
+    vault: &oneiron::Vault,
+) -> Option<axum::http::HeaderValue> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")?
+        .trim();
+    let proof = crate::auth::BindingProof::from_headers(headers).ok()?;
+    let value = vault
+        .home_connection_proof(token, proof.timestamp, &proof.nonce)
+        .ok()??;
+    axum::http::HeaderValue::from_str(&value).ok()
 }
 
 /// Whether this socket's credential has since been revoked.
@@ -756,6 +787,25 @@ fn window_delivery(
     state: &super::conn_state::ConnState,
     frame: Vec<u8>,
 ) -> Option<Vec<u8>> {
+    // A sealed packet forwards only where its world may be read or a sealed
+    // copy may rest, judged for this socket's proved destination (OF-292).
+    // It is never turned into a WINDOW_INVALIDATE.
+    if let Some(world) = sealed_update_world(&frame) {
+        if !window_broadcast_allowed(protocol_version, state, &frame) {
+            return None;
+        }
+        let world = world?;
+        let vault = server.vault();
+        let destination = state.destination(vault);
+        let may = vault
+            .sealed_copy_may_rest_on(world, destination)
+            .unwrap_or(false)
+            || vault
+                .authority_fold()
+                .map(|fold| fold.world_readable_on(world, destination))
+                .unwrap_or(false);
+        return may.then_some(frame);
+    }
     if window_broadcast_allowed(protocol_version, state, &frame) {
         let peer = state.peer_machine(server.vault());
         return (!window_update_withheld(server, peer, &frame)).then_some(frame);
@@ -775,6 +825,22 @@ fn window_delivery(
     protocol::encode_window_sync(key, protocol::window_sub_tags::WINDOW_INVALIDATE, &[])
         .into_result()
         .ok()
+}
+
+/// The world of a `SEALED_UPDATE` frame's window (`None` inside for a base
+/// window), or `None` when `frame` is not one.
+fn sealed_update_world(frame: &[u8]) -> Option<Option<oneiron::EntityId>> {
+    if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
+        return None;
+    }
+    let (key, sub_tag, _) = protocol::decode_window_sync(frame.get(1..)?).ok()?;
+    if sub_tag != protocol::window_sub_tags::SEALED_UPDATE {
+        return None;
+    }
+    match oneiron::sync::WindowKey::try_new(key) {
+        Some(window) => Some(window.world()),
+        None => Some(None),
+    }
 }
 
 /// Whether `frame` is a window UPDATE or REPLACEMENT this server now

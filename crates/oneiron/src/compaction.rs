@@ -61,8 +61,10 @@
 use crate::ports::EntityStoreRead;
 mod driver;
 mod epoch;
+mod fold_words;
 mod folds;
 mod gate;
+mod hooks;
 pub mod output;
 mod stored_epoch;
 mod withdrawn;
@@ -86,6 +88,11 @@ pub(crate) use epoch::{
     EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
     epoch_sources_admitted_in,
 };
+pub(crate) use fold_words::{
+    FOLD_LEDGERS, fence_withdrawn_folds_in, land_folds_in_base, land_folds_in_overlay,
+    scrub_withdrawn_fold_summary_in_txn,
+};
+pub(crate) use folds::escape_compacted_text;
 pub use gate::{
     CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionSuppression, GatedCompaction, compaction_reply_schema, compaction_request_input,
@@ -94,8 +101,11 @@ pub use gate::{
 pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };
+pub use hooks::{CompactHooks, HOST_COMPACT, compact_invocation};
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, scrub_withdrawn_epoch_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use withdrawn::{is_withdrawn_keyframe, withdrawn_keyframe_envelope};
 
 use crate::entity_id::EntityId;
 use crate::error::{CompactionPacketError, Result};

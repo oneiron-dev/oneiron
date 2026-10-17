@@ -429,6 +429,9 @@ pub struct NapiMemoryItem {
     pub facet: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f64>,
+    /// A conversation record's current reactions, one grouped line per glyph;
+    /// empty for every other item.
+    pub reactions: Vec<String>,
     /// For a TURN item, the messages whose words the query matched, best first.
     pub cited_messages: Vec<NapiCitedMessage>,
     /// For a TURN or MESSAGE item, the conversation it is in (32 hex), when
@@ -450,11 +453,22 @@ pub struct NapiCitedMessage {
 pub struct NapiScopeHonesty {
     /// Worlds excluded by the requested scope.
     pub out_of_scope_worlds: Vec<String>,
+    /// The census stopped at its scan cap or at the answer's deadline, so a
+    /// world past it may be missing.
+    pub census_capped: bool,
 }
 
 /// Retrieval accounting (S6).
 #[napi(object)]
 pub struct NapiRetrievalMeta {
+    /// Execution health, independent of result count.
+    pub quality: String,
+    /// Observed reasons retrieval ran degraded.
+    pub degradation: Vec<String>,
+    /// Presentation adjustment; stored confidence and ranking are unchanged.
+    pub confidence_adjustment: f64,
+    /// The paid rerank stage's model, accounting, or skip reason.
+    pub rerank: Option<serde_json::Value>,
     /// True when only sparse signals ran.
     pub sparse: Option<bool>,
     /// Candidates considered.
@@ -587,6 +601,27 @@ pub struct NapiOutboundDraftInput {
     pub apns_interruption_level: Option<String>,
     /// `plain_chat` | `push` — the resolved level for a compatibility verb.
     pub resolved_level: Option<String>,
+    /// The saved mention `target` came from, when the agent named the
+    /// person (OF-123): the send refuses with IDENTITY_UNSETTLED while that
+    /// mention is unsettled.
+    pub mention: Option<NapiMentionProvenance>,
+}
+
+/// The saved person mention an effect's target came from (OF-123 act-now
+/// guard): the turn whose tags hold it and its message, as 32 hex, and its
+/// byte span in the message text. The engine refuses the effect while the
+/// mention is unsettled; `self.identity.settle` settles it.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NapiMentionProvenance {
+    /// The turn whose tags hold the mention, as 32 hex.
+    pub turn: String,
+    /// The message the mention is in, as 32 hex.
+    pub message: String,
+    /// Byte offset where the mention starts.
+    pub start: i64,
+    /// Byte offset where the mention ends (exclusive).
+    pub end: i64,
 }
 
 /// Receipt for one scheduled outbound intent.
@@ -680,6 +715,10 @@ pub struct NapiCalendarInviteInput {
     pub ics_blob_ref: String,
     /// Delivery target.
     pub recipient: String,
+    /// The saved mention `recipient` came from, when the agent named the
+    /// person (OF-123): the invite refuses with IDENTITY_UNSETTLED while that
+    /// mention is unsettled.
+    pub mention: Option<NapiMentionProvenance>,
 }
 
 /// Selector for `forget`: a claim short ref, or `{subjectRef, predicate}`.

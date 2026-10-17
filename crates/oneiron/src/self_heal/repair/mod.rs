@@ -4,8 +4,11 @@ use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
 
+mod dev_runner;
 mod invocation;
 mod validation;
+
+pub use dev_runner::{DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget};
 
 pub use invocation::HealerInvocationStamp;
 #[cfg_attr(not(test), allow(unused_imports))]

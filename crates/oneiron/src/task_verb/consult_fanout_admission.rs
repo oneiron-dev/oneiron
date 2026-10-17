@@ -1,4 +1,11 @@
-//! Meter and admit consult fan-outs before any TASK exists.
+//! Meter, state and admit consult fan-outs before any TASK exists.
+//!
+//! Every fan-out states its counts, expected spend and cap before minting
+//! (OF-393). The approval mode gates every fan-out at any width: `manual`
+//! pauses, `auto` mints on the decider's allow and otherwise pauses for the
+//! escalated role, `full-access` mints. The threshold only marks the
+//! exceptional-width check, which never holds: it rides the pause row of a
+//! held run and the statement of a minted one.
 
 use super::consult_fanout_store::{
     FrozenInput, StoredFanout, TxnSurface, policy_in, runs_in, save_run,
@@ -10,10 +17,11 @@ use super::{
     ConsultFanOutPolicy, ConsultFanOutReceipt, ConsultFanOutScope, ConsultFanOutSpec,
     ConsultPayload, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl,
 };
-use crate::consent::AuthenticatedOwner;
-use crate::context_board::{
-    AgentsSection, ChildAgentPresence, PeerPresence, render_agents_section,
+use crate::agent_dispatch::{
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatcher, FanoutCaller, FanoutStatement, FanoutWork,
+    WidthCheckClass, agent_dispatch_actor, decode_agent_dispatch_input,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::escalation::{EscalationTrigger, standing_policy_for};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -84,6 +92,32 @@ impl Memory<'_> {
             true,
             Some(preset),
             ConsultFanOutScope::default(),
+            None,
+        )
+    }
+
+    /// A counted preset fan-out by an agent the host runs: the statement
+    /// states the hard cap `caller`'s own work runs under. The host binds
+    /// `caller` from the agent's authenticated dispatch; a parent attempt that
+    /// is not this actor's own agent dispatch is refused.
+    pub fn fan_out_counted_consults_for_caller(
+        &self,
+        input: &ConsultFanOutSpec,
+        preset: &str,
+        decisions: Option<&FanoutDecisions<'_>>,
+        caller: &FanoutCaller,
+    ) -> MemoryResult<ConsultFanOutReceipt> {
+        if preset.is_empty() || preset.trim() != preset {
+            return Err(MemoryError::bad_request("fan-out preset must be canonical"));
+        }
+        self.verify_fanout_caller(caller)?;
+        self.fan_out_consults_impl(
+            input,
+            decisions,
+            true,
+            Some(preset),
+            ConsultFanOutScope::default(),
+            Some(caller),
         )
     }
 
@@ -106,11 +140,11 @@ impl Memory<'_> {
                 "fan-out preset or policy scope must be canonical",
             ));
         }
-        self.fan_out_consults_impl(input, decisions, true, Some(preset), scope.clone())
+        self.fan_out_consults_impl(input, decisions, true, Some(preset), scope.clone(), None)
     }
 
-    /// Meter a counted plan before admission. This does not write a TASK,
-    /// ask the decision ladder, or persist a pause.
+    /// Meter and state a counted plan before admission. This does not write a
+    /// TASK, ask the decision ladder, or persist a pause or a question.
     pub fn estimate_counted_consults(
         &self,
         input: &ConsultFanOutSpec,
@@ -132,9 +166,11 @@ impl Memory<'_> {
             &policy,
         )?;
         let estimate = fanout_estimate(&plan)?;
+        let statement = self.consult_statement(&txn, input, None, now)?;
         Ok(super::ConsultFanOutEstimate {
             total_count: estimate.total_count,
             per_peer: estimate.per_peer,
+            statement,
         })
     }
 
@@ -144,9 +180,18 @@ impl Memory<'_> {
         input: &ConsultFanOutSpec,
         decisions: Option<&FanoutDecisions<'_>>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
-        self.fan_out_consults_impl(input, decisions, false, None, ConsultFanOutScope::default())
+        self.fan_out_consults_impl(
+            input,
+            decisions,
+            false,
+            None,
+            ConsultFanOutScope::default(),
+            None,
+        )
     }
 
+    /// `caller` is host-bound context; every public door without it states
+    /// no cap.
     fn fan_out_consults_impl(
         &self,
         input: &ConsultFanOutSpec,
@@ -154,19 +199,24 @@ impl Memory<'_> {
         allow_repeated_peers: bool,
         preset: Option<&str>,
         policy_scope: ConsultFanOutScope,
+        caller: Option<&FanoutCaller>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let now = input.now.unwrap_or_else(|| self.vault().now_recorded_at());
         let correlation = self.vault().new_entity_id()?;
         let validated = self.validate_fanout(input, correlation, now, allow_repeated_peers)?;
-        let governed = {
+        // The plan is frozen and stated in one snapshot, before any TASK.
+        let (governed, statement) = {
             let txn = self
                 .vault()
                 .store
                 .env
                 .read_txn()
                 .map_err(crate::error::Error::from)?;
-            policy_in(self.vault(), &txn, &policy_scope)?
+            (
+                policy_in(self.vault(), &txn, &policy_scope)?,
+                self.consult_statement(&txn, input, caller, now)?,
+            )
         };
         let policy = governed.policy.clone();
         let frozen = FrozenInput::new(input, now, preset, policy_scope);
@@ -177,7 +227,9 @@ impl Memory<'_> {
             input: frozen,
             plan,
             estimate,
+            statement,
             pause: None,
+            check_row: None,
             dispatched_at: None,
             task_refs: Vec::new(),
             denied: false,
@@ -213,15 +265,19 @@ impl Memory<'_> {
             },
             decisions,
         )?;
-        let disposition = if !has_pathology
-            && run.estimate.total_count > policy.approval_threshold
-            && policy.mode == super::ConsultFanOutMode::Auto
-        {
+        // AUTO rules on every auto fan-out, whatever its width.
+        let disposition = if !has_pathology && policy.mode == super::ConsultFanOutMode::Auto {
             auto.decide(&run.plan, &run.estimate)
                 .unwrap_or(FanoutAutoDisposition::SurfaceHuman)
         } else {
             FanoutAutoDisposition::SurfaceHuman
         };
+        // An accepted standing row answers alone when it exists, so an Allow
+        // beside one stood on it.
+        let clearance = standing
+            .as_ref()
+            .filter(|_| disposition == FanoutAutoDisposition::Allow)
+            .map(|row| row.row_ref.to_hex());
         self.with_verified_actor_write_txn(|txn| {
             self.require_fanout_ceiling(txn)?;
             if policy_in(self.vault(), txn, &run.input.policy_scope)? != governed
@@ -247,10 +303,13 @@ impl Memory<'_> {
                     vault: self.vault(),
                     txn,
                     run: &mut run,
+                    clearance: clearance.clone(),
                 },
                 now.saturating_mul(1000),
             )?;
             match admission {
+                // Above the threshold the sink has already recorded the
+                // classified width check; the run mints either way.
                 FanoutAdmission::Proceed { estimate } => {
                     run.estimate = estimate;
                     self.mint_fanout_in(txn, &validated, input, &mut run, now)?;
@@ -264,7 +323,19 @@ impl Memory<'_> {
                         return Err(Error::InvariantViolation("fan-out surface identity").into());
                     }
                     run.estimate = estimate;
-                    run.pause = Some(*row);
+                    // A held run asks its width check on its own pause row.
+                    let threshold = u64::from(policy.approval_threshold);
+                    if run.statement.crosses(threshold) {
+                        run.statement.raise_width_check(
+                            threshold,
+                            WidthCheckClass::Asked {
+                                row_ref: row.row_ref.clone(),
+                            },
+                        );
+                    }
+                    let mut row = *row;
+                    row.statement = Some(run.statement.clone());
+                    run.pause = Some(row);
                 }
             }
             save_run(self.vault(), txn, &run)?;
@@ -381,27 +452,71 @@ impl Memory<'_> {
         Ok(policy_in(self.vault(), &txn, scope)?.policy)
     }
 
-    /// Rebuilds this actor's AGENTS counts from the durable metering rows.
-    /// Includes silent runs and parked denials; this projection grants no authority.
-    pub fn fan_out_agents_section(
-        &self,
-        children: &[ChildAgentPresence],
-        peers: &[PeerPresence],
-    ) -> MemoryResult<AgentsSection> {
+    /// This actor's consult fan-out meter rows, rebuilt from the durable
+    /// metering rows. Includes silent runs and parked denials; this
+    /// projection grants no authority.
+    pub fn fan_out_meter_rows(&self) -> MemoryResult<Vec<super::FanoutMeterRow>> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let mut section = render_agents_section(children, peers);
         let txn = self
             .vault()
             .store
             .env
             .read_txn()
             .map_err(crate::error::Error::from)?;
+        let mut rows = Vec::new();
         for run in runs_in(self.vault(), &txn)? {
             if run.plan.actor_ref == self.actor().to_hex() {
-                section.rows.extend(run.receipt()?.meter.board_rows);
+                rows.extend(run.receipt()?.meter.board_rows);
             }
         }
-        Ok(section)
+        Ok(rows)
+    }
+
+    /// The statement of one consult fan-out: every consult a peer delivery,
+    /// repeats included, under the caller's cap or none.
+    fn consult_statement(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &ConsultFanOutSpec,
+        caller: Option<&FanoutCaller>,
+        now: u64,
+    ) -> MemoryResult<FanoutStatement> {
+        let work: Vec<_> = input
+            .assignees
+            .iter()
+            .map(|peer| FanoutWork::PeerConsult { peer: *peer })
+            .collect();
+        let root = FanoutCaller::default();
+        Ok(AgentDispatcher::new(self.vault()).plan_fanout_in_txn(
+            txn,
+            caller.unwrap_or(&root),
+            &work,
+            now,
+        )?)
+    }
+
+    /// A caller's parent attempt must be this actor's own agent dispatch, so
+    /// no guest-supplied id can state another agent's cap.
+    fn verify_fanout_caller(&self, caller: &FanoutCaller) -> MemoryResult<()> {
+        let Some(parent) = caller.parent_attempt else {
+            return Ok(());
+        };
+        let status = crate::dreamer_runner::DreamerRunnerStore::new(self.vault()).status(parent)?;
+        let own = match status {
+            Some(status) if status.payload.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE => {
+                agent_dispatch_actor(&decode_agent_dispatch_input(&status.payload.input)?)?
+                    == crate::WriteActor::new(self.actor(), self.actor_class())
+            }
+            _ => false,
+        };
+        if !own {
+            return Err(consult_refusal(
+                MEMORY_CODE_FORBIDDEN,
+                "fan-out caller attempt is not this actor's own dispatch",
+                "Bind the caller from the running agent's own attempt.",
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn reauthenticate_fanout_owner(
@@ -528,14 +643,13 @@ impl Memory<'_> {
         // Consults created individually or replayed from peers also close
         // cycles. Stream the existing TASK index; do not reconstruct a second
         // task graph from only this facade's historical runs.
-        for entry in self
-            .vault()
-            .store
-            .type_index
-            .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_TASK])?
-        {
-            let (key, _) = entry?;
-            let task = crate::vault::entity_id_from_type_index_key(&key)?;
+        for entry in EntityStoreRead::port_entity_ids_by_type(
+            &self.vault().store,
+            txn,
+            crate::registry::ENTITY_TYPE_TASK,
+            None,
+        )? {
+            let task = entry?;
             if let Some(body) = task_verb_body_in(self.vault(), txn, task)?
                 && body.task_kind() == TaskKind::Consult
                 && let Some(TaskAssignee::Peer { actor_ref }) = body.assignee

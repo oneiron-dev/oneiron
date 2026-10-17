@@ -2,6 +2,7 @@
 
 mod channels;
 mod pack;
+mod retrieval_policy;
 mod types;
 
 use super::authority;

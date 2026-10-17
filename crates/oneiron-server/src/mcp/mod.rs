@@ -43,18 +43,20 @@ pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
 pub(crate) use self::endpoint_args::validate_mcp_endpoint_tool_args_as;
 pub use self::endpoint_args::{
-    McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpSetupToolArgs, McpVerbArguments,
-    McpVerbToolArgs, McpVerbToolPayload, validate_mcp_endpoint_tool_args,
+    McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest, McpReadResultToolArgs, McpResultFacet,
+    McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
+    validate_mcp_endpoint_tool_args,
 };
 pub(crate) use self::endpoint_schema::verb_input_unknown_field;
 pub use self::endpoint_schema::{
     MCP_BOARD_BUDGET_TOK_MAX, MCP_CACHE_TTL_MS_MAX, MCP_FRAME_EPOCH_MAX, MCP_PAGE_LIMIT_MAX,
     MCP_PAGE_LIMIT_MIN,
 };
+pub(crate) use self::exec_host::enter_engine_native_run;
 pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
-    McpCodeModeProvider, McpEngineNativeCodeHost, RunCompactionSeat, bind_mcp_code_execution_host,
-    mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
+    McpCodeModeProvider, McpEngineNativeCodeHost, ReaderMeter, RunCompactionSeat,
+    bind_mcp_code_execution_host, mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub use self::paging::{
     MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource,
@@ -63,6 +65,7 @@ pub use self::paging::{
 };
 pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot};
 pub use self::registry::McpConnectorActorRegistry;
+pub(crate) use self::results::mcp_stamp_call_receipt;
 pub use self::results::{
     McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError,
     mcp_effective_scope_label, mcp_effective_scope_value, mcp_recovery_suggestions,
@@ -71,8 +74,8 @@ pub use self::results::{
 pub use self::surface::{
     MCP_BOARD_BUDGET_TOK, MCP_CODE_HOST_UNBOUND_CODE, MCP_CODE_RUN_SCHEMA_VERSION,
     MCP_EXECUTE_CODE_TOOL, MCP_MAX_LIVE_PAGE_CONTINUATIONS, MCP_PAGE_ITEM_CAP,
-    MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS,
-    MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
+    MCP_READ_RESULT_TOOL, MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION,
+    MCP_RESULT_TTL_MS, MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
     MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool,
     McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily,
     exported_verb_rows, generated_verb_tools, project_verb_rows, registered_surface,

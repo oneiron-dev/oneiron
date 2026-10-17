@@ -353,6 +353,11 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
         ),
         (Value::from("provenance"), body.provenance),
         (Value::from("created_at"), Value::from(body.created_at)),
+        (
+            Value::from("type_ref"),
+            body.type_ref
+                .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
+        ),
     ];
     // Elided when absent, so a task nobody refused keeps its bytes.
     if let Some(refusal) = &body.refusal {
@@ -362,7 +367,26 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
     if let Some(brief) = &body.brief {
         entries.push((Value::from("brief"), stored_brief_value(brief)));
     }
+    // OF-389: elided the same way, so a TASK that wraps no subproject keeps
+    // its bytes.
+    if let Some(subproject_ref) = body.subproject_ref {
+        entries.push((
+            Value::from("subproject_ref"),
+            entity_ref_value(subproject_ref),
+        ));
+    }
+    // OF-540: elided the same way, so a TASK outside any team run keeps its
+    // bytes.
+    if let Some(team) = &body.team {
+        entries.push((Value::from("team"), team_stamp_value(team)));
+    }
     canonical_bytes(&Value::Map(entries))
+}
+
+/// A TASK's frozen team run as named MessagePack, the shape `brief` uses.
+fn team_stamp_value(team: &crate::agent_dispatch::TeamRunStamp) -> Value {
+    let encoded = rmp_serde::to_vec_named(team).expect("a team stamp always encodes");
+    rmpv::decode::read_value(&mut encoded.as_slice()).expect("typed team stamp MessagePack")
 }
 
 /// The stored brief as named MessagePack, the shape `mirror_fields` uses.

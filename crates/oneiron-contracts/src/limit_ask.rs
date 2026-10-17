@@ -42,17 +42,61 @@ pub enum EngineLimit {
     /// live share is the least of this and the pool split between the runs
     /// open on it.
     CodeResultSessionMemoryBytes,
+    /// Bytes of image forms one model call's context takes when its host
+    /// names no room of its own (OF-329's lazy images). Past the room each
+    /// image steps down its ladder: the full image, then a thumbnail beside
+    /// its description, then the description alone, each with its view
+    /// handle. An image no form of which fits the room a read had left is
+    /// served as its handle alone, and asks whether everything is okay: the
+    /// crossing measures the bytes its smallest form needed.
+    ImageRoomBytes,
+    /// Readers one run has queued and not yet started. Past it asks whether
+    /// everything is okay and keeps queueing; it never refuses and never
+    /// bounds the active window.
+    CodeReaderBacklog,
+    /// Options one ask offers (`tasks.ask` `what.options`). Every option is
+    /// kept and validated past it.
+    AskOptions,
+    /// UTF-8 bytes of one ask option's display text, each option measured on
+    /// its own. The text is kept whole; a board or UI shows its own preview.
+    AskOptionTextBytes,
+    /// Context references one ask names (`what.context_refs`). Each is still
+    /// read and held to its disclosure past it.
+    AskContextRefs,
+    /// Recipients one ask resolves to, each a member TASK of its group.
+    AskRecipients,
+    /// MessagePack bytes of one ask spec as its caller sent it, before its
+    /// task's class fills it in.
+    AskSpecMsgpackBytes,
+    /// Reminder delays one ask carries once its class's are inherited.
+    AskReminders,
+    /// Provenance references one ask answer cites (`tasks.answer`).
+    AnswerProvenanceRefs,
+    /// Distinct wait identities one ask holds, consumed ones included: the
+    /// step keys external `tasks.wait` calls bind, or the waiting steps of
+    /// one run branch.
+    AskWaitIdentities,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 16] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
         Self::CodeResultMemoryBytes,
         Self::CodeResultSessionMemoryBytes,
+        Self::ImageRoomBytes,
+        Self::CodeReaderBacklog,
+        Self::AskOptions,
+        Self::AskOptionTextBytes,
+        Self::AskContextRefs,
+        Self::AskRecipients,
+        Self::AskSpecMsgpackBytes,
+        Self::AskReminders,
+        Self::AnswerProvenanceRefs,
+        Self::AskWaitIdentities,
     ];
 
     /// The config key that sets the row.
@@ -64,6 +108,16 @@ impl EngineLimit {
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
             Self::CodeResultMemoryBytes => "limits.code_result_memory_bytes",
             Self::CodeResultSessionMemoryBytes => "limits.code_result_session_memory_bytes",
+            Self::ImageRoomBytes => "limits.image_room_bytes",
+            Self::CodeReaderBacklog => "limits.code_reader_backlog",
+            Self::AskOptions => "limits.ask_options",
+            Self::AskOptionTextBytes => "limits.ask_option_text_bytes",
+            Self::AskContextRefs => "limits.ask_context_refs",
+            Self::AskRecipients => "limits.ask_recipients",
+            Self::AskSpecMsgpackBytes => "limits.ask_spec_msgpack_bytes",
+            Self::AskReminders => "limits.ask_reminders",
+            Self::AnswerProvenanceRefs => "limits.answer_provenance_refs",
+            Self::AskWaitIdentities => "limits.ask_wait_identities",
         }
     }
 
@@ -76,6 +130,16 @@ impl EngineLimit {
             Self::CodeResultScanBytes => 256 << 20,
             Self::CodeResultMemoryBytes => memory_share(8),
             Self::CodeResultSessionMemoryBytes => memory_share(64),
+            Self::ImageRoomBytes => 32 << 20,
+            Self::CodeReaderBacklog => 256,
+            Self::AskOptions => 65_536,
+            Self::AskOptionTextBytes => 1 << 20,
+            Self::AskContextRefs => 65_536,
+            Self::AskRecipients => 65_536,
+            Self::AskSpecMsgpackBytes => 256 << 20,
+            Self::AskReminders => 65_536,
+            Self::AnswerProvenanceRefs => 65_536,
+            Self::AskWaitIdentities => 1 << 20,
         }
     }
 }

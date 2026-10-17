@@ -108,8 +108,15 @@ impl SyncConnection {
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
         let mut promotion_rx = self.manager.subscribe_promotions();
+        let mut left_rx = self.left.subscribe();
+        self.running.send_replace(true);
 
         loop {
+            // A member who left the shared vault this env holds never
+            // reconnects (OF-158).
+            if *left_rx.borrow_and_update() {
+                break;
+            }
             // A residence-mode switch takes effect at this connect's hello.
             client.config.residence_mode = *self.mode.borrow();
             // Attempt connection
@@ -170,10 +177,14 @@ impl SyncConnection {
                 _ = &mut shutdown_rx => {
                     break;
                 }
+                _ = left_rx.wait_for(|left| *left) => {
+                    break;
+                }
             }
         }
 
         self.manager.outbound().detach();
+        self.running.send_replace(false);
         Ok(event_rx)
     }
 
@@ -185,6 +196,7 @@ impl SyncConnection {
     ) -> Result<crate::sync::carrier::SyncSocket, String> {
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
+        client.home_peer = crate::authority::PeerMachine::Unknown;
         // Sync pulls the full root snapshot. The upgrade therefore proves an
         // unattenuated logged slip with a fresh holder signature; a device-key
         // lease or an issuer secret never grants this read. Each reconnect has
@@ -195,26 +207,33 @@ impl SyncConnection {
         let mut request = url
             .into_client_request()
             .map_err(|e| format!("WS connect failed: {e}"))?;
+        let mut binding = None;
         if let Some(credential) = &self.config.client_config.transport_credential {
-            credential
-                .sign_upgrade(
-                    self.manager.vault(),
-                    self.manager.vault().store.clock.wall_now(),
-                    &mut request,
-                )
-                .map_err(str::to_owned)?;
+            binding = Some(
+                credential
+                    .sign_upgrade(
+                        self.manager.vault(),
+                        self.manager.vault().store.clock.wall_now(),
+                        &mut request,
+                    )
+                    .map_err(str::to_owned)?,
+            );
         } else if !self.config.client_config.auth_token.is_empty() {
             let header_value = format!("Bearer {}", self.config.client_config.auth_token)
                 .parse()
                 .map_err(|_| "Auth token is not a valid header value".to_string())?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
         }
-        let ws_stream = crate::sync::carrier::connect_sync_socket(
+        let (ws_stream, response) = crate::sync::carrier::connect_sync_socket(
             request,
             self.config.client_config.mesh_dialer.as_deref(),
         )
         .await
         .map_err(|e| format!("WS connect failed: {e}"))?;
+        // Every send on this socket is judged for the machine the home
+        // proved over this upgrade's own proof (OF-534 G6), before the first.
+        client.home_peer =
+            crate::sync::home_proof::home_peer(self.manager.vault(), &response, binding.as_ref());
 
         let (mut write, mut read) = ws_stream.split();
 
@@ -487,6 +506,12 @@ impl SyncConnection {
         queued: Vec<QueuedUpdate>,
     ) -> Result<Vec<QueuedUpdate>, String> {
         let mut sent = Vec::with_capacity(queued.len());
+        let mut frames = Vec::new();
+        let mut size = 1;
+        let mut tick = tokio::time::interval(Duration::from_millis(
+            u64::from(client.config.sync_debounce_ms).max(1),
+        ));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         for update in queued {
             // Mirror the queued ops into the LOCAL window doc first:
             // convergence is confirmed by VV equality with the server,
@@ -510,6 +535,11 @@ impl SyncConnection {
                 UpdateVerdict::Withheld => continue,
                 UpdateVerdict::Uninspectable => break,
             }
+            // A window the home refused to grant again keeps its rows queued,
+            // unsent; they hold back no other window's clear.
+            if !client.residence_granted(&update.window_key) {
+                continue;
+            }
             // Re-encode as WindowSync wire message
             let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
                 residence_update_frame(update.seq, &update.window_key, &update.encoded)
@@ -522,11 +552,33 @@ impl SyncConnection {
                 .into_result()
             }
             .map_err(|e| format!("Queue replay encode failed: {e}"))?;
+            if !super::node_batch::fits(&frames, size, &msg).map_err(|e| e.to_string())? {
+                tick.tick().await;
+                let batch = transport::encode_node_batch(&frames)
+                    .into_result()
+                    .map_err(|e| e.to_string())?;
+                write
+                    .send(Message::Binary(batch.into()))
+                    .await
+                    .map_err(|e| format!("Queue replay failed: {e}"))?;
+                frames.clear();
+                size = 1;
+                // A single member still has to fit inside its BATCH envelope.
+                super::node_batch::fits(&frames, size, &msg).map_err(|e| e.to_string())?;
+            }
+            size += 4 + msg.len();
+            frames.push(msg);
+            sent.push(update);
+        }
+        if !frames.is_empty() {
+            tick.tick().await;
+            let batch = transport::encode_node_batch(&frames)
+                .into_result()
+                .map_err(|e| e.to_string())?;
             write
-                .send(Message::Binary(msg.into()))
+                .send(Message::Binary(batch.into()))
                 .await
                 .map_err(|e| format!("Queue replay failed: {e}"))?;
-            sent.push(update);
         }
         Ok(sent)
     }

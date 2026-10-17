@@ -5,12 +5,13 @@ use super::policy::{
 };
 use super::types::{invalid, paired_valid};
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt,
-    DecisionRung, DecisionTime, HumanAskReason, PairedReading, PersonChangedAnswer, ProviderPin,
-    Reasoning, ReasoningCause, StopCause, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
+    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, ImagePin, PairedReading,
+    PersonChangedAnswer, ProviderPin, Reasoning, ReasoningCause, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -90,6 +91,9 @@ pub struct DecisionCall<'a> {
     /// Images the question reads, each filling the state field of its name. Only a
     /// provider that reads images gets a call with any.
     pub images: &'a [DecisionImage],
+    /// Audio clips the question reads, each filling the state field of its name. Only a
+    /// provider that reads audio gets a call with any.
+    pub audio: &'a [DecisionAudio],
     /// A JSON object of at most [`MAX_DECISION_STATE_BYTES`]; never an implicit vault dump.
     pub state: &'a Value,
     /// A provider with a native deadline gets [`RetrievalDeadline::decision_time_left`], and
@@ -104,6 +108,7 @@ pub struct DecisionPack<'a> {
     pub questions: &'a [&'a DecisionQuestion],
     pub evidence: &'a [EntityId],
     pub images: &'a [DecisionImage],
+    pub audio: &'a [DecisionAudio],
     pub state: &'a Value,
     pub deadline: &'a RetrievalDeadline,
 }
@@ -115,6 +120,7 @@ impl<'a> DecisionPack<'a> {
             question,
             evidence: self.evidence,
             images: self.images,
+            audio: self.audio,
             state: self.state,
             deadline: self.deadline,
         })
@@ -146,20 +152,24 @@ impl ProviderCapability {
             AnswerContract::Noul => true,
             AnswerContract::Choice { options } => options.len() <= self.max_options,
             AnswerContract::Score { .. } => self.score,
-            // A box is found in an image: the ladder also asks the provider whether it
-            // reads images.
-            AnswerContract::Box => true,
+            // A box or a point is found in an image: the ladder also asks the provider
+            // whether it reads images.
+            AnswerContract::Box | AnswerContract::Point => true,
         }
     }
 }
 
-/// Whether `provider` can take `question` over `images`.
+/// Whether `provider` can take `question` over `images` and `audio`. A call carrying both
+/// needs a provider that reads both; the ladder never drops one to fit.
 fn takes(
     provider: &dyn DecisionProvider,
     question: &DecisionQuestion,
     images: &[DecisionImage],
+    audio: &[DecisionAudio],
 ) -> bool {
-    provider.capability().takes(question) && (images.is_empty() || provider.reads_images())
+    provider.capability().takes(question)
+        && (images.is_empty() || provider.reads_images())
+        && (audio.is_empty() || provider.reads_audio())
 }
 
 /// Providers see only caller-prepared, access-checked evidence references and the state the
@@ -173,8 +183,18 @@ pub trait DecisionProvider: Send + Sync {
         ProviderCapability::default()
     }
     /// Whether it reads images. The ladder skips a provider that does not for a call with
-    /// images, and so for every Box question.
+    /// images, and so for every Box or Point question.
     fn reads_images(&self) -> bool {
+        false
+    }
+    /// The long edge it fits each image to before sending it; none when it sends the
+    /// pixels as handed in. The receipt pins what each measurement was sent.
+    fn image_edge(&self) -> Option<u32> {
+        None
+    }
+    /// Whether it hears audio clips. The ladder skips a provider that does not for a call
+    /// with any.
+    fn reads_audio(&self) -> bool {
         false
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -246,6 +266,14 @@ pub trait DecisionModel: Send + Sync {
     fn reads_images(&self) -> bool {
         false
     }
+    /// See [`DecisionProvider::image_edge`].
+    fn image_edge(&self) -> Option<u32> {
+        None
+    }
+    /// See [`DecisionProvider::reads_audio`].
+    fn reads_audio(&self) -> bool {
+        false
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -284,6 +312,12 @@ impl DecisionProvider for ModelDecisionProvider {
     fn reads_images(&self) -> bool {
         self.model.reads_images()
     }
+    fn image_edge(&self) -> Option<u32> {
+        self.model.image_edge()
+    }
+    fn reads_audio(&self) -> bool {
+        self.model.reads_audio()
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)
     }
@@ -303,6 +337,8 @@ pub struct HumanDecisionRequest {
     pub prior_provider: Option<ProviderPin>,
     /// Host-issued versioned queue identity; the host renders its own text.
     pub queue_pin: ProviderPin,
+    /// Who the ask goes to, as the caller bound it ([`DecisionLadder::ask_to`]).
+    pub to: AskTo,
 }
 
 impl HumanDecisionRequest {
@@ -343,6 +379,136 @@ pub trait HumanDecisionQueue: Send + Sync {
     fn queue(&self, request: HumanDecisionRequest) -> Result<()>;
 }
 
+/// A role an ask can go to (Q3 by role). A role names authority, not a person: the host
+/// resolves who holds it when the ask is queued, and the answer door rechecks it. The
+/// model asks for escalation; it never names the role or the actor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "role", rename_all = "snake_case")]
+pub enum AskRole {
+    /// The actor responsible for what the question is over (a schedule's, a question's or
+    /// a unit's), as the caller binds it; with a project, the chain then walks that
+    /// project's boards.
+    Responsible {
+        #[serde(with = "super::codec::entity")]
+        actor: EntityId,
+        #[serde(default, with = "super::codec::optional_entity")]
+        project: Option<EntityId>,
+    },
+    /// A project's effective board; the chain then walks its parents' boards.
+    Board {
+        #[serde(with = "super::codec::entity")]
+        project: EntityId,
+    },
+    /// The vault's live owners, where every chain ends.
+    Owner,
+}
+
+impl AskRole {
+    /// Where the role sits on a chain.
+    #[must_use]
+    pub fn rank(&self) -> RoleRank {
+        match self {
+            Self::Responsible { .. } => RoleRank::Responsible,
+            Self::Board { .. } => RoleRank::Board,
+            Self::Owner => RoleRank::Owner,
+        }
+    }
+}
+
+/// How far up a chain a role sits: an ask climbs from its role toward the owners.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoleRank {
+    Responsible,
+    Board,
+    Owner,
+}
+
+/// What an answer to an ask authorises. An e-signature or a person-authorised payment
+/// resolves only to a natural person, whoever else holds the role.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskAct {
+    #[default]
+    Judgment,
+    ESignature,
+    Payment,
+}
+
+impl AskAct {
+    /// Whether only a natural person may answer.
+    #[must_use]
+    pub fn person_only(self) -> bool {
+        matches!(self, Self::ESignature | Self::Payment)
+    }
+}
+
+/// Who a call's ask goes to: bound by the caller from trusted context, never from
+/// model-authored state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AskTo {
+    /// The role asked first.
+    pub role: AskRole,
+    /// The highest rank the ask may climb to.
+    pub ceiling: RoleRank,
+    pub act: AskAct,
+}
+
+impl AskTo {
+    /// The vault's owners, for a judgment: where an ask goes when its caller names no role.
+    #[must_use]
+    pub fn owner() -> Self {
+        Self {
+            role: AskRole::Owner,
+            ceiling: RoleRank::Owner,
+            act: AskAct::Judgment,
+        }
+    }
+
+    /// A role at or under its ceiling.
+    pub fn validate(&self) -> Result<()> {
+        if self.role.rank() > self.ceiling {
+            return Err(invalid("an ask's role is above its ceiling"));
+        }
+        Ok(())
+    }
+}
+
+/// Whether a role holder is a natural person or a bound agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HolderKind {
+    Person,
+    Agent,
+}
+
+/// A live actor holding a role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoleHolder {
+    #[serde(with = "super::codec::entity")]
+    pub actor: EntityId,
+    pub kind: HolderKind,
+}
+
+/// A role on an ask's chain and the live actors who held it, as resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedRole {
+    pub role: AskRole,
+    /// Never empty.
+    pub holders: Vec<RoleHolder>,
+}
+
+/// The host's role chain (Q3 by role): the next role an ask goes to.
+pub trait AskRoleResolver: Send + Sync {
+    /// The first role on `to`'s chain after `after` (from `to.role` when none), up to
+    /// `to.ceiling`, with a live holder who may answer for `to.act`. None when no role up
+    /// to the ceiling has one: the ask stays unresolved, never with wider authority.
+    fn next_role(&self, to: &AskTo, after: Option<&AskRole>) -> Result<Option<ResolvedRole>>;
+}
+
 /// Slots are fixed. A step up skips a rung with no provider, up to the dial's
 /// ceiling, and the receipt's pins name every rung that ran. The last rung is a
 /// queue, not a model-produced human answer.
@@ -354,10 +520,16 @@ pub struct DecisionLadder<'a> {
     pub big: Option<&'a dyn DecisionProvider>,
     pub human: &'a dyn HumanDecisionQueue,
     pub human_pin: ProviderPin,
+    /// Who the person rung's ask goes to; none is the vault's owners ([`AskTo::owner`]).
+    /// The caller binds it from trusted context, never the model.
+    pub ask_to: Option<&'a AskTo>,
     /// The host's versioned person question ("ask a person?"). When the dial reaches the
     /// person and the policy has a person row, every read asks it beside the call's
     /// questions as its own typed question.
     pub person: Option<&'a DecisionQuestion>,
+    /// The host's versioned presence question ("is the target in the image?"). A Box or
+    /// Point call through [`Self::run_located`] asks it first.
+    pub presence: Option<&'a DecisionQuestion>,
 }
 
 impl DecisionLadder<'_> {
@@ -409,11 +581,45 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<TypedDecision> {
-        let mut decisions = self.run_pack_images(
+        self.run_media(
+            question,
+            principal,
+            evidence,
+            images,
+            &[],
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        )
+    }
+
+    /// [`Self::run`] over the images and audio clips the question reads. Only providers
+    /// that read every medium the call carries take it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's media, state and clock join the question, its scope, the dial and the policy"
+    )]
+    pub fn run_media(
+        &self,
+        question: &DecisionQuestion,
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+    ) -> Result<TypedDecision> {
+        let mut decisions = self.run_pack_media(
             &[question],
             principal,
             evidence,
             images,
+            audio,
             state,
             dial,
             policy,
@@ -482,6 +688,99 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<Vec<TypedDecision>> {
+        self.run_pack_media(
+            questions,
+            principal,
+            evidence,
+            images,
+            &[],
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        )
+    }
+
+    /// [`Self::run_pack_images`] over audio clips as well. A clip fills the state field of
+    /// its name like an image, and each receipt keeps every clip's evidence ref and
+    /// version, never its samples.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's media, state and clock join the questions, their scope, dial and policy"
+    )]
+    pub fn run_pack_media(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+    ) -> Result<Vec<TypedDecision>> {
+        let pack = self.open(
+            questions,
+            principal,
+            evidence,
+            images,
+            audio,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        )?;
+        let mut readings = pack.readings();
+        let mut first = Vec::with_capacity(questions.len());
+        if dial.first == DecisionRung::Human {
+            first.extend(questions.iter().map(|_| None));
+        } else {
+            // Past the questions-per-call row the pack goes as several requests in turn.
+            let per_call = policy.questions_per_call();
+            for (chunk, readings) in questions
+                .chunks(per_call)
+                .zip(readings.chunks_mut(per_call))
+            {
+                let call = DecisionPack {
+                    questions: chunk,
+                    evidence,
+                    images,
+                    audio,
+                    state,
+                    deadline,
+                };
+                first.extend(
+                    self.read(dial.first, &call, pack.person, readings)?
+                        .into_iter()
+                        .map(Some),
+                );
+            }
+        }
+        self.close(&pack, first, readings)
+    }
+
+    /// A pack's checked routing inputs, before its first read.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the inputs of run_pack_media, checked once for every first read"
+    )]
+    pub(super) fn open<'a>(
+        &'a self,
+        questions: &'a [&'a DecisionQuestion],
+        principal: EntityId,
+        evidence: &'a [EntityId],
+        images: &'a [DecisionImage],
+        audio: &'a [DecisionAudio],
+        state: &'a Value,
+        dial: DecisionDial,
+        policy: &'a DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &'a RetrievalDeadline,
+    ) -> Result<OpenPack<'a>> {
         if questions.is_empty() {
             return Err(invalid("invalid decision pack"));
         }
@@ -498,11 +797,11 @@ impl DecisionLadder<'_> {
         DecisionImage::check_call(
             images,
             state,
-            questions
-                .iter()
-                .any(|question| question.contract == AnswerContract::Box),
+            questions.iter().any(|question| question.contract.locates()),
         )
         .map_err(|_| invalid("invalid decision images"))?;
+        DecisionAudio::check_call(audio, images, state)
+            .map_err(|_| invalid("invalid decision audio"))?;
         dial.band.validate()?;
         if dial.first > dial.ceiling {
             return Err(invalid("invalid decision dial"));
@@ -524,53 +823,51 @@ impl DecisionLadder<'_> {
             .iter()
             .map(|question| policy.resolve(question, reversibility, dial.band))
             .collect::<Result<Vec<_>>>()?;
-        let mut readings = questions
+        Ok(OpenPack {
+            questions,
+            principal,
+            evidence,
+            images,
+            audio,
+            state,
+            dial,
+            rows,
+            person_row,
+            person,
+            policy,
+            reversibility,
+            deadline,
+        })
+    }
+
+    /// Each question's routing after its first read, `first` (none when the dial starts at
+    /// the person).
+    pub(super) fn close(
+        &self,
+        pack: &OpenPack<'_>,
+        first: Vec<Option<Read>>,
+        readings: Vec<Readings>,
+    ) -> Result<Vec<TypedDecision>> {
+        pack.questions
             .iter()
-            .map(|_| Readings::default())
-            .collect::<Vec<_>>();
-        let mut first = Vec::with_capacity(questions.len());
-        if dial.first == DecisionRung::Human {
-            first.extend(questions.iter().map(|_| None));
-        } else {
-            // Past the questions-per-call row the pack goes as several requests in turn.
-            let per_call = policy.questions_per_call();
-            for (chunk, readings) in questions
-                .chunks(per_call)
-                .zip(readings.chunks_mut(per_call))
-            {
-                let pack = DecisionPack {
-                    questions: chunk,
-                    evidence,
-                    images,
-                    state,
-                    deadline,
-                };
-                first.extend(
-                    self.read(dial.first, &pack, person, readings)?
-                        .into_iter()
-                        .map(Some),
-                );
-            }
-        }
-        questions
-            .iter()
-            .zip(rows)
+            .zip(&pack.rows)
             .zip(first)
             .zip(readings)
-            .map(|(((&question, row), first), readings)| {
+            .map(|(((&question, &row), first), readings)| {
                 let route = Route {
                     question,
-                    principal,
-                    evidence,
-                    images,
-                    state,
-                    dial,
+                    principal: pack.principal,
+                    evidence: pack.evidence,
+                    images: pack.images,
+                    audio: pack.audio,
+                    state: pack.state,
+                    dial: pack.dial,
                     row,
-                    person_row,
-                    person,
-                    policy,
-                    reversibility,
-                    deadline,
+                    person_row: pack.person_row,
+                    person: pack.person,
+                    policy: pack.policy,
+                    reversibility: pack.reversibility,
+                    deadline: pack.deadline,
                 };
                 self.route(&route, first, readings)
             })
@@ -590,6 +887,7 @@ impl DecisionLadder<'_> {
             principal,
             evidence,
             images,
+            audio,
             state,
             dial,
             row,
@@ -655,7 +953,7 @@ impl DecisionLadder<'_> {
                 break;
             }
             // A stronger rung, the person's included, starts only while work time is left.
-            match self.next_available(rung, dial.ceiling, question, images) {
+            match self.next_available(rung, dial.ceiling, question, images, audio) {
                 None => {
                     unavailable = true;
                     if let Some(cause) = cause {
@@ -675,6 +973,7 @@ impl DecisionLadder<'_> {
                         questions: &questions,
                         evidence,
                         images,
+                        audio,
                         state,
                         deadline,
                     };
@@ -720,6 +1019,7 @@ impl DecisionLadder<'_> {
                 prior_provider: prior.as_ref().and(readings.pins.last().cloned()),
                 prior,
                 queue_pin: self.human_pin.clone(),
+                to: self.ask_to.cloned().unwrap_or_else(AskTo::owner),
             })?;
             readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
@@ -736,7 +1036,11 @@ impl DecisionLadder<'_> {
         };
         // A rung that abstained answered nothing.
         let answered = answered.filter(|_| outcome.answer != DecisionAnswer::Abstain);
-        let evidence_versions = images.iter().map(|image| image.evidence.clone()).collect();
+        let evidence_versions = images
+            .iter()
+            .map(|image| image.evidence.clone())
+            .chain(audio.iter().map(|clip| clip.evidence.clone()))
+            .collect();
         Ok(TypedDecision {
             answer: outcome.answer,
             probability: outcome.probability,
@@ -761,8 +1065,35 @@ impl DecisionLadder<'_> {
                     answered,
                     reasoning,
                 }),
+                images: readings.images,
             },
         })
+    }
+
+    /// The first rung from `first` up to `ceiling` whose provider reads images when
+    /// `images` and audio when `audio`, for a host that starts a media call there. `None`
+    /// when no rung in that span reads every medium the call carries: the host abstains
+    /// rather than drop one.
+    #[must_use]
+    pub fn first_media_reader(
+        &self,
+        first: DecisionRung,
+        ceiling: DecisionRung,
+        images: bool,
+        audio: bool,
+    ) -> Option<DecisionRung> {
+        let mut rung = first;
+        loop {
+            if self.slot(rung).is_some_and(|provider| {
+                (!images || provider.reads_images()) && (!audio || provider.reads_audio())
+            }) {
+                return Some(rung);
+            }
+            if rung >= ceiling || rung == DecisionRung::Human {
+                return None;
+            }
+            rung = next_rung(rung);
+        }
     }
 
     fn slot(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
@@ -776,6 +1107,28 @@ impl DecisionLadder<'_> {
         }
     }
 
+    /// The first rung from `dial.first` to its ceiling, short of the person, whose provider
+    /// takes `question` over `images`. The ladder fails a call whose first rung cannot take
+    /// it, so a caller with images starts there, or asks without them and says so.
+    pub fn first_taking(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+    ) -> Option<DecisionRung> {
+        let mut rung = dial.first;
+        while rung <= dial.ceiling && rung != DecisionRung::Human {
+            if self
+                .slot(rung)
+                .is_some_and(|provider| takes(provider, question, images, &[]))
+            {
+                return Some(rung);
+            }
+            rung = next_rung(rung);
+        }
+        None
+    }
+
     /// The next rung above `rung` that can answer `question`, up to `ceiling`. The person's
     /// queue is always present (ARCH-0076 #posture: no house model sends the step to the
     /// big model or the person).
@@ -785,13 +1138,14 @@ impl DecisionLadder<'_> {
         ceiling: DecisionRung,
         question: &DecisionQuestion,
         images: &[DecisionImage],
+        audio: &[DecisionAudio],
     ) -> Option<DecisionRung> {
         while rung < ceiling {
             rung = next_rung(rung);
             if rung == DecisionRung::Human
                 || self
                     .slot(rung)
-                    .is_some_and(|provider| takes(provider, question, images))
+                    .is_some_and(|provider| takes(provider, question, images, audio))
             {
                 return Some(rung);
             }
@@ -818,38 +1172,75 @@ impl DecisionLadder<'_> {
         if !pack
             .questions
             .iter()
-            .all(|question| takes(provider, question, pack.images))
+            .all(|question| takes(provider, question, pack.images, pack.audio))
         {
             return Err(invalid("decision provider cannot take the question"));
         }
-        let count = pack.questions.len();
         if !pack.deadline.decision_may_start() {
-            return Ok((0..count).map(|_| Read::NotStarted).collect());
+            return Ok((0..pack.questions.len())
+                .map(|_| Read::NotStarted)
+                .collect());
         }
-        let answers = match ask(provider, pack, person) {
-            Ok(answers) => answers,
-            Err(_) if !pack.deadline.decision_may_start() => {
-                return Ok((0..count).map(|_| Read::Cut).collect());
+        let reads = take(&pin, pack, ask(provider, pack, person), readings)?;
+        // Each measurement that answered pins what it was sent of every image.
+        if !pack.images.is_empty() {
+            let edge = provider.image_edge();
+            for (read, readings) in reads.iter().zip(readings.iter_mut()) {
+                if !matches!(read, Read::Answer(_)) {
+                    continue;
+                }
+                for image in pack.images {
+                    if readings
+                        .images
+                        .iter()
+                        .any(|row| row.provider == pin && row.name == image.name)
+                    {
+                        continue;
+                    }
+                    let row = image
+                        .pin(pin.clone(), edge)
+                        .map_err(|_| invalid("invalid decision images"))?;
+                    readings.images.push(row);
+                }
             }
-            Err(error) => return Err(error),
-        };
-        if pack.deadline.answer_due() {
-            return Ok((0..count).map(|_| Read::Cut).collect());
-        }
-        let mut reads = Vec::with_capacity(answers.len());
-        for ((question, answer), readings) in pack.questions.iter().zip(answers).zip(readings) {
-            answer.validate(question)?;
-            if let Some(reading) = answer.paired {
-                readings.paired.push(reading.bind(pin.clone()));
-            }
-            if let Some(reading) = answer.person {
-                readings.person.push(reading.bind(pin.clone()));
-            }
-            readings.pins.push(pin.clone());
-            reads.push(Read::Answer(answer));
         }
         Ok(reads)
     }
+}
+
+/// What one provider request, `answered`, gave each pack question on the call's clock. A
+/// failure once the work time is spent, or a reply after the answer's time, is the cut; a
+/// failure with time left fails the call.
+pub(super) fn take(
+    pin: &ProviderPin,
+    pack: &DecisionPack<'_>,
+    answered: Result<Vec<ProviderDecision>>,
+    readings: &mut [Readings],
+) -> Result<Vec<Read>> {
+    let count = pack.questions.len();
+    let answers = match answered {
+        Ok(answers) => answers,
+        Err(_) if !pack.deadline.decision_may_start() => {
+            return Ok((0..count).map(|_| Read::Cut).collect());
+        }
+        Err(error) => return Err(error),
+    };
+    if pack.deadline.answer_due() {
+        return Ok((0..count).map(|_| Read::Cut).collect());
+    }
+    let mut reads = Vec::with_capacity(answers.len());
+    for ((question, answer), readings) in pack.questions.iter().zip(answers).zip(readings) {
+        answer.validate(question)?;
+        if let Some(reading) = answer.paired {
+            readings.paired.push(reading.bind(pin.clone()));
+        }
+        if let Some(reading) = answer.person {
+            readings.person.push(reading.bind(pin.clone()));
+        }
+        readings.pins.push(pin.clone());
+        reads.push(Read::Answer(answer));
+    }
+    Ok(reads)
 }
 
 /// The person question's read shape, the one seam for it (test 6b: a separate read, not
@@ -864,40 +1255,79 @@ fn ask(
     let answers = match (person, pack.call(0)) {
         (None, Some(call)) if pack.questions.len() == 1 => vec![provider.decide(&call)?],
         (None, _) => provider.decide_pack(pack)?,
-        (Some(person), _) => {
-            let questions = pack
-                .questions
-                .iter()
-                .copied()
-                .chain([person])
-                .collect::<Vec<_>>();
-            let mut answers = provider.decide_pack(&DecisionPack {
+        (Some(_), _) => {
+            let questions = asked(pack, person);
+            provider.decide_pack(&DecisionPack {
                 questions: &questions,
                 ..*pack
-            })?;
-            if answers.len() != questions.len() {
-                return Err(invalid("a pack answers every question"));
-            }
-            let asked = answers.pop().expect("the person question's answer");
-            asked.validate(person)?;
-            let reading = match (&asked.answer, asked.probability) {
-                (DecisionAnswer::Noul(_), Some(probability)) => Some(PairedAnswer {
-                    question: person.id,
-                    question_version: person.version,
-                    probability,
-                }),
-                _ => None,
-            };
-            for answer in &mut answers {
-                answer.person = reading;
-            }
-            answers
+            })?
         }
     };
-    if answers.len() != pack.questions.len() {
+    joined(answers, pack.questions.len(), person)
+}
+
+/// The questions one read asks: the pack's, then the person question when there is one.
+pub(super) fn asked<'q>(
+    pack: &DecisionPack<'q>,
+    person: Option<&'q DecisionQuestion>,
+) -> Vec<&'q DecisionQuestion> {
+    pack.questions.iter().copied().chain(person).collect()
+}
+
+/// `answers` to [`asked`]'s questions as the pack's `count` answers, the person question's
+/// P(yes) joined to each as its person reading.
+pub(super) fn joined(
+    mut answers: Vec<ProviderDecision>,
+    count: usize,
+    person: Option<&DecisionQuestion>,
+) -> Result<Vec<ProviderDecision>> {
+    if let Some(person) = person {
+        if answers.len() != count + 1 {
+            return Err(invalid("a pack answers every question"));
+        }
+        let asked = answers.pop().expect("the person question's answer");
+        asked.validate(person)?;
+        let reading = match (&asked.answer, asked.probability) {
+            (DecisionAnswer::Noul(_), Some(probability)) => Some(PairedAnswer {
+                question: person.id,
+                question_version: person.version,
+                probability,
+            }),
+            _ => None,
+        };
+        for answer in &mut answers {
+            answer.person = reading;
+        }
+    }
+    if answers.len() != count {
         return Err(invalid("a pack answers every question"));
     }
     Ok(answers)
+}
+
+/// One pack's checked routing inputs, shared by its questions.
+pub(super) struct OpenPack<'a> {
+    questions: &'a [&'a DecisionQuestion],
+    principal: EntityId,
+    evidence: &'a [EntityId],
+    images: &'a [DecisionImage],
+    audio: &'a [DecisionAudio],
+    state: &'a Value,
+    dial: DecisionDial,
+    rows: Vec<LearnedBand>,
+    person_row: Option<PersonThreshold>,
+    /// The person question, asked beside the pack's when the dial reaches the person.
+    pub(super) person: Option<&'a DecisionQuestion>,
+    policy: &'a DecisionBandPolicy,
+    reversibility: Reversibility,
+    deadline: &'a RetrievalDeadline,
+}
+
+impl OpenPack<'_> {
+    /// One empty reading record per question.
+    pub(super) fn readings(&self) -> Vec<Readings> {
+        self.questions.iter().map(|_| Readings::default()).collect()
+    }
 }
 
 /// One question's routing inputs, shared by its reads.
@@ -907,6 +1337,7 @@ struct Route<'a> {
     principal: EntityId,
     evidence: &'a [EntityId],
     images: &'a [DecisionImage],
+    audio: &'a [DecisionAudio],
     state: &'a Value,
     dial: DecisionDial,
     row: LearnedBand,
@@ -926,7 +1357,7 @@ fn validate_state(state: &Value) -> Result<()> {
 }
 
 /// What one provider read gave the call.
-enum Read {
+pub(super) enum Read {
     Answer(ProviderDecision),
     /// No work time was left to start it.
     NotStarted,
@@ -967,10 +1398,11 @@ pub(super) fn millis(time: std::time::Duration) -> u64 {
 
 /// What a run's measurements leave on the receipt.
 #[derive(Default)]
-struct Readings {
+pub(super) struct Readings {
     pins: Vec<ProviderPin>,
     paired: Vec<PairedReading>,
     person: Vec<PairedReading>,
+    images: Vec<ImagePin>,
 }
 
 /// A missing person reading never asks; it is not P(yes) = 0, it is no reading.

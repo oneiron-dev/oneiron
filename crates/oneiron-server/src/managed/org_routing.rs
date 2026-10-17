@@ -163,7 +163,9 @@ impl OrgVaultRouter {
                     Some("data directory")
                 } else if [&route.http_socket, &route.ctl_socket]
                     .iter()
-                    .any(|socket| *socket == &existing.http_socket || *socket == &existing.ctl_socket)
+                    .any(|socket| {
+                        *socket == &existing.http_socket || *socket == &existing.ctl_socket
+                    })
                 {
                     Some("socket")
                 } else {
@@ -231,10 +233,10 @@ impl ManagedArgs {
                 }
             }
         };
-        VaultBinding::new(self.vault_name.clone(), self.data_dir.clone(), tenancy).map_err(|error| {
-            ManagedError::VaultRoutingRejected {
+        VaultBinding::new(self.vault_name.clone(), self.data_dir.clone(), tenancy).map_err(
+            |error| ManagedError::VaultRoutingRejected {
                 reason: error.to_string(),
-            }
-        })
+            },
+        )
     }
 }

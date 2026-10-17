@@ -51,6 +51,17 @@ pub enum ManagedError {
     #[error("--keystore-dir must be an absolute path")]
     RelativeKeystoreDir,
 
+    #[error("--{flag} must be an absolute path")]
+    RelativeRecipientFile { flag: &'static str },
+
+    #[error("--artifact-http-socket must be an absolute path")]
+    RelativeArtifactSocket,
+
+    #[error(
+        "--artifact-domains names where the artifact origin answers; it needs --artifact-http-socket"
+    )]
+    ArtifactDomainsWithoutSocket,
+
     #[error("--{flag} must be a non-negative file descriptor, got {value}")]
     InvalidFd { flag: &'static str, value: i32 },
 
@@ -133,6 +144,21 @@ pub struct ManagedArgs {
     /// Where this install keeps its this-device-only key slots, a place the
     /// supervisor chose. Without it managed mode installs no keystore.
     pub keystore_dir: Option<PathBuf>,
+    /// The node's managed escrow recipient's public key file
+    /// (`--escrow-recipient-file`).
+    pub escrow_recipient: Option<PathBuf>,
+    /// The owner's break-glass recipient's public key file
+    /// (`--break-glass-recipient-file`).
+    pub break_glass_recipient: Option<PathBuf>,
+    /// Where the vault spools its escrow capsules for the node to ship
+    /// (`--escrow-outbox-dir`).
+    pub escrow_outbox: Option<PathBuf>,
+    /// The artifact origin's socket (`--artifact-http-socket`), when the
+    /// supervisor gave the vault one.
+    pub artifact_socket: Option<PathBuf>,
+    /// The domains the artifact origin answers under, as the cloud named
+    /// them: `<vault>.<domain>` and `<app>--<vault>.<domain>`.
+    pub artifact_domains: Vec<String>,
 }
 
 impl ManagedArgs {
@@ -220,13 +246,45 @@ impl ManagedArgs {
             credentials_fd,
             vsock_guest: args.vsock_guest,
             keystore_dir: args.keystore_dir.clone(),
+            escrow_recipient: args.escrow_recipient_file.clone(),
+            break_glass_recipient: args.break_glass_recipient_file.clone(),
+            escrow_outbox: args.escrow_outbox_dir.clone(),
+            artifact_socket: args.artifact_http_socket.clone(),
+            artifact_domains: args
+                .artifact_domains
+                .iter()
+                .flatten()
+                .map(|domain| {
+                    oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain)
+                })
+                .filter(|domain| !domain.is_empty())
+                .collect(),
         };
+        if managed
+            .artifact_socket
+            .as_deref()
+            .is_some_and(std::path::Path::is_relative)
+        {
+            return Err(ManagedError::RelativeArtifactSocket);
+        }
+        if managed.artifact_socket.is_none() && !managed.artifact_domains.is_empty() {
+            return Err(ManagedError::ArtifactDomainsWithoutSocket);
+        }
         if managed
             .keystore_dir
             .as_deref()
             .is_some_and(std::path::Path::is_relative)
         {
             return Err(ManagedError::RelativeKeystoreDir);
+        }
+        for (flag, path) in [
+            ("escrow-recipient-file", &managed.escrow_recipient),
+            ("break-glass-recipient-file", &managed.break_glass_recipient),
+            ("escrow-outbox-dir", &managed.escrow_outbox),
+        ] {
+            if path.as_deref().is_some_and(std::path::Path::is_relative) {
+                return Err(ManagedError::RelativeRecipientFile { flag });
+            }
         }
         // Non-negative is not enough. Both descriptors are adopted by owners
         // that close what they hold — `read_managed_credentials` and
@@ -281,6 +339,8 @@ impl ManagedArgs {
             vault_path: self.data_dir.clone(),
             auth_secret: None,
             allow_unauthenticated: true,
+            // Browser origins are argv policy too, for the external shared UI.
+            allowed_origins: args.allowed_origins.clone().unwrap_or_default(),
             dimensions: args.dimensions.unwrap_or(defaults.dimensions),
             map_size: args.map_size.unwrap_or(defaults.map_size),
             // Argv only: the usual resolver probes HOME and the XDG roots,
@@ -305,6 +365,12 @@ impl ManagedArgs {
         };
         if let Some(log_level) = args.log_level.clone() {
             config.log_level = log_level;
+        }
+        // The artifact origin serves this vault at its own name under each
+        // domain the supervisor gave.
+        if self.artifact_socket.is_some() {
+            config.artifact_domains = self.artifact_domains.clone();
+            config.artifact_vault_name = Some(self.vault_name.clone());
         }
         config
     }
@@ -446,6 +512,21 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.keystore_dir.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "escrow-recipient-file",
+        |args| args.escrow_recipient_file.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "break-glass-recipient-file",
+        |args| args.break_glass_recipient_file.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "escrow-outbox-dir",
+        |args| args.escrow_outbox_dir.is_some(),
+        ArgvUse::Read,
+    ),
     // The bind: the supervisor's socket, never a host:port.
     (
         "host",
@@ -465,7 +546,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "artifact-domains",
         |args| args.artifact_domains.is_some(),
-        ArgvUse::Refused(NO_HOST_PORT_REASON),
+        ArgvUse::Read,
+    ),
+    (
+        "artifact-http-socket",
+        |args| args.artifact_http_socket.is_some(),
+        ArgvUse::Read,
     ),
     (
         "artifact-vault-name",
@@ -501,7 +587,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "allowed-origins",
         |args| args.allowed_origins.is_some(),
-        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+        ArgvUse::Read,
     ),
     (
         "trusted-proxies",

@@ -30,13 +30,22 @@ pub(super) fn brief_share_receipts(
                 return Ok(());
             };
             let trace = crate::receipt::gate_decision_receipt(&gate).policy_trace;
-            let created =
-                brief_share_receipt(id, &share, &admission, &trace, share.created_at, false);
+            let travel = crate::share_travel::brief_travel_in_txn(vault, txn, &id)?;
+            let created = brief_share_receipt(
+                id,
+                &share,
+                &admission,
+                &travel,
+                &trace,
+                share.created_at,
+                false,
+            );
             if query.matches(&created) {
                 receipts.push(created);
             }
             if let Some(revoked_at) = share.revoked_at {
-                let revoked = brief_share_receipt(id, &share, &admission, &trace, revoked_at, true);
+                let revoked =
+                    brief_share_receipt(id, &share, &admission, &travel, &trace, revoked_at, true);
                 if query.matches(&revoked) {
                     receipts.push(revoked);
                 }
@@ -51,6 +60,7 @@ fn brief_share_receipt(
     id: EntityId,
     share: &Share,
     admission: &ShareAdmission,
+    travel: &crate::share_travel::TravelChoice,
     trace: &[String],
     occurred_at: u64,
     revoked: bool,
@@ -69,6 +79,10 @@ fn brief_share_receipt(
         (
             "redaction_scope_hash".to_owned(),
             share.redaction_scope_hash(),
+        ),
+        (
+            crate::share_travel::FIELD_TRAVELLED.to_owned(),
+            crate::share_travel::travelled_value(travel.born_with.iter().copied()),
         ),
     ]);
     let gate_ref = format!("gate:{}", admission.gate_id.to_hex());

@@ -192,6 +192,7 @@ impl RunInner {
             facts: PermitFacts {
                 selector: selector.map(str::to_owned),
                 subject: request.model.as_str().to_owned(),
+                model: Some(request.model.clone()),
                 offer: offer.offer.clone(),
                 route: offer.route.key(),
                 locality: offer.locality,
@@ -201,6 +202,7 @@ impl RunInner {
                 reserved_units,
                 unit: line.unit.clone(),
                 allocation: allocation.as_ref().map(|(reference, _)| reference.clone()),
+                allocation_unit: allocation.as_ref().map(|(_, hold)| hold.unit.clone()),
                 allocation_reserved_units: allocation
                     .as_ref()
                     .and_then(|(_, hold)| hold.meter.reserved_for(&hold.lease)),
@@ -263,6 +265,7 @@ impl RunInner {
             facts: PermitFacts {
                 selector: None,
                 subject: connector.connector.clone(),
+                model: None,
                 offer: connector.connector.clone(),
                 route: connector.route.key(),
                 locality: connector.locality,
@@ -272,6 +275,7 @@ impl RunInner {
                 reserved_units: reserve,
                 unit: line.unit.clone(),
                 allocation: allocation.as_ref().map(|(reference, _)| reference.clone()),
+                allocation_unit: allocation.as_ref().map(|(_, hold)| hold.unit.clone()),
                 allocation_reserved_units: allocation
                     .as_ref()
                     .and_then(|(_, hold)| hold.meter.reserved_for(&hold.lease)),
@@ -325,10 +329,13 @@ impl RunInner {
             });
         };
         let units = priced(native_units, native, &unit, rates)?;
-        let lease = meter.admit_reserve(units).map_err(|denied| match denied {
-            BudgetDenied::Exhausted => short(),
-            denied => RunDenied::Budget { denied },
-        })?;
+        let lease = meter
+            .admit_reserve(units)
+            .inspect_err(|denied| self.budget_hit(&reference.id, &meter, denied))
+            .map_err(|denied| match denied {
+                BudgetDenied::Exhausted => short(),
+                denied => RunDenied::Budget { denied },
+            })?;
         Ok(Some((
             reference,
             AllocationHold {

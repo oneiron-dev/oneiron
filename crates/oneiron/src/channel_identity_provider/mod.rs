@@ -11,9 +11,12 @@ mod inbound_types;
 mod line_adapter;
 pub mod mail_placement;
 pub mod mailbox_cursor;
+pub(crate) mod member_mail;
 mod shared_validate;
 mod slack_adapter;
+mod slack_personas;
 mod slack_validate;
+pub mod stalwart;
 #[cfg(test)]
 mod tests;
 
@@ -22,8 +25,8 @@ pub use self::email_adapter::{
 };
 pub use self::inbound_types::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
-    ChannelIdentityProviderProvision, EmailProviderInbound, LineOfficialAccountInbound,
-    SlackProviderInbound,
+    ChannelIdentityProviderProvision, EmailProviderInbound, EmailThreadHeaders,
+    LineOfficialAccountInbound, SlackProviderInbound,
 };
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,

@@ -8,8 +8,8 @@ pub use codec::UsageError;
 pub use ledger::UsageLedger;
 pub use limit::{CachedBudgetLimit, ExchangeRate};
 pub use model::{
-    Money, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent, UsageEventType, UsageMode,
-    UsageRecordResult, UsageRollup, UsageTokenCounts,
+    Money, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent,
+    UsageEventType, UsageMode, UsageRecordResult, UsageRollup, UsageRun, UsageTokenCounts,
 };
 #[cfg(test)]
 mod tests;

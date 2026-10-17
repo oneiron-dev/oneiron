@@ -3,13 +3,19 @@
 //! the objection window and stays effect-free; this module validates each
 //! act's typed plan, claims the matured act in the writer that applies its
 //! effect, and records one receipt that every affected holder is told about.
-//! Erase keeps its own executor (`Memory::execute_completed_entity_erase`).
+//! Erase keeps its own executor (`Memory::execute_completed_entity_erase`);
+//! a Member's or Admin's ask for one is `erase_ask`.
+mod erase_ask;
 mod membership;
+
+pub use erase_ask::{
+    EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
+};
+pub use membership::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
 
 use super::FederationGrantRole as Role;
 use super::pending_act::{LiveActHolder, check_vault, decode, encode, invalid, key};
-use super::record_scope::ScopedRecord;
-use crate::authority::HostSlipIssuer;
+use crate::authority::{HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -109,6 +115,27 @@ pub enum SharedVaultChange {
         member: String,
         role: Role,
     },
+    /// An `add_member` holder invited `member`; nothing is granted yet.
+    MemberInvited {
+        invitation: String,
+        member: String,
+        role: Role,
+        expires_at: u64,
+    },
+    /// `member` accepted the invitation and holds `role` now.
+    InvitationAccepted {
+        invitation: String,
+        member: String,
+        role: Role,
+    },
+    InvitationDeclined {
+        invitation: String,
+        member: String,
+    },
+    InvitationWithdrawn {
+        invitation: String,
+        member: String,
+    },
     MemberRoleChanged {
         member: String,
         from: Role,
@@ -119,6 +146,10 @@ pub enum SharedVaultChange {
     },
     MemberLeft {
         member: String,
+    },
+    OwnerRecovered {
+        from: String,
+        to: String,
     },
 }
 
@@ -140,25 +171,33 @@ pub struct SharedActExecutionReceipt {
     pub revoked_slips: Vec<String>,
     /// The export made for a removed Owner before the removal.
     pub export: Option<SharedActExport>,
+    /// The hash (hex) of the host-signed `OwnerHandover` AUTHORITY_LOG
+    /// entry an ownership change wrote in this writer, which names this
+    /// receipt back. `None` when nothing was signed: a membership change, or
+    /// an act run with no slip issuer.
+    pub authority_entry: Option<String>,
     pub completed_at: u64,
 }
 
-/// What an export-first removal exported for `member`: the record count and
-/// a digest over the exported records, never their content.
+/// What an export-first removal exported for `member`: the record count,
+/// the BLAKE3 of the archive (OF-222), never its content, and the diaries
+/// the export read (OF-490).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedActExport {
     pub member: String,
     pub records: u64,
     pub digest: String,
+    pub diary_reads: Vec<crate::batch::export::ExportDiaryRead>,
 }
 
-/// An executed act's receipt, and for an export-first removal the records
-/// the host delivers to the removed Owner.
+/// An executed act's receipt, and for an export-first removal the archive
+/// of what the removed Owner could read, which the host delivers to them:
+/// the whole-vault archive's shape (OF-222), re-importable into a fresh vault.
 #[derive(Debug, Clone)]
 pub struct SharedActExecution {
     pub receipt: SharedActExecutionReceipt,
-    pub export: Vec<ScopedRecord>,
+    pub export: Option<crate::batch::export::WholeVaultExport>,
 }
 
 /// One recipient's durable notice that a receipt was written.
@@ -329,7 +368,9 @@ impl Vault {
     /// is still a live Owner. The claim, the effect, the receipt and every
     /// recipient's notice commit in one writer, so the act takes effect at
     /// most once; running it again returns the same receipt. With `slips`,
-    /// the capability slips of anyone who lost a role are revoked with it.
+    /// the capability slips of anyone who lost a role are revoked with it,
+    /// and the host signs an ownership change into the authority log as an
+    /// `OwnerHandover` naming the act and its receipt.
     /// An export-first removal exports what its target could read before
     /// the writer opens, and records that export's digest in the receipt.
     pub fn execute_completed_shared_act(
@@ -338,7 +379,19 @@ impl Vault {
         act_id: &str,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecution> {
-        let mut export = self.removal_export(act_id)?;
+        let mut export = self
+            .removal_export(act_id)?
+            .map(|(member, records)| {
+                let ids = records.iter().map(|record| record.id).collect();
+                // Its diary reads are the removed owner's, who receives it.
+                let reader = crate::write_envelope::WriteActor::new(
+                    member,
+                    crate::edge::EdgeActorClass::Human,
+                );
+                self.export_records_archive(&ids, reader)
+                    .map(|archive| (member, records.len() as u64, archive))
+            })
+            .transpose()?;
         let mut txn = self.store.env.write_txn()?;
         let actor = executor.revalidate_person_in_txn(self, &txn)?;
         let act = self
@@ -359,7 +412,7 @@ impl Vault {
             return receipt
                 .map(|receipt| SharedActExecution {
                     receipt,
-                    export: Vec::new(),
+                    export: None,
                 })
                 .ok_or(Error::ConcurrentWrite("authority act already executed"));
         }
@@ -435,7 +488,7 @@ impl Vault {
                 let target = hex_id(&plan.target)?;
                 let successor = plan.successor.as_deref().map(hex_id).transpose()?;
                 if plan.v != PLAN_VERSION
-                    || plan.export_first != export.as_ref().is_some_and(|(of, _)| *of == target)
+                    || plan.export_first != export.as_ref().is_some_and(|(of, ..)| *of == target)
                 {
                     return Err(invalid());
                 }
@@ -462,21 +515,53 @@ impl Vault {
             }
             SharedActKind::Erase => return Err(invalid()),
         };
-        let export = export.take().map(|(member, records)| {
-            let mut digest = blake3::Hasher::new();
-            for record in &records {
-                digest.update(record.id.as_bytes());
-                digest.update(&(record.bytes.len() as u64).to_be_bytes());
-                digest.update(&record.bytes);
+        let mut authority_entry = None;
+        if let Some(issuer) = slips {
+            let handover = match &effect.change {
+                SharedVaultChange::OwnershipTransferred {
+                    from,
+                    to,
+                    from_keeps,
+                } => Some((OwnerHandoverCause::Transfer, from, Some(to), from_keeps)),
+                SharedVaultChange::OwnerRemoved {
+                    target,
+                    successor,
+                    target_keeps,
+                } => Some((
+                    OwnerHandoverCause::Removal,
+                    target,
+                    successor.as_ref(),
+                    target_keeps,
+                )),
+                _ => None,
+            };
+            if let Some((cause, from, to, keeps)) = handover {
+                authority_entry = Some(self.append_owner_handover_in_txn(
+                    &mut txn,
+                    issuer,
+                    OwnerHandover {
+                        shared_vault: act.vault_id,
+                        cause,
+                        from: hex_id(from)?,
+                        to: to.map(|to| hex_id(to)).transpose()?,
+                        from_keeps: keeps.map(|role| role.as_str().to_owned()),
+                        act: Some(act.id.clone()),
+                        proof: None,
+                        receipt: receipt_id.clone(),
+                    },
+                )?);
             }
+        }
+        let export = export.take().map(|(member, records, archive)| {
             let summary = SharedActExport {
                 member: member.to_hex(),
-                records: records.len() as u64,
-                digest: digest.finalize().to_hex().to_string(),
+                records,
+                digest: blake3::hash(archive.bytes()).to_hex().to_string(),
+                diary_reads: archive.diary_reads().to_vec(),
             };
-            (summary, records)
+            (summary, archive)
         });
-        let (summary, records) = export.unzip();
+        let (summary, archive) = export.unzip();
         let receipt = self.record_shared_change_in_txn(
             &mut txn,
             receipt_id,
@@ -486,12 +571,13 @@ impl Vault {
             owners,
             effect,
             summary,
+            authority_entry,
             now,
         )?;
         txn.commit()?;
         Ok(SharedActExecution {
             receipt,
-            export: records.unwrap_or_default(),
+            export: archive,
         })
     }
 
@@ -508,6 +594,7 @@ impl Vault {
         owners: BTreeSet<EntityId>,
         effect: Effect,
         export: Option<SharedActExport>,
+        authority_entry: Option<crate::authority::AuthorityEntryHash>,
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
         let (act_id, request_id) = act.unzip();
@@ -525,6 +612,9 @@ impl Vault {
                 .map(|slip| crate::entity_id::bytes_to_hex_lower(slip))
                 .collect(),
             export,
+            authority_entry: authority_entry
+                .as_ref()
+                .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
             completed_at: now,
         };
         self.store
@@ -599,6 +689,44 @@ impl Vault {
             let (_, bytes) = entry?;
             let outcome: SharedActOutcome = decode(&bytes)?;
             if outcome.vault_id == vault_id {
+                outcomes.push(outcome);
+            }
+        }
+        Ok(outcomes)
+    }
+
+    /// `person`'s own notices of losing the vault: their leave, their
+    /// removal, and an ownership change that left them no role. Read for a
+    /// removed person whose slips no longer authenticate
+    /// (`Vault::removed_member_notices`).
+    pub(crate) fn removal_outcomes_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<Vec<SharedActOutcome>> {
+        let person = person.to_hex();
+        let prefix = key(OUTCOME_PREFIX, &format!("{person}:"));
+        let mut outcomes = Vec::new();
+        for entry in self.store.vault_meta.prefix_iter(txn, &prefix)? {
+            let (_, bytes) = entry?;
+            let outcome: SharedActOutcome = decode(&bytes)?;
+            let lost = match &outcome.change {
+                SharedVaultChange::MemberLeft { member }
+                | SharedVaultChange::MemberRemoved { member } => *member == person,
+                SharedVaultChange::OwnerRemoved {
+                    target,
+                    target_keeps: None,
+                    ..
+                } => *target == person,
+                SharedVaultChange::OwnershipTransferred {
+                    from,
+                    from_keeps: None,
+                    ..
+                }
+                | SharedVaultChange::OwnerRecovered { from, .. } => *from == person,
+                _ => false,
+            };
+            if lost {
                 outcomes.push(outcome);
             }
         }

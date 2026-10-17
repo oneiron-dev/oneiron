@@ -23,6 +23,34 @@ pub enum ChannelIdentityProviderInbound {
     Line(LineOfficialAccountInbound),
 }
 
+/// RFC 5322 threading headers the host parsed at the wire. They join the mail
+/// to its thread through the passport graph (R5), whichever identity got it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmailThreadHeaders {
+    /// The `Message-ID` header, with or without its angle brackets.
+    pub message_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_reply_to: Option<String>,
+}
+
+impl EmailThreadHeaders {
+    /// Builds the header set of one message.
+    #[must_use]
+    pub fn new(
+        message_id: impl Into<String>,
+        references: Vec<String>,
+        in_reply_to: Option<String>,
+    ) -> Self {
+        Self {
+            message_id: message_id.into(),
+            references,
+            in_reply_to,
+        }
+    }
+}
+
 /// Email webhook payload fields the adapter needs for fail-closed routing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EmailProviderInbound {
@@ -33,6 +61,10 @@ pub struct EmailProviderInbound {
     /// this absent and use `envelope_from` as their sender address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header_mailbox: Option<super::gmail::HeaderMailbox>,
+    /// Threading headers, when the host parsed them. Ingress with them takes
+    /// the named-address door (`Vault::enqueue_inbound_email`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_headers: Option<EmailThreadHeaders>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
     pub received_at: u64,
@@ -52,9 +84,17 @@ impl EmailProviderInbound {
             envelope_to: envelope_to.into(),
             envelope_from: envelope_from.into(),
             header_mailbox: None,
+            thread_headers: None,
             payload_ref: None,
             received_at,
         }
+    }
+
+    /// Attaches the host-parsed threading headers.
+    #[must_use]
+    pub fn with_thread_headers(mut self, headers: EmailThreadHeaders) -> Self {
+        self.thread_headers = Some(headers);
+        self
     }
 
     /// Attaches a typed From-header projection supplied by the Gmail wire.

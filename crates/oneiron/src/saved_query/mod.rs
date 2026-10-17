@@ -52,6 +52,7 @@
 //! answer `None` and writes answer [`Error::EntityNotFound`], so the lifecycle
 //! API leaks nothing to a caller who was never granted the query.
 
+mod decisions;
 mod definition;
 mod evaluator;
 mod evidence;
@@ -69,6 +70,7 @@ mod support;
 #[cfg(test)]
 mod tests;
 
+pub use self::decisions::MembershipDecisions;
 pub use self::definition::{
     CreateSavedQueryRequest, EvalMode, EvalPolicy, QueryScope, SAVED_QUERY_SCHEMA_VERSION,
     SAVED_QUERY_SHORT_ID_PREFIX, SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord,
@@ -76,7 +78,7 @@ pub use self::definition::{
 };
 pub use self::evaluator::{
     EvaluationRequest, SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE, SAVED_QUERY_WHY_SCOPE_CLOSED,
-    SavedQueryEvaluator, SavedQueryJudgeBinding, run_llm_judge,
+    SavedQueryEvaluator, SavedQueryJudgeBinding,
 };
 pub use self::evidence::{
     EVIDENCE_HASH_LEN, EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence,

@@ -66,15 +66,43 @@ pub(super) fn text_fields(body: &[u8]) -> Vec<(String, String)> {
         .into_iter()
         .filter_map(|(name, value)| {
             let name = name.as_str()?;
-            if !matches!(
-                name,
-                "content" | "text" | "body" | "markdown" | "description" | "title" | "name" | "val"
-            ) {
+            if name == "tags" {
+                return Some((
+                    name.to_owned(),
+                    value
+                        .as_array()?
+                        .iter()
+                        .filter_map(rmpv::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ));
+            }
+            if name != "val" && !crate::ports::is_text_field(name) {
                 return None;
             }
             Some((name.to_owned(), value.as_str()?.to_owned()))
         })
         .collect()
+}
+
+pub(super) fn revision_text_fields(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    revision: RevisionRef,
+    body: &[u8],
+) -> Result<Vec<(String, String)>> {
+    #[cfg(feature = "sync")]
+    if let Some(field) = crate::entity_doc::pointer_field_in(store, txn, id)? {
+        let frontier = FRONTIER
+            .get(store, txn, &(*id, revision.0))?
+            .ok_or(Error::EntityNotFound)?;
+        let doc = crate::entity_doc::record_document(store, txn, id, Some(&frontier))?
+            .ok_or(Error::EntityNotFound)?;
+        return crate::entity_doc::document_text_fields(&doc, &field);
+    }
+    let _ = (store, txn, id, revision);
+    Ok(text_fields(body))
 }
 
 pub(super) fn write_doc_row(doc: &LoroDoc, raw: &[u8]) -> Result<()> {
@@ -147,13 +175,17 @@ pub(super) fn load_doc(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LoroDoc> {
+    #[cfg(feature = "sync")]
+    if let Some(doc) = crate::entity_doc::record_document(store, txn, id, None)? {
+        return Ok(doc.doc);
+    }
     let bytes = DOC
         .get(store, txn, id)?
         .ok_or(Error::CorruptedIndex("entity document missing"))?;
     LoroDoc::from_snapshot(&bytes).map_err(|_| Error::CorruptedIndex("entity document"))
 }
 
-pub(super) fn fork_revision(
+pub(crate) fn fork_revision(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
@@ -162,6 +194,10 @@ pub(super) fn fork_revision(
     let raw = FRONTIER
         .get(store, txn, &(*id, revision.0))?
         .ok_or(Error::EntityNotFound)?;
+    #[cfg(feature = "sync")]
+    if let Some(doc) = crate::entity_doc::record_document(store, txn, id, Some(&raw))? {
+        return Ok(doc.doc);
+    }
     let frontier = Frontiers::decode(&raw).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
     let doc = load_doc(store, txn, id)?
         .fork_at(&frontier)
@@ -187,6 +223,10 @@ pub(crate) fn capture_entity_revision(
     id: &EntityId,
     new_raw: &[u8],
 ) -> Result<()> {
+    #[cfg(feature = "sync")]
+    if crate::entity_doc::has_record_head(store, txn, id)? {
+        return Ok(());
+    }
     let header = EntityMetadataHeader::parse(new_raw)
         .ok_or(Error::CorruptedIndex("entity revision header"))?;
     // A world key's pad is erased with its world, so no history keeps it.
@@ -276,6 +316,112 @@ pub(crate) fn capture_entity_revision(
     put_state(store, txn, id, &current)
 }
 
+/// Registers common document frontiers in the existing revision/index ledger.
+/// No second text document or editable record copy is created.
+#[cfg(feature = "sync")]
+pub(crate) fn capture_entity_document(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    doc: &LoroDoc,
+    birth: bool,
+) -> Result<()> {
+    let next = reference(id, &doc.oplog_frontiers().encode());
+    let mut current = state(store, txn, id)?.unwrap_or(RevisionState {
+        live: next,
+        indexed: next,
+        changed_at_ms: unix_millis_at(std::time::SystemTime::now()),
+        has_doc: true,
+    });
+    if !birth {
+        let frontier = FRONTIER
+            .get(store, txn, &(*id, current.indexed.0))?
+            .ok_or(Error::CorruptedIndex("indexed document frontier missing"))?;
+        let frontier = Frontiers::decode(&frontier)
+            .map_err(|_| Error::CorruptedIndex("indexed document frontier"))?;
+        let retained = doc
+            .frontiers_to_vv(&frontier)
+            .is_some_and(|vv| vv.includes_vv(&doc.shallow_since_vv().to_vv()));
+        if !retained {
+            return Err(crate::error::ArtifactError::InvalidEditManifest(
+                "publish the indexed frontier before purging its history",
+            )
+            .into());
+        }
+    }
+    if doc.is_shallow() {
+        let floor = doc.shallow_since_vv().to_vv();
+        let mut purged = Vec::new();
+        for (key, encoded) in FRONTIER.scan_from(store, txn, id.as_bytes())? {
+            let frontier = Frontiers::decode(&encoded)
+                .map_err(|_| Error::CorruptedIndex("entity frontier"))?;
+            if !doc
+                .frontiers_to_vv(&frontier)
+                .is_some_and(|vv| vv.includes_vv(&floor))
+            {
+                purged.push(key);
+            }
+        }
+        for key in purged {
+            FRONTIER.delete(store, txn, &key)?;
+            IDENTITY.delete(store, txn, &key.1)?;
+        }
+    }
+    if birth {
+        // Birth-only row references now name the birth operations themselves.
+        retain_frontier(store, txn, id, current.live, doc)?;
+        retain_frontier(store, txn, id, current.indexed, doc)?;
+        DOC.delete(store, txn, id)?;
+        current.indexed = next;
+    }
+    if current.live != next {
+        current.changed_at_ms = unix_millis_at(std::time::SystemTime::now());
+    }
+    current.live = next;
+    current.has_doc = true;
+    retain_frontier(store, txn, id, next, doc)?;
+    put_state(store, txn, id, &current)
+}
+
+fn raw_for_revision(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    revision: Option<RevisionRef>,
+) -> Result<Vec<u8>> {
+    #[cfg(feature = "sync")]
+    if crate::entity_doc::has_record_head(store, txn, id)? {
+        let body = match revision {
+            Some(revision) => {
+                let frontier = FRONTIER
+                    .get(store, txn, &(*id, revision.0))?
+                    .ok_or(Error::EntityNotFound)?;
+                crate::entity_doc::record_body_at(
+                    store,
+                    txn,
+                    id,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                    &frontier,
+                )?
+            }
+            None => crate::entity_doc::resolve_record_body(
+                store,
+                txn,
+                id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?,
+        };
+        let mut projected = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        projected.extend_from_slice(&body);
+        return Ok(projected);
+    }
+    match revision {
+        Some(revision) => doc_raw(&fork_revision(store, txn, id, revision)?),
+        None => Ok(raw.to_vec()),
+    }
+}
+
 /// Publishes the revision a room holds pending for `id`. A room indexes what
 /// it stages at once and runs no idle pass, so once it indexes a row it put,
 /// the row's indexed revision is its live one; base keeps its deferred
@@ -297,9 +443,9 @@ pub(crate) fn publish_room_revision(
     // Without a document the indexed body cannot be read back: it counts as
     // another, and the room hides what it did not restage.
     let changed = !current.has_doc
-        || doc_raw(&fork_revision(store, txn, id, current.indexed)?)?
+        || raw_for_revision(store, txn, id, &live, Some(current.indexed))?
             .get(ENTITY_METADATA_HEADER_LEN..)
-            != live.get(ENTITY_METADATA_HEADER_LEN..);
+            != raw_for_revision(store, txn, id, &live, None)?.get(ENTITY_METADATA_HEADER_LEN..);
     current.indexed = current.live;
     put_state(store, txn, id, &current)?;
     let codes = super::phonetic::take_phonetic(
@@ -328,11 +474,12 @@ pub(crate) fn vectors_embed_body(
     let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok((false, false));
     };
+    let live = raw_for_revision(store, txn, id, &live, None)?;
     let later = live.get(ENTITY_METADATA_HEADER_LEN..) == Some(body);
     let held = match state(store, txn, id)? {
         Some(current) if current.live != current.indexed => {
             current.has_doc
-                && doc_raw(&fork_revision(store, txn, id, current.indexed)?)?
+                && raw_for_revision(store, txn, id, &live, Some(current.indexed))?
                     .get(ENTITY_METADATA_HEADER_LEN..)
                     == Some(body)
         }
@@ -426,19 +573,19 @@ pub(super) fn retained_rows_in_txn(
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(Vec::new());
     };
-    let mut rows = vec![raw.to_vec()];
+    let mut rows = vec![raw_for_revision(store, txn, id, &raw, None)?];
     if !state(store, txn, id)?.is_some_and(|current| current.has_doc) {
         return Ok(rows);
     }
-    let doc = load_doc(store, txn, id)?;
     for row in FRONTIER.iter_from(store, txn, id.as_bytes())?.take(limit) {
-        let (_, encoded) = row?;
-        let frontier =
-            Frontiers::decode(&encoded).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
-        let fork = doc
-            .fork_at(&frontier)
-            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?;
-        rows.push(doc_raw(&fork)?);
+        let ((_, revision), _) = row?;
+        rows.push(raw_for_revision(
+            store,
+            txn,
+            id,
+            &raw,
+            Some(RevisionRef(revision)),
+        )?);
     }
     Ok(rows)
 }
@@ -478,14 +625,22 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
             && vault
                 .store
                 .entity_deletion_present_in_txn(txn, id, header.learned_at)?)
-        // Words a deletion withdrew never serve, at any selected version.
-        || (raw.len() > ENTITY_METADATA_HEADER_LEN
-            && crate::ports::withdrawn_in_txn(store, txn, id)?)
+        // Words a deletion withdrew, or whose recorded sources no longer
+        // stand, never serve, at any selected version. A shell's current
+        // header carries none.
+        || ((raw.len() > ENTITY_METADATA_HEADER_LEN || mode != ReadMode::Live)
+            && !crate::ports::raw_readable_in_txn(store, txn, id, &raw)?)
     {
         return Ok(None);
     }
+    // The selected bytes answer for their own `stale` flag.
+    let stale = crate::ports::BodyStale::for_kind(header.entity_type);
+    let admit = |row: Vec<u8>| {
+        let body = row.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        stale.admits(body).then_some(row)
+    };
     if mode == ReadMode::Live {
-        return Ok(Some(raw.to_vec()));
+        return raw_for_revision(store, txn, id, &raw, None).map(admit);
     }
     let current = state(store, txn, id)?;
     let target = match mode {
@@ -513,7 +668,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
             ReadMode::Pinned(row),
         );
     }
-    Ok(Some(doc_raw(&fork_revision(store, txn, id, target)?)?))
+    raw_for_revision(store, txn, id, &raw, Some(target)).map(admit)
 }
 
 pub(crate) fn ensure_document(

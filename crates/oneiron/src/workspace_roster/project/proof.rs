@@ -27,6 +27,10 @@ pub(crate) fn validate_transition(
     let next: ProjectRecord = decode(bytes).map_err(|_| refused("invalid project body"))?;
     let prior = stored(store, txn, id, kind)?;
     if let Some(old) = &prior {
+        // OF-389: a subproject's wrapper TASK is fixed at its spawn.
+        if old.wrapper_task != next.wrapper_task {
+            return Err(refused("a subproject's wrapper task never changes"));
+        }
         // Membership, goal and ask edits keep the authority and its proof.
         if old.authority() == next.authority() && old.write_proof == next.write_proof {
             return Ok(());
@@ -85,11 +89,41 @@ pub(crate) fn validate_transition(
     let cx = trial.door_cx(id, &held)?;
     if let Some(current) = &current {
         match &current.disposition {
-            ProjectDisposition::Unsigned
-            | ProjectDisposition::Settled
-            | ProjectDisposition::ParentCycle { .. } => {
+            ProjectDisposition::Unsigned | ProjectDisposition::Settled => {
                 if parent != current.witness.as_ref().map(|witness| witness.head) {
                     return Err(refused("project write must build on its current authority"));
+                }
+            }
+            ProjectDisposition::ParentCycle { forks, .. } => {
+                // A board fork the cycle leaves open settles only through
+                // `resolve_project_fork`, whose envelope this transaction
+                // holds; its anchor may be undefined in the served labels, so
+                // the trial below, which installs `next` only where every
+                // world does, judges it (ruling (a)). Any other write builds
+                // on the served state.
+                let board_fork = parent.filter(|parent| {
+                    (forks.iter())
+                        .any(|fork| fork.anchor == *parent && fork.rank == ProjectRank::Board)
+                });
+                match board_fork {
+                    Some(anchor) => {
+                        let named = held.resolutions_at(&anchor).any(|hash| match cx.row(hash) {
+                            Some(ProjectRevision::Resolution { resolution, .. }) => {
+                                resolution.next == candidate
+                            }
+                            _ => false,
+                        });
+                        if !named {
+                            return Err(unresolved(id, "a board fork needs a board resolution"));
+                        }
+                    }
+                    None => {
+                        if parent != current.witness.as_ref().map(|witness| witness.head) {
+                            return Err(refused(
+                                "project write must build on its current authority",
+                            ));
+                        }
+                    }
                 }
             }
             ProjectDisposition::Fork {
@@ -248,17 +282,13 @@ fn refuse_stranded_children(
     next: &ProjectEffective,
 ) -> Result<()> {
     let parent = id.to_hex();
-    for row in reader
-        .store()
-        .type_index
-        .prefix_iter(reader.txn(), &[kind])?
-    {
-        let (key, _) = row?;
-        let child = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project type index"))?,
-        )?;
+    for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        reader.store(),
+        reader.txn(),
+        kind,
+        None,
+    )? {
+        let child = row?;
         if child == id {
             continue;
         }

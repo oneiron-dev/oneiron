@@ -198,62 +198,83 @@ pub(super) fn scoped_read_actor_matches(
     true
 }
 
+/// One legacy read selector against one claim (OF-453 "one Scope"). The
+/// position axes a selector can name (world, kinds, sensitivity band,
+/// project) decode once into a Scope ([`legacy_read_scope`]) and are judged
+/// by `Scope::admits` against the claim's own record Scope, exactly as the
+/// non-claim record door judges them. What is not a position stays its own
+/// conjunct: the opaque claim-scope match, facet placement (FACET-READ is
+/// outside `Scope::admits`), and the retrieval quality floor (staleness,
+/// confidence, salience). An unknown or malformed selector admits nothing.
+///
+/// [`legacy_read_scope`]: crate::federation::scope_codec::legacy_read_scope
 fn scoped_read_scope_matches_claim(
     scope: Option<&Value>,
     body: &ClaimBody,
     claim_facets: &[EntityId],
 ) -> bool {
-    let Some(scope) = scope else {
+    let Some(selectors) = scoped_read_position_selectors(scope) else {
+        return false;
+    };
+    if !selectors.admits(
+        "read",
+        &body.record_scope("read"),
+        &crate::federation::Scope::top(),
+    ) {
+        return false;
+    }
+    let Some(Value::Map(entries)) = scope else {
         return true;
     };
-    match scope {
-        Value::Nil => true,
-        Value::Map(entries) if entries.is_empty() => true,
-        Value::Map(entries) => {
-            for (key, value) in entries {
-                let Some(key) = key.as_str() else {
-                    return false;
-                };
-                let matches = match key {
-                    "world" | "world_ref" | "worldRef" => {
-                        scoped_read_world_matches_claim(value, body.world)
-                    }
-                    "claim_scope" | "claimScope" | "scope" => {
-                        scoped_read_claim_scope_matches(value, body.scope.as_ref())
-                    }
-                    "facet" | "facet_ref" | "facetRef" => {
-                        scoped_read_claim_facet_matches(value, body.scope.as_ref(), claim_facets)
-                    }
-                    "entity_types"
+    let floor_keys = entries.iter().any(|(key, _)| {
+        matches!(
+            key.as_str(),
+            Some(
+                "entity_types"
                     | "max_sensitivity_band"
                     | "include_stale"
                     | "min_confidence"
-                    | "min_salience" => {
-                        // Recognize and enforce authority conjuncts without
-                        // changing any relationship/world/facet matcher.
-                        super::retrieval_filter::RetrievalPolicyFloor::from_scope(Some(scope))
-                            .is_some_and(|floor| {
-                                !floor.deny_all
-                                    && floor.allowed_entity_types.as_ref().is_none_or(|types| {
-                                        types.contains(&crate::registry::ENTITY_TYPE_CLAIM)
-                                    })
-                                    && crate::claim::claim_sensitivity_band(body)
-                                        .is_some_and(|band| band <= floor.max_sensitivity_band)
-                                    && (floor.include_stale || !body.stale)
-                                    && body.confidence >= floor.min_confidence
-                                    && body.salience.unwrap_or(0.0) >= floor.min_salience
-                            })
-                    }
-                    _ => false,
-                };
-                if !matches {
-                    return false;
-                }
-            }
-            true
-        }
-        _ => false,
+                    | "min_salience"
+            )
+        )
+    });
+    // The quality floor rides any retrieval key, as it always has: kinds and
+    // band are the Scope's above, staleness, confidence and salience are not.
+    if floor_keys
+        && !super::retrieval_filter::RetrievalPolicyFloor::from_scope(scope).is_some_and(|floor| {
+            !floor.deny_all
+                && (floor.include_stale || !body.stale)
+                && body.confidence >= floor.min_confidence
+                && body.salience.unwrap_or(0.0) >= floor.min_salience
+        })
+    {
+        return false;
     }
+    entries.iter().all(|(key, value)| match key.as_str() {
+        Some("claim_scope" | "claimScope" | "scope") => {
+            scoped_read_claim_scope_matches(value, body.scope.as_ref())
+        }
+        Some("facet" | "facet_ref" | "facetRef") => {
+            scoped_read_claim_facet_matches(value, body.scope.as_ref(), claim_facets)
+        }
+        // Position axes were judged by the Scope above; quality by its floor.
+        _ => true,
+    })
+}
+
+/// The position Scope a legacy read selector names, or `None` when it names
+/// one ambiguously (two world keys) or carries a key no door knows.
+fn scoped_read_position_selectors(scope: Option<&Value>) -> Option<crate::federation::Scope> {
+    if let Some(Value::Map(entries)) = scope
+        && entries
+            .iter()
+            .filter(|(key, _)| matches!(key.as_str(), Some("world" | "world_ref" | "worldRef")))
+            .count()
+            > 1
+    {
+        return None;
+    }
+    crate::federation::scope_codec::legacy_read_scope(scope)
 }
 
 /// Whether `grant` reads claims in `world` (`None` is base reality), as
@@ -283,45 +304,10 @@ pub(crate) fn scoped_read_grant_reads_world(
     {
         return false;
     }
-    match grant.scope.as_ref() {
-        None | Some(Value::Nil) => true,
-        Some(Value::Map(entries)) => entries.iter().all(|(key, value)| match key.as_str() {
-            Some("world" | "world_ref" | "worldRef") => {
-                scoped_read_world_matches_claim(value, world)
-            }
-            Some(
-                "claim_scope"
-                | "claimScope"
-                | "scope"
-                | "facet"
-                | "facet_ref"
-                | "facetRef"
-                | "entity_types"
-                | "max_sensitivity_band"
-                | "include_stale"
-                | "min_confidence"
-                | "min_salience",
-            ) => true,
-            _ => false,
-        }),
-        _ => false,
-    }
-}
-
-fn scoped_read_world_matches_claim(value: &Value, claim_world: Option<EntityId>) -> bool {
-    if matches!(value, Value::Nil) {
-        return claim_world.is_none();
-    }
-    if value.as_str().is_some_and(|text| text == "base") {
-        return claim_world.is_none();
-    }
-    let Some(grant_world) = scoped_read_entity_id_from_value(value) else {
-        return false;
-    };
-    match claim_world {
-        None => false,
-        Some(claim_world) => claim_world == grant_world,
-    }
+    // The selector's own world axis, from the same decode the claim matcher
+    // judges with; a selector on another axis leaves every world open.
+    scoped_read_position_selectors(grant.scope.as_ref())
+        .is_some_and(|selectors| selectors.worlds.contains(&id))
 }
 
 fn scoped_read_claim_scope_matches(value: &Value, claim_scope: Option<&Value>) -> bool {
@@ -511,8 +497,7 @@ pub(crate) fn companion_profile_access_grant(
                 return Err(Error::CorruptedIndex("access grant body"));
             }
         };
-        if grant.allows_companion_profile_read(principal_ref, person_ref, facet_ref, now)
-            && live()?
+        if grant.allows_companion_profile_read(principal_ref, person_ref, facet_ref, now) && live()?
         {
             return Ok(Some(id));
         }

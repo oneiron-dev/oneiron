@@ -11,6 +11,12 @@
 //! - escrow: a hybrid capsule (X25519 + ML-KEM-1024) to a recovery or transfer
 //!   key, the one wrap that crosses a public-key boundary.
 //!
+//! A managed node's supervisor unwraps the key itself and hands it to the vault
+//! process at boot ([`Vault::admit_vault_key`]); that wrap stays with the node.
+//! A passkey is asked for its PRF at one input per vault and credential
+//! ([`passkey_prf_input`]), so a host holding only a sealed artifact asks for the
+//! same output the wrap was sealed under.
+//!
 //! The wraps and a commitment to the key live in `vault_meta`; the key itself
 //! lives only in this handle's memory once unlocked. A wrap that opens to bytes
 //! the commitment does not name is refused. Which wraps a vault keeps is the
@@ -36,6 +42,8 @@ use crate::side_table::{self, Named, SideTable};
 const PAYLOAD_LABEL: &[u8] = b"oneiron/vault-dek/v1\0";
 const PAYLOAD_LEN: usize = PAYLOAD_LABEL.len() + 32;
 const COMMITMENT_CONTEXT: &str = "oneiron/vault-key-commitment/v1";
+const PASSKEY_PRF_CONTEXT: &str = "oneiron/vault-key-passkey-prf-input/v1";
+const ESCROW_SEED_LABEL: &[u8] = b"oneiron/vault-key-escrow-recipient/v1";
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 /// The crypto epoch every vault-key envelope is sealed at.
@@ -166,6 +174,48 @@ fn check_name(name: &str) -> Result<()> {
     }
 }
 
+/// The WebAuthn PRF input (`prf.eval.first`) a passkey wrap's KEK is the output
+/// at: `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input/v1", vault id ‖
+/// credential)`. The vault and the credential name fix it, so a new host with
+/// only a sealed artifact (whose head names both) asks the authenticator for
+/// the output the wrap was sealed under. It is public; the secret is the
+/// authenticator's.
+pub fn passkey_prf_input(vault_id: &[u8; 32], credential: &str) -> Result<[u8; 32]> {
+    check_name(credential)?;
+    let mut hasher = blake3::Hasher::new_derive_key(PASSKEY_PRF_CONTEXT);
+    hasher.update(vault_id);
+    hasher.update(credential.as_bytes());
+    Ok(*hasher.finalize().as_bytes())
+}
+
+/// The escrow recipient a 32-byte seed grows into: `HybridSecretKey::from_seed`
+/// under the label `oneiron/vault-key-escrow-recipient/v1`. A recovery box keeps
+/// and releases the seed alone; the wrap seals to the public half. An all-zero
+/// seed is refused.
+pub fn escrow_recipient(seed: &[u8; 32]) -> Result<HybridSecretKey> {
+    HybridSecretKey::from_seed(seed, ESCROW_SEED_LABEL)
+        .map_err(|_| refused("an escrow seed is 32 bytes, not all zero"))
+}
+
+/// One wrap to add to the held vault data key, with the secret it seals to.
+pub enum NewVaultKeyWrap<'a> {
+    /// This install's keystore.
+    Device,
+    /// The vault password, replacing an earlier one; Argon2id at `cost`, or
+    /// RFC 9106's second recommended option.
+    Password {
+        password: &'a [u8],
+        cost: Option<Argon2Cost>,
+    },
+    /// A passkey's PRF output at [`passkey_prf_input`].
+    Passkey { credential: &'a str, prf: [u8; 32] },
+    /// A recovery or transfer public key.
+    Escrow {
+        label: &'a str,
+        recipient: &'a HybridPublicKey,
+    },
+}
+
 /// What unlocks the vault key a sealed artifact carries, on a host that may not
 /// hold the vault: the secrets the unlock doors take.
 pub enum VaultKeyUnlock<'a> {
@@ -196,6 +246,14 @@ impl CarriedVaultKey {
     /// The commitment naming the vault key.
     pub(crate) fn commitment(&self) -> &[u8; 32] {
         &self.commitment
+    }
+
+    /// Each carried wrap's public facts: what a host may unlock with.
+    pub(crate) fn wrap_infos(&self) -> Vec<VaultKeyWrapInfo> {
+        self.wraps
+            .iter()
+            .map(|stored| stored.info.clone())
+            .collect()
     }
 
     /// The key for `context` of the vault key a carried wrap opens to under
@@ -245,7 +303,9 @@ impl CarriedVaultKey {
                         &UnlockSecret::Kek(Kek::from_bytes(*seed)),
                     );
                 }
-                Err(refused("this keystore holds no device wrap of the vault key"))
+                Err(refused(
+                    "this keystore holds no device wrap of the vault key",
+                ))
             }
             VaultKeyUnlock::Password(password) => {
                 let passphrase = Passphrase::new(password)
@@ -422,6 +482,11 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(key));
     }
 
+    /// The vault id its data key, wraps and sealed artifacts are bound to.
+    pub fn vault_key_vault_id(&self) -> [u8; 32] {
+        *self.vault_id().as_bytes()
+    }
+
     /// Whether this vault has a data key, and whether this handle holds it.
     pub fn vault_key_status(&self) -> Result<VaultKeyStatus> {
         if self.held_vault_key().is_some() {
@@ -492,6 +557,42 @@ impl Vault {
             }
         }
         self.unlock_vault_key()
+    }
+
+    /// Holds the vault data key a managed node delivered. Its supervisor unwraps
+    /// the key with the node key at boot and hands it over the inherited pipe
+    /// (CROSS-ARCH-0022 #ov-custody), so the vault's sealed artifacts derive
+    /// from that very key. A vault with a data key holds it only when its
+    /// commitment names these bytes. A vault without one takes it as its own,
+    /// with no wrap: the node's wrap stays with the supervisor, and a restore
+    /// elsewhere opens through an escrow wrap ([`Self::add_vault_key_escrow`]).
+    /// True when the vault took it as new.
+    pub fn admit_vault_key(&self, delivered: &[u8; 32]) -> Result<bool> {
+        let key = VaultDataKey(Zeroizing::new(*delivered));
+        let vault_id = *self.vault_id().as_bytes();
+        let commitment = key.commitment(&vault_id);
+        let created = self.with_write_txn(|txn| {
+            if let Some(state) = STATE.get(&self.store, txn, &())? {
+                return if state.commitment == commitment {
+                    Ok(false)
+                } else {
+                    Err(refused("the delivered key is not this vault's data key"))
+                };
+            }
+            let created_at = self.instant_in_txn(txn)?.secs();
+            STATE.put(
+                &self.store,
+                txn,
+                &(),
+                &VaultKeyState {
+                    commitment,
+                    created_at,
+                },
+            )?;
+            Ok(true)
+        })?;
+        self.hold_vault_key(key);
+        Ok(created)
     }
 
     /// The vault key as it rests, read in `txn` for a sealed artifact to carry,
@@ -683,10 +784,120 @@ impl Vault {
         )
     }
 
+    /// Seals the held vault data key to `recipient` as escrow wrap `label`, in
+    /// the caller's transaction, replacing a wrap of that label. `None` when
+    /// this handle does not hold the key.
+    pub(crate) fn put_vault_key_escrow_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        label: &str,
+        recipient: &HybridPublicKey,
+    ) -> Result<Option<VaultKeyWrapInfo>> {
+        check_name(label)?;
+        let Some(key) = self.held_vault_key() else {
+            return Ok(None);
+        };
+        let vault_id = *self.vault_id().as_bytes();
+        let commitment = key.commitment(&vault_id);
+        let state = STATE
+            .get(&self.store, txn, &())?
+            .ok_or_else(|| refused("the vault has no data key"))?;
+        if state.commitment != commitment {
+            return Err(refused("this handle holds another vault key"));
+        }
+        let kind = VaultKeyWrapKind::Escrow {
+            label: label.to_owned(),
+        };
+        let envelope = seal_wrap(
+            &vault_id,
+            &commitment,
+            &kind,
+            &WrapSecret::Hybrid(recipient),
+            &key,
+        )?;
+        let info = VaultKeyWrapInfo {
+            id: kind.id(),
+            kind,
+            created_at: self.instant_in_txn(txn)?.secs(),
+        };
+        WRAPS.put(
+            &self.store,
+            txn,
+            &info.id,
+            &StoredWrap {
+                info: info.clone(),
+                envelope,
+            },
+        )?;
+        Ok(Some(info))
+    }
+
+    /// The vault key's passkey PRF input for `credential` ([`passkey_prf_input`]).
+    pub fn vault_key_passkey_prf_input(&self, credential: &str) -> Result<[u8; 32]> {
+        passkey_prf_input(self.vault_id().as_bytes(), credential)
+    }
+
+    /// Adds one wrap on an owner's request: the owner is rechecked in the
+    /// transaction that stores it, so a request whose slip or ownership went
+    /// away while it waited adds nothing.
+    pub fn add_vault_key_wrap_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        wrap: NewVaultKeyWrap<'_>,
+    ) -> Result<VaultKeyWrapInfo> {
+        match wrap {
+            NewVaultKeyWrap::Device => {
+                let (kek, kind) = self.device_kek()?;
+                self.add_vault_key_wrap_checked(kind, &WrapSecret::Kek(kek), Some(owner))
+            }
+            NewVaultKeyWrap::Password { password, cost } => {
+                let passphrase = Passphrase::new(password)
+                    .map_err(|_| refused("the password is not accepted"))?;
+                self.add_vault_key_wrap_checked(
+                    VaultKeyWrapKind::Password,
+                    &WrapSecret::Passphrase(
+                        &passphrase,
+                        cost.unwrap_or(Argon2Cost::RFC9106_SECOND),
+                    ),
+                    Some(owner),
+                )
+            }
+            NewVaultKeyWrap::Passkey { credential, prf } => {
+                check_name(credential)?;
+                self.add_vault_key_wrap_checked(
+                    VaultKeyWrapKind::Passkey {
+                        credential: credential.to_owned(),
+                    },
+                    &WrapSecret::Kek(Kek::from_bytes(prf)),
+                    Some(owner),
+                )
+            }
+            NewVaultKeyWrap::Escrow { label, recipient } => {
+                check_name(label)?;
+                self.add_vault_key_wrap_checked(
+                    VaultKeyWrapKind::Escrow {
+                        label: label.to_owned(),
+                    },
+                    &WrapSecret::Hybrid(recipient),
+                    Some(owner),
+                )
+            }
+        }
+    }
+
     fn add_vault_key_wrap(
         &self,
         kind: VaultKeyWrapKind,
         secret: &WrapSecret<'_>,
+    ) -> Result<VaultKeyWrapInfo> {
+        self.add_vault_key_wrap_checked(kind, secret, None)
+    }
+
+    fn add_vault_key_wrap_checked(
+        &self,
+        kind: VaultKeyWrapKind,
+        secret: &WrapSecret<'_>,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<VaultKeyWrapInfo> {
         let key = self
             .held_vault_key()
@@ -695,6 +906,9 @@ impl Vault {
         let commitment = key.commitment(&vault_id);
         let envelope = seal_wrap(&vault_id, &commitment, &kind, secret, &key)?;
         self.with_write_txn(|txn| {
+            if let Some(owner) = owner {
+                owner.revalidate_in_txn(self, txn)?;
+            }
             let state = STATE
                 .get(&self.store, txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?;
@@ -721,7 +935,28 @@ impl Vault {
 
     /// Removes one wrap. The last wrap stays: without it the key is lost.
     pub fn remove_vault_key_wrap(&self, id: &str) -> Result<()> {
+        self.remove_vault_key_wrap_checked(id, None)
+    }
+
+    /// [`Self::remove_vault_key_wrap`] on an owner's request, rechecked in the
+    /// transaction that removes it.
+    pub fn remove_vault_key_wrap_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        id: &str,
+    ) -> Result<()> {
+        self.remove_vault_key_wrap_checked(id, Some(owner))
+    }
+
+    fn remove_vault_key_wrap_checked(
+        &self,
+        id: &str,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> Result<()> {
         self.with_write_txn(|txn| {
+            if let Some(owner) = owner {
+                owner.revalidate_in_txn(self, txn)?;
+            }
             let id = id.to_owned();
             if WRAPS.get(&self.store, txn, &id)?.is_none() {
                 return Err(refused("the vault key has no such wrap"));
@@ -753,5 +988,77 @@ impl Vault {
         Ok(Zeroizing::new(
             key.derive(context, self.vault_id().as_bytes()),
         ))
+    }
+}
+
+/// Which escrow capsule each escrow wrap last handed to the host's outbound
+/// spool, by the blake3 of its envelope.
+const ESCROW_SPOOLED: SideTable<String, [u8; 32], Named> =
+    SideTable::new(&side_table::VAULT_KEY_ESCROW_SPOOLED);
+
+/// One escrow wrap as a registry keeps it (CROSS-ARCH-0022 #ov-custody):
+/// the capsule and what opens and checks it. None of it is secret.
+#[derive(Debug, Clone)]
+pub struct VaultKeyEscrowCapsule {
+    pub wrap_id: String,
+    pub label: String,
+    /// The vault the capsule is bound to.
+    pub vault_id: [u8; 32],
+    /// The commitment an opened key must match.
+    pub commitment: [u8; 32],
+    /// The E0 `VaultDek` envelope: a hybrid capsule of the data key.
+    pub capsule: Vec<u8>,
+    /// The vault clock, in seconds, when the wrap was added.
+    pub created_at: u64,
+    /// This capsule is on the host's outbound spool already.
+    pub spooled: bool,
+}
+
+impl Vault {
+    /// The vault key's escrow capsules, each with whether the host's
+    /// outbound spool holds it yet.
+    pub fn vault_key_escrow_capsules(&self) -> Result<Vec<VaultKeyEscrowCapsule>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(state) = STATE.get(&self.store, &txn, &())? else {
+            return Ok(Vec::new());
+        };
+        let vault_id = *self.vault_id().as_bytes();
+        let mut capsules = Vec::new();
+        for (id, stored) in WRAPS.scan(&self.store, &txn)? {
+            let VaultKeyWrapKind::Escrow { label } = stored.info.kind else {
+                continue;
+            };
+            let spooled = ESCROW_SPOOLED
+                .get(&self.store, &txn, &id)?
+                .is_some_and(|hash| hash == *blake3::hash(&stored.envelope).as_bytes());
+            capsules.push(VaultKeyEscrowCapsule {
+                wrap_id: id,
+                label,
+                vault_id,
+                commitment: state.commitment,
+                capsule: stored.envelope,
+                created_at: stored.info.created_at,
+                spooled,
+            });
+        }
+        Ok(capsules)
+    }
+
+    /// Records that the host's outbound spool durably holds `capsule`, the
+    /// escrow wrap `wrap_id`'s envelope, so the vault hands each capsule over
+    /// once. A wrap sealed again since holds another capsule and is refused.
+    pub fn mark_vault_key_escrow_spooled(&self, wrap_id: &str, capsule: &[u8]) -> Result<()> {
+        let hash = *blake3::hash(capsule).as_bytes();
+        self.with_write_txn(|txn| {
+            let id = wrap_id.to_owned();
+            let held = WRAPS
+                .get(&self.store, txn, &id)?
+                .is_some_and(|stored| *blake3::hash(&stored.envelope).as_bytes() == hash);
+            if !held {
+                return Err(refused("the vault key holds no such escrow capsule"));
+            }
+            ESCROW_SPOOLED.put(&self.store, txn, &id, &hash)?;
+            Ok(())
+        })
     }
 }

@@ -19,6 +19,13 @@ pub trait PackFitPolicy {
         Ok(None)
     }
 
+    /// A connector, including an engine-built adapter, stays Candidate until
+    /// the engine probes its source-bound wire contract. A script qualification
+    /// alone cannot activate a connector.
+    fn qualify_connector(&self, _source: &PackSource) -> Result<Option<PackQualification>> {
+        Ok(None)
+    }
+
     /// Host-observed tool surfaces from the pinned source's actual adapter.
     /// Empty is a declaration of no external tool surface, not a passing scan.
     fn observed_tools(&self, _source: &PackSource) -> Result<Vec<PackObservedTool>> {
@@ -44,6 +51,7 @@ pub struct PackQualification {
     pub advisory_accepted: bool,
     pub advisory: String,
     pub runtime: Option<PackRuntimeRecipe>,
+    pub connector: Option<super::ConnectorPackQualification>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,12 +70,15 @@ pub struct PackPermissions {
     /// Each hook's capability set as tokens: phase, verbs, actors, scope,
     /// outcome kinds, budget and the blocking dial.
     pub hooks: Vec<String>,
+    /// Each organ's ask and pinned builds as tokens (OF-575).
+    pub organs: Vec<String>,
     pub section_verbs: Vec<String>,
     pub section_authorities: Vec<String>,
     /// Only added powers are the widening passed to the fit ladder.
     pub widening_grants: Vec<String>,
     pub widening_wakes: Vec<String>,
     pub widening_hooks: Vec<String>,
+    pub widening_organs: Vec<String>,
     pub widening_section_verbs: Vec<String>,
     pub widening_section_authorities: Vec<String>,
 }
@@ -143,6 +154,7 @@ pub enum PackInstallStatus {
 pub enum PackCandidateReason {
     RulesHit,
     CodeAutoInstallOff,
+    QualificationRequired,
     /// A hub source whose dependencies carry OSV advisories, or whose
     /// advisory query did not complete, waits for the owner.
     Advisories,
@@ -168,6 +180,7 @@ pub struct PackInstallReceipt {
     pub permissions: PackPermissions,
     /// Qualified source/runtime as data. A Candidate has no execution right.
     pub qualification_report_hash: Option<String>,
+    pub connector_qualification: Option<super::PackConnectorReceipt>,
     pub runtime: Option<PackRuntimeRecipe>,
     /// Typed section recipes from the pinned tree; runtime must enforce requested powers.
     pub sections: Vec<PackSection>,

@@ -43,9 +43,7 @@ pub(crate) fn msgpack_value_projection(value: &Value) -> Value {
             Value::from("invalid_utf8_string"),
         )]),
         Value::Binary(_) | Value::Ext(_, _) => Value::Nil,
-        Value::Array(values) => {
-            Value::Array(values.iter().map(msgpack_value_projection).collect())
-        }
+        Value::Array(values) => Value::Array(values.iter().map(msgpack_value_projection).collect()),
         Value::Map(entries) => {
             let mut kept: Vec<(Value, Value)> = Vec::with_capacity(entries.len());
             let mut at: std::collections::HashMap<&str, usize> =

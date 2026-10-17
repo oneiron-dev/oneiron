@@ -32,15 +32,15 @@ pub struct RegisteredChannelActor {
 }
 
 impl Vault {
-    /// Resolves the channel's own actor, not the identity's routing target.
+    /// Resolves the channel's own actor, not the identity's routing target,
+    /// from the identity's `channel_identity.reputation_ref` head (OF-272).
     pub fn channel_actor(&self, identity_ref: &EntityId) -> Result<Option<EntityId>> {
-        let Some(identity) = self.get_channel_identity(identity_ref)? else {
-            return Ok(None);
-        };
-        let Some(actor) = identity.reputation_ref() else {
-            return Ok(None);
-        };
         let txn = self.store.env.read_txn()?;
+        let Some(actor) = super::channel_identity_facts_in_txn(&self.store, &txn, identity_ref)?
+            .and_then(|facts| facts.reputation_ref)
+        else {
+            return Ok(None);
+        };
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &actor)?
         else {
             return Ok(None);
@@ -216,6 +216,7 @@ impl Vault {
                 channels: BTreeSet::new(),
                 actor_class: Some("system".to_owned()),
                 org_ref: None,
+                grant_ref: None,
             },
         )?;
         txn.commit()?;

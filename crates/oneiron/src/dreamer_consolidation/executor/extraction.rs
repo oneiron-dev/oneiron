@@ -1,7 +1,11 @@
-//! Extraction request/response projection for one admitted branch.
+//! Extraction request/response projection for one admitted branch, and the
+//! typed pack that decides which listed claim each candidate corrects.
 
+use super::decisions::{id_options, named_id};
 use super::*;
 use crate::llm::FinishReason;
+use crate::llm::decision::AnswerContract;
+use crate::llm::decision::catalogue::CORRECTION;
 
 impl ConsolidationExecutor<'_> {
     pub(in crate::dreamer_consolidation) fn extraction_request(
@@ -99,19 +103,17 @@ impl ConsolidationExecutor<'_> {
         })
     }
 
-    /// The candidates the branch takes from `response`. Decode never fails
-    /// the partition over one candidate: one it cannot take (a candidate
-    /// breaking a rule such as the predicate grammar, or one in a reply
+    /// The candidates one child's `scope` can take from `response`, before
+    /// the claim each corrects is decided, and how many it cannot. Decode
+    /// never fails the partition over one candidate: one it cannot take (a
+    /// candidate breaking a rule such as the evidence rules, or one in a reply
     /// stored before the step checked candidates) is not written, and is
     /// counted.
-    pub(in crate::dreamer_consolidation) fn decode_candidates(
-        partition: &ConsolidationPartitionKey,
+    pub(in crate::dreamer_consolidation) fn parse_candidates<'s>(
         response: &LlmResponse,
         resources: &BranchResources<'_>,
-        scope: &crate::llm::Scope,
-        attempt_id: crate::attempt_queue::AttemptId,
-        now_ms: u64,
-    ) -> Result<Vec<super::super::evidence::ExtractedCandidate>> {
+        scope: &'s crate::llm::Scope,
+    ) -> Result<(Vec<ParsedCandidate<'s>>, usize)> {
         let items = extraction_reply(response)?.candidates;
         let items = items.as_slice();
         // A child hash is not part of the return contract. If a model still
@@ -125,11 +127,110 @@ impl ConsolidationExecutor<'_> {
                 "child evidence hash disagrees with the ledger"
             );
         }
-
-        let mut candidates = Vec::new();
+        let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {
-            match decode_candidate(item, partition, resources, scope, attempt_id, now_ms) {
+            match parse_candidate(item, resources, scope) {
+                Ok(candidate) => parsed.push(candidate),
+                Err(reason) => {
+                    skipped += 1;
+                    tracing::warn!(
+                        target: "oneiron::dreamer",
+                        %reason,
+                        "extracted candidate not written"
+                    );
+                }
+            }
+        }
+        Ok((parsed, skipped))
+    }
+
+    /// Which listed claim each parsed candidate corrects, in order. A
+    /// candidate whose subject the listing shows claims about, that its child
+    /// may read and write, gets one question over `none` and those claims'
+    /// ids, all candidates in one pack; one with no such claim, or no answer,
+    /// corrects none. None when the step trapped.
+    pub(in crate::dreamer_consolidation) async fn decide_corrections(
+        &self,
+        step_ctx: &DurableStepContext<'_>,
+        pass: &crate::dreamer_wake::WakePassDeadline,
+        parsed: &[ParsedCandidate<'_>],
+        resources: &BranchResources<'_>,
+        charges: &mut StepChargeTally,
+    ) -> DurableStepResult<Option<Vec<Option<EntityId>>>> {
+        let mut questions = Vec::new();
+        // Each candidate's question indexes, and every listed claim asked about.
+        let mut asks: Vec<Vec<usize>> = vec![Vec::new(); parsed.len()];
+        let mut listed: Vec<(EntityId, EntityId, &str, &str)> = Vec::new();
+        for (position, candidate) in parsed.iter().enumerate() {
+            let shown: Vec<_> = resources
+                .known()
+                .shown_about(candidate.subject)
+                .filter(|(claim, ..)| {
+                    resources.prior(*claim).is_ok()
+                        && resources.source_version(claim).is_ok_and(|version| {
+                            candidate.scope.allows_read(&version)
+                                && candidate.scope.allows_write(&version)
+                        })
+                })
+                .collect();
+            let ids: Vec<EntityId> = shown.iter().map(|(claim, ..)| *claim).collect();
+            for (group, options) in id_options(&ids, true).into_iter().enumerate() {
+                let (position_key, group_key) = (position.to_string(), group.to_string());
+                asks[position].push(questions.len());
+                questions.push(CORRECTION.question(
+                    &[position_key.as_bytes(), group_key.as_bytes()],
+                    self.decisions.correction_wording.clone(),
+                    AnswerContract::Choice { options },
+                )?);
+            }
+            for (claim, predicate, value) in shown {
+                if !listed.iter().any(|row| row.0 == claim) {
+                    listed.push((claim, candidate.subject, predicate, value));
+                }
+            }
+        }
+        if questions.is_empty() {
+            return Ok(Some(vec![None; parsed.len()]));
+        }
+        let state = correction_state(parsed, &asks, &questions, &listed);
+        let evidence: Vec<EntityId> = listed.iter().map(|row| row.0).collect();
+        let Some(decided) = self
+            .decide(
+                step_ctx,
+                pass,
+                resources.scope(),
+                &questions,
+                &evidence,
+                &state,
+                charges,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            asks.iter()
+                .map(|asked| named_id(asked.iter().map(|&at| &decided[at]).collect()))
+                .collect(),
+        ))
+    }
+
+    /// The candidates the branch takes, each bound to the claim it corrects.
+    pub(in crate::dreamer_consolidation) fn build_candidates(
+        parsed: Vec<ParsedCandidate<'_>>,
+        corrects: &[Option<EntityId>],
+        mut skipped: usize,
+        partition: &ConsolidationPartitionKey,
+        resources: &BranchResources<'_>,
+        attempt_id: crate::attempt_queue::AttemptId,
+        now_ms: u64,
+    ) -> Vec<super::super::evidence::ExtractedCandidate> {
+        let mut candidates = Vec::new();
+        for (candidate, corrects) in parsed.into_iter().zip(corrects) {
+            match build_candidate(
+                candidate, *corrects, partition, resources, attempt_id, now_ms,
+            ) {
                 Ok(candidate) => candidates.push(candidate),
                 Err(reason) => {
                     skipped += 1;
@@ -149,100 +250,54 @@ impl ConsolidationExecutor<'_> {
                 "extraction reply had candidates the branch could not take"
             );
         }
-        Ok(candidates)
+        candidates
     }
 }
 
-/// One candidate as the branch takes it, or why it is not written. Every
-/// read here is of the reply or of the branch's pinned resources, so an
-/// error is this candidate's alone.
-fn decode_candidate(
+/// One extracted candidate as the reply states it, its evidence checked
+/// against its child's scope.
+pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
+    scope: &'s crate::llm::Scope,
+    subject: EntityId,
+    /// Its own predicate, when that meets the claim grammar.
+    predicate: Option<String>,
+    value: serde_json::Value,
+    confidence: f32,
+    rel: Option<serde_json::Value>,
+    topic: Option<serde_json::Value>,
+    locators: Vec<super::super::evidence::EvidenceLocator>,
+    evidence_turn_refs: Vec<EntityId>,
+    project: EntityId,
+}
+
+/// One candidate's reading of the reply and of the branch's pinned
+/// resources, or why it is not written; an error is this candidate's alone.
+fn parse_candidate<'s>(
     item: &serde_json::Value,
-    partition: &ConsolidationPartitionKey,
     resources: &BranchResources<'_>,
-    scope: &crate::llm::Scope,
-    attempt_id: crate::attempt_queue::AttemptId,
-    now_ms: u64,
-) -> Result<super::super::evidence::ExtractedCandidate> {
+    scope: &'s crate::llm::Scope,
+) -> Result<ParsedCandidate<'s>> {
     // A candidate that names no value carries no claim.
-    if item.get("value").is_none_or(serde_json::Value::is_null) {
-        return Err(invalid_consolidation("extracted candidate names no value"));
-    }
-    // A candidate naming a listed claim corrects it and binds to that head:
-    // its subject, predicate, relationship and topic, so it routes to the
-    // head through the conflict and grant doors. A claim the branch does
-    // not hold is not one it may name.
-    let corrects = match item.get("corrects") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(named) => {
-            let held = named
-                .as_str()
-                .and_then(entity_id_from_hex)
-                .and_then(|id| resources.prior(id).ok())
-                .filter(|prior| {
-                    resources
-                        .source_version(&prior.claim_id)
-                        .is_ok_and(|version| {
-                            scope.allows_read(&version) && scope.allows_write(&version)
-                        })
-                });
-            Some(held.ok_or_else(|| {
-                invalid_consolidation("extracted correction names a claim the branch does not hold")
-            })?)
-        }
-    };
-    let named = item
+    let value = item
+        .get("value")
+        .filter(|value| !value.is_null())
+        .ok_or_else(|| invalid_consolidation("extracted candidate names no value"))?
+        .clone();
+    let subject = item
         .get("subject")
         .and_then(|value| value.as_str())
-        .and_then(entity_id_from_hex);
-    let (subject, predicate) = match corrects {
-        Some(prior) => {
-            let ClaimSubject::Entity(subject) = prior.body.subject else {
-                return Err(invalid_consolidation(
-                    "extracted correction names a claim with no entity subject",
-                ));
-            };
-            if named.is_some_and(|named| named != subject) {
-                return Err(invalid_consolidation(
-                    "extracted correction names a claim about another subject",
-                ));
-            }
-            (subject, prior.body.predicate.as_str())
-        }
-        None => {
-            let subject = named
-                .ok_or_else(|| invalid_consolidation("extracted candidate names no subject"))?;
-            let predicate = item
-                .get("predicate")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| invalid_consolidation("extracted candidate names no predicate"))?;
-            // The contract's predicate rule is the claim grammar's.
-            crate::claim::validate_predicate(predicate, false).map_err(|_| {
-                invalid_consolidation("extracted candidate's predicate breaks the claim grammar")
-            })?;
-            (subject, predicate)
-        }
-    };
+        .and_then(entity_id_from_hex)
+        .ok_or_else(|| invalid_consolidation("extracted candidate names no subject"))?;
+    // The contract's predicate rule is the claim grammar's.
+    let predicate = item
+        .get("predicate")
+        .and_then(|value| value.as_str())
+        .filter(|predicate| crate::claim::validate_predicate(predicate, false).is_ok())
+        .map(str::to_owned);
     let confidence = item
         .get("confidence")
         .and_then(serde_json::Value::as_f64)
         .unwrap_or(0.5) as f32;
-    let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
-    let rel = match (corrects, item.get("rel")) {
-        (Some(prior), _) => prior.body.rel,
-        (None, None | Some(serde_json::Value::Null)) => scope.relationship,
-        (None, Some(value)) => Some(
-            value
-                .as_str()
-                .and_then(entity_id_from_hex)
-                .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
-        ),
-    };
-    if scope.relationship.is_some_and(|bound| rel != Some(bound)) {
-        return Err(invalid_consolidation(
-            "extraction relationship crossed branch scope",
-        ));
-    }
     let refs = item
         .get("evidence_refs")
         .and_then(serde_json::Value::as_array)
@@ -268,9 +323,134 @@ fn decode_candidate(
         .ok_or_else(|| {
             invalid_consolidation("extracted candidate's sources share no one branch project")
         })?;
+    Ok(ParsedCandidate {
+        scope,
+        subject,
+        predicate,
+        value,
+        confidence,
+        rel: item.get("rel").filter(|value| !value.is_null()).cloned(),
+        topic: item
+            .get("topic_key")
+            .filter(|value| !value.is_null())
+            .cloned(),
+        locators,
+        evidence_turn_refs,
+        project,
+    })
+}
 
-    let mut candidate =
-        ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence);
+/// The candidates and the listed claims as the correction pack reads them:
+/// each candidate with its questions, subject, predicate and value, each
+/// value as its JSON text, cut shorter (halving) until the whole fits.
+fn correction_state(
+    parsed: &[ParsedCandidate<'_>],
+    asks: &[Vec<usize>],
+    questions: &[crate::llm::decision::DecisionQuestion],
+    listed: &[(EntityId, EntityId, &str, &str)],
+) -> serde_json::Value {
+    let values: Vec<String> = parsed
+        .iter()
+        .map(|candidate| candidate.value.to_string())
+        .collect();
+    let longest = values
+        .iter()
+        .map(String::len)
+        .chain(listed.iter().map(|row| row.3.len()))
+        .max()
+        .unwrap_or(0);
+    crate::llm::decision::fit_state(longest, |cut| {
+        let candidates: Vec<serde_json::Value> = parsed
+            .iter()
+            .zip(asks)
+            .zip(&values)
+            .filter(|((_, asked), _)| !asked.is_empty())
+            .map(|((candidate, asked), value)| {
+                let ids: Vec<String> = asked.iter().map(|&at| questions[at].id.to_hex()).collect();
+                serde_json::json!({
+                    "questions": ids,
+                    "subject": candidate.subject.to_hex(),
+                    "predicate": candidate.predicate,
+                    "value": crate::llm::decision::cut_text(value, cut),
+                })
+            })
+            .collect();
+        let listed: Vec<serde_json::Value> = listed
+            .iter()
+            .map(|(claim, subject, predicate, value)| {
+                serde_json::json!({
+                    "claim": claim.to_hex(),
+                    "subject": subject.to_hex(),
+                    "predicate": predicate,
+                    "value": crate::llm::decision::cut_text(value, cut),
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "candidates": candidates,
+            "listed": listed,
+            "cut_at_bytes": cut,
+        })
+    })
+}
+
+/// One parsed candidate as the branch takes it, or why it is not written.
+/// A candidate that corrects a listed claim binds to that head: its subject,
+/// predicate, relationship and topic, so it routes to the head through the
+/// conflict and grant doors, and the verdict skips it.
+fn build_candidate(
+    parsed: ParsedCandidate<'_>,
+    corrects: Option<EntityId>,
+    partition: &ConsolidationPartitionKey,
+    resources: &BranchResources<'_>,
+    attempt_id: crate::attempt_queue::AttemptId,
+    now_ms: u64,
+) -> Result<super::super::evidence::ExtractedCandidate> {
+    let scope = parsed.scope;
+    let corrects = corrects.map(|claim| resources.prior(claim)).transpose()?;
+    let (subject, predicate) = match corrects {
+        Some(prior) => {
+            let ClaimSubject::Entity(subject) = prior.body.subject else {
+                return Err(invalid_consolidation(
+                    "extracted correction names a claim with no entity subject",
+                ));
+            };
+            if parsed.subject != subject {
+                return Err(invalid_consolidation(
+                    "extracted correction names a claim about another subject",
+                ));
+            }
+            (subject, prior.body.predicate.as_str())
+        }
+        None => (
+            parsed.subject,
+            parsed.predicate.as_deref().ok_or_else(|| {
+                invalid_consolidation("extracted candidate's predicate breaks the claim grammar")
+            })?,
+        ),
+    };
+    let value = json_to_rmpv(&parsed.value);
+    let rel = match (corrects, parsed.rel) {
+        (Some(prior), _) => prior.body.rel,
+        (None, None) => scope.relationship,
+        (None, Some(value)) => Some(
+            value
+                .as_str()
+                .and_then(entity_id_from_hex)
+                .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
+        ),
+    };
+    if scope.relationship.is_some_and(|bound| rel != Some(bound)) {
+        return Err(invalid_consolidation(
+            "extraction relationship crossed branch scope",
+        ));
+    }
+    let mut candidate = ClaimCandidate::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        value,
+        parsed.confidence,
+    );
     if let Some(rel) = rel {
         candidate = candidate.with_relationship(rel);
     }
@@ -286,18 +466,15 @@ fn decode_candidate(
     }
     let topic = match corrects {
         Some(prior) => prior_topic(prior.body.scope.as_ref()),
-        None => item
-            .get("topic_key")
-            .filter(|value| !value.is_null())
-            .map(json_to_rmpv),
+        None => parsed.topic.as_ref().map(json_to_rmpv),
     };
     if let Some(topic) = topic {
         fields.push((Value::from("topic_key"), topic));
     }
-    if project != crate::claim::default_project_id() {
+    if parsed.project != crate::claim::default_project_id() {
         fields.push((
             Value::from(SCOPE_PROJECT_KEY),
-            Value::Binary(project.as_bytes().to_vec()),
+            Value::Binary(parsed.project.as_bytes().to_vec()),
         ));
     }
     if !fields.is_empty() {
@@ -319,7 +496,7 @@ fn decode_candidate(
         PromotionCandidate {
             claim_id,
             candidate,
-            evidence_turn_refs,
+            evidence_turn_refs: parsed.evidence_turn_refs,
             // Extraction output from the working set carries no external
             // chain; a peer-derived candidate gets its hops from
             // `peer_answer_provenance_chain` at the landing seam.
@@ -332,15 +509,12 @@ fn decode_candidate(
             },
             learned_at: now_ms,
         },
-        locators,
+        parsed.locators,
     )?;
-    // Only a head the listing showed is a correction target; one held only
-    // for a replay's scope binds, but the verdict judges it.
+    // Only a head the listing shows is a correction target.
     Ok(match corrects {
-        Some(prior) if resources.known().shows(prior.claim_id) => {
-            extracted.correcting(prior.claim_id)
-        }
-        _ => extracted,
+        Some(prior) => extracted.correcting(prior.claim_id),
+        None => extracted,
     })
 }
 
@@ -452,11 +626,10 @@ pub(in crate::dreamer_consolidation) fn extraction_reply(
 /// The extraction step's check: the reply meets the contract, each of its
 /// candidates included, or it is refused and never memoized, so the next
 /// run asks again. A candidate names a 32-hex `subject`, a string
-/// `predicate`, a `value` that is not null, a `confidence` from 0 to 1, one
-/// or more evidence refs as decode reads them, and a 32-hex `corrects` when
-/// it names one. A candidate that meets them but breaks a rule (the
-/// predicate grammar, or a head, source or project the branch must hold)
-/// is decode's to skip, never a refusal.
+/// `predicate`, a `value` that is not null, a `confidence` from 0 to 1, and
+/// one or more evidence refs as decode reads them. A candidate that meets
+/// them but breaks a rule (the predicate grammar, or a source or project the
+/// branch must hold) is decode's to skip, never a refusal.
 pub(in crate::dreamer_consolidation) fn check_extraction_reply(
     response: &LlmResponse,
 ) -> std::result::Result<(), String> {
@@ -507,12 +680,6 @@ fn contract_fault(candidate: &serde_json::Value) -> Option<&'static str> {
             refs.is_some_and(|refs| {
                 !refs.is_empty() && refs.iter().all(|cited| decode_model_locator(cited).is_ok())
             }),
-        ),
-        (
-            "corrects",
-            candidate
-                .get("corrects")
-                .is_none_or(|named| named.is_null() || id("corrects")),
         ),
     ]
     .into_iter()

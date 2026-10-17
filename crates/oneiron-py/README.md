@@ -95,11 +95,12 @@ created for the actor you want to act as instead.
 | `Oneiron.pair(link)` | `(handle, credential)`: a remote handle and the credential to store |
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |
 | `handle.in_room_turn(room_ref)` | a new handle whose every verb runs as a turn in that room |
+| `handle.last_receipt_ref()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `None` when embedded or before any call |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, ...)` | `MemoryPack` |
 | `handle.vault.receipts(limit=100)` | `list[FacadeReceipt]` |
-| `handle.vault.export(format=None)` | the live vault, serialized in one of the pack formats |
+| `handle.vault.export(format=None)` | the whole vault as one re-importable archive: a ZIP (JSONL per record kind, files by BLAKE3, manifest), base64 in `archive` |
 | `handle.cancel(task_ref)` | `TaskCancelReceipt` |
 | `handle.describe(task_ref=None)` | `TaskDescription`: one task card, or the whole TASKS section |
 | `handle.can(request)` | `TaskAskPreflight` |
@@ -108,6 +109,15 @@ created for the actor you want to act as instead.
 | `handle.vault.kv.get` / `put` / `delete` / `search` / `namespaces(request)` | exact, actor-owned keyed memory |
 | `handle.tasks.*` | `create`, `update`, `answer`, `outcomes` |
 | `handle.vault.rooms.*` | `list`, `messages`, `render`, `find`, `get`, `trunk`, `claim`, `speak` |
+
+Every other verb in the SDK verb table sits at its SDK path on the handle and
+takes its whole input as one dict. The stubs type that dict and the result as
+TypedDicts from `oneiron.facade_types` (imported in the stubs as `Facade`),
+which `scripts/sdk/generate.py` reads from the Rust types each row names, and
+each method's docstring is its row's description. Of the table's 153 facade
+rows, 131 inputs and 127 results are fully typed; the rest are typed down to a
+leaf that is opaque JSON by design (`Any`), and none is left untyped. The
+module is stub-only: annotate with it under `typing.TYPE_CHECKING`.
 
 `vault.recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`

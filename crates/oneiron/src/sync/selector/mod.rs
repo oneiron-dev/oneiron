@@ -34,6 +34,8 @@ use super::loro_support;
 
 #[cfg(feature = "test-hooks")]
 pub use self::admission::put_selector_test_federation_grant;
+#[cfg(feature = "sync")]
+pub(in crate::sync) use self::admission::validate_sync_identity_body;
 pub(crate) use self::admission::{AdmittedUpdate, admit_staged_window_update};
 pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
 pub(in crate::sync) use self::admission::{
@@ -45,9 +47,8 @@ pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
-    encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
-    filtered_window_doc_for, filtered_window_doc_for_peer, guest_share_envelope,
-    guest_share_envelope_body,
+    encode_selector_vv_request, encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
+    filtered_window_doc_for_peer, guest_share_envelope, guest_share_envelope_body,
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;

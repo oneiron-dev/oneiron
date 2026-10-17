@@ -4,6 +4,7 @@ use super::{
     InboundSurfaceEventInput, SurfaceEventAck, SurfaceEventAction, SurfaceEventAdmission,
     SurfaceEventAttemptRef, SurfaceEventHandoffState,
 };
+use crate::channel_identity_provider::EmailThreadHeaders;
 use crate::thread_passport::{
     ThreadPassportInput, ThreadPassportResolution, canonical_message_id, canonical_message_id_list,
 };
@@ -16,6 +17,39 @@ pub struct CcAgentIntakeOutcome {
 }
 
 impl Vault {
+    /// Mail ingress for every email identity: a delegated mailbox is never
+    /// special-cased (R2). With parseable threading headers the message takes
+    /// the named-address door below, so it joins its thread across identities.
+    /// Without them, or with headers the passport cannot read, it takes the
+    /// generic door: a header gap is metadata, not a reason to drop mail.
+    pub fn enqueue_inbound_email(
+        &self,
+        input: InboundSurfaceEventInput,
+        headers: Option<&EmailThreadHeaders>,
+        now: u64,
+    ) -> Result<SurfaceEventAdmission> {
+        let threaded = headers.filter(|headers| {
+            canonical_message_id(&headers.message_id).is_ok()
+                && canonical_message_id_list(&headers.references).is_ok()
+                && headers
+                    .in_reply_to
+                    .as_deref()
+                    .is_none_or(|reply| canonical_message_id(reply).is_ok())
+        });
+        let Some(headers) = threaded else {
+            return self.enqueue_inbound_surface_event(input, now);
+        };
+        Ok(self
+            .enqueue_cc_agent_email(
+                input,
+                &headers.message_id,
+                &headers.references,
+                headers.in_reply_to.as_deref(),
+                now,
+            )?
+            .admission)
+    }
+
     /// Foreign CC content remains claims, never instructions or permission to book/send.
     /// A successful ack means the owner inbox can read the thread immediately. The
     /// worker receives ProposeConfirm and the sticky thread ref; it must use the

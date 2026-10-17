@@ -16,8 +16,10 @@ use super::codec::{
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
-    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_TASK_REALIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_WEAVE_LENS_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
@@ -390,6 +392,66 @@ impl<'a> DreamerRunnerStore<'a> {
         )
     }
 
+    /// Enqueues `resident`'s own dreaming (OF-490) as a Nightly child in the
+    /// wake's own commit: one per resident per wake key. The resident's
+    /// stamp binds at enqueue.
+    pub(crate) fn enqueue_resident_dream_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        resident: crate::EntityId,
+        parent_attempt: Option<crate::attempt_queue::AttemptId>,
+        wake_key: Option<&str>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_RESIDENT_DREAM_ATTEMPT_KIND.to_owned(),
+                input: crate::dreamer_consolidation::resident_dream_input(resident),
+                parent_attempt,
+            },
+            wake_key.map(|key| {
+                format!(
+                    "{DREAMER_RESIDENT_DREAM_ATTEMPT_KIND}:{}:{key}",
+                    resident.to_hex()
+                )
+            }),
+            run_id,
+            now,
+        )
+    }
+
+    /// Enqueues the weave lens's generate step for one published digest
+    /// period (OF-499), in the publication's own commit: one per period
+    /// render.
+    pub(crate) fn enqueue_weave_lens_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        reader: crate::claim::WeaveDigestReader,
+        scheduled_for: u64,
+        rendered_at: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let input = crate::claim::weave_lens_attempt_input(reader, scheduled_for, rendered_at);
+        let dedupe = format!(
+            "{DREAMER_WEAVE_LENS_ATTEMPT_KIND}:{}:{scheduled_for}:{rendered_at}",
+            reader.id().to_hex()
+        );
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_WEAVE_LENS_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_WEAVE_LENS_ATTEMPT_KIND.to_owned(),
+                input,
+                parent_attempt: None,
+            },
+            Some(dedupe),
+            None,
+            rendered_at,
+        )
+    }
+
     /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
     /// take the advisory dedupe floor, and co-commit the private run-tree row
     /// whichever way the queue answered.
@@ -489,9 +551,28 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Marks a leased Dreamer attempt complete through the generic queue.
     pub fn complete(&self, input: CompleteDreamerAttempt) -> Result<CompleteDreamerAttemptOutcome> {
+        self.complete_judged(input, None)
+    }
+
+    /// [`Self::complete`], with the runner's answer to its TASK's "Done means
+    /// met?" ([`crate::task_verb::runner_done_question`]), asked before this
+    /// write. Without one, a TASK with a brief asks up.
+    pub fn complete_judged(
+        &self,
+        input: CompleteDreamerAttempt,
+        judged: Option<crate::task_verb::RunnerDoneAnswer>,
+    ) -> Result<CompleteDreamerAttemptOutcome> {
+        use crate::task_verb::highway_runner::RunnerSettle;
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
         let outcome = self.vault.with_write_txn_grouped(|wtxn| {
+            // OF-220: a TASK's durable result lands before the lease clears.
+            crate::task_verb::highway_runner::report_leased_task_in_txn(
+                self.vault,
+                wtxn,
+                attempt_id,
+                judged.map_or(RunnerSettle::Done, RunnerSettle::Judged),
+            )?;
             let outcome = crate::ports::JobQueue::port_job_complete(
                 self.vault,
                 wtxn,
@@ -568,6 +649,16 @@ impl<'a> DreamerRunnerStore<'a> {
                     "agent retry requires a dispatch attempt",
                 ));
             }
+            // OF-220: the TASK requeues before its try's lease clears.
+            crate::task_verb::highway_runner::report_leased_task_in_txn(
+                self.vault,
+                txn,
+                source.id,
+                crate::task_verb::highway_runner::RunnerSettle::Failed {
+                    error: input.last_error.as_deref().unwrap_or_default(),
+                    retryable: true,
+                },
+            )?;
             let crate::attempt_queue::RetryOutcome::Retried(record) =
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
@@ -595,6 +686,16 @@ impl<'a> DreamerRunnerStore<'a> {
                         "agent dispatch failures require typed detector evidence",
                     ));
                 }
+                // OF-220: the TASK fails before its try's lease clears.
+                crate::task_verb::highway_runner::report_leased_task_in_txn(
+                    self.vault,
+                    wtxn,
+                    attempt_id,
+                    crate::task_verb::highway_runner::RunnerSettle::Failed {
+                        error: &input.reason,
+                        retryable: false,
+                    },
+                )?;
                 let outcome = crate::ports::JobQueue::port_job_fail(
                     self.vault,
                     wtxn,
@@ -670,6 +771,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let record = DreamerParkedAttemptRecord {
             attempt_id: input.attempt_id,
             reason: input.reason,
+            cause: input.cause,
             park_owner: input.park_owner,
             parked_at: input.now,
         };
@@ -782,6 +884,19 @@ impl<'a> DreamerRunnerStore<'a> {
 }
 
 pub(super) fn decode_dreamer_attempt_status(record: AttemptRecord) -> Result<DreamerAttemptStatus> {
+    // A TASK's realization carries the TASK's bare spec, not the runner
+    // envelope: its status reads that spec as its input, with no parent.
+    if record.kind == DREAMER_TASK_REALIZE_ATTEMPT_KIND {
+        let input = super::codec::decode_value(&record.payload)?;
+        return Ok(DreamerAttemptStatus {
+            attempt: record,
+            payload: DreamerAttemptPayload {
+                attempt_type: DREAMER_TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                input,
+                parent_attempt: None,
+            },
+        });
+    }
     if !is_dreamer_queue_kind(&record.kind) {
         return Err(invalid_dreamer_runner(
             "attempt is not a Dreamer runner attempt",
@@ -806,6 +921,8 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_RECIPE_WAKE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == DREAMER_NOTE_REVIEW_ATTEMPT_KIND
+        || kind == DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+        || kind == DREAMER_WEAVE_LENS_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
         || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }

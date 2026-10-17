@@ -1,4 +1,5 @@
 //! Actor-bound room deletion and per-person erasure over the existing delete door.
+use super::privacy_erase::{PrivacyEraseProgress, RoomPersonEraseOutcome};
 use super::*;
 use crate::conversation_dag::{actor_in_txn, conversation_of};
 use crate::deletion::{DeleteEntityOutcome, DeleteReason, DeletionGateContext, GatedDeletion};
@@ -478,6 +479,8 @@ fn reverify_record_delete(
 }
 
 impl Vault {
+    /// `progress` is the erase request's kept set: a GDPR split here skips
+    /// what the request already kept and adds what it newly keeps.
     fn delete_room_record_as(
         &self,
         room: EntityId,
@@ -485,6 +488,7 @@ impl Vault {
         actor: WriteActor,
         reason: DeleteReason,
         subject: Option<EntityId>,
+        progress: &mut PrivacyEraseProgress,
     ) -> Result<DeleteEntityOutcome> {
         let txn = self.store.env.read_txn()?;
         let role = check_delete(self, &txn, room, record, actor, reason, subject)?;
@@ -498,6 +502,14 @@ impl Vault {
             role,
         );
         drop(txn);
+        let reverify = |txn: &heed::RoTxn<'_>| {
+            reverify_record_delete(self, txn, room, record, actor, reason, subject)
+        };
+        // A GDPR erase keeps what a legal hold names (C5). The MESSAGEs and
+        // the reactions below are split each on their own; a held one is
+        // left in place and the erase goes on. One the request already kept
+        // through another path is not split, logged or counted again.
+        let privacy = reason == DeleteReason::GdprDelete;
         // Delete selected MESSAGE content before its TURN loses the PartOf
         // edge. A personal operation never purges a different actor's row.
         if self
@@ -522,8 +534,11 @@ impl Vault {
                     }
                 }
                 drop(txn);
+                if privacy {
+                    targets = progress.unheld(self, &targets, actor, &reverify)?;
+                }
                 for message in targets {
-                    self.delete_room_record_as(room, message, actor, reason, subject)?;
+                    self.delete_room_record_as(room, message, actor, reason, subject, progress)?;
                 }
                 if ids.len() < ERASE_PAGE {
                     break;
@@ -534,14 +549,14 @@ impl Vault {
         // Reactions about the record go first, under the same reason: a hard
         // delete removes the claims' subject edges, and a failure here leaves
         // the record in place for a retry to find them again.
-        let reactions = {
+        let mut reactions = {
             let txn = self.store.env.read_txn()?;
             crate::reaction::record_reaction_claims_in(self, &txn, record)?
         };
+        if privacy {
+            reactions = progress.unheld(self, &reactions, actor, &reverify)?;
+        }
         crate::reaction::erase_reaction_claims(self, &reactions, reason)?;
-        let reverify = |txn: &heed::RoTxn<'_>| {
-            reverify_record_delete(self, txn, room, record, actor, reason, subject)
-        };
         self.delete_entity_with_reason_gated(
             &record,
             reason,
@@ -564,7 +579,14 @@ impl Vault {
         ) {
             return Err(denied());
         }
-        self.delete_room_record_as(room, record, actor, reason, None)
+        self.delete_room_record_as(
+            room,
+            record,
+            actor,
+            reason,
+            None,
+            &mut PrivacyEraseProgress::default(),
+        )
     }
 
     /// Test seam for suites whose subject is a downstream effect of deletion:
@@ -601,17 +623,24 @@ impl Vault {
     /// Hard-erases this PERSON's live and soft-erased records in keyset pages.
     /// The local append fence commits before any page, and every page rechecks
     /// authority. A retry starts at the beginning and skips completed purges.
+    /// A record a legal hold names is kept (C5): its refusal goes to the
+    /// hold's log once per request, it is neither deleted nor among the
+    /// outcomes, and the report counts it once in `kept`. A kept TURN's
+    /// MESSAGEs are not reached through it.
     pub fn erase_room_person(
         &self,
         room: EntityId,
         person: EntityId,
         actor: WriteActor,
-    ) -> Result<Vec<DeleteEntityOutcome>> {
+    ) -> Result<RoomPersonEraseOutcome> {
         self.with_write_txn_grouped(|txn| {
             authorize_room_erasure(self, txn, room, person, actor)?;
             ROOM_ERASURES.put(&self.store, txn, &(room, person), &[1])?;
             Ok(())
         })?;
+        let reauthorize =
+            |txn: &heed::RoTxn<'_>| authorize_room_erasure(self, txn, room, person, actor);
+        let mut progress = PrivacyEraseProgress::default();
         let mut outcomes = Vec::new();
         // MESSAGE text is stored separately from its TURN. Scan the room's
         // direct BelongsTo index first: messages authored by this PERSON may
@@ -642,6 +671,7 @@ impl Vault {
                 }
             }
             drop(txn);
+            let targets = progress.unheld(self, &targets, actor, &reauthorize)?;
             for message in targets {
                 outcomes.push(self.delete_room_record_as(
                     room,
@@ -649,6 +679,7 @@ impl Vault {
                     actor,
                     DeleteReason::GdprDelete,
                     Some(person),
+                    &mut progress,
                 )?);
             }
             if ids.len() < ERASE_PAGE {
@@ -682,6 +713,7 @@ impl Vault {
                 })
                 .collect::<Result<Vec<_>>>()?;
             drop(txn);
+            let targets = progress.unheld(self, &targets, actor, &reauthorize)?;
             for record in targets {
                 outcomes.push(self.delete_room_record_as(
                     room,
@@ -689,6 +721,7 @@ impl Vault {
                     actor,
                     DeleteReason::GdprDelete,
                     Some(person),
+                    &mut progress,
                 )?);
             }
             if ids.len() < ERASE_PAGE {
@@ -702,6 +735,7 @@ impl Vault {
             authorize_room_erasure(self, &txn, room, person, actor)?;
             crate::reaction::person_reaction_claims_in(self, &txn, room, person)?
         };
+        let reactions = progress.unheld(self, &reactions, actor, &reauthorize)?;
         crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
         // The single writer closes the in-flight fence only after every
         // selected active row has completed its reason-aware deletion. A
@@ -711,7 +745,10 @@ impl Vault {
             ROOM_ERASURES.put(&self.store, txn, &(room, person), &[2])?;
             Ok(())
         })?;
-        Ok(outcomes)
+        Ok(RoomPersonEraseOutcome {
+            outcomes,
+            kept: progress.kept.len(),
+        })
     }
 }
 

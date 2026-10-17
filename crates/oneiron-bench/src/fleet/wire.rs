@@ -63,6 +63,11 @@ struct Envelope<T> {
     seq: u64,
     last: bool,
     payload: T,
+    /// The call receipt an RPC reply states (OF-538); read past, never sent.
+    #[serde(default, skip_serializing, rename = "receipt_ref")]
+    _receipt_ref: Option<String>,
+    #[serde(default, skip_serializing, rename = "no_record")]
+    _no_record: bool,
 }
 
 /// Mints one logged read/write agent slip, bound to the agent's own holder key.
@@ -241,6 +246,8 @@ impl Agent {
             seq: 0,
             last: true,
             payload: json!({"method":method,"params":params}),
+            _receipt_ref: None,
+            _no_record: false,
         };
         let mut bytes = vec![TAG_RPC];
         bytes.extend(rmp_serde::to_vec_named(&request)?);

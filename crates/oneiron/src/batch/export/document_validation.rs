@@ -11,7 +11,7 @@ use crate::serialize::{ExportBody, ExportValue};
 
 impl WholeVaultDocument {
     pub(super) fn validate(&self, vault: &Vault) -> Result<()> {
-        self.manifest.validate_json()?;
+        self.manifest.validate()?;
         let mut ids = BTreeSet::new();
         for row in self.entities() {
             let id = parse_id(&row.id)?;

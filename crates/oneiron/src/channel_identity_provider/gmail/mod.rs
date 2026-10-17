@@ -1,4 +1,5 @@
-//! Gmail/Workspace read-side adapter for `delegated_grant` rows.
+//! Gmail/Workspace adapter for `delegated_grant` rows: reads, and (OF-374)
+//! member send-as through [`GmailSendSink`].
 //!
 //! This adapter binds a member's own mailbox — one the product never minted and
 //! never owns — to a ChannelIdentity of the fourth shape. Everything downstream
@@ -18,23 +19,37 @@
 //!   [`GmailDelegatedAdapter::enqueue_inbox_poll`] and
 //!   [`GmailDelegatedAdapter::with_delegated_token_at_door`] — therefore require
 //!   an ACTIVE delegated row that matches this adapter, not just a live secret.
-//! * **Scoped-read only.** [`GmailReadWire`] has no send, reply, delete, or
-//!   modify method, and [`delegated_scope_for_google_oauth_scope`] maps only the
-//!   two read scopes. A caller cannot widen this by passing a different string;
-//!   there is no variant for a write scope to land in.
+//! * **Scoped-read by default; send is an explicit opt-in.** [`GmailReadWire`]
+//!   has no send, reply, delete, or modify method, and
+//!   [`delegated_scope_for_google_oauth_scope`] maps only the two read scopes.
+//!   The one write scope, `gmail.send`, enters only through
+//!   [`GmailDelegatedAdapterConfig::with_google_oauth_scopes_allowing_send`],
+//!   and a row carrying it is admitted only over custody whose binding holds
+//!   the provider's granted-scope evidence. Holding it is capability, not
+//!   approval: every send is one gated write through
+//!   [`GmailDelegatedAdapter::dispatch_send_recorded`], held for the owner
+//!   unless a grant covers it.
 //! * **No credential in a signature.** The read wire receives an opaque
 //!   [`GmailReadAuthority`] bound to the live identity, not a bare custody
 //!   name. Its token callback rechecks the row at credential egress; token
 //!   bytes are never persisted or returned in a page.
-//! * **No new dependency.** The protocol lives behind the wire trait, so the
-//!   dependency graph and lockfile are untouched.
+//! * **No new dependency.** The read protocol lives behind the wire trait; the
+//!   send wire [`HttpGmailSendWire`] uses the `reqwest` the crate already
+//!   declares, so the lockfile is untouched.
 //!
 //! Rotation is absent by construction: the member's provider owns revoking and
 //! re-issuing this grant, and the delegated edge table has no `Rotating` state
 //! to step into.
 
+mod http;
 mod run;
+mod send;
+pub use self::http::HttpGmailSendWire;
 pub use self::run::GmailReadAuthority;
+pub use self::send::{
+    GMAIL_SEND_PLAN_REF_PREFIX, GmailReplyThread, GmailSendAuthority, GmailSendPlan, GmailSendSink,
+    GmailSendWire, GmailSendWireError, GmailSentMessage,
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -74,6 +89,12 @@ pub const GMAIL_READONLY_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gm
 
 /// Google OAuth scope granting read of message headers/metadata only.
 pub const GMAIL_METADATA_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gmail.metadata";
+
+/// Google OAuth scope granting send-only access (`users.messages.send`).
+///
+/// The narrowest Google write scope: it sends, and reads, modifies or deletes
+/// nothing. `gmail.compose`, `gmail.modify` and `mail.google.com` stay refused.
+pub const GMAIL_SEND_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gmail.send";
 
 const GMAIL_INBOX_POLL_DEDUPE_PREFIX: &str = "gmail:inbox_poll:v1:";
 pub(super) const GMAIL_EVENT_ID_PREFIX: &str = "gmail:";
@@ -117,6 +138,22 @@ pub fn delegated_scope_for_google_oauth_scope(scope_url: &str) -> Option<Delegat
         GMAIL_READONLY_OAUTH_SCOPE => Some(DelegatedGrantScope::MailRead),
         GMAIL_METADATA_OAUTH_SCOPE => Some(DelegatedGrantScope::MailMetadata),
         _ => None,
+    }
+}
+
+/// Maps a Google OAuth scope URL onto a scope class, admitting the one send
+/// scope beside the two read scopes.
+///
+/// The explicit opt-in twin of [`delegated_scope_for_google_oauth_scope`]:
+/// only `gmail.send` is added, and every broader write scope still maps to
+/// `None`.
+#[must_use]
+pub fn delegated_scope_for_google_oauth_scope_allowing_send(
+    scope_url: &str,
+) -> Option<DelegatedGrantScope> {
+    match scope_url.trim() {
+        GMAIL_SEND_OAUTH_SCOPE => Some(DelegatedGrantScope::MailSend),
+        other => delegated_scope_for_google_oauth_scope(other),
     }
 }
 
@@ -234,21 +271,52 @@ impl GmailDelegatedAdapterConfig {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] for a write scope or an empty scope list.
-    pub fn with_google_oauth_scopes(mut self, scope_urls: &[&str]) -> Result<Self> {
+    pub fn with_google_oauth_scopes(self, scope_urls: &[&str]) -> Result<Self> {
+        self.with_scopes_mapped(
+            scope_urls,
+            delegated_scope_for_google_oauth_scope,
+            "gmail delegated grant admits read scopes only",
+        )
+    }
+
+    /// As [`Self::with_google_oauth_scopes`], but also admits `gmail.send`
+    /// (OF-374, member send-as).
+    ///
+    /// The explicit opt-in: a host calls this only with the scopes Google's
+    /// token response actually GRANTED, and registers the matching custody
+    /// evidence through
+    /// [`delegated_custody_scopes_for_grant`](crate::channel_identity::delegated_custody_scopes_for_grant).
+    /// A send-only grant is lawful (it can send and cannot read); every scope
+    /// broader than `gmail.send` is still refused.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for a broader write scope or an empty list.
+    pub fn with_google_oauth_scopes_allowing_send(self, scope_urls: &[&str]) -> Result<Self> {
+        self.with_scopes_mapped(
+            scope_urls,
+            delegated_scope_for_google_oauth_scope_allowing_send,
+            "gmail delegated grant admits read scopes and gmail.send only",
+        )
+    }
+
+    fn with_scopes_mapped(
+        mut self,
+        scope_urls: &[&str],
+        map: fn(&str) -> Option<DelegatedGrantScope>,
+        refusal: &str,
+    ) -> Result<Self> {
         let mut scopes = Vec::with_capacity(scope_urls.len());
         for scope_url in scope_urls {
-            let scope = delegated_scope_for_google_oauth_scope(scope_url).ok_or_else(|| {
-                Error::InvalidConfig(format!(
-                    "gmail delegated grant admits read scopes only, not {scope_url}"
-                ))
-            })?;
+            let scope = map(scope_url)
+                .ok_or_else(|| Error::InvalidConfig(format!("{refusal}, not {scope_url}")))?;
             if !scopes.contains(&scope) {
                 scopes.push(scope);
             }
         }
         if scopes.is_empty() {
             return Err(Error::InvalidConfig(
-                "gmail delegated grant requires at least one read scope".to_owned(),
+                "gmail delegated grant requires at least one scope".to_owned(),
             ));
         }
         self.scopes = scopes;
@@ -280,10 +348,28 @@ impl GmailDelegatedAdapterConfig {
         &self.custody_record_ref
     }
 
-    /// The read scopes the grant covers.
+    /// The scopes the grant covers.
     #[must_use]
     pub fn scopes(&self) -> &[DelegatedGrantScope] {
         &self.scopes
+    }
+
+    /// Whether the grant covers a read scope; the read doors refuse a
+    /// send-only grant.
+    #[must_use]
+    pub fn grants_read(&self) -> bool {
+        self.scopes.iter().any(|scope| {
+            matches!(
+                scope,
+                DelegatedGrantScope::MailRead | DelegatedGrantScope::MailMetadata
+            )
+        })
+    }
+
+    /// Whether the grant covers `gmail.send`.
+    #[must_use]
+    pub fn grants_send(&self) -> bool {
+        self.scopes.contains(&DelegatedGrantScope::MailSend)
     }
 }
 
@@ -424,6 +510,7 @@ impl GmailDelegatedAdapter {
         identity_id: EntityId,
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<DoorInjectionReceipt> {
+        self.require_read_grant()?;
         self.require_active_row_matches_adapter(vault, &identity_id)?;
         vault.inject_secret_at_door(
             &self.config.custody_record_ref,
@@ -455,6 +542,7 @@ impl GmailDelegatedAdapter {
         identity_id: EntityId,
         now: u64,
     ) -> Result<EnqueueOutcome> {
+        self.require_read_grant()?;
         self.require_active_row_matches_adapter(vault, &identity_id)?;
         let config = GmailInboxPollConfig {
             mailbox_address: self.config.mailbox_address.clone(),
@@ -543,16 +631,27 @@ impl GmailDelegatedAdapter {
         vault: &Vault,
         identity_id: &EntityId,
     ) -> Result<()> {
+        // Channel, mailbox and state are the identity's facts, read from its
+        // `channel_identity.*` heads (OF-272); the grant, its custody record
+        // and its scopes are custody, held on the local row alone.
+        let txn = vault.store.env.read_txn()?;
         let identity = vault
-            .get_channel_identity(identity_id)?
+            .get_channel_identity_in_txn(&txn, identity_id)?
             .ok_or(Error::EntityNotFound)?;
+        let facts = crate::channel_identity::channel_identity_facts_in_txn(
+            &vault.store,
+            &txn,
+            identity_id,
+        )?
+        .ok_or(Error::EntityNotFound)?;
+        drop(txn);
         let Some(grant) = identity.grant() else {
             return Err(Error::InvalidConfig(
                 "gmail inbox poll requires a delegated_grant identity row".to_owned(),
             ));
         };
         let mailbox = AssignmentAddress::normalize(EMAIL_CHANNEL, &self.config.mailbox_address);
-        if identity.channel() != EMAIL_CHANNEL || identity.address_or_handle() != mailbox.as_str() {
+        if facts.channel != EMAIL_CHANNEL || facts.address_or_handle != mailbox.as_str() {
             return Err(Error::InvalidConfig(
                 "gmail inbox poll identity row is assigned to another channel or mailbox"
                     .to_owned(),
@@ -572,13 +671,25 @@ impl GmailDelegatedAdapter {
                 "gmail inbox poll identity row grants another scope set".to_owned(),
             ));
         }
-        if identity.state() != ChannelIdentityState::Active {
+        if facts.state != ChannelIdentityState::Active {
             return Err(Error::InvalidConfig(format!(
                 "gmail delegated reads require an active identity row, not {}",
-                identity.state().as_str()
+                facts.state.as_str()
             )));
         }
         Ok(())
+    }
+
+    /// A send-only grant (OF-374) cannot read: the read doors refuse it before
+    /// touching the row or the token.
+    fn require_read_grant(&self) -> Result<()> {
+        if self.config.grants_read() {
+            Ok(())
+        } else {
+            Err(Error::InvalidConfig(
+                "gmail delegated reads require a read scope on the grant".to_owned(),
+            ))
+        }
     }
 
     fn provision_record(

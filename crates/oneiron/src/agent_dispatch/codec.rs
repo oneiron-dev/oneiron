@@ -17,8 +17,8 @@ use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
     KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
-    KEY_ORIGIN_CONVERSATION, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
-    KEY_SPAWN_INTENT, KEY_TARGET, TARGET_CUSTOM, TARGET_SYSTEM,
+    KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
+    KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
 
@@ -96,6 +96,17 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             .map_err(|_| Error::InvalidConfig("healer case encode".into()))?;
         entries.push((Value::from("healer_case"), Value::Binary(bytes)));
     }
+    // OF-543: the type stamp always rides the payload, root included — a
+    // spawn without one is invalid, never untyped.
+    if input.type_ref.node_id.is_empty() {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "task_type_ref node_id must not be empty",
+        )));
+    }
+    entries.push((
+        Value::from(KEY_TASK_TYPE_REF),
+        Value::from(input.type_ref.wire_form().as_str()),
+    ));
     if let Some(budget) = input.budget {
         entries.push((Value::from(KEY_BUDGET), Value::from(budget)));
     }
@@ -107,7 +118,43 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         })?;
         entries.push((Value::from(KEY_LAUNCH), Value::from(json)));
     }
+    super::room_join::encode_room_keys(input, &mut entries)?;
+    if let Some(team) = &input.team {
+        team.validate()?;
+        let json = serde_json::to_string(team).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "team-run stamp must encode",
+            ))
+        })?;
+        entries.push((Value::from(KEY_TEAM), Value::from(json)));
+    }
+    if let Some(plan) = &input.plan {
+        plan.validate()?;
+        let json = serde_json::to_string(plan).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "spawn plan receipt must encode",
+            ))
+        })?;
+        entries.push((Value::from(KEY_PLAN), Value::from(json)));
+    }
     Ok(Value::Map(entries))
+}
+
+/// The strict OF-540 team-stamp decode the codec and [`attempt_team_stamp`]
+/// share: a serialized stamp whose team reference passes the receipt rule.
+fn decode_team_stamp(value: &Value) -> Result<super::TeamRunStamp> {
+    let json = value
+        .as_str()
+        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "team must be a serialized team-run stamp",
+        )))?;
+    let stamp: super::TeamRunStamp = serde_json::from_str(json).map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "team must decode as a team-run stamp",
+        ))
+    })?;
+    stamp.validate()?;
+    Ok(stamp)
 }
 
 /// Decodes a pinned-key dispatch input map (strict: map shape, string keys,
@@ -133,8 +180,13 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut spawn_intent = None;
     let mut scope = None;
     let mut healer_case = None;
+    let mut type_ref = None;
     let mut budget = None;
     let mut launch = None;
+    let mut room = None;
+    let mut join = None;
+    let mut team = None;
+    let mut plan = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -299,6 +351,20 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                 super::healer_context::validate(&case)?;
                 healer_case = Some(case);
             }
+            KEY_TASK_TYPE_REF => {
+                let wire = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "task_type_ref must be node_id@tree_version",
+                    ),
+                ))?;
+                type_ref = Some(
+                    crate::task_type::TaskTypeRef::parse_wire(wire).map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "task_type_ref must be node_id@tree_version",
+                        ))
+                    })?,
+                );
+            }
             KEY_BUDGET => {
                 budget = Some(value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("budget must be an integer"),
@@ -316,6 +382,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     ))
                 })?);
             }
+            super::types::KEY_ROOM => room = Some(super::room_join::decode_room(value)?),
+            super::types::KEY_JOIN => join = Some(super::room_join::decode_join(value)?),
             KEY_DEPTH_REMAINING => {
                 let depth = value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
@@ -337,6 +405,24 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                         "origin_conversation must be an entity id",
                     )));
                 }
+            }
+            KEY_TEAM => {
+                team = Some(decode_team_stamp(value)?);
+            }
+            KEY_PLAN => {
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "plan must be a serialized spawn plan receipt",
+                    ),
+                ))?;
+                let receipt: super::SpawnPlanReceipt =
+                    serde_json::from_str(json).map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "plan must decode as a spawn plan receipt",
+                        ))
+                    })?;
+                receipt.validate()?;
+                plan = Some(receipt);
             }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
@@ -398,8 +484,15 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         project_ref,
         spawn_intent,
         scope,
+        // Rows written before OF-543 carry no stamp; they read as the
+        // seeded root, the unsure placement, rather than failing decode.
+        type_ref: type_ref.unwrap_or_default(),
         budget,
         launch,
+        room,
+        join,
+        team,
+        plan,
     })
 }
 
@@ -433,7 +526,51 @@ pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
 /// Absent / wrong-kind / wrong-attempt-type / undecodable are all "no dispatch
 /// lineage", never storage corruption: the queue and codec are `pub`, so any
 /// attempt id can be named as a parent (the D13 non-boundary ruling).
-pub(super) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispatchInput> {
+/// The OF-543 type stamp of a queue row's dispatch payload, for the
+/// terminal attempt receipt. `None` only for non-dispatch rows.
+#[must_use]
+pub(crate) fn attempt_task_type_ref(
+    record: &AttemptRecord,
+) -> Option<crate::task_type::TaskTypeRef> {
+    record_dispatch_input(record).map(|input| input.type_ref)
+}
+
+/// The OF-540 team-run stamp a queue row's payload froze, for the terminal
+/// attempt receipt and the TASK lifecycle bodies: an agent dispatch's, or
+/// the one an external TASK try froze at its accept. `None` for any other
+/// row and for work outside any team run.
+///
+/// Strict, unlike the lineage reads: a malformed stamp (or input map) on an
+/// agent-dispatch or external-try payload is an error, never a quiet "no
+/// team".
+pub(crate) fn attempt_team_stamp(record: &AttemptRecord) -> Result<Option<super::TeamRunStamp>> {
+    if record.kind == crate::task_verb::TASK_EXTERNAL_ATTEMPT_KIND {
+        return Ok(crate::task_verb::decode_external_task_attempt(&record.payload)?.team);
+    }
+    if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+        return Ok(None);
+    }
+    // An envelope that does not decode names no attempt type, so it is not
+    // known to be an agent dispatch at all.
+    let Ok(payload) = decode_dreamer_attempt_payload(&record.payload) else {
+        return Ok(None);
+    };
+    if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
+        return Ok(None);
+    }
+    let Value::Map(entries) = &payload.input else {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "agent dispatch input must be a MessagePack map",
+        )));
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(KEY_TEAM))
+        .map(|(_, value)| decode_team_stamp(value))
+        .transpose()
+}
+
+pub(crate) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispatchInput> {
     if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
         return None;
     }

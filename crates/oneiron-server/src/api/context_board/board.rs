@@ -1,10 +1,10 @@
 //! The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES,
-//! TASKS, AGENTS, SKILLS and ROOM, each from its engine producer, in canon
-//! order, under one budget. Every row is read under the caller's own read.
+//! TASKS, SKILLS, ROOM and INBOX, each from its engine producer, in canon
+//! order, under one budget. Every row is read under the caller's own read,
+//! and every person is named by handle (PEOPLE ruling).
 
 use super::super::core_engine_error;
 use super::super::parse_entity_id_param;
-use super::validate_session_id;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -12,15 +12,19 @@ use oneiron::EntityId;
 use oneiron::context_board::BoardFrameError;
 use oneiron::context_board::BoardSection;
 use oneiron::context_board::CapabilityHit;
+use oneiron::context_board::PeopleView;
 use oneiron::context_board::SessionReadSet;
 use oneiron::context_board::quoted_leaf;
 use oneiron::memory::MemoryError;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 use utoipa::ToSchema;
 
 /// WORLDS rows past this many collapse into the section's additive overflow.
 const BOARD_WORLDS_CAP: usize = 16;
+/// Most INBOX rows one board renders; the lens orders them by impact.
+const BOARD_INBOX_CAP: usize = 16;
 
 /// Names the room whose ROOM section this board renders.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -36,16 +40,6 @@ pub(crate) struct ContextBoardProjectControls {
     /// Hex PROJECT entity id the caller can read.
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     project_id: String,
-}
-
-/// AGENTS controls: which run the child lane reads.
-#[derive(Debug, Default, Deserialize, ToSchema)]
-pub(crate) struct ContextBoardAgentsControls {
-    /// Run whose indexed attempts the child lane reads. Absent, it reads the
-    /// whole working set.
-    #[serde(default)]
-    #[schema(example = "run-123")]
-    run_id: Option<String>,
 }
 
 /// How the board's render budget settled, so a shed is legible.
@@ -96,7 +90,6 @@ pub(super) struct BoardTargets {
     /// when the board's session id names one.
     session: Option<EntityId>,
     project: Option<EntityId>,
-    run_id: Option<String>,
 }
 
 impl BoardTargets {
@@ -123,7 +116,6 @@ pub(super) fn board_targets(
     retrieval_room: Option<&str>,
     session: Option<&str>,
     project: Option<&ContextBoardProjectControls>,
-    agents: Option<&ContextBoardAgentsControls>,
 ) -> Result<BoardTargets, ApiError> {
     let actor = board_actor(auth);
     let room = match room {
@@ -148,16 +140,11 @@ pub(super) fn board_targets(
     let project = project
         .map(|project| parse_entity_id_param(&project.project_id, "project.project_id"))
         .transpose()?;
-    let run_id = agents.and_then(|agents| agents.run_id.clone());
-    if let Some(run_id) = &run_id {
-        validate_session_id(run_id, "agents.run_id")?;
-    }
     Ok(BoardTargets {
         actor,
         room,
         session: session.and_then(|session| EntityId::from_hex(session).ok()),
         project,
-        run_id,
     })
 }
 
@@ -167,14 +154,17 @@ pub(super) struct BoardParts {
     pub(super) authority: oneiron::pipeline::ResolvedWorldAuthority,
     pub(super) scope: String,
     pub(super) sections: Vec<BoardSection>,
+    /// The caller's `you:` forks line, rendered under the legend.
+    pub(super) you: Option<String>,
     pub(super) worlds: Vec<String>,
     pub(super) tasks: Vec<String>,
     pub(super) room: Option<Vec<String>>,
     pub(super) skills: Vec<String>,
-    pub(super) agents: Vec<String>,
     /// The task intents, worlds, room, room rules and project the board
     /// named: rows a keyed replay re-admits.
     pub(super) named: Vec<EntityId>,
+    /// The hook blocks whose task rows TASKS tagged.
+    pub(super) hook_blocks: std::collections::BTreeSet<EntityId>,
 }
 
 /// Assembles every section the board renders for this caller.
@@ -186,6 +176,8 @@ pub(super) fn board_parts(
     memories: Option<&oneiron::MemoriesSection>,
     hits: &[CapabilityHit],
     reads: &SessionReadSet,
+    people: &PeopleView<'_>,
+    hook_pins: &[oneiron::context_board::HookPin],
 ) -> Result<BoardParts, ApiError> {
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
@@ -212,23 +204,24 @@ pub(super) fn board_parts(
     // ROOM, read fresh through the caller's own facade handle, with its host
     // among the board session's present participants.
     let room = match (&targets.room, &memory) {
-        (Some(target), Some(memory)) => match memory.rooms_render_hosted(target.id, targets.session)
-        {
-            Ok(room) => Some(room),
-            Err(error) if !target.explicit && caller_fault(&error) => None,
-            Err(error) => {
-                return Err(board_memory_error(
-                    "board room failed",
-                    "room.conversation_id",
-                    error,
-                ));
+        (Some(target), Some(memory)) => {
+            match memory.rooms_render_hosted(target.id, targets.session) {
+                Ok(room) => Some(room),
+                Err(error) if !target.explicit && caller_fault(&error) => None,
+                Err(error) => {
+                    return Err(board_memory_error(
+                        "board room failed",
+                        "room.conversation_id",
+                        error,
+                    ));
+                }
             }
-        },
+        }
         _ => None,
     };
     let room_section = room
         .as_ref()
-        .map(oneiron::context_board::RoomSection::board_section)
+        .map(|room| room.board_section(people))
         .transpose()
         .map_err(board_frame_error)?;
     if let Some(room) = &room {
@@ -240,14 +233,34 @@ pub(super) fn board_parts(
         );
     }
 
-    // TASKS, with the project view as its first detail row.
-    let tasks = match &memory {
-        Some(memory) => readable_task_rows(auth, read, memory)?,
-        None => oneiron::context_board::TasksSection {
-            rows: Vec::new(),
-            overflow: None,
-        },
+    // TASKS: each task's `who` and `fits:` by handle, the caller's live
+    // children on the task they realize, and the project view as its first
+    // detail row. The `you:` line rides the frame, under the legend.
+    let (mut tasks, you) = match &memory {
+        Some(memory) => {
+            let mut rows = readable_task_rows(auth, read, memory)?;
+            let (children, forks) = match targets.actor() {
+                Some(actor) => (
+                    oneiron::context_board::child_states_for_actor(vault, actor)
+                        .map_err(|error| core_engine_error("board children failed", error))?,
+                    oneiron::context_board::fork_states_for_actor(vault, actor)
+                        .map_err(|error| core_engine_error("board forks failed", error))?,
+                ),
+                None => (Vec::new(), Vec::new()),
+            };
+            rows.attach_people(people, &children);
+            let you = oneiron::context_board::render_you_line(&forks, &rows.intents);
+            (rows.render(), you)
+        }
+        None => (
+            oneiron::context_board::TasksSection {
+                rows: Vec::new(),
+                overflow: None,
+            },
+            None,
+        ),
     };
+    let hook_blocks = tasks.tag_hook_pins(hook_pins);
     named.extend(
         tasks
             .rows
@@ -255,50 +268,34 @@ pub(super) fn board_parts(
             .filter(|row| row.is_intent)
             .filter_map(|row| EntityId::from_hex(&row.id).ok()),
     );
-    let project = match (targets.project, &room) {
-        (Some(project), _) => Some(
-            project_row(server, read, project)?.ok_or_else(|| {
+    let project =
+        match (targets.project, &room) {
+            (Some(project), _) => Some(project_row(server, read, project)?.ok_or_else(|| {
                 ApiError::bad_request("unknown project", Some("project.project_id"))
-            })?,
-        ),
-        // An ordinary room's body is not a project room's and reads as an
-        // error here: it names no project.
-        (None, Some(room)) => match vault
-            .project_room(room.room)
-            .ok()
-            .flatten()
-            .and_then(|room| EntityId::from_hex(&room.project_id).ok())
-        {
-            Some(project) => project_row(server, read, project)?,
-            None => None,
-        },
-        (None, None) => None,
-    };
-    let lead = match project {
-        Some((project, row)) => {
-            named.push(project);
-            vec![row]
-        }
-        None => Vec::new(),
-    };
+            })?),
+            // An ordinary room's body is not a project room's and reads as an
+            // error here: it names no project.
+            (None, Some(room)) => match vault
+                .project_room(room.room)
+                .ok()
+                .flatten()
+                .and_then(|room| EntityId::from_hex(&room.project_id).ok())
+            {
+                Some(project) => project_row(server, read, project)?,
+                None => None,
+            },
+            (None, None) => None,
+        };
+    let mut lead = Vec::new();
+    if let Some((project, row)) = project {
+        named.push(project);
+        lead.push(row);
+    }
     let tasks_section =
         oneiron::context_board::assemble_tasks_section(&tasks, lead).map_err(board_frame_error)?;
 
-    // AGENTS: the caller's live spawns, then this turn's candidates. No
-    // authorized peer roster exists yet, so the peer lane is empty.
-    let children = match targets.actor() {
-        Some(actor) => {
-            oneiron::context_board::child_presence_for_actor(vault, actor, targets.run_id.as_deref())
-                .map_err(|error| core_engine_error("board agents failed", error))?
-        }
-        None => Vec::new(),
-    };
-    let agents =
-        oneiron::context_board::render_agents_section(&children, &[]).with_candidates(hits);
-    let agents_section =
-        oneiron::context_board::assemble_agents_section(&agents).map_err(board_frame_error)?;
-
-    // SKILLS, with the learning view on each found row.
+    // SKILLS, with the learning view on each found skill row and the agent
+    // definitions the capability channel found.
     let skills = oneiron::context_board::SkillsSection::project_with_learning(
         hits,
         reads,
@@ -308,6 +305,35 @@ pub(super) fn board_parts(
     .map_err(|error| core_engine_error("board skills failed", error))?;
     let skills_section = skills.board_section().map_err(board_frame_error)?;
 
+    // INBOX: the caller's own slice of the inbox lens, kept to rows that
+    // reach it through an identity its read admits. Hidden when empty.
+    let inbox = match targets.actor() {
+        Some(actor) => {
+            let mut rows = Vec::new();
+            let slice = vault
+                .agent_inbox_slice(actor, BOARD_INBOX_CAP, None)
+                .map_err(|error| core_engine_error("board inbox failed", error))?;
+            for item in slice {
+                let mut readable = false;
+                for participant in item
+                    .participants
+                    .iter()
+                    .filter(|row| row.actor_ref == actor)
+                {
+                    readable |= read
+                        .is_ref_readable(&participant.identity_ref)
+                        .map_err(|error| core_engine_error("board inbox failed", error))?;
+                }
+                if readable {
+                    rows.push(item);
+                }
+            }
+            oneiron::context_board::assemble_inbox_section(actor, &rows, people)
+                .map_err(board_frame_error)?
+        }
+        None => None,
+    };
+
     let mut sections = vec![worlds.clone()];
     if let Some(memories) = memories {
         sections.extend(
@@ -316,19 +342,20 @@ pub(super) fn board_parts(
         );
     }
     sections.push(tasks_section.clone());
-    sections.push(agents_section);
     sections.push(skills_section);
     sections.extend(room_section.clone());
+    sections.extend(inbox);
     Ok(BoardParts {
         authority,
         scope,
         sections,
+        you,
         worlds: worlds.detail_rows().to_vec(),
         tasks: tasks_section.detail_rows().to_vec(),
         room: room_section.map(|room| room.pinned_rows().to_vec()),
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
-        agents: agents.rows.into_iter().map(|row| row.line).collect(),
         named,
+        hook_blocks,
     })
 }
 
@@ -339,7 +366,7 @@ fn readable_task_rows(
     auth: &CoreAuth,
     read: &oneiron::claim::ScopedRead<'_>,
     memory: &oneiron::memory::Memory<'_>,
-) -> Result<oneiron::context_board::TasksSection, ApiError> {
+) -> Result<oneiron::context_board::TasksSectionRows, ApiError> {
     let mut rows = memory
         .describe_rows()
         .map_err(|error| board_memory_error("board tasks failed", "tasks", error))?;
@@ -359,7 +386,57 @@ fn readable_task_rows(
     if auth.verified_slip().is_some() {
         rows.bare_jobs.clear();
     }
-    Ok(rows.render())
+    Ok(rows)
+}
+
+/// The vault's people as the caller's read admits them, and the persons the
+/// caller's cached prefix roster holds: those an agent run's emitted prefix
+/// made resident, or, before a run's prefix emits, those its epoch-boundary
+/// selection will. A caller with no run reads every name inline.
+pub(super) async fn board_people(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    read: &oneiron::claim::ScopedRead<'_>,
+    session_id: Option<&str>,
+) -> Result<(oneiron::context_board::People, BTreeSet<EntityId>), ApiError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        });
+    let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
+        read.is_entity_readable(&person)
+    })
+    .map_err(|error| core_engine_error("board people failed", error))?;
+    // Each `about` is the stored line of the highest band the reader reads.
+    let applied = read
+        .read_receipt(None, 0)
+        .map_err(|error| core_engine_error("board people failed", error))?
+        .applied;
+    let ceiling = (!applied.deny_all).then_some(applied.max_sensitivity_band);
+    people
+        .set_about(&mut |person| server.vault.person_about(person, ceiling))
+        .map_err(|error| core_engine_error("board people failed", error))?;
+    let run_key = auth
+        .principal_ref()
+        .filter(|_| auth.actor_class() == Some("agent"))
+        .and_then(|actor| EntityId::from_hex(actor).ok())
+        .zip(session_id.map(str::to_owned));
+    let resident = match run_key {
+        Some(key) => match server.self_brief_sessions.lock().await.get(&key) {
+            Some(run) if run.emitted_epoch == Some(run.epoch) => {
+                run.render.resident_people().clone()
+            }
+            Some(run) => {
+                let mut pinned = vec![run.state.self_ref, run.state.principal];
+                pinned.extend(run.state.cast.iter().copied());
+                people.residence(&pinned).resident
+            }
+            None => BTreeSet::new(),
+        },
+        None => BTreeSet::new(),
+    };
+    Ok((people, resident))
 }
 
 /// The project view row, when the caller's read reads the project and its
@@ -423,5 +500,8 @@ fn board_memory_error(context: &'static str, field: &str, error: MemoryError) ->
 }
 
 pub(super) fn board_frame_error(error: BoardFrameError) -> ApiError {
-    ApiError::bad_request(format!("context board render failed: {error}"), Some("board"))
+    ApiError::bad_request(
+        format!("context board render failed: {error}"),
+        Some("board"),
+    )
 }

@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 15] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 20] = [
     "schema_version",
     "target",
     "agent_def",
@@ -43,9 +43,14 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 15] = [
     "spawn_intent",
     "scope",
     "healer_case",
+    "task_type_ref",
     "budget",
     "launch",
     "origin_conversation",
+    "room",
+    "join",
+    "team",
+    "plan",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -67,10 +72,17 @@ pub(super) const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
 pub(super) const KEY_PROJECT_REF: &str = AGENT_DISPATCH_INPUT_KEYS[8];
 pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
 pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
-pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[12];
-pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[13];
+pub(super) const KEY_TASK_TYPE_REF: &str = AGENT_DISPATCH_INPUT_KEYS[12];
+pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[13];
+pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[14];
 /// OF-221: the conversation a root dispatch's host stamped as its origin.
-pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[14];
+pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[15];
+pub(super) const KEY_ROOM: &str = AGENT_DISPATCH_INPUT_KEYS[16];
+pub(super) const KEY_JOIN: &str = AGENT_DISPATCH_INPUT_KEYS[17];
+/// OF-540: the team run the dispatch works in.
+pub(super) const KEY_TEAM: &str = AGENT_DISPATCH_INPUT_KEYS[18];
+/// OF-541: the planner receipt the launch ran under.
+pub(super) const KEY_PLAN: &str = AGENT_DISPATCH_INPUT_KEYS[19];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -136,6 +148,10 @@ pub struct AgentDispatchInput {
     /// Exact branch-resource restriction, never a replacement for live authority.
     /// An absent value grants no branch-resource access.
     pub scope: Option<crate::llm::Scope>,
+    /// OF-543 ONE TASK TYPE stamp, placed once at spawn. Required: every
+    /// spawn carries a `typeRef`, and an unsure placement is the root —
+    /// never an absent/untyped spawn.
+    pub type_ref: crate::task_type::TaskTypeRef,
     /// The spawn's requested `budget` (OF-532): a hard carve under the parent's
     /// cap, in the parent scope's unit.
     pub budget: Option<u64>,
@@ -143,12 +159,23 @@ pub struct AgentDispatchInput {
     /// spend and cap, as the caller saw them. The cost part of the spawn
     /// receipt.
     pub launch: Option<super::LaunchStatement>,
+    /// The room the launch works in (OF-531), as the spawn asked.
+    pub room: Option<crate::workspace_roster::RoomWork>,
+    /// The join receipt the launch re-proved in its own transaction (OF-531).
+    pub join: Option<crate::workspace_roster::JoinReceiptRef>,
+    /// OF-540: the team run this dispatch works in, frozen once at spawn.
+    /// `None` is no team run; the terminal receipt stamps it otherwise.
+    pub team: Option<super::TeamRunStamp>,
+    /// OF-541: the planner receipt the launch ran under, frozen with the
+    /// attempt: what was asked, what was resolved, and why. `None` for a
+    /// spawn that was not planned. A plan is never authority.
+    pub plan: Option<super::SpawnPlanReceipt>,
 }
 
 impl AgentDispatchInput {
     /// The pre-ONE-1709 payload shape: no spawn context, no depth budget.
     #[must_use]
-    pub const fn frozen(target: AgentDispatchTarget, definition: AgentDefinition) -> Self {
+    pub fn frozen(target: AgentDispatchTarget, definition: AgentDefinition) -> Self {
         Self {
             target,
             definition,
@@ -159,8 +186,13 @@ impl AgentDispatchInput {
             project_ref: None,
             spawn_intent: None,
             scope: None,
+            type_ref: crate::task_type::TaskTypeRef::seeded_root(),
             budget: None,
             launch: None,
+            room: None,
+            join: None,
+            team: None,
+            plan: None,
         }
     }
 }
@@ -182,6 +214,10 @@ pub struct AgentSpawnContext {
     /// None inherits the stored parent's resource restriction. A root with
     /// None has deny-all resource scope; ordinary non-resource calls still run.
     pub scope: Option<crate::llm::Scope>,
+    /// OF-543: the placed task type, when the spawner (or the placement
+    /// skill it routed) already placed this spawn. None means dispatch
+    /// places it as the root — the unsure answer — never untyped.
+    pub type_ref: Option<crate::task_type::TaskTypeRef>,
     /// The canon spawn table's `budget` (optional; set = pin): a hard carve
     /// under the parent's cap the child can never pass. Unset, the child holds
     /// its calibrated expected spend and may top up to the ancestor's cap.
@@ -194,6 +230,19 @@ pub struct AgentSpawnContext {
     /// always inherits its parent's stored origin, so a spawning agent can
     /// never name one.
     pub origin_conversation: Option<EntityId>,
+    /// The room the agent works in (OF-531). Set, the launch re-proves the
+    /// agent's join there before it reserves or enqueues; unset, nothing
+    /// changes.
+    pub room: Option<crate::workspace_roster::RoomWork>,
+    /// OF-540: the team run this spawn works in. Set wins, so a nested team
+    /// names its own; None keeps the parent's frozen stamp, and a root
+    /// without one is no team run.
+    pub team: Option<super::TeamRunStamp>,
+    /// OF-541: the live planner's receipt for this spawn. Set, dispatch
+    /// freezes it with the attempt, takes the type it placed, and requires
+    /// the target to be the seat it resolved. It never mints a TASK, a team
+    /// run or authority.
+    pub plan: Option<super::SpawnPlanReceipt>,
 }
 
 impl AgentSpawnContext {
@@ -221,6 +270,12 @@ impl AgentSpawnContext {
     }
 
     #[must_use]
+    pub fn with_type_ref(mut self, type_ref: crate::task_type::TaskTypeRef) -> Self {
+        self.type_ref = Some(type_ref);
+        self
+    }
+
+    #[must_use]
     pub const fn with_budget(mut self, budget: u64) -> Self {
         self.budget = Some(budget);
         self
@@ -235,6 +290,18 @@ impl AgentSpawnContext {
     #[must_use]
     pub const fn with_origin_conversation(mut self, conversation: EntityId) -> Self {
         self.origin_conversation = Some(conversation);
+        self
+    }
+
+    #[must_use]
+    pub fn with_team(mut self, team: super::TeamRunStamp) -> Self {
+        self.team = Some(team);
+        self
+    }
+
+    #[must_use]
+    pub fn with_plan(mut self, plan: super::SpawnPlanReceipt) -> Self {
+        self.plan = Some(plan);
         self
     }
 }
@@ -485,8 +552,8 @@ impl<T> SpawnOverride<T> {
 
 /// What a parent says when it spawns (ARCH-0079 #spawn): the required need,
 /// separate from the prompt, plus optional care, notes and seeded or pinned
-/// model, width, pattern and budget. The planner routes on the need and
-/// fills in everything unset.
+/// model, width, pattern and budget, and the type the engine placed once.
+/// The planner routes on the need and fills in everything unset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpawnNeed {
     /// What the parent needs, in one or two lines. Required, non-blank.
@@ -497,10 +564,10 @@ pub struct SpawnNeed {
     /// Constraints and preferences (a model family, a time limit, …).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
-    /// The task's ONE TASK TYPE stamp (OF-543), the planner-card key; an
-    /// absent or unknown type reads the root card.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_type: Option<String>,
+    /// The spawn's ONE TASK TYPE stamp (OF-543), placed once by the engine
+    /// against the tree in force and the planner-card key. Required: an
+    /// unsure placement is the root, never an absent type.
+    pub type_ref: crate::task_type::TaskTypeRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<SpawnOverride<crate::llm::ModelId>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -515,12 +582,12 @@ pub struct SpawnNeed {
 
 impl SpawnNeed {
     #[must_use]
-    pub fn new(need: impl Into<String>) -> Self {
+    pub fn new(need: impl Into<String>, type_ref: crate::task_type::TaskTypeRef) -> Self {
         Self {
             need: need.into(),
             care: None,
             notes: None,
-            task_type: None,
+            type_ref,
             model: None,
             width: None,
             pattern: None,
@@ -529,16 +596,40 @@ impl SpawnNeed {
     }
 
     /// The door every planner entry runs first: the need is required and
-    /// non-blank, a width override names at least one agent, and a seed
-    /// weight is a positive finite run count.
+    /// non-blank, the type stamp names a node, a width override names at
+    /// least one agent, a budget override at least one unit, a seed weight
+    /// is a positive finite run count, and the pins agree with each other.
+    /// Inconsistent pins are invalid input: the planner never overrides a
+    /// pin to reconcile them.
     pub fn validate(&self) -> crate::error::Result<()> {
         if self.need.trim().is_empty() {
             return Err(super::widen_record::invalid("spawn need is required"));
         }
+        if self.type_ref.node_id.is_empty() {
+            return Err(super::widen_record::invalid(
+                "spawn type stamp must name a node",
+            ));
+        }
         if let Some(width) = &self.width
             && *width.value() == 0
         {
-            return Err(super::widen_record::invalid("spawn width must be at least 1"));
+            return Err(super::widen_record::invalid(
+                "spawn width must be at least 1",
+            ));
+        }
+        if let Some(budget) = &self.budget_cap_units
+            && *budget.value() == 0
+        {
+            return Err(super::widen_record::invalid(
+                "a spawn budget is more than zero units",
+            ));
+        }
+        if let (Some(pattern), Some(width)) = (self.pinned_pattern(), self.pinned_width())
+            && !pattern.admits_width(width)
+        {
+            return Err(super::widen_record::invalid(
+                "pinned spawn width does not fit the pinned pattern",
+            ));
         }
         let weights = [
             self.model.as_ref().map(SpawnOverride::weight_runs),

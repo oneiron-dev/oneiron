@@ -39,12 +39,16 @@ use crate::gate::class_policy::ActPosture;
 const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
 const MAX_DELEGATED_GRANT_SCOPES: usize = 8;
 
-/// Read-only OAuth scope classes a `delegated_grant` row may carry.
+/// OAuth scope classes a `delegated_grant` row may carry.
 ///
-/// There is deliberately no send, reply, delete, or modify variant. Scoped-read
-/// is not a policy setting that a caller could widen: the absence of the variant
-/// is what makes a delegated row structurally incapable of naming a write scope,
-/// including through a decoded body.
+/// Two read classes and exactly one write class, `MailSend` (OF-374). There is
+/// deliberately no reply, delete, or modify variant: a reply is a send with
+/// thread headers, and nothing else a member grant could carry is one the
+/// engine acts on. `MailSend` is send CAPABILITY, never send approval: the
+/// custody proof requires the host to have registered the provider's own
+/// granted-scope evidence for it, and every send still crosses the gate, which
+/// holds it for the owner unless a grant covers it (ARCH-0046 "depends on the
+/// grant").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum DelegatedGrantScope {
@@ -52,6 +56,8 @@ pub enum DelegatedGrantScope {
     MailRead,
     /// Read message headers/metadata only.
     MailMetadata,
+    /// Send mail as the granted mailbox (Gmail `gmail.send`).
+    MailSend,
 }
 
 impl DelegatedGrantScope {
@@ -60,6 +66,7 @@ impl DelegatedGrantScope {
         match self {
             Self::MailRead => "mail.read",
             Self::MailMetadata => "mail.metadata",
+            Self::MailSend => "mail.send",
         }
     }
 
@@ -68,6 +75,7 @@ impl DelegatedGrantScope {
         match value {
             "mail.read" => Some(Self::MailRead),
             "mail.metadata" => Some(Self::MailMetadata),
+            "mail.send" => Some(Self::MailSend),
             _ => None,
         }
     }
@@ -75,7 +83,7 @@ impl DelegatedGrantScope {
 
 /// The custody handle a `delegated_grant` row carries.
 ///
-/// This is a custody record NAME plus the read scopes the grant covers. The
+/// This is a custody record NAME plus the scopes the grant covers. The
 /// OAuth access/refresh token bytes live in the custody record and are reachable
 /// only through the SECRET-02 door under an effector binding; they never land on
 /// this struct, on the encoded body, or on any claim derived from it.
@@ -83,7 +91,7 @@ impl DelegatedGrantScope {
 pub struct DelegatedGrant {
     /// Custody record name (`Vault::resolve_secret_ref` key), never a token.
     pub custody_record_ref: String,
-    /// Read scopes the grant covers; non-empty, deduplicated.
+    /// Scopes the grant covers; non-empty, deduplicated.
     pub scopes: Vec<DelegatedGrantScope>,
 }
 
@@ -99,16 +107,27 @@ impl DelegatedGrant {
 
     /// Whether the scopes this grant covers include OUTBOUND SEND.
     ///
-    /// Always false today, and matched exhaustively on purpose:
-    /// [`DelegatedGrantScope`] declares read classes only, so adding a send
-    /// class is a compile error here until someone decides what it answers.
-    /// That is what keeps a manifest row from turning a read-only OAuth grant
-    /// into send authority — the policy row says whether the ACT class may run,
-    /// and this says whether the grant we actually hold carries it.
+    /// Matched exhaustively on purpose: only [`DelegatedGrantScope::MailSend`]
+    /// answers yes, and a new scope class is a compile error here until someone
+    /// decides what it answers. That is what keeps a manifest row from turning
+    /// a read-only OAuth grant into send authority — the policy row says whether
+    /// the ACT class may run, and this says whether the grant we actually hold
+    /// carries it. A row can only carry `MailSend` through a custody proof that
+    /// found the provider's granted-scope evidence on the binding.
     #[must_use]
     pub(crate) fn covers_outbound_send(&self) -> bool {
         self.scopes.iter().any(|scope| match scope {
             DelegatedGrantScope::MailRead | DelegatedGrantScope::MailMetadata => false,
+            DelegatedGrantScope::MailSend => true,
+        })
+    }
+
+    /// Whether the grant covers a READ scope class.
+    #[must_use]
+    pub fn covers_read(&self) -> bool {
+        self.scopes.iter().any(|scope| match scope {
+            DelegatedGrantScope::MailRead | DelegatedGrantScope::MailMetadata => true,
+            DelegatedGrantScope::MailSend => false,
         })
     }
 
@@ -127,7 +146,7 @@ impl DelegatedGrant {
         }
         if self.scopes.is_empty() || self.scopes.len() > MAX_DELEGATED_GRANT_SCOPES {
             return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
-                "delegated grant must declare 1..=8 read scopes",
+                "delegated grant must declare 1..=8 scopes",
             )));
         }
         for (index, scope) in self.scopes.iter().enumerate() {
@@ -309,10 +328,11 @@ impl Custody {
     /// never a class one. A self-held row holds an account the product minted,
     /// so the capability is its live state. A delegated row holds a grant, and
     /// [`DelegatedGrant::covers_outbound_send`] asks that grant — which answers
-    /// no for every scope class that exists, because
-    /// [`DelegatedGrantScope`] has no send variant to name. Raising the
-    /// manifest row does not change that answer; it changes which refusal the
-    /// caller reports.
+    /// no for every read scope class, and yes only for
+    /// [`DelegatedGrantScope::MailSend`], which a row carries only over custody
+    /// holding the provider's granted-send evidence. Raising the manifest row
+    /// does not change that answer for a read-only grant; it changes which
+    /// refusal the caller reports.
     #[must_use]
     pub(crate) fn holds_outbound_capability(&self) -> bool {
         match self {
@@ -338,9 +358,9 @@ impl Custody {
     ///
     /// This NEVER authorizes an effect: the dispatch door must also resolve
     /// the vault's `act_policy` in its transaction via `Self::may_send_under`.
-    /// In particular there is no permanent delegated-class ban here. Current
-    /// delegated grants are read-only, so they lack the send capability, but a
-    /// future outbound grant would still need the manifest row and gate.
+    /// In particular there is no permanent delegated-class ban here. A
+    /// read-only delegated grant lacks the send capability; a `mail.send`
+    /// grant (OF-374) holds it and still needs the manifest row and the gate.
     #[must_use]
     pub fn may_send(&self) -> bool {
         self.holds_outbound_capability()
@@ -647,6 +667,36 @@ pub fn delegated_custody_scopes(channel: &str, address: &str) -> Vec<String> {
     ]
 }
 
+/// The scope string a custody binding declares when the PROVIDER granted
+/// `scope` to the token it holds.
+///
+/// The host registers it at OAuth completion, and only from the provider's own
+/// token response (Google's granted `scope` list), never from what the consent
+/// request asked for: an incremental-consent screen can come back narrower than
+/// it was requested. A row naming a send scope is admitted only over a binding
+/// carrying this evidence, so a caller-built config cannot manufacture send.
+#[must_use]
+pub fn delegated_custody_granted_scope(scope: DelegatedGrantScope) -> String {
+    format!("granted:{}", scope.as_str())
+}
+
+/// [`delegated_custody_scopes`] plus the granted-scope evidence every
+/// send-capable scope in `grant_scopes` needs.
+#[must_use]
+pub fn delegated_custody_scopes_for_grant(
+    channel: &str,
+    address: &str,
+    grant_scopes: &[DelegatedGrantScope],
+) -> Vec<String> {
+    let mut scopes = delegated_custody_scopes(channel, address);
+    for scope in grant_scopes {
+        if matches!(scope, DelegatedGrantScope::MailSend) {
+            scopes.push(delegated_custody_granted_scope(*scope));
+        }
+    }
+    scopes
+}
+
 /// Typed proof that a delegated grant's custody record was read out of the
 /// vault and found active, with the channel's required read binding present AND
 /// that binding naming this exact mailbox as its subject.
@@ -749,6 +799,17 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
     };
     let binding = admission.binding_for(effector).ok_or_else(denied)?;
     if !binding.grants_read() || !binding_names_subject(binding, &subject) {
+        return Err(denied());
+    }
+    // OF-374: a send scope on the ROW is a claim the token can send. The only
+    // thing that makes it true is the provider's granted-scope evidence the
+    // host registered on this same binding at OAuth completion.
+    if grant.covers_outbound_send()
+        && !binding_names_subject(
+            binding,
+            &delegated_custody_granted_scope(DelegatedGrantScope::MailSend),
+        )
+    {
         return Err(denied());
     }
     Ok(DelegatedCustodyProof {

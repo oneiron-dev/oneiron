@@ -53,7 +53,7 @@ impl MeshConfig {
 /// Starts the mesh listener when `config` names a bind address, serving
 /// `app` for sync. `None` when it is off.
 pub(crate) async fn start(
-    vault: Arc<oneiron::Vault>,
+    server: Arc<crate::server::SyncServer>,
     config: &MeshConfig,
     app: &Router,
     header_read_timeout: Duration,
@@ -61,7 +61,7 @@ pub(crate) async fn start(
     let Some(bind) = config.bind else {
         return Ok(None);
     };
-    host::start(vault, bind, &config.relays, app, header_read_timeout).await
+    host::start(server, bind, &config.relays, app, header_read_timeout).await
 }
 
 #[cfg(not(feature = "mesh"))]
@@ -76,7 +76,7 @@ mod host {
     }
 
     pub(super) async fn start(
-        _vault: Arc<oneiron::Vault>,
+        _server: Arc<crate::server::SyncServer>,
         _bind: SocketAddr,
         _relays: &[String],
         _app: &Router,
@@ -103,11 +103,15 @@ mod host {
     use hyper::body::Incoming;
     use hyper_util::rt::{TokioIo, TokioTimer};
     use hyper_util::service::TowerToHyperService;
+    use oneiron_llm_own_server::{LLM_ALPN, LlmMeshService};
     use oneiron_mesh_transport::iroh_transport::{IrohTransport, private_relay_map};
     use oneiron_mesh_transport::transport_key::TransportKey;
     use oneiron_mesh_transport::{
         AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
         PairedMachineGrants, SYNC_ALPN, VaultMachineRoster,
+    };
+    use oneiron_organ_host::{
+        AskHandlers, HostConfig, ORGAN_ALPN, OrganHost, OrganRouter, OrganService,
     };
     use tokio::task::JoinHandle;
 
@@ -116,7 +120,8 @@ mod host {
 
     /// Work a route needs done while the listener runs, such as re-driving
     /// jobs that wait for a node.
-    pub(crate) type MeshTick = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+    pub(crate) type MeshTick =
+        Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
     /// The route table: one service per ALPN, and the ticks the routes need.
     #[derive(Default)]
@@ -131,7 +136,6 @@ mod host {
             self
         }
 
-        #[allow(dead_code, reason = "the first tick is the organ route's redrive (OF-575)")]
         pub(crate) fn tick(mut self, tick: MeshTick) -> Self {
             self.ticks.push(tick);
             self
@@ -146,14 +150,53 @@ mod host {
     }
 
     /// Every protocol the mesh listener serves. Add a protocol's row here.
-    pub(crate) fn mesh_routes(app: &Router, header_read_timeout: Duration) -> MeshRoutes {
-        MeshRoutes::default().route(
-            SYNC_ALPN,
-            Arc::new(SyncRoute {
-                app: app.clone(),
-                header_read_timeout,
-            }),
-        )
+    pub(crate) fn mesh_routes(
+        app: &Router,
+        header_read_timeout: Duration,
+        server: &Arc<crate::server::SyncServer>,
+    ) -> MeshRoutes {
+        let vault = &server.vault;
+        // This machine's organ host serves the owner's other nodes, and its
+        // calls that wait for a node are re-driven on the tick (OF-575).
+        let organs = Arc::new(OrganHost::new(HostConfig::default()));
+        let router = Arc::new(OrganRouter::new().with_local(Arc::clone(&organs)));
+        MeshRoutes::default()
+            .route(
+                SYNC_ALPN,
+                Arc::new(SyncRoute {
+                    app: app.clone(),
+                    header_read_timeout,
+                }),
+            )
+            .route(
+                ORGAN_ALPN,
+                Arc::new(OrganService::new(organs, Arc::clone(vault))),
+            )
+            // This machine's models serve the owner's other nodes (OF-575).
+            .route(
+                LLM_ALPN,
+                Arc::new(LlmMeshService::new(Arc::new(crate::api::MeshLlm(
+                    Arc::clone(server),
+                )))),
+            )
+            .tick(organ_redrive(router, Arc::clone(vault)))
+    }
+
+    /// Runs every held organ call a node can take now, on a blocking thread.
+    fn organ_redrive(router: Arc<OrganRouter>, vault: Arc<oneiron::Vault>) -> MeshTick {
+        Arc::new(move || -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            let router = Arc::clone(&router);
+            let vault = Arc::clone(&vault);
+            Box::pin(async move {
+                let ran = tokio::task::spawn_blocking(move || {
+                    router.redrive_waiting(&vault, &AskHandlers::none())
+                })
+                .await;
+                if let Ok(Err(error)) = ran {
+                    tracing::warn!(%error, "organ redrive");
+                }
+            })
+        })
     }
 
     /// The running mesh listener.
@@ -175,18 +218,19 @@ mod host {
     }
 
     pub(super) async fn start(
-        vault: Arc<oneiron::Vault>,
+        server: Arc<crate::server::SyncServer>,
         bind: SocketAddr,
         relays: &[String],
         app: &Router,
         header_read_timeout: Duration,
     ) -> anyhow::Result<Option<MeshHost>> {
+        let vault = Arc::clone(&server.vault);
         let (machine, key) = TransportKey::for_install(&vault)
             .map_err(|error| anyhow::anyhow!("mesh transport key: {error}"))?
             .ok_or_else(|| {
                 anyhow::anyhow!("the mesh listener needs this install enrolled as a machine")
             })?;
-        let routes = Arc::new(mesh_routes(app, header_read_timeout));
+        let routes = Arc::new(mesh_routes(app, header_read_timeout, &server));
         let policy = AcceptPolicy {
             roster: Arc::new(VaultMachineRoster(Arc::clone(&vault))),
             grants: Arc::new(PairedMachineGrants(vault)),

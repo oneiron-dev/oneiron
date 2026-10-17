@@ -375,7 +375,9 @@ impl SyncClient {
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
         let born = watch_births(&vault, admitted.births(), || {
-            self.import_accepted_window_update(window_key, &window, admitted.bytes())
+            crate::sync::ingest::peer_import(&vault, || {
+                self.import_accepted_window_update(window_key, &window, admitted.bytes())
+            })
         })?;
         let released = admitted
             .release(&self.vault, key, &born)

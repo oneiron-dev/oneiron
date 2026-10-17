@@ -20,9 +20,8 @@ mod burst_inputs;
 mod call;
 mod defaults;
 pub use defaults::{
-    DEFAULT_ASSET_TEXT_AT, ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable,
-    ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane, VoicePrecedence,
-    locality_within_extraction_bound,
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
+    VoiceBackendBinding, VoiceLane, VoicePrecedence, locality_within_extraction_bound,
 };
 // Public so `oneiron`'s resident-default door ranks routes the same way the table does.
 pub use defaults::locality_rank;
@@ -47,7 +46,9 @@ pub use failure_policy::{
 pub mod image;
 mod label_read;
 pub mod media;
-pub use label_read::{LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet};
+pub use label_read::{
+    LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet, joint_marginals,
+};
 mod model_id;
 mod protocol;
 mod safeguard;

@@ -25,7 +25,7 @@ use crate::server::SyncServer;
 
 use super::args::{ManagedArgs, ManagedError};
 use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
-use super::listener::{ManagedCtl, init_managed_tracing};
+use super::listener::{BoundServeListener, ManagedCtl, ServeListener, init_managed_tracing};
 use super::vault_gates::{open_managed_vault, provision_host_authority};
 use oneiron_vault_contract::host::{Host, HostLimits};
 
@@ -366,6 +366,17 @@ pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> R
     build_app(server).layer(freeze)
 }
 
+/// The managed artifact origin: this vault's `/a/`, and its names under the
+/// artifact domains (`oneiron_vault_contract::artifact_origin`), behind the
+/// same freeze gate as the API socket.
+pub(super) fn build_managed_artifact_app(
+    server: Arc<SyncServer>,
+    state: Arc<ManagedState>,
+) -> Router {
+    let freeze = middleware::from_fn_with_state(state, refuse_frozen_writes);
+    crate::build_artifact_app(server).layer(freeze)
+}
+
 /// The freeze gate on the served path.
 ///
 /// Consulted per request, before the handler runs: once `prepare_reap` has
@@ -486,6 +497,78 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
     (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
 }
 
+/// Seals the vault's held data key to the node's managed escrow recipient
+/// and the owner's break-glass recipient, each named by the supervisor.
+/// A wrap is labelled by its recipient's fingerprint, so a restart adds
+/// nothing, and a recipient of a new epoch gets a wrap of its own.
+fn escrow_vault_key(vault: &oneiron::Vault, managed: &ManagedArgs) -> anyhow::Result<()> {
+    let present = vault.vault_key_wraps()?;
+    for (role, path) in [
+        ("managed", &managed.escrow_recipient),
+        ("break-glass", &managed.break_glass_recipient),
+    ] {
+        let Some(path) = path else {
+            continue;
+        };
+        let bytes = std::fs::read(path)
+            .map_err(|error| anyhow::anyhow!("{role} escrow recipient unreadable: {error}"))?;
+        let recipient = oneiron::world_keys::HybridPublicKey::from_bytes(&bytes)
+            .map_err(|_| anyhow::anyhow!("{role} escrow recipient is not a hybrid public key"))?;
+        let fingerprint = blake3::hash(&bytes);
+        let label = format!("{role}.{}", &fingerprint.to_hex()[..16]);
+        let sealed = present.iter().any(|wrap| {
+            matches!(&wrap.kind, oneiron::world_keys::VaultKeyWrapKind::Escrow { label: held } if *held == label)
+        });
+        if !sealed {
+            vault.add_vault_key_escrow(&label, &recipient)?;
+        }
+    }
+    Ok(())
+}
+
+/// Hands each escrow capsule the outbox does not hold yet to the outbox the
+/// supervisor named (CROSS-ARCH-0022 #ov-custody, invariant 03): the report
+/// is written durably first and marked in the vault after, so a crash
+/// between the two writes the same report again. The node ships it and
+/// removes it only after the registry's durable acknowledgement. A capsule
+/// that cannot be spooled waits for the next start; the vault still serves,
+/// since the node holds the key it runs on.
+fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
+    let Some(outbox) = &managed.escrow_outbox else {
+        return;
+    };
+    let spool = || -> anyhow::Result<()> {
+        for capsule in vault.vault_key_escrow_capsules()? {
+            let Some((role @ ("managed" | "break-glass"), _)) = capsule.label.split_once('.')
+            else {
+                continue;
+            };
+            if capsule.spooled {
+                continue;
+            }
+            let report = oneiron_vault_contract::escrow::EscrowCapsuleReport {
+                schema_version: oneiron_vault_contract::escrow::ESCROW_REPORT_SCHEMA_VERSION,
+                report_type: oneiron_vault_contract::escrow::ESCROW_REPORT_TYPE.to_owned(),
+                report_id: blake3::hash(&capsule.capsule).to_hex().to_string(),
+                vault_name: managed.vault_name.clone(),
+                vault_id: oneiron_vault_contract::hex(&capsule.vault_id),
+                role: role.to_owned(),
+                label: capsule.label.clone(),
+                wrap_id: capsule.wrap_id.clone(),
+                key_commitment: oneiron_vault_contract::hex(&capsule.commitment),
+                capsule: oneiron_vault_contract::hex(&capsule.capsule),
+                sealed_at: capsule.created_at,
+            };
+            oneiron_vault_contract::escrow::spool_escrow_report(outbox, &report)?;
+            vault.mark_vault_key_escrow_spooled(&capsule.wrap_id, &capsule.capsule)?;
+        }
+        Ok(())
+    };
+    if let Err(error) = spool() {
+        tracing::warn!(%error, "an escrow capsule was not spooled; the next start spools it");
+    }
+}
+
 /// Boots the engine as a supervised child process.
 ///
 /// The startup order is the contract, not an implementation detail: the
@@ -496,6 +579,7 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
 /// happened.
 pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Result<()> {
     let config = managed.serve_config(args);
+    let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     init_managed_tracing(&config.log_level);
     tracing::info!(
         vault = %managed.vault_name,
@@ -548,6 +632,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
     issuer_key.fill(0);
     provision_host_authority(&vault, &issuer, &config.keystore, &managed.data_dir)?;
+    // The delivered DEK is the vault's data key (CROSS-ARCH-0022
+    // #ov-custody): its sealed artifacts derive from it, and each escrow
+    // recipient the node's operator installed keeps a copy of it.
+    vault.admit_vault_key(&credentials.dek)?;
+    escrow_vault_key(&vault, &managed)?;
+    spool_vault_key_escrow(&vault, &managed);
     // Managed mode reads no environment, so the destination carries no
     // bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
@@ -559,6 +649,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             }
         }));
     sync_server.managed_issuer = Some(issuer);
+    if managed.artifact_socket.is_some() {
+        sync_server = sync_server.with_artifact_socket();
+    }
     let sync_server = Arc::new(sync_server);
 
     // Adoption stays here, after the gates: the listener was only resolved
@@ -566,6 +659,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let http = http.bind().await?;
     let http_owned_path = http.owned_path().map(Path::to_path_buf);
     let ctl = ManagedCtl::bind(&managed.ctl_socket)?;
+    // The artifact origin, on the socket the supervisor routes the vault's
+    // artifact names to (OF-356); this process owns the path it binds.
+    let artifacts = match &managed.artifact_socket {
+        Some(path) => Some(ServeListener::UnixPath(path.clone()).bind().await?),
+        None => None,
+    };
+    let artifacts_owned_path = artifacts
+        .as_ref()
+        .and_then(BoundServeListener::owned_path)
+        .map(Path::to_path_buf);
 
     let ledger = WakeLedger::load(
         Arc::clone(&vault),
@@ -636,20 +739,91 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 .map(|admission| Box::new(admission) as Box<dyn Send>)
         })
     });
+    // Surface events drain under the same admission (OF-218).
+    let connector_events = sync_server.spawn_connector_event_worker({
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
+    // Approved sends leave under the same admission (OF-187).
+    let connector_sends = sync_server.spawn_connector_send_worker({
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
+    // Checked built-in channels, under the same admission (OF-519).
+    let builtin_host = crate::builtin_host::spawn(&sync_server, {
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
+    // Failure signals reach our collector under the same admission (OF-380).
+    // Managed mode reads no environment, so the send carries no bearer.
+    let failure_signals = crate::ai_host::failure_signals::spawn(
+        &sync_server,
+        crate::ai_host::failure_signals::FailureSignalHost::new(
+            &config.failure_signals,
+            true,
+            None,
+        ),
+        {
+            let state = Arc::clone(&state);
+            Arc::new(move || {
+                state
+                    .admit_http_mutation()
+                    .ok()
+                    .map(|admission| Box::new(admission) as Box<dyn Send>)
+            })
+        },
+    );
+    // The nightly Coach jobs that need the host's model or rules (OF-420).
+    let coach_host = crate::ai_host::coach_host::spawn(&sync_server);
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
-    let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state));
+    let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
+    let artifact_task = artifacts.map(|listener| {
+        let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
+        let stop = shutdown.triggered();
+        tokio::spawn(async move { listener.serve_until(app, stop).await })
+    });
     // Graceful shutdown couples "stop accepting" and "drain in-flight": the
     // listener closes the moment SIGTERM lands, and this resolves once the
     // requests already in the runtime have finished.
     let result = http.serve_until(app, shutdown.triggered()).await;
     host.on_stop()?;
     let _ = ctl_task.await;
+    if let Some(task) = artifact_task {
+        let _ = task.await;
+    }
     // Drain observation writes without thawing a previously quiescent process.
     let telemetry_drained = state.freeze();
     // No new durable background work from here on.
     background.stop().await;
+    connector_events.abort();
+    let _ = connector_events.await;
+    connector_sends.abort();
+    let _ = connector_sends.await;
+    builtin_host.abort();
+    let _ = builtin_host.await;
+    coach_host.abort();
+    let _ = coach_host.await;
+    if let Some(failure_signals) = failure_signals {
+        failure_signals.abort();
+        let _ = failure_signals.await;
+    }
     // Frozen, so nothing new is admitted; an admitted write ends before exit.
     oversight.stop().await;
 
@@ -661,6 +835,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         {
             tracing::warn!(%error, path = %path.display(), "http socket unlink failed");
         }
+    }
+    if let Some(path) = artifacts_owned_path
+        && let Err(error) = std::fs::remove_file(&path)
+        && error.kind() != ErrorKind::NotFound
+    {
+        tracing::warn!(%error, path = %path.display(), "artifact socket unlink failed");
     }
 
     final_ledger_push(&state, &sync_server).await;

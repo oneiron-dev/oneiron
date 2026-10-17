@@ -61,11 +61,33 @@ impl Seed {
         WitnessTurn {
             conversation_ref: self.conversation.to_hex(),
             turn_ref: Some(self.turn.to_hex()),
+            quote: None,
             messages: vec![self.message(content)],
             occurred_at: self.occurred_at,
         }
     }
 }
+/// Drops the recovery seeds an erase of `id` covers: the message's own, and
+/// every seed whose turn or conversation is `id`. A seed holds accepted reply
+/// text, so it leaves with its record. Registered in `deletion/derived_rows.rs`.
+pub(crate) fn erase_stream_seeds_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    ACTIVE.delete(store, txn, id)?;
+    let covered: Vec<EntityId> = ACTIVE
+        .scan(store, txn)?
+        .into_iter()
+        .filter(|(_, seed)| seed.turn == *id || seed.conversation == *id)
+        .map(|(message, _)| message)
+        .collect();
+    for message in covered {
+        ACTIVE.delete(store, txn, &message)?;
+    }
+    Ok(())
+}
+
 pub(super) fn receipt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

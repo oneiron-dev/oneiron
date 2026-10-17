@@ -5,8 +5,8 @@
 //! and each piece reports why it is idle (`no_model_configured`, say) on
 //! `/api/health` and `GET /v1/ai/status`. Writes never wait on a model.
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use oneiron::dreamer_consolidation::DREAMER_EXTRACTION_ROLE;
@@ -17,6 +17,7 @@ use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocali
 use oneiron_driver::{HintPusher, IdleSample, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig};
+use crate::decision_host::DecisionHost;
 use crate::models::{
     KeyDoor, LoggedReceipts, ModelRuntime, ModelsStatus, OfferCooldowns, RawInference, RoleCall,
     RoleRefusal, Seat, VaultKeyDoor,
@@ -29,9 +30,17 @@ mod code_mode;
 mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
+pub(crate) mod coach_heal;
+mod coach_health;
+pub(crate) mod coach_host;
+mod code_fix;
 mod dreamer;
+pub(crate) mod failure_signals;
 mod harness;
+pub(crate) mod identity;
+mod local_vision;
 mod policy;
+pub(crate) mod self_heal_detectors;
 mod status;
 mod step;
 mod step_failure;
@@ -44,12 +53,15 @@ mod tests;
 mod turn_actions;
 mod turns;
 pub(crate) mod waves;
+mod weave_lens;
 mod workflows;
 
+pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
 pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
 };
+pub(crate) use weave_lens::{WeaveLensCaller, render_live_weave_lens};
 
 use dreamer::{DreamerHost, DreamerStart};
 use policy::{DreamerRoute, dreamer_role_purpose};
@@ -82,6 +94,9 @@ pub struct AiHandle {
     inbound: Arc<AtomicU64>,
     /// The running Dreamer has a summary instruction to write bodies with.
     summaries: bool,
+    /// The server's decision host, set once the server staffs it: the
+    /// Dreamer's passes ask their typed questions through it.
+    decisions: Arc<OnceLock<DecisionHost>>,
 }
 
 impl AiHandle {
@@ -122,6 +137,7 @@ impl AiHandle {
             turns: TurnTracker::new(),
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
+            decisions: Arc::default(),
         }
     }
 
@@ -240,6 +256,12 @@ impl AiHandle {
         self.runtime.status()
     }
 
+    /// [`Self::models_status`] with each offer's live health (OF-305).
+    #[must_use]
+    pub fn models_live_status(&self) -> ModelsStatus {
+        self.runtime.live_status()
+    }
+
     /// The models this server serves, for the `ai.*` verbs.
     #[must_use]
     pub(crate) fn model_runtime(&self) -> &ModelRuntime {
@@ -248,11 +270,11 @@ impl AiHandle {
 
     /// Tells the Dreamer's session policy what the app saw. A no-op without
     /// a running Dreamer: no session is opened that nothing would close.
-    pub fn session_hint(&self, hint: SessionHint) {
+    pub fn session_hint(&self, key: oneiron::session_lifecycle::SessionKey, hint: SessionHint) {
         let Some(hints) = &self.hints else {
             return;
         };
-        if let Err(error) = hints.push_session_hint(hint, None) {
+        if let Err(error) = hints.push_session_hint(key, hint, None) {
             tracing::warn!(?error, ?hint, "dreamer session hint dropped");
         }
     }
@@ -358,6 +380,8 @@ pub struct AiHost {
     sieve: Option<SieveDrain>,
     /// A peer's sync apply wakes the running Dreamer.
     sync_wake: Option<sync_wake::SyncWake>,
+    /// The server the Dreamer's timer runs the standing questions on.
+    question_timer: dreamer::QuestionTimer,
 }
 
 /// The sieve's backlog drain and the stop it checks between passes.
@@ -376,6 +400,7 @@ impl AiHost {
             models,
             server.host_root_provisioned(),
             server.run_receipts(),
+            Some(server.host_account()),
         )
         .await;
         if host.handle.hints.is_some() {
@@ -385,18 +410,41 @@ impl AiHost {
                 &server.reassert_manager,
             ));
         }
-        let server = server.with_ai(host.handle.clone());
+        let server = server
+            .with_ai(host.handle.clone())
+            .with_decision_config(models);
+        // The Dreamer started before the server staffed its ladder; its next
+        // pass asks through it.
+        let _ = host.handle.decisions.set(server.decision_host().clone());
+        // So did the workflow pump: from its next leaf on, a leaf that ran is
+        // judged on its execution context through the same ladder (OF-540).
+        if let Some(pump) = &host.workflows {
+            pump.with_attribution_ladder(server.decision_host().ladder().clone());
+        }
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server =
             code_mode::bind(server, &host.handle.runtime, models, &host.handle.status).await;
         (server, host)
     }
 
+    /// Binds the standing-question pump to the running Dreamer's timer
+    /// (OF-506): its Deadline passes run the pump on the home node. `false`
+    /// when no Dreamer runs, so the caller starts the pump's own sleeper and
+    /// exactly one runner serves the questions.
+    pub(crate) fn bind_question_timer(&self, server: &Arc<SyncServer>) -> bool {
+        if self.dreamer.is_none() {
+            return false;
+        }
+        // A second bind finds the first; the timer still drives the pump.
+        let _ = self.question_timer.set(Arc::downgrade(server));
+        true
+    }
+
     /// Builds every seat from `models` and starts the workers those seats can
     /// serve. Every model call they make is admitted as a run whose receipts
     /// are written to the log.
     pub async fn start(vault: Arc<Vault>, models: Option<&ModelsConfig>, host_root: bool) -> Self {
-        Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts)).await
+        Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts), None).await
     }
 
     /// `start`, with the run receipts going to `receipts`.
@@ -405,12 +453,17 @@ impl AiHost {
         models: Option<&ModelsConfig>,
         host_root: bool,
         receipts: Arc<dyn RunReceiptSink>,
+        account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
         recover_dead_leases(&vault);
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
-        let runtime =
-            Arc::new(ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts));
+        let mut runtime =
+            ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts);
+        if let Some(account) = account {
+            runtime = runtime.with_host_account(account);
+        }
+        let runtime = Arc::new(runtime);
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
             handle: handle.clone(),
@@ -418,13 +471,20 @@ impl AiHost {
             workflows: None,
             sieve: None,
             sync_wake: None,
+            question_timer: dreamer::QuestionTimer::default(),
         };
         let Some(models) = models else {
             return host;
         };
         let status = Arc::clone(&handle.status);
         let idle = handle.idle_sample();
-        match start_dreamer(&vault, &runtime, models, host_root, &status, idle).await {
+        let timer = Arc::clone(&host.question_timer);
+        let decisions = Arc::clone(&handle.decisions);
+        match start_dreamer(
+            &vault, &runtime, models, host_root, &status, idle, decisions, timer,
+        )
+        .await
+        {
             Ok(dreamer) => {
                 handle.hints = Some(dreamer.hints());
                 handle.summaries = models.dreamer.summary_instruction.is_some();
@@ -438,6 +498,9 @@ impl AiHost {
         }
         host.handle = handle;
         turn_actions::spawn(&vault, &host.handle);
+        if host.dreamer.is_some() {
+            resume_on_recovery(&vault, &runtime);
+        }
         // Turns that landed while no Dreamer ran, or just before a crash,
         // get their due wake now rather than waiting for the next turn. It
         // settles before start returns, so it reads only those turns: one
@@ -586,6 +649,71 @@ fn recover_dead_leases(vault: &Vault) {
     }
 }
 
+/// After each stable recovery of a provider that was down (OF-305), the
+/// attempts this server's Dreamer parked because a provider was unavailable
+/// are requeued, as a restart requeues them: the outage that failed their
+/// step is over. One parked on a signal (a budget or consent trap, a wait),
+/// by a hard cut or on any other error is not this resume's. The task holds the vault weakly and ends with
+/// the runtime.
+fn resume_on_recovery(vault: &Arc<Vault>, runtime: &ModelRuntime) {
+    let vault = Arc::downgrade(vault);
+    let mut recoveries = runtime.recoveries();
+    tokio::spawn(async move {
+        while recoveries.changed().await.is_ok() {
+            let Some(vault) = vault.upgrade() else {
+                return;
+            };
+            let resumed = tokio::task::spawn_blocking(move || resume_outage_parks(&vault)).await;
+            if let Err(error) = resumed {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "recovery resume did not finish"
+                );
+            }
+        }
+    });
+}
+
+/// Requeues every attempt this server's Dreamer parked on an unavailable
+/// provider.
+fn resume_outage_parks(vault: &Vault) {
+    let rows = match AttemptQueue::new(vault).list() {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, "recovery resume could not list attempts");
+            return;
+        }
+    };
+    let runner = DreamerRunnerStore::new(vault);
+    let mut resumed = 0usize;
+    for row in rows
+        .iter()
+        .filter(|row| matches!(row.state, AttemptState::Leased))
+    {
+        let Ok(Some(park)) = runner.parked_attempt(row.id) else {
+            continue;
+        };
+        if park.park_owner != dreamer::LEASE_OWNER
+            || park.cause != oneiron::DreamerParkCause::ProviderUnavailable
+        {
+            continue;
+        }
+        match runner.resume_parked(row.id, &park.park_owner, unix_now()) {
+            Ok(Some(_)) => resumed += 1,
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, attempt = ?row.id, "an outage park was not resumed");
+            }
+        }
+    }
+    if resumed > 0 {
+        tracing::info!(
+            resumed,
+            "a provider recovered; attempts its outage parked resume"
+        );
+    }
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -599,6 +727,8 @@ async fn start_dreamer(
     host_root: bool,
     status: &Arc<StatusCell>,
     idle: IdleSample,
+    decisions: Arc<OnceLock<DecisionHost>>,
+    question_timer: dreamer::QuestionTimer,
 ) -> Result<DreamerHost, IdleReason> {
     if !models.dreamer.enabled {
         return Err(IdleReason::Disabled);
@@ -662,6 +792,9 @@ async fn start_dreamer(
         egress,
         status: Arc::clone(status),
         idle,
+        windows: dreamer::dream_windows(models),
+        decisions,
+        question_timer,
     })
     .await
     .map_err(|error| {
@@ -699,6 +832,11 @@ fn start_workflows(
 }
 
 impl AiHandle {
+    /// The model seats this host built: inert ones when `[models]` is unset.
+    pub(crate) fn models(&self) -> &Arc<ModelRuntime> {
+        &self.runtime
+    }
+
     /// The router the raw `/v1/llm` routes call, with its own meter.
     pub(crate) fn decision_read(&self) -> Option<crate::models::DecisionReadDoor> {
         self.runtime.decision_read().cloned()
@@ -714,6 +852,7 @@ impl AiHandle {
                 units,
                 oneiron::BudgetExhaustionPolicy::Suspend,
             ),
+            self.runtime.host_account(),
         ))
     }
 }

@@ -15,6 +15,7 @@ use crate::Vault;
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
 };
+use crate::disclosure::AttendeeIdentityChoice;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::voice_identity::{VoiceAttributionEvidence, VoiceResolvedSegment};
@@ -311,6 +312,34 @@ impl InterlocutorSet {
     #[must_use]
     pub fn entries(&self) -> &[Interlocutor] {
         &self.entries
+    }
+
+    /// Whether `other` holds the same people, placed the same way: entry for
+    /// entry, the same class, presence evidence, contact and owner flags.
+    /// Labels, relationship names and first-touch notes are cosmetic and do
+    /// not count.
+    #[must_use]
+    pub fn same_audience(&self, other: &Self) -> bool {
+        fn placed(
+            set: &InterlocutorSet,
+        ) -> Vec<(&'static str, &'static str, Option<&str>, bool, bool)> {
+            let mut placed: Vec<_> = set
+                .entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.class.as_str(),
+                        entry.evidence.as_str(),
+                        entry.contact_ref.as_deref(),
+                        entry.claimed_owner,
+                        entry.owner_print_matched,
+                    )
+                })
+                .collect();
+            placed.sort_unstable();
+            placed
+        }
+        placed(self) == placed(other)
     }
 
     /// One per-speaker claims-not-instructions stamp per entry.
@@ -619,7 +648,8 @@ impl Vault {
     /// storage fault — so the one caller has a single fail-closed branch. A
     /// roster that resolves but names nobody legitimately yields no entries.
     /// One party per distinct speaker: repeated segments of the same speaker
-    /// collapse before the caller's contact-ref dedupe sees them.
+    /// key or placed identity collapse before the caller's contact-ref
+    /// dedupe sees them.
     fn voice_roster_parties(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -629,24 +659,43 @@ impl Vault {
             .voice_session_roster_in_txn(rtxn, voice_session_ref)?
             .ok_or(Error::EntityNotFound)?;
 
+        // A placed speaker is one party per identity it was placed as. An
+        // unplaced speaker is one party per capture speaker key, whose
+        // residual segments add nothing once any segment of that key is
+        // placed. The owner names an unplaced speaker against this roster:
+        // the ask's session is the roster ref, its speaker the speaker key,
+        // and its revision the roster's (OF-365 P5).
+        let unplaced = roster.unplaced_speakers();
         let mut parties = Vec::new();
-        let mut seen_speakers: HashSet<String> = HashSet::new();
+        let mut seen_parties: HashSet<String> = HashSet::new();
         for segment in &roster.segments {
-            let speaker_key = match &segment.evidence {
+            let party = match &segment.evidence {
                 VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => {
                     format!("enrolled:{}", subject_ref.to_hex())
                 }
                 VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
                     format!("invite:{}", attendee_ref.to_hex())
                 }
-                VoiceAttributionEvidence::ResidualCluster { cluster_ref } => {
-                    format!("residual:{cluster_ref}")
+                VoiceAttributionEvidence::ResidualCluster { .. } => {
+                    if !unplaced.contains(&segment.speaker_key.as_str()) {
+                        continue;
+                    }
+                    format!("speaker:{}", segment.speaker_key)
                 }
             };
-            if !seen_speakers.insert(speaker_key) {
+            if !seen_parties.insert(party) {
                 continue;
             }
-            parties.push(self.voice_roster_party(rtxn, segment)?);
+            let answer = match &segment.evidence {
+                VoiceAttributionEvidence::ResidualCluster { .. } => self.attendee_identity_in_txn(
+                    rtxn,
+                    voice_session_ref,
+                    &segment.speaker_key,
+                    roster.roster_revision,
+                )?,
+                _ => None,
+            };
+            parties.push(self.voice_roster_party(rtxn, segment, answer)?);
         }
         Ok(parties)
     }
@@ -657,12 +706,15 @@ impl Vault {
     /// `owner_print_matched`; an enrolled CONTACT print keeps the
     /// `EnrolledVoicePrint` rung; an invite-eliminated attendee is resolved as
     /// an ordinary known contact, because elimination is a NON-biometric
-    /// naming step and must not borrow the enrolled-print rung. A contact that
-    /// is missing or revoked degrades to an anonymous `Unknown`.
+    /// naming step and must not borrow the enrolled-print rung. A residual
+    /// speaker the owner named (`answer`) resolves the same way, for the same
+    /// reason; unnamed, it stays `Unknown`. A contact that is missing or
+    /// revoked degrades to an anonymous `Unknown`.
     fn voice_roster_party(
         &self,
         rtxn: &heed::RoTxn<'_>,
         segment: &VoiceResolvedSegment,
+        answer: Option<AttendeeIdentityChoice>,
     ) -> Result<Interlocutor> {
         let anonymous = || Interlocutor::unknown(segment.speaker_label.clone(), false);
         match &segment.evidence {
@@ -693,7 +745,19 @@ impl Vault {
                     None => Ok(anonymous()),
                 }
             }
-            VoiceAttributionEvidence::ResidualCluster { .. } => Ok(anonymous()),
+            VoiceAttributionEvidence::ResidualCluster { .. } => {
+                let Some(AttendeeIdentityChoice::Contact(contact_ref)) = answer else {
+                    return Ok(anonymous());
+                };
+                match self.active_counterparty_contact(rtxn, &contact_ref)? {
+                    Some(record) => self.known_contact_interlocutor(
+                        contact_ref,
+                        &record.counterparty,
+                        record.first_touch,
+                    ),
+                    None => Ok(anonymous()),
+                }
+            }
         }
     }
 

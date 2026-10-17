@@ -34,7 +34,7 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 /// Key: id16 + hash32 (blake3 of the proposal ref), as the settlement ledger.
-const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
+pub(super) const PENDING: SideTable<(EntityId, [u8; 32]), PendingRow, Named> =
     SideTable::new(&side_table::EDIT_SETTLE_PENDING_PROPOSAL);
 
 /// The most report text one native output may carry.
@@ -42,7 +42,7 @@ pub const NATIVE_OUTPUT_REPORT_MAX_BYTES: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PendingRow {
+pub(super) struct PendingRow {
     proposal_ref: String,
     retained_by: EntityId,
     retained_at: u64,
@@ -210,7 +210,51 @@ impl PendingRow {
     }
 }
 
+/// One held edit proposal that carries typed answers and waits unsettled.
+pub(super) struct HeldAnswers {
+    pub(super) key: (EntityId, [u8; 32]),
+    pub(super) proposal: EditProposal,
+    pub(super) retained_by: EntityId,
+    pub(super) made_by: Option<MadeBy>,
+}
+
 impl Vault {
+    /// The held edit proposals that carry typed answers and wait unsettled.
+    pub(super) fn held_answer_proposals(&self) -> Result<Vec<HeldAnswers>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut out = Vec::new();
+        for row in PENDING.iter_from(&self.store, &rtxn, &[])? {
+            let (key, row) = row?;
+            let typed = matches!(
+                &row.body,
+                PendingBody::Edit {
+                    sheet_answers: Some(_),
+                    ..
+                } | PendingBody::Edit {
+                    format: OfficeFormat::Docx,
+                    ..
+                }
+            );
+            if !typed || RECORD.contains(&self.store, &rtxn, &key)? {
+                continue;
+            }
+            let Some(proposal) = row.edit_proposal()? else {
+                continue;
+            };
+            if proposal.sheet_answers.is_none() && proposal.manifest.paragraph_judgments.is_empty()
+            {
+                continue;
+            }
+            out.push(HeldAnswers {
+                key,
+                proposal,
+                retained_by: row.retained_by,
+                made_by: row.made_by,
+            });
+        }
+        Ok(out)
+    }
+
     /// Holds an edit proposal beside its artifact until a Keep or Discard
     /// names it by its ref. A rejected or already settled proposal, or a ref
     /// already waiting, is refused. `made_by` is the envelope Keep gives the
@@ -359,15 +403,35 @@ impl Vault {
             .pending_row(artifact_id, proposal_ref)?
             .ok_or(Error::EntityNotFound)?;
         let outcome = if let Some(proposal) = row.edit_proposal()? {
-            self.settle_select_edit_proposal_made_by(
+            // A held answer whose units changed under it lands what is
+            // untouched and withdraws the rest (ARCH-0075 §4).
+            match self.split_typed_answers(
                 artifact_id,
                 &proposal,
+                row.retained_by,
                 row.made_by.as_ref(),
-                consent,
-                actor,
-                occurred,
-                learned_at,
-            )?
+                true,
+            )? {
+                Some(split) => self.keep_split(
+                    artifact_id,
+                    &proposal,
+                    split,
+                    row.made_by.as_ref(),
+                    consent,
+                    actor,
+                    occurred,
+                    learned_at,
+                )?,
+                None => self.settle_select_edit_proposal_made_by(
+                    artifact_id,
+                    &proposal,
+                    row.made_by.as_ref(),
+                    consent,
+                    actor,
+                    occurred,
+                    learned_at,
+                )?,
+            }
         } else {
             self.keep_native_output(artifact_id, &row, consent, actor, occurred, learned_at)?
         };
@@ -568,6 +632,7 @@ fn output_record(
         pptx_slide_creation_id_mints: Vec::new(),
         pptx_review_identities: Vec::new(),
         pptx_judgments: Vec::new(),
+        docx_judgments: Vec::new(),
         anchors: Vec::new(),
         reason: None,
         sheet_answers: None,
@@ -575,7 +640,7 @@ fn output_record(
     }
 }
 
-fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
+pub(super) fn validate_pending_ref(proposal_ref: &str) -> Result<()> {
     if proposal_ref.trim().is_empty() || proposal_ref.len() > BLOB_ARTIFACT_RUN_REF_MAX_BYTES {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "proposal ref must be non-empty and within the run-ref length bound",

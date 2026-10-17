@@ -257,6 +257,11 @@ impl Vault {
             if record.state != ProposalState::Proposed {
                 return Err(Error::InvalidConfig("patch review is terminal".into()));
             }
+            if release.is_some() && actor == record.proposal.actor.actor_ref {
+                return Err(Error::InvalidConfig(
+                    "patch proposer cannot approve its own release".into(),
+                ));
+            }
             let (target, patch, schema) = match &record.proposal.operation {
                 RepairOperation::DevPatch {
                     repo_ref,
@@ -310,6 +315,15 @@ fn reverse_receipt_in_txn(
     Ok(receipt)
 }
 impl HealerRegistration<'_> {
+    pub(in crate::self_heal) fn require_dev_runner(&self, vault: &Vault) -> Result<WriteActor> {
+        if self.band != HealerBand::Dev || !std::ptr::eq(self.vault, vault) {
+            return Err(Error::InvalidConfig(
+                "dev runner requires a dev healer registered in this vault".into(),
+            ));
+        }
+        Ok(self.actor)
+    }
+
     /// Read-only diagnostic-band access for the external runner's identity.
     /// The receipt counts the stored events this runner may not read.
     pub fn failure_corpus(

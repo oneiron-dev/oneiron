@@ -32,6 +32,19 @@ pub trait AnonymousChatResponder: Send + Sync {
         target: AnonymousChatTarget,
         text: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+
+    /// Input warnings belong to the model's system-notice channel, not a
+    /// conversation transcript. A host that serves a model forwards them
+    /// verbatim; a responder without a model channel only needs `respond`.
+    fn respond_with_notices<'a>(
+        &'a self,
+        target: AnonymousChatTarget,
+        text: &'a str,
+        notices: &'a [GateSystemNoticeRecord],
+    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        let _ = notices;
+        self.respond(target, text)
+    }
 }
 
 /// A shared system notice has `audience = user_and_model`. The host must
@@ -133,7 +146,9 @@ impl AnonymousChatSession<'_> {
             });
         }
 
-        let content = responder.respond(target, text).await?;
+        let content = responder
+            .respond_with_notices(target, text, &notices)
+            .await?;
         route.revalidate()?;
         let (decision, mut output_notices) = crate::policy_model::stateless_owner_classification(
             vault,

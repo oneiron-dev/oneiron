@@ -126,9 +126,10 @@ impl GmailDelegatedAdapter {
             // A withdrawn row cannot route pages fetched while it was active.
             self.require_active_row_matches_adapter(vault, &identity_id)?;
             let inbound = message.into_provider_inbound()?;
+            let thread = inbound.thread_headers.clone();
             let input = self.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
             if let crate::surface_event::SurfaceEventAdmission::Rejected(_) =
-                vault.enqueue_inbound_surface_event(input, now)?
+                vault.enqueue_inbound_email(input, thread.as_ref(), now)?
             {
                 return Err(Error::InvalidConfig(
                     "gmail mailbox message was rejected by inbound routing".to_owned(),

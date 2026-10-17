@@ -13,15 +13,24 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value as JsonValue, json};
 
+use crate::entity_id::EntityId;
+use crate::llm::decision::catalogue::BOOKING_OFF_TOPIC;
+use crate::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung,
+    GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep, HeldLadder, ProviderPin,
+    Reversibility,
+};
 use crate::llm::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback,
     LlmBackend, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ResponseFormat,
     TierPrecedence,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::temporal::TimeRange;
 
 /// Wire version of [`ConstraintObject`]. A payload carrying any other version
@@ -52,6 +61,12 @@ pub const CONSTRAINT_PARSE_CALL_PURPOSE: &str = "booking_constraint_parse";
 /// Name of the deterministic fallback that runs when the parse tier is
 /// unavailable. Validation stays deterministic; the solver always is.
 const CONSTRAINT_PARSE_FALLBACK: &str = "booking_constraint_deterministic_reject";
+
+/// The booking front's typed question; a yes ends the turn with a deflect.
+const OFF_TOPIC_QUESTION: &str = "Is the text something other than a scheduling preference?";
+
+/// The time one shipped off-topic read may take.
+const OFF_TOPIC_BUDGET: Duration = Duration::from_secs(30);
 
 /// Routing namespace for the model id derived from the resolved tier. The
 /// concrete provider/model is chosen by host policy behind the tier ref, so
@@ -291,7 +306,9 @@ fn is_strictly_ascending<T: Ord>(values: &[T]) -> bool {
 }
 
 /// What one bounded parse pass concluded. `OffTopic` is a terminal disposition:
-/// it yields one structured deflect, never a second turn.
+/// it yields one structured deflect, never a second turn. It is the off-topic
+/// question's answer through the host's ladder; a constraint is the extraction
+/// an on-topic turn's parse returns.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "disposition", rename_all = "snake_case")]
 pub enum ConstraintParseDisposition {
@@ -408,6 +425,39 @@ pub trait SlotOracle: Send + Sync {
 pub struct ConstraintParseConfig {
     pub tier: TierPrecedence,
     pub max_input_bytes: usize,
+    pub decisions: BookingDecisions,
+}
+
+/// The host's ladder for the off-topic question, the principal it asks for, the
+/// dial and learned bands it routes under, and the time one read may take. The
+/// parse tier's read sits at the dial's first rung, in place of that slot's
+/// provider.
+#[derive(Clone)]
+pub struct BookingDecisions {
+    pub ladder: HeldLadder,
+    pub principal: EntityId,
+    pub dial: DecisionDial,
+    pub bands: DecisionBandPolicy,
+    pub budget: Duration,
+}
+
+impl BookingDecisions {
+    /// An unstaffed ladder for `principal`: the parse tier's read, at the
+    /// system-one rung, is the one rung, and every band starts in shadow.
+    #[must_use]
+    pub fn shipped(principal: EntityId) -> Self {
+        Self {
+            ladder: HeldLadder::unstaffed(),
+            principal,
+            dial: DecisionDial {
+                first: DecisionRung::SystemOne,
+                ceiling: DecisionRung::SystemOne,
+                band: DecisionBand::default(),
+            },
+            bands: DecisionBandPolicy::default(),
+            budget: OFF_TOPIC_BUDGET,
+        }
+    }
 }
 
 impl ConstraintParseConfig {
@@ -497,11 +547,12 @@ fn admit(used: u16, cap: u16) -> Result<u16, BookingError> {
         .ok_or(BookingError::SessionCapExhausted)
 }
 
-/// Parse bounded free text into a disposition with one zero-temperature,
-/// JSON-schema, tool-free model call.
+/// Parse bounded free text into a disposition: the off-topic question through
+/// the host's ladder, then, for an on-topic turn, one zero-temperature,
+/// JSON-schema, tool-free extraction call.
 ///
-/// The caller has already admitted the model call: this function does not touch
-/// session state.
+/// The caller has already admitted the parse pass: both calls go out on its
+/// lease, and this function does not touch session state.
 pub async fn parse_constraint_with_backend(
     backend: &dyn LlmBackend,
     lease: &BudgetLease,
@@ -523,6 +574,10 @@ pub async fn parse_constraint_with_backend(
     }
     validate_visitor_tz(&request.detected_visitor_tz)?;
 
+    if off_topic(backend, lease, request, config, free_text).await? {
+        return Ok(ConstraintParseDisposition::OffTopic);
+    }
+
     let response = backend
         .generate(
             constraint_parse_llm_request(request, config, free_text)?,
@@ -531,27 +586,95 @@ pub async fn parse_constraint_with_backend(
         .await
         .map_err(|error| BookingError::ConstraintParse(error.to_string()))?;
 
-    let disposition: ConstraintParseDisposition =
-        serde_json::from_str(&response_text(&response.message)).map_err(|error| {
-            BookingError::ConstraintParse(format!("parser payload is not a disposition: {error}"))
+    let extraction: ConstraintExtraction = serde_json::from_str(&response_text(&response.message))
+        .map_err(|error| {
+            BookingError::ConstraintParse(format!("parser payload is not a constraint: {error}"))
         })?;
+    // A timezone override is the only free-form string the parser may emit.
+    // Validating it as an identifier is what stops the original sentence from
+    // riding into the solve request.
+    if let Some(tz) = &extraction.visitor_tz_override {
+        validate_visitor_tz(tz)?;
+    }
+    Ok(ConstraintParseDisposition::Constraint {
+        object: extraction.object.canonicalize()?,
+        visitor_tz_override: extraction.visitor_tz_override,
+    })
+}
 
-    match disposition {
-        ConstraintParseDisposition::OffTopic => Ok(ConstraintParseDisposition::OffTopic),
-        ConstraintParseDisposition::Constraint {
-            object,
-            visitor_tz_override,
-        } => {
-            // A timezone override is the only free-form string the parser may
-            // emit. Validating it as an identifier is what stops the original
-            // sentence from riding into the solve request.
-            if let Some(tz) = &visitor_tz_override {
-                validate_visitor_tz(tz)?;
+/// What an on-topic turn's extraction returns.
+#[derive(Deserialize)]
+struct ConstraintExtraction {
+    object: ConstraintObject,
+    visitor_tz_override: Option<String>,
+}
+
+/// Whether the turn is off topic, through the host's ladder: the parse tier's
+/// read on the caller's lease is the first rung, under the parser's own system
+/// voice, and the turn is the call's state. A read that does not decide fails
+/// the parse.
+async fn off_topic(
+    backend: &dyn LlmBackend,
+    lease: &BudgetLease,
+    request: &ConstraintParseRequest,
+    config: &ConstraintParseConfig,
+    free_text: &str,
+) -> Result<bool, BookingError> {
+    let decisions = &config.decisions;
+    let unread = |reason: String| BookingError::ConstraintParse(reason);
+    let question = BOOKING_OFF_TOPIC
+        .question(
+            &[&CONSTRAINT_SCHEMA_VERSION.to_be_bytes()],
+            OFF_TOPIC_QUESTION.to_owned(),
+            AnswerContract::Noul,
+        )
+        .map_err(|error| unread(error.to_string()))?;
+    let mut shell = constraint_parse_llm_request(request, config, free_text)?;
+    shell.messages = vec![system_message(constraint_system_prompt())];
+    let seal = |request: LlmRequest| -> crate::Result<LlmRequest> { Ok(request) };
+    let rung = GeneratedRung {
+        pin: ProviderPin {
+            rung: decisions.dial.first,
+            model: shell.model.to_string(),
+            version: shell.model.to_string(),
+        },
+        backend,
+        step: GeneratedStep::Raw { lease },
+        request: shell,
+        seal: &seal,
+    };
+    let state = json!({
+        "schema_version": CONSTRAINT_SCHEMA_VERSION,
+        "visitor_tz": request.detected_visitor_tz,
+        "now_utc": request.now_utc,
+        "text": free_text,
+    });
+    let decided = decisions
+        .ladder
+        .ladder()
+        .run_pack_generated(
+            &rung,
+            &[&question],
+            decisions.principal,
+            &[],
+            &state,
+            decisions.dial,
+            &decisions.bands,
+            Reversibility::ReversibleRead,
+            &RetrievalDeadline::hard(Instant::now(), decisions.budget),
+        )
+        .await
+        .map_err(|error| unread(error.to_string()))?;
+    match decided {
+        GeneratedDecisions::Decided { decisions, .. } => {
+            match decisions.first().map(|decision| &decision.answer) {
+                Some(DecisionAnswer::Noul(yes)) => Ok(*yes),
+                _ => Err(unread("off-topic read did not decide".to_owned())),
             }
-            Ok(ConstraintParseDisposition::Constraint {
-                object: object.canonicalize()?,
-                visitor_tz_override,
-            })
+        }
+        GeneratedDecisions::Unread(GeneratedMiss::Backend(error)) => Err(unread(error.to_string())),
+        GeneratedDecisions::Unread(GeneratedMiss::Budget(_)) | GeneratedDecisions::Trapped => {
+            Err(unread("off-topic read did not run".to_owned()))
         }
     }
 }
@@ -620,12 +743,10 @@ fn constraint_parse_llm_request(
             locality: ModelLocality::ThirdParty,
         },
         messages: vec![
-            LlmMessage {
-                role: LlmMessageRole::System,
-                content: vec![ContentPart::Text {
-                    text: constraint_system_prompt(),
-                }],
-            },
+            system_message(format!(
+                "{}\nConvert the scheduling preference into the JSON schema and return nothing else.",
+                constraint_system_prompt()
+            )),
             LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text {
@@ -641,13 +762,19 @@ fn constraint_parse_llm_request(
     })
 }
 
-/// Machine-facing instruction for the parser. This never reaches a visitor —
-/// all visible copy is host-supplied configuration.
+fn system_message(text: String) -> LlmMessage {
+    LlmMessage {
+        role: LlmMessageRole::System,
+        content: vec![ContentPart::Text { text }],
+    }
+}
+
+/// Machine-facing instruction for the parser, which the off-topic read shares.
+/// This never reaches a visitor — all visible copy is host-supplied
+/// configuration.
 fn constraint_system_prompt() -> String {
     [
         "You are the Oneiron booking constraint parser, a system voice independent of any persona.",
-        "Convert the scheduling preference into the JSON schema and return nothing else.",
-        "Return disposition=off_topic when the text is not a scheduling preference.",
         "Never copy the input text, an explanation, or any other field into the output.",
         "You do not choose times, hold, confirm, or cancel anything.",
     ]
@@ -665,9 +792,8 @@ fn constraint_response_schema() -> JsonValue {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["disposition"],
+        "required": ["object"],
         "properties": {
-            "disposition": { "enum": ["constraint", "off_topic"] },
             "visitor_tz_override": { "type": ["string", "null"], "maxLength": MAX_VISITOR_TZ_BYTES },
             "object": {
                 "type": "object",

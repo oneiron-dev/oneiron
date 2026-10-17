@@ -13,7 +13,6 @@ pub enum MemorySlot {
     Turns,
     Summaries,
     Facets,
-    Companions,
     Other,
 }
 
@@ -25,7 +24,6 @@ impl MemorySlot {
             Self::Turns => "turns",
             Self::Summaries => "summaries",
             Self::Facets => "facets",
-            Self::Companions => "companions",
             Self::Other => "other",
         }
     }
@@ -37,7 +35,6 @@ impl MemorySlot {
             Self::Turns => 1,
             Self::Summaries => 2,
             Self::Facets => 3,
-            Self::Companions => 4,
             Self::Other => 5,
         }
     }
@@ -69,7 +66,6 @@ pub struct MemoriesBudget {
     pub turns: usize,
     pub summaries: usize,
     pub facets: usize,
-    pub companions: usize,
     pub other: usize,
     /// One additional cap shared by every world. Pinned rows are never shed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,7 +79,6 @@ impl MemoriesBudget {
         turns: usize,
         summaries: usize,
         facets: usize,
-        companions: usize,
         other: usize,
     ) -> Self {
         Self {
@@ -91,7 +86,6 @@ impl MemoriesBudget {
             turns,
             summaries,
             facets,
-            companions,
             other,
             shared_total: None,
         }
@@ -110,7 +104,6 @@ impl MemoriesBudget {
             MemorySlot::Turns => self.turns,
             MemorySlot::Summaries => self.summaries,
             MemorySlot::Facets => self.facets,
-            MemorySlot::Companions => self.companions,
             MemorySlot::Other => self.other,
         }
     }
@@ -121,7 +114,6 @@ impl MemoriesBudget {
             MemorySlot::Turns => &mut self.turns,
             MemorySlot::Summaries => &mut self.summaries,
             MemorySlot::Facets => &mut self.facets,
-            MemorySlot::Companions => &mut self.companions,
             MemorySlot::Other => &mut self.other,
         };
         *counter = counter.saturating_add(1);
@@ -173,6 +165,10 @@ pub struct MemoryRow {
     pub tier: MemoryTier,
     #[serde(default)]
     pub snippet: Option<String>,
+    /// `<pack>/<hook>` when a hook block pins this row (ARCH-0080 §11,
+    /// OI-1 = A): the tag the board shows beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<String>,
     /// The exact revision this row's body was served at, where the read
     /// pinned one. Board history records it, never LIVE in its place. Not on
     /// the wire: board refs stay as they were.

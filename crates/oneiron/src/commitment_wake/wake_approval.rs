@@ -357,7 +357,10 @@ pub fn schedule_approved_commitment_wake(
             },
         )));
     }
-    facade.schedule_outbound(&OutboundDraftInput {
+    // The owner's civil clock, when set, rides the send so its delivery
+    // window can read local time (OF-187).
+    let context = super::reminder::reminder_schedule_context(facade.vault());
+    let draft = OutboundDraftInput {
         verb: approved.verb,
         channel: approved.channel,
         target: approved.target,
@@ -371,7 +374,9 @@ pub fn schedule_approved_commitment_wake(
         // never alias the attempt run index.
         job_ref: None,
         occurred_at: Some(approved.occurred_at),
-    })
+        mention: None,
+    };
+    facade.schedule_outbound_with_context(&draft, &context)
 }
 
 /// The approval half of a commitment wake (ARCH-0046 O2): every approved

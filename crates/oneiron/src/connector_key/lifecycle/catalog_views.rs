@@ -8,6 +8,7 @@ use super::super::record::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeyRecord, ConnectorKeyStatus,
     normalize_connector_key,
 };
+use super::super::slate_setting::callable_verbs_in_txn;
 use super::super::txn::{CATALOG_NAME_INDEX, governing_connector_key, read_connector_key_in_txn};
 
 /// The HISTORY lens over one catalogued connector: what it is, plus the
@@ -91,9 +92,10 @@ impl Vault {
             if record.status != ConnectorKeyStatus::Active {
                 continue;
             }
-            let Some(catalog) = record.catalog else {
+            let Some(mut catalog) = record.catalog.clone() else {
                 continue;
             };
+            catalog.verbs = callable_verbs_in_txn(&self.store, &rtxn, &record, catalog.verbs)?;
             if catalog.name.contains(&name_query)
                 || catalog.summary.to_lowercase().contains(&summary_query)
             {
@@ -111,9 +113,10 @@ impl Vault {
         let Some((key_ref, record)) = self.catalog_record_in_txn(&rtxn, name)? else {
             return Ok(None);
         };
-        let Some(entry) = record.catalog else {
+        let Some(mut entry) = record.catalog.clone() else {
             return Ok(None);
         };
+        entry.verbs = callable_verbs_in_txn(&self.store, &rtxn, &record, entry.verbs)?;
         let budgeted_as_sends = entry.call_class.debits_sends();
         Ok(Some(ConnectorDescription {
             key_ref,
@@ -148,9 +151,10 @@ impl Vault {
         if record.status != ConnectorKeyStatus::Active {
             return Ok(None);
         }
-        let Some(entry) = record.catalog else {
+        let Some(mut entry) = record.catalog.clone() else {
             return Ok(None);
         };
+        entry.verbs = callable_verbs_in_txn(&self.store, &rtxn, &record, entry.verbs)?;
         Ok(Some(ConnectorCallRoute {
             key_ref,
             connector: record.connector,

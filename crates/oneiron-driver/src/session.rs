@@ -37,11 +37,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
-use oneiron::session_lifecycle::{SessionActivityPeriod, SessionHintTimestamp};
-use oneiron::{
-    DreamerConsolidationScope, EndedSession, EntityId, Result, SessionClosePredicate,
-    SessionEndWake, SessionMintOutcome, Vault, plan_partitions, read_watermark, scan_dirty_turns,
-};
+use oneiron::session_lifecycle::{SessionActivityPeriod, SessionHintTimestamp, SessionKey};
+use oneiron::{EndedSession, EntityId, Result, SessionClosePredicate, SessionMintOutcome, Vault};
 
 use crate::tick::{
     NowMillis, SessionHintCarrier, SessionHintStamp, Tick, TickSource, sleep_until_due,
@@ -60,10 +57,9 @@ pub const DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS: u64 = 1_000;
 const HINT_RETRY_BACKOFF_BASE_MS: u64 = 1;
 const HINT_RETRY_BACKOFF_CAP_MS: u64 = 1_000;
 
-/// Session-lifecycle facts an app may hint. Deliberately carries no session
-/// id, no scope, and no trigger: the driver owns which session (at most one
-/// is open per vault) and what pass, if any, results — a hint producer can
-/// never shape a pass (H-S4).
+/// Session-lifecycle facts an app may hint. The host binds an actor/machine
+/// key separately; there is no session id, scope or trigger to forge. The
+/// driver owns the sitting and any resulting pass (H-S4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionHint {
     /// The app opened: mint a session (or re-signal presence on the open
@@ -229,15 +225,17 @@ impl<'v> SessionLifecycleDriver<'v> {
     /// `Self::apply_hint_carrier`.
     pub fn apply_hint(
         &self,
+        key: SessionKey,
         hint: SessionHint,
         claimed_ms: Option<u64>,
         arrival_ms: u64,
     ) -> Result<SessionHintEffect> {
-        self.apply_hint_carrier(SessionHintCarrier::point(hint, claimed_ms, arrival_ms))
+        self.apply_hint_carrier(SessionHintCarrier::point(key, hint, claimed_ms, arrival_ms))
     }
 
     fn apply_hint_carrier(&self, carrier: SessionHintCarrier) -> Result<SessionHintEffect> {
-        let mut open = self.vault.open_session()?;
+        let key = carrier.key;
+        let mut open = self.vault.open_session(key)?;
         let ceiling_ms = self.config.lifetime_ceiling_secs.saturating_mul(1_000);
         let first_floor_ms = open.as_ref().map_or_else(
             || carrier.first.arrival_ms.saturating_sub(ceiling_ms),
@@ -258,23 +256,27 @@ impl<'v> SessionLifecycleDriver<'v> {
             && self.expiry_ms(session.started_at, session.last_activity) <= first.arrival_ms
         {
             let due_at_ms = self.expiry_ms(session.started_at, session.last_activity);
-            open = match self.close_due_session_at(due_at_ms)? {
+            open = match self.close_due_session_for_at(key, due_at_ms)? {
                 Some(_) => None,
                 // A concurrent bump may have won the transaction's expiry
                 // re-check. Re-read that winner so this carried fact still
                 // applies to the sitting instead of being discarded.
-                None => self.vault.open_session()?,
+                None => self.vault.open_session(key)?,
             };
         }
 
         match carrier.hint {
-            SessionHint::AppOpen => match self.vault.mint_session_from_hint(first)? {
-                SessionMintOutcome::Minted(id) => Ok(SessionHintEffect::Minted(id)),
+            SessionHint::AppOpen => match self.vault.mint_session_from_hint(key, first) {
+                Ok(SessionMintOutcome::Minted(id)) => Ok(SessionHintEffect::Minted(id)),
                 // Presence re-signal on the open sitting counts as activity.
-                SessionMintOutcome::AlreadyOpen(_) => Ok(self
+                Ok(SessionMintOutcome::AlreadyOpen(_)) => Ok(self
                     .vault
-                    .record_session_app_open_hint(first)?
+                    .record_session_app_open_hint(key, first)?
                     .map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped)),
+                // A `host.session.open` hook refused the sitting (ARCH-0080
+                // §5): the hint is spent, and nothing opens.
+                Err(oneiron::Error::VerbHook(_)) => Ok(SessionHintEffect::NoOp),
+                Err(error) => Err(error),
             },
             SessionHint::Activity => {
                 let Some(session) = open else {
@@ -290,6 +292,7 @@ impl<'v> SessionLifecycleDriver<'v> {
                     // point to the old sitting, then close at the ceiling;
                     // the post-ceiling endpoint and count attach nowhere.
                     let bumped = self.vault.record_session_activity_period(
+                        key,
                         SessionActivityPeriod {
                             first,
                             last: first,
@@ -297,12 +300,13 @@ impl<'v> SessionLifecycleDriver<'v> {
                         },
                         self.config.activity_rollup_gap_ms,
                     )?;
-                    self.close_due_session_at(ceiling_at_ms)?;
+                    self.close_due_session_for_at(key, ceiling_at_ms)?;
                     return Ok(bumped.map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped));
                 }
                 Ok(self
                     .vault
                     .record_session_activity_period(
+                        key,
                         SessionActivityPeriod {
                             first,
                             last,
@@ -332,10 +336,12 @@ impl<'v> SessionLifecycleDriver<'v> {
     /// earlier of `last_activity + idle_floor` and `started_at + ceiling`.
     /// `None` when no session is open.
     pub fn next_expiry_ms(&self) -> Result<Option<u64>> {
-        let Some(open) = self.vault.open_session()? else {
-            return Ok(None);
-        };
-        Ok(Some(self.expiry_ms(open.started_at, open.last_activity)))
+        Ok(self
+            .vault
+            .open_sessions()?
+            .into_iter()
+            .map(|open| self.expiry_ms(open.started_at, open.last_activity))
+            .min())
     }
 
     fn expiry_ms(&self, started_at: u64, last_activity: u64) -> u64 {
@@ -361,7 +367,23 @@ impl<'v> SessionLifecycleDriver<'v> {
     /// mutation is stamped at the policy-derived due instant, never at a late
     /// resume/processing time, and does not read the driver's wall clock.
     pub fn close_due_session_at(&self, observed_ms: u64) -> Result<Option<EndedSession>> {
-        let Some(open) = self.vault.open_session()? else {
+        let next = self
+            .vault
+            .open_sessions()?
+            .into_iter()
+            .min_by_key(|open| self.expiry_ms(open.started_at, open.last_activity));
+        match next {
+            Some(open) => self.close_due_session_for_at(open.key, observed_ms),
+            None => Ok(None),
+        }
+    }
+
+    fn close_due_session_for_at(
+        &self,
+        key: SessionKey,
+        observed_ms: u64,
+    ) -> Result<Option<EndedSession>> {
+        let Some(open) = self.vault.open_session(key)? else {
             return Ok(None);
         };
         let due_at_ms = self.expiry_ms(open.started_at, open.last_activity);
@@ -398,29 +420,7 @@ impl<'v> SessionLifecycleDriver<'v> {
         ended_at: u64,
         end_hint: Option<SessionHintTimestamp>,
     ) -> Result<Option<EndedSession>> {
-        let scope = DreamerConsolidationScope::Meso;
-        let watermark = read_watermark(self.vault, scope)?;
-        let dirty = scan_dirty_turns(self.vault, scope, &watermark, usize::MAX)?;
-        let edged: Vec<_> = dirty
-            .iter()
-            .filter(|turn| turn.conversation.is_some())
-            .copied()
-            .collect();
-        if edged.len() < dirty.len() {
-            tracing::info!(
-                parked = dirty.len() - edged.len(),
-                "meso round parks turns without a conversation edge"
-            );
-        }
-        let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
-        let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
-        let plans = plan_partitions(self.vault, scope, &edged, &watermark)?;
-        let wake = SessionEndWake {
-            plans,
-            planned_watermark: watermark.last_learned_at,
-            planned_turn_ids,
-            advance_watermark_to,
-        };
+        let wake = self.vault.plan_session_end_wake(expected)?;
         self.vault
             .end_session_with_wake_and_hint(expected, predicate, ended_at, &wake, end_hint)
     }

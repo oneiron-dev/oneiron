@@ -1,6 +1,8 @@
 //! MCP endpoint surface: modes, verb bindings, and the registered tool listing.
 
-use super::endpoint_schema::{execute_code_tool_schema, setup_tool_schema, verb_tool_schema};
+use super::endpoint_schema::{
+    execute_code_tool_schema, read_result_tool_schema, setup_tool_schema, verb_tool_schema,
+};
 use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
 use oneiron::task_verb::sdk::AgentVerb;
 use serde::Serialize;
@@ -15,6 +17,11 @@ pub const MCP_SETUP_TOOL: &str = "setup_oneiron";
 /// The durable plain-JavaScript execution tool. It is advertised only after
 /// the host binds a verified production runtime, backend and budget lease.
 pub const MCP_EXECUTE_CODE_TOOL: &str = "execute_code";
+
+/// The direct read of one `execute_code` run's results, with no model call
+/// and no run entered. It is registered beside `execute_code`, and only
+/// with it.
+pub const MCP_READ_RESULT_TOOL: &str = "read_result";
 
 /// A configuration refusal, not an unsupported execution surface. A server
 /// without a verified host refuses before creating a durable run.
@@ -98,15 +105,19 @@ impl McpSurfaceMode {
     }
 }
 
-/// The exported verb family a generated tool projects from.
+/// The exported verb root a generated tool projects from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpVerbFamily {
-    Board,
+    /// `self.`: the calling agent's own focus, memory and skills.
+    SelfRoot,
+    Vault,
+    Connector,
+    Ai,
     Tasks,
-    Rooms,
+    /// The native read table's `memory.` methods.
     Memory,
     /// The bare verbs over any handle (ARCH-0067 §4), such as `describe` and
-    /// `cancel`: their row names carry no family prefix.
+    /// `cancel`: their row names carry no root.
     Handle,
 }
 
@@ -114,9 +125,11 @@ impl McpVerbFamily {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Board => "board",
+            Self::SelfRoot => "self",
+            Self::Vault => "vault",
+            Self::Connector => "connector",
+            Self::Ai => "ai",
             Self::Tasks => "tasks",
-            Self::Rooms => "rooms",
             Self::Memory => "memory",
             Self::Handle => "handle",
         }
@@ -124,9 +137,11 @@ impl McpVerbFamily {
 
     fn from_prefix(prefix: &str) -> Option<Self> {
         match prefix {
-            "board" => Some(Self::Board),
+            "self" => Some(Self::SelfRoot),
+            "vault" => Some(Self::Vault),
+            "connector" => Some(Self::Connector),
+            "ai" => Some(Self::Ai),
             "tasks" => Some(Self::Tasks),
-            "rooms" => Some(Self::Rooms),
             "memory" => Some(Self::Memory),
             _ => None,
         }
@@ -139,8 +154,8 @@ pub struct McpGeneratedVerbTool {
     /// The exported row verbatim. The tool name IS the verb name.
     pub name: &'static str,
     pub family: McpVerbFamily,
-    /// The row's suffix, borrowed out of the row itself; a bare row's whole
-    /// name.
+    /// The row past its root, borrowed out of the row itself (it may hold
+    /// further dots, as in `turn.continue`); a bare row's whole name.
     pub verb: &'static str,
 }
 
@@ -212,7 +227,7 @@ fn project_verb_row(
         },
         None => (McpVerbFamily::Handle, row),
     };
-    if verb.is_empty() || verb.contains('.') {
+    if verb.split('.').any(str::is_empty) {
         return Err(unprojectable);
     }
     if AgentVerb::from_name(row).is_none()
@@ -278,6 +293,7 @@ impl McpGeneratedVerbTool {
 pub enum McpEndpointTool {
     Setup,
     ExecuteCode,
+    ReadResult,
     Verb(McpGeneratedVerbTool),
 }
 
@@ -287,6 +303,7 @@ impl McpEndpointTool {
         match self {
             Self::Setup => MCP_SETUP_TOOL,
             Self::ExecuteCode => MCP_EXECUTE_CODE_TOOL,
+            Self::ReadResult => MCP_READ_RESULT_TOOL,
             Self::Verb(tool) => tool.name,
         }
     }
@@ -298,15 +315,28 @@ impl McpEndpointTool {
             // this release. The text states the shipped contract so a schema
             // dump can never read as an offer.
             Self::ExecuteCode => "Run a durable plain-JavaScript task in the verified QuickJS WASM sandbox. Reuse the same run_ref and task to resume; completed calls return their stored result without repeating effects.".to_owned(),
+            Self::ReadResult => "Read one result of a durable execute_code run without a model call: its card (describe), or a slice, search, query or chunks page of it, by the name the run bound, its handle or a range ref. Only the run this credential's run_ref names is read; its served rows and its taint are checked as inside the run, and every reply fits one message with a cursor to read on.".to_owned(),
             Self::Verb(tool) if tool.memory_method().is_some() => format!(
                 "{} One atomic native response; nested arrays retain the native request budgets and result metadata. Narrow connector ceilings fail closed.",
                 tool.memory_method().map_or("", VaultReadMethod::description)
             ),
-            Self::Verb(tool) => format!(
-                "Invoke the exported {family} verb {name} directly, with the same actor ceiling and gate every other door applies.",
-                family = tool.family.as_str(),
-                name = tool.name,
-            ),
+            // OF-246: the row's own description, from the verb table's
+            // generated catalog; a row that states none keeps the plain line.
+            Self::Verb(tool) => match AgentVerb::from_name(tool.name)
+                .map(AgentVerb::description)
+                .filter(|description| !description.is_empty())
+            {
+                Some(description) => format!(
+                    "{description} Runs the exported {family} verb {name} with the same actor ceiling and gate every other door applies.",
+                    family = tool.family.as_str(),
+                    name = tool.name,
+                ),
+                None => format!(
+                    "Invoke the exported {family} verb {name} directly, with the same actor ceiling and gate every other door applies.",
+                    family = tool.family.as_str(),
+                    name = tool.name,
+                ),
+            },
         }
     }
 
@@ -314,6 +344,7 @@ impl McpEndpointTool {
         match self {
             Self::Setup => setup_tool_schema(),
             Self::ExecuteCode => execute_code_tool_schema(),
+            Self::ReadResult => read_result_tool_schema(),
             Self::Verb(tool) => verb_tool_schema(tool),
         }
     }
@@ -378,6 +409,7 @@ impl McpRegisteredSurface {
         };
         if available {
             tools.push(McpEndpointTool::ExecuteCode);
+            tools.push(McpEndpointTool::ReadResult);
         }
         let listing = Value::Array(
             tools

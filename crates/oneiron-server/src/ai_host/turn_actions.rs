@@ -2,7 +2,8 @@
 //! (`vault.conversations.turn.continue` / `.retry`) as the reply it asks
 //! for, through chat's answer producer, admitted exactly as a chat turn is:
 //! the agent's definition, the role's route, the requester's budget line,
-//! and the requester's standing for the whole turn.
+//! and the requester's standing for the whole turn. Its model call runs
+//! under `host.turn.generate` (ARCH-0080 §5), as a chat turn's does.
 //!
 //! The request is rebuilt from the ledger as the requester reads it. Continue
 //! opens a continuation on the same MESSAGE: a model that keeps a trailing
@@ -28,8 +29,8 @@ use tokio::sync::{broadcast, watch};
 
 use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
-    Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, TurnCredential, begin_answer,
-    chat_request, keepalive_every, text_message, witness_turn,
+    Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, TurnCredential, after_turn,
+    begin_answer, chat_request, keepalive_every, text_message, turn_generate_pre, witness_turn,
 };
 use crate::server::blocking;
 
@@ -170,6 +171,13 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
             .map_err(|error| error.to_string())?
             .idle_timeout_ms,
     );
+    // `host.turn.generate`'s pre chain runs once the reply is admitted and
+    // before its stream opens: a skip, or an ask, ends the turn with its
+    // reason. Its post chain runs once the reply's producer ends.
+    // A queued action carries no credential: its hooks read as its actor.
+    let generating = turn_generate_pre(vault, actor, None, None, &action.conversation.to_hex())
+        .map_err(|error| error.to_string())?
+        .map_err(|stop| stop.to_string())?;
     let open = match action.action {
         TurnAction::Continue => AnswerOpen::Continue(action.message),
         TurnAction::Retry => AnswerOpen::Turn(witness_turn(
@@ -185,6 +193,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         Answer {
             vault: Arc::clone(vault),
             agent: context.agent,
+            session_key: None,
             open,
             mode: MessageWriteMode::Atomic,
             admitted,
@@ -202,6 +211,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         | AnswerRefused::Engine(reason)
         | AnswerRefused::NotAdmitted(reason) => reason,
     })?;
+    let answering = after_turn(Arc::clone(vault), generating, answering);
     drop(answering.subscription);
     let outcome = answering
         .outcome

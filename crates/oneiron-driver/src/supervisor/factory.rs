@@ -3,15 +3,16 @@ use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_consolidation::{
-    DREAMER_NARRATIVE_ROLE, RoleBackends, RoleCall, ScopeSummaryExecutor,
+    DREAMER_NARRATIVE_ROLE, PersonAboutExecutor, RoleBackends, RoleCall, ScopeSummaryExecutor,
 };
+use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::{
-    BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationExecutor,
-    ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy, LlmBackend, ModelId,
-    Result, WriteActor,
+    BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationDecisions,
+    ConsolidationExecutor, ConsolidationSink, DreamerAttemptExecutor,
+    DreamerClaimAuthoringStrategy, LlmBackend, ModelId, Result, WriteActor,
 };
 use oneiron::{Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
@@ -34,6 +35,16 @@ pub trait PassExecutorFactory {
     /// counter — the same counter the driver reads for legibility, never a
     /// second one.
     fn executor<'p>(&'p mut self, guard: &'p BudgetGuard) -> Result<Self::Exec<'p>>;
+
+    /// Independent executors for disjoint home-owned MACRO buckets, all on
+    /// this pass's meter. A host with a non-shareable sink lends one executor.
+    fn macro_executors<'p>(
+        &'p mut self,
+        guard: &'p BudgetGuard,
+        _buckets: usize,
+    ) -> Result<Vec<Self::Exec<'p>>> {
+        Ok(vec![self.executor(guard)?])
+    }
 
     /// The engine-stamped actor for policy-aware budget construction;
     /// `None` selects the legacy single-pool guard.
@@ -74,6 +85,17 @@ pub trait PassExecutorFactory {
     fn linked_shutdown(&self) -> Option<Arc<dyn LinkedShutdown>> {
         None
     }
+
+    /// The host's home-timer work, run once a Deadline pass is done: the
+    /// standing-question pump (OF-506). The default has none.
+    fn run_home_timer(
+        &mut self,
+        _vault: &Vault,
+        _now_secs: u64,
+        _local_node_id: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// [`PassExecutorFactory`] over the landed [`ConsolidationExecutor`]: owns
@@ -90,6 +112,7 @@ pub struct ConsolidationExecutorFactory {
     /// calls `backend`.
     roles: RoleBackends,
     sink: Box<dyn ConsolidationSink>,
+    parallel_sinks: Vec<Box<dyn ConsolidationSink>>,
     /// CMT-3 (ONE-1540). `None` by DEFAULT, and the wrapper is installed
     /// either way: a tagged commitment event that reached the partition
     /// decoder would be a decode error and a parked driver, so "install the
@@ -97,12 +120,19 @@ pub struct ConsolidationExecutorFactory {
     /// factory must not offer.
     commitment_wake_planner: Option<Box<dyn CommitmentWakeProposalPlanner>>,
     weave_recipe_runtime: Option<Box<dyn WeaveRecipeRuntime>>,
+    /// OF-218. `None` by default, and the connector-event wrapper is
+    /// installed either way: with no responder a wake is delivered and
+    /// settled, never fed to the partition decoder.
+    connector_event_responder: Option<Box<dyn ConnectorEventResponder>>,
     /// The host's instruction for declared scope summaries. `None` leaves a
     /// declaration unable to run; the host refuses declarations up front.
     summary_instruction: Option<String>,
     wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
     wave_dispatch: Option<WaveReadyDispatcher>,
     attachment: Option<Box<dyn PassAttachmentSource>>,
+    /// The host's ladder for the Dreamer's typed questions. `None` asks them
+    /// with the shipped wording, the verdict role's read the only rung.
+    decisions: Option<ConsolidationDecisions>,
 }
 
 impl ConsolidationExecutorFactory {
@@ -126,13 +156,25 @@ impl ConsolidationExecutorFactory {
             extraction_egress,
             roles: RoleBackends::default(),
             sink,
+            parallel_sinks: Vec::new(),
             commitment_wake_planner: None,
             weave_recipe_runtime: None,
+            connector_event_responder: None,
             summary_instruction: None,
             wave_planner: None,
             wave_dispatch: None,
             attachment: None,
+            decisions: None,
         }
+    }
+
+    /// The host's ladder, dial, bands and wording for the Dreamer's typed
+    /// questions: how a conflict resolves, and which listed claim a candidate
+    /// corrects.
+    #[must_use]
+    pub fn with_decisions(mut self, decisions: ConsolidationDecisions) -> Self {
+        self.decisions = Some(decisions);
+        self
     }
 
     /// Opts into a pass-scoped host attachment (the server's voice host is
@@ -203,6 +245,17 @@ impl ConsolidationExecutorFactory {
         self
     }
 
+    /// Runs the target agent on each connector wake and sends its reply
+    /// through the ordinary outbound pipeline (OF-218).
+    #[must_use]
+    pub fn with_connector_event_responder(
+        mut self,
+        responder: Box<dyn ConnectorEventResponder>,
+    ) -> Self {
+        self.connector_event_responder = Some(responder);
+        self
+    }
+
     /// Register the host's agent-side planner AND TASK dispatcher together.
     /// A plan cut is agent policy; the supervisor owns only durable admission
     /// and the computed-ready handoff, never a built-in plan or work DSL.
@@ -247,43 +300,34 @@ impl ConsolidationExecutorFactory {
     }
 }
 
-impl PassExecutorFactory for ConsolidationExecutorFactory {
-    type Exec<'p> = WeaveRecipeExecutor<
-        ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
-        Option<&'p mut dyn WeaveRecipeRuntime>,
-    >;
-
-    fn executor<'p>(&'p mut self, guard: &'p BudgetGuard) -> Result<Self::Exec<'p>> {
-        let inner = ConsolidationExecutor {
-            backend: self.backend.as_ref(),
-            guard,
-            strategy: self.strategy,
-            actor: self.actor,
-            model: self.model.clone(),
-            inference: HostInferenceContext {
-                binding: self.binding.clone(),
-                extraction_egress: self.extraction_egress.as_deref(),
-            },
-            roles: self.roles.clone(),
-            sink: self.sink.as_mut(),
-            scope: None,
-        };
-        // The trait-object lifetime is shortened HERE, one reference at a time:
-        // `&mut` is invariant in its pointee, so the coercion cannot happen
-        // through the `Option` and `as_deref_mut()` alone would pin the pass
-        // lifetime to `'static`.
-        let planner = match self.commitment_wake_planner.as_mut() {
+impl ConsolidationExecutorFactory {
+    fn build_executors<'p>(
+        &'p mut self,
+        guard: &'p BudgetGuard,
+        buckets: usize,
+    ) -> Result<Vec<<Self as PassExecutorFactory>::Exec<'p>>> {
+        self.parallel_sinks.clear();
+        for _ in 1..buckets {
+            let Some(sink) = self.sink.fork() else {
+                break;
+            };
+            self.parallel_sinks.push(sink);
+        }
+        let mut planner = match self.commitment_wake_planner.as_mut() {
             Some(planner) => {
                 let planner: &mut dyn CommitmentWakeProposalPlanner = planner.as_mut();
                 Some(planner)
             }
             None => None,
         };
-        // Always wrapped. With no planner the wrapper never reads the actor, so
-        // this stays infallible for every legal existing host — including a
-        // System-class one — and a tagged event completes as a typed no-planner
-        // skip instead of reaching the partition decoder.
-        let inner = CommitmentWakeExecutor::new(inner, planner, self.actor)?;
+        let mut runtime = self.weave_recipe_runtime.as_mut().map(|runtime| {
+            let runtime: &mut dyn WeaveRecipeRuntime = runtime.as_mut();
+            runtime
+        });
+        let mut responder = self.connector_event_responder.as_mut().map(|responder| {
+            let responder: &mut dyn ConnectorEventResponder = responder.as_mut();
+            responder
+        });
         let narrative = RoleCall::resolve(
             &self.roles,
             DREAMER_NARRATIVE_ROLE,
@@ -292,20 +336,86 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
             &self.binding,
             self.extraction_egress.as_deref(),
         );
-        let inner = ScopeSummaryExecutor::new(
-            inner,
-            narrative.backend,
-            guard,
-            self.actor,
-            narrative.model.clone(),
-            narrative.inference,
-            self.summary_instruction.as_deref(),
-        );
-        let runtime = self.weave_recipe_runtime.as_mut().map(|runtime| {
-            let runtime: &mut dyn WeaveRecipeRuntime = runtime.as_mut();
-            runtime
-        });
-        Ok(WeaveRecipeExecutor { inner, runtime })
+        let decisions = match &self.decisions {
+            Some(decisions) => decisions.clone(),
+            None => ConsolidationDecisions::shipped()?,
+        };
+        let mut executors = Vec::new();
+        for sink in std::iter::once(&mut self.sink).chain(self.parallel_sinks.iter_mut()) {
+            let inner = ConsolidationExecutor {
+                backend: self.backend.as_ref(),
+                guard,
+                strategy: self.strategy,
+                actor: self.actor,
+                model: self.model.clone(),
+                inference: HostInferenceContext {
+                    binding: self.binding.clone(),
+                    extraction_egress: self.extraction_egress.as_deref(),
+                },
+                roles: self.roles.clone(),
+                sink: sink.as_mut(),
+                scope: None,
+                decisions: decisions.clone(),
+            };
+            // Only the first worker admits non-consolidation priority work.
+            let inner = CommitmentWakeExecutor::new(inner, planner.take(), self.actor)?;
+            let inner = ScopeSummaryExecutor::new(
+                inner,
+                narrative.backend,
+                guard,
+                self.actor,
+                narrative.model.clone(),
+                HostInferenceContext {
+                    binding: narrative.inference.binding.clone(),
+                    extraction_egress: narrative.inference.extraction_egress,
+                },
+                self.summary_instruction.as_deref(),
+            );
+            // PEOPLE `about` lines ride the same narrative role.
+            let inner = PersonAboutExecutor::new(
+                inner,
+                narrative.backend,
+                guard,
+                self.actor,
+                narrative.model.clone(),
+                HostInferenceContext {
+                    binding: narrative.inference.binding.clone(),
+                    extraction_egress: narrative.inference.extraction_egress,
+                },
+                None,
+            );
+            let inner = WeaveRecipeExecutor {
+                inner,
+                runtime: runtime.take(),
+            };
+            executors.push(ConnectorEventExecutor::new(inner, responder.take()));
+        }
+        Ok(executors)
+    }
+}
+
+impl PassExecutorFactory for ConsolidationExecutorFactory {
+    type Exec<'p> = ConnectorEventExecutor<
+        'p,
+        WeaveRecipeExecutor<
+            PersonAboutExecutor<
+                'p,
+                ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
+            >,
+            Option<&'p mut dyn WeaveRecipeRuntime>,
+        >,
+    >;
+
+    fn executor<'p>(&'p mut self, guard: &'p BudgetGuard) -> Result<Self::Exec<'p>> {
+        Ok(self.build_executors(guard, 1)?.remove(0))
+    }
+
+    fn macro_executors<'p>(
+        &'p mut self,
+        guard: &'p BudgetGuard,
+        buckets: usize,
+    ) -> Result<Vec<Self::Exec<'p>>> {
+        self.build_executors(guard, buckets)
     }
 
     fn actor(&self) -> Option<WriteActor> {

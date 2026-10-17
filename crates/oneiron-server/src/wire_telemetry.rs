@@ -143,6 +143,16 @@ impl LimitRow {
         Self::Engine(EngineLimit::CodeResultScanBytes),
         Self::Engine(EngineLimit::CodeResultMemoryBytes),
         Self::Engine(EngineLimit::CodeResultSessionMemoryBytes),
+        Self::Engine(EngineLimit::ImageRoomBytes),
+        Self::Engine(EngineLimit::CodeReaderBacklog),
+        Self::Engine(EngineLimit::AskOptions),
+        Self::Engine(EngineLimit::AskOptionTextBytes),
+        Self::Engine(EngineLimit::AskContextRefs),
+        Self::Engine(EngineLimit::AskRecipients),
+        Self::Engine(EngineLimit::AskSpecMsgpackBytes),
+        Self::Engine(EngineLimit::AskReminders),
+        Self::Engine(EngineLimit::AnswerProvenanceRefs),
+        Self::Engine(EngineLimit::AskWaitIdentities),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
@@ -580,6 +590,24 @@ impl WireTelemetry {
             return Err(Error::CorruptedIndex("wire question identity"));
         }
         Ok(question)
+    }
+    /// Every call-volume question kept, by key, oldest window first: what the
+    /// health check reads (OF-520).
+    pub(crate) fn kept_questions(&self) -> Result<Vec<(String, WireQuestion)>> {
+        self.kept(QUESTION)
+    }
+    /// Every limit question kept, by key: each row's windows, oldest first.
+    pub(crate) fn kept_limit_questions(&self) -> Result<Vec<(String, WireLimitQuestion)>> {
+        self.kept(LIMIT_QUESTION)
+    }
+    fn kept<T: serde::de::DeserializeOwned>(&self, prefix: &str) -> Result<Vec<(String, T)>> {
+        let mut kept = Vec::new();
+        for key in self.vault.sync_state_keys_with_prefix(prefix)? {
+            if let Some(bytes) = self.vault.sync_state_get(&key)? {
+                kept.push((key, decode(&bytes)?));
+            }
+        }
+        Ok(kept)
     }
 }
 impl Drop for WireTelemetry {

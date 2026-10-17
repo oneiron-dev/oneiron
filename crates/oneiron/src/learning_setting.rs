@@ -154,6 +154,18 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     PLANNER_SOLO_SUCCESS_FLOOR,
     PLANNER_SOLO_MARGIN,
     PLANNER_BIG_PLAN_WIDTH,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_LOOP_REPEATS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_CHECK_FAILS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_WAIT_SHARE,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_WAIT_MINUTES,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_SILENT_MINUTES,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_WIDEN_DENIALS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_COST_SPIKE,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_ESCALATE_TTL_HOURS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_CARD_FLOOR,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_DUP_MIN_COST,
+    crate::skill::EXPLORATION_ASK_CLIMB_HOURS,
 ];
 
 /// The catalog row named `key`, if the engine knows it.
@@ -185,8 +197,9 @@ impl SettingMode {
 /// One owner seed or pin over a vault-scoped setting. The setter is the owner
 /// who writes it ([`put_setting_row`]), never a field the caller fills in.
 ///
-/// Canon scopes a row `spawn | goal | project | vault`; every reader the
-/// engine has today asks at the vault, so the vault is the only scope stored.
+/// Canon scopes a row `spawn | goal | project | vault`. This row is the
+/// vault's; [`put_scoped_setting_row`] lays one over a project or a task
+/// type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingRow {
     /// The catalog key this row steers.
@@ -201,8 +214,19 @@ pub struct SettingRow {
     pub why: String,
 }
 
+/// Where an owner row applies. A project or task-type row steers only the
+/// reads that name that project or type ([`setting_value_scoped`]); every
+/// other read sees the vault's row.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingScope {
+    Vault,
+    Project(crate::entity_id::EntityId),
+    /// A task type's node, at whatever tree version the read names.
+    Type(crate::learning::TypeRef),
+}
+
 /// Owner rows, keyed by `setting_key "\0" mode`, so a seed and a pin over one
-/// key stand side by side.
+/// key stand side by side; a project or type row appends its scope.
 const SETTING: SideTable<String, StoredSettingRow, Raw> =
     SideTable::new(&side_table::LEARNING_SETTING);
 
@@ -243,6 +267,18 @@ fn row_key(key: &str, mode: SettingMode) -> String {
     format!("{key}\0{}", mode.as_str())
 }
 
+fn scoped_row_key(key: &str, mode: SettingMode, scope: &SettingScope) -> String {
+    match scope {
+        SettingScope::Vault => row_key(key, mode),
+        SettingScope::Project(project) => {
+            format!("{}\0project\0{}", row_key(key, mode), project.to_hex())
+        }
+        SettingScope::Type(type_ref) => {
+            format!("{}\0type\0{}", row_key(key, mode), type_ref.node_id)
+        }
+    }
+}
+
 const fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
 }
@@ -260,6 +296,26 @@ const fn invalid(reason: &'static str) -> Error {
 /// or a reason over 1 KiB; the owner-write refusal when `owner` is not the
 /// vault's owner; storage errors.
 pub fn put_setting_row(vault: &Vault, owner: &WriteActor, row: &SettingRow) -> Result<()> {
+    put_scoped_setting_row(vault, owner, &SettingScope::Vault, row)
+}
+
+/// [`put_setting_row`] over `scope`: a project's or a task type's own seed
+/// or pin, under the same owner rule and bounds. Only a vault seed is the
+/// vault fit's prior, so only it refolds the fit.
+///
+/// # Errors
+///
+/// As [`put_setting_row`], and [`Error::InvalidClaimBody`] for a malformed
+/// type reference.
+pub fn put_scoped_setting_row(
+    vault: &Vault,
+    owner: &WriteActor,
+    scope: &SettingScope,
+    row: &SettingRow,
+) -> Result<()> {
+    if let SettingScope::Type(type_ref) = scope {
+        type_ref.validate()?;
+    }
     let spec = setting_spec(&row.key).ok_or(invalid("no learned setting has this key"))?;
     if row.why.len() > MAX_WHY_BYTES {
         return Err(invalid(
@@ -290,9 +346,18 @@ pub fn put_setting_row(vault: &Vault, owner: &WriteActor, row: &SettingRow) -> R
     };
     vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
-        SETTING.put(&vault.store, wtxn, &row_key(spec.key, row.mode), &stored)?;
+        SETTING.put(
+            &vault.store,
+            wtxn,
+            &scoped_row_key(spec.key, row.mode, scope),
+            &stored,
+        )?;
         // A seed is the fit's prior: every fit over this knob refolds from it.
-        crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, spec.key, row.at)?;
+        if *scope == SettingScope::Vault {
+            crate::learning::project::reproject_setting_cells_in_txn(
+                vault, wtxn, spec.key, row.at,
+            )?;
+        }
         Ok(())
     })
 }
@@ -310,10 +375,25 @@ pub fn clear_setting_row(
     key: &str,
     mode: SettingMode,
 ) -> Result<()> {
+    clear_scoped_setting_row(vault, owner, &SettingScope::Vault, key, mode)
+}
+
+/// [`clear_setting_row`] over `scope`.
+///
+/// # Errors
+///
+/// As [`clear_setting_row`].
+pub fn clear_scoped_setting_row(
+    vault: &Vault,
+    owner: &WriteActor,
+    scope: &SettingScope,
+    key: &str,
+    mode: SettingMode,
+) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
-        SETTING.delete(&vault.store, wtxn, &row_key(key, mode))?;
-        if mode == SettingMode::Seed {
+        SETTING.delete(&vault.store, wtxn, &scoped_row_key(key, mode, scope))?;
+        if mode == SettingMode::Seed && *scope == SettingScope::Vault {
             let now = crate::unix_seconds_now();
             crate::learning::project::reproject_setting_cells_in_txn(vault, wtxn, key, now)?;
         }
@@ -338,8 +418,45 @@ pub(crate) fn setting_value_in_txn(
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
 ) -> Result<f64> {
-    if let Some(value) = owner_row_value(store, txn, spec, SettingMode::Pin)? {
-        return Ok(value);
+    setting_value_scoped_in_txn(store, txn, spec, None, None)
+}
+
+/// The value in force for `spec` where `project` and `type_ref` apply: the
+/// narrowest pin (the project's, then the type's, then the vault's), else the
+/// vault-scope fit once it has own runs, else the narrowest seed in the same
+/// order, else the catalog seed. With neither named it is [`setting_value`].
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+pub fn setting_value_scoped(
+    vault: &Vault,
+    spec: &SettingSpec,
+    project: Option<crate::entity_id::EntityId>,
+    type_ref: Option<&crate::learning::TypeRef>,
+) -> Result<f64> {
+    let rtxn = vault.store.env.read_txn()?;
+    setting_value_scoped_in_txn(&vault.store, &rtxn, spec, project, type_ref)
+}
+
+/// [`setting_value_scoped`] inside a transaction the caller already holds.
+pub(crate) fn setting_value_scoped_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    project: Option<crate::entity_id::EntityId>,
+    type_ref: Option<&crate::learning::TypeRef>,
+) -> Result<f64> {
+    let scopes: Vec<SettingScope> = project
+        .map(SettingScope::Project)
+        .into_iter()
+        .chain(type_ref.cloned().map(SettingScope::Type))
+        .chain([SettingScope::Vault])
+        .collect();
+    for scope in &scopes {
+        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Pin, scope)? {
+            return Ok(value);
+        }
     }
     if let Some(fit) =
         crate::learning::project::SETTING_FIT.get(store, txn, &spec.key.to_owned())?
@@ -349,10 +466,58 @@ pub(crate) fn setting_value_in_txn(
         // A fit never leaves the catalog's bounds, so it never widens a floor.
         return Ok(fit.value.clamp(spec.min, spec.max));
     }
-    if let Some(value) = owner_row_value(store, txn, spec, SettingMode::Seed)? {
-        return Ok(value);
+    for scope in &scopes {
+        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Seed, scope)? {
+            return Ok(value);
+        }
     }
     Ok(spec.seed)
+}
+
+/// Every owner row as stored, in key order: its scope, the row, and the
+/// owner who set it (32 hex), for the owner's list doors. A type row's key
+/// names its node only, so its scope reads `tree_version` 0: a type row
+/// matches its node at any tree version.
+///
+/// # Errors
+///
+/// A row that does not decode; storage errors.
+pub fn list_setting_rows(vault: &Vault) -> Result<Vec<(SettingScope, SettingRow, String)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for (stored_key, stored) in SETTING.scan(&vault.store, &rtxn)? {
+        let parts: Vec<&str> = stored_key.split('\0').collect();
+        let mode = match parts.get(1).copied() {
+            Some("seed") => SettingMode::Seed,
+            Some("pin") => SettingMode::Pin,
+            _ => continue,
+        };
+        let scope = match parts.as_slice() {
+            [_, _] => SettingScope::Vault,
+            [_, _, "project", hex] => match crate::entity_id::EntityId::from_hex(hex) {
+                Ok(project) => SettingScope::Project(project),
+                Err(_) => continue,
+            },
+            [_, _, "type", node] => SettingScope::Type(crate::learning::TypeRef {
+                node_id: (*node).to_owned(),
+                tree_version: 0,
+            }),
+            _ => continue,
+        };
+        out.push((
+            scope,
+            SettingRow {
+                key: parts[0].to_owned(),
+                mode,
+                value: stored.value,
+                weight_runs: stored.weight_runs,
+                at: stored.at,
+                why: stored.why,
+            },
+            stored.by,
+        ));
+    }
+    Ok(out)
 }
 
 pub(crate) fn owner_row_value(
@@ -361,8 +526,18 @@ pub(crate) fn owner_row_value(
     spec: &SettingSpec,
     mode: SettingMode,
 ) -> Result<Option<f64>> {
+    scoped_row_value(store, txn, spec, mode, &SettingScope::Vault)
+}
+
+fn scoped_row_value(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    mode: SettingMode,
+    scope: &SettingScope,
+) -> Result<Option<f64>> {
     Ok(SETTING
-        .get(store, txn, &row_key(spec.key, mode))?
+        .get(store, txn, &scoped_row_key(spec.key, mode, scope))?
         // A row written under wider bounds than today's catalog is not a
         // value this reader can stand behind; the next row down is.
         .filter(|row| (spec.min..=spec.max).contains(&row.value))

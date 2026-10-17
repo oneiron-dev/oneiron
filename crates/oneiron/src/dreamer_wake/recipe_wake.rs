@@ -93,7 +93,7 @@ fn continuous(
 
 /// Nightly: the cadence wake registers the Timer wake's maintenance (the
 /// vault cleanup pass, the Coach's nightly jobs, the Dreamer's curator,
-/// harness audit and NOTE review) as this receipt's children on its run tree, in the commit
+/// harness audit, NOTE review and each resident's own dreaming) as this receipt's children on its run tree, in the commit
 /// that takes its input. They run on the elected home's next Timer pass.
 fn nightly(
     vault: &Vault,
@@ -105,6 +105,8 @@ fn nightly(
     let run_id = attempt.status.attempt.run_id.clone();
     let key = format!("nightly:{}", bytes_to_hex_lower(parent.as_bytes()));
     let store = DreamerRunnerStore::new(vault);
+    // Each resident's own dreaming (OF-490), read before the commit opens.
+    let residents = vault.dreaming_residents()?;
     let taken = vault.with_write_txn_grouped(|txn| {
         if take_wake_recipe_input_in_txn(vault, txn, trigger)?.is_none() {
             return Ok(false);
@@ -130,16 +132,20 @@ fn nightly(
             run_id.clone(),
             now,
         )?;
-        store.enqueue_honesty_audits_in_txn(
-            txn,
-            Some(parent),
-            Some(&key),
-            run_id.clone(),
-            now,
-        )?;
+        store.enqueue_honesty_audits_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_coach_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_dreamer_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_note_review_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
+        for resident in &residents {
+            store.enqueue_resident_dream_in_txn(
+                txn,
+                *resident,
+                Some(parent),
+                Some(&key),
+                run_id.clone(),
+                now,
+            )?;
+        }
         Ok(true)
     })?;
     if taken {

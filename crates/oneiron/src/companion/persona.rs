@@ -4,7 +4,6 @@
 //! variants live on FACET. Compilation is a projection, never a second store.
 
 use super::codec::invalid_companion;
-use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, PointRead, ReadRow, ScopedRead,
@@ -13,6 +12,7 @@ use crate::claim::{
 use crate::error::{Error, Result};
 use crate::federation::{ScopeId, Sensitivity};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
+use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 use crate::{EdgeKind, EntityId, TimeRange, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -183,8 +183,9 @@ fn validate_json(value: &Value, depth: usize) -> Result<()> {
 }
 
 fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
-    // The public companion projector redacts binary values. Compilation must
-    // instead reject them: redacting to null would turn data into a deletion.
+    // The generic MessagePack-to-JSON projection redacts binary values.
+    // Compilation must instead reject them: redacting to null would turn data
+    // into a deletion.
     validate_json(value, 0)?;
     serde_json::from_value(msgpack_value_to_json(value))
         .map_err(|_| invalid_companion("invalid persona value"))

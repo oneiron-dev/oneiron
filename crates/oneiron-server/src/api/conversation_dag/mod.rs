@@ -18,7 +18,9 @@ use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest};
+use axum::response::{IntoResponse, Response};
+use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest, QuoteSpan};
+use oneiron::memory::MemoryError;
 use oneiron::reaction::{ReactionExternalId, ReactionIngress, ReactionInput};
 use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use oneiron::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
@@ -51,6 +53,41 @@ fn appended_response(
     }))
 }
 
+/// A DAG write's refusal: the adapter's own, or the caller-bound engine
+/// door's, forwarded whole as the facade forwards it (an invented reference
+/// is a 422).
+pub(crate) enum DagWriteError {
+    Core(EnvelopedApiError),
+    Memory(super::facade::FacadeApiError),
+}
+
+impl From<ApiError> for DagWriteError {
+    fn from(error: ApiError) -> Self {
+        Self::Core(error.into())
+    }
+}
+
+impl From<EnvelopedApiError> for DagWriteError {
+    fn from(error: EnvelopedApiError) -> Self {
+        Self::Core(error)
+    }
+}
+
+impl From<MemoryError> for DagWriteError {
+    fn from(error: MemoryError) -> Self {
+        Self::Memory(error.into())
+    }
+}
+
+impl IntoResponse for DagWriteError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Core(error) => error.into_response(),
+            Self::Memory(error) => error.into_response(),
+        }
+    }
+}
+
 fn append_input(
     conversation: EntityId,
     req: DagAppendRequest,
@@ -61,6 +98,17 @@ fn append_input(
     Ok(AppendRecord {
         conversation,
         reply_to: parse_optional(req.reply_to.as_deref(), "reply_to")?,
+        quote: req
+            .quote
+            .as_ref()
+            .map(|quote| {
+                Ok::<_, ApiError>(QuoteSpan {
+                    message: parse_entity_id_param(&quote.message, "quote.message")?,
+                    start: quote.start,
+                    end: quote.end,
+                })
+            })
+            .transpose()?,
         address: match req.addr.unwrap_or(DagAddressMode::Broadcast) {
             DagAddressMode::Broadcast => AddressMode::Broadcast,
             DagAddressMode::Direct => AddressMode::Direct,
@@ -91,15 +139,20 @@ pub(crate) async fn append_core_record(
     State(server): State<Arc<SyncServer>>,
     Path(conversation_id): Path<String>,
     payload: Result<Json<DagAppendRequest>, JsonRejection>,
-) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
+) -> Result<Json<DagAppendResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = json_payload(payload)?;
-    let appended = server
-        .vault
-        .append_dag_record(&append_input(conversation, req, &auth)?)
-        .map_err(|e| core_engine_error("record append failed", e))?;
-    appended_response(&server, appended)
+    let input = append_input(conversation, req, &auth)?;
+    let writer = super::credential_memory(
+        &server.vault,
+        Some(&auth),
+        input.actor.entity_ref(),
+        input.actor.actor_class(),
+    )
+    .at(auth.locality());
+    let appended = server.vault.append_dag_record(&writer, &input)?;
+    Ok(appended_response(&server, appended)?)
 }
 
 #[utoipa::path(get, path = "/v1/core/conversations/{conversation_id}/records",
@@ -374,7 +427,7 @@ pub(crate) async fn reply_in_thread(
     State(server): State<Arc<SyncServer>>,
     Path((conversation_id, record)): Path<(String, String)>,
     payload: Result<Json<DagAppendRequest>, JsonRejection>,
-) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
+) -> Result<Json<DagAppendResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
@@ -386,11 +439,16 @@ pub(crate) async fn reply_in_thread(
         )
         .into());
     }
-    let appended = server
-        .vault
-        .reply_in_thread(record, &append_input(conversation, req, &auth)?)
-        .map_err(|e| core_engine_error("thread reply failed", e))?;
-    appended_response(&server, appended)
+    let input = append_input(conversation, req, &auth)?;
+    let writer = super::credential_memory(
+        &server.vault,
+        Some(&auth),
+        input.actor.entity_ref(),
+        input.actor.actor_class(),
+    )
+    .at(auth.locality());
+    let appended = server.vault.reply_in_thread(&writer, record, &input)?;
+    Ok(appended_response(&server, appended)?)
 }
 
 #[utoipa::path(get, path = "/v1/core/conversations/{conversation_id}/records/{record}/thread",

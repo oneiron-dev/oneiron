@@ -83,8 +83,14 @@ pub struct SyncServer {
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
-    /// Tenant usage ledger over the server vault.
+    /// Node-side account API key verifier (OF-448), installed by a host
+    /// that supplies the control-plane checker. `None`: account keys are
+    /// never admitted.
+    pub(crate) account_keys: Option<Arc<crate::auth::account_key::AccountKeys>>,
+    /// Per-vault usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
+    /// Stable across served runs and policy refreshes; empty until the host grants.
+    host_account: Arc<oneiron::llm::run_admission::HostAccount>,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
@@ -95,9 +101,15 @@ pub struct SyncServer {
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// Runs the reader children code runs spawn, on the code host once one
+    /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
+    pub(crate) reader_runner: Arc<super::ReaderRunner>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
+    /// The `[desktop]` guest each code run starts for its own desktop verbs.
+    /// `None` answers every desktop call `browser_unbound`.
+    pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
@@ -130,6 +142,17 @@ pub struct SyncServer {
     pub(crate) decision_read: Option<(crate::models::DecisionReadDoor, oneiron::BudgetGuard)>,
     /// Reads that route holds at once (`limits.decision_reads`).
     pub(crate) decision_reads: crate::admission::Admission<()>,
+    /// The host's decision ladder: the rule table and the owner's ask queue
+    /// on every server, with the rungs `[models]` binds once the AI host
+    /// attaches.
+    pub(crate) decisions: crate::decision_host::DecisionHost,
+    /// The hook sandbox the fact-hook runner runs bodies on, set by `serve`
+    /// once it loads; `vault.hooks.replay` replays on the same one. Empty
+    /// under `--no-hooks`, or when the sandbox did not load.
+    pub(crate) hook_runtime: std::sync::OnceLock<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>>,
+    /// The checked built-in channels this host serves (OF-519), kept by
+    /// `builtin_host::spawn` and read by their provider webhooks.
+    pub(crate) builtin_handles: Arc<crate::builtin_host::BuiltinHandles>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -150,6 +173,9 @@ pub struct SyncServer {
     /// The port of the artifact-only listener on the API's host, set by the
     /// serve path once it is bound. `None` where none serves.
     artifact_port: Option<u16>,
+    /// Managed serve's artifact origin on a unix socket of its own
+    /// (`--artifact-http-socket`), which has no port to advertise.
+    artifact_socket: bool,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -304,6 +330,11 @@ impl SyncServer {
         let questions: Arc<crate::wire_telemetry::LimitQuestions> =
             Arc::clone(wire_telemetry.limit_questions());
         vault.set_limit_ask(questions);
+        // Reader children wake this server's runner, which also keeps their
+        // cutoff.
+        let reader_runner = super::ReaderRunner::start(&vault, &config.limits);
+        let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
+        vault.set_reader_job_runner(runner);
         crate::models::outbound_wait::install(&vault);
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
@@ -311,6 +342,8 @@ impl SyncServer {
             config.limits.decision_reads,
             config.limits.queue_wait(),
         );
+        let decisions = crate::decision_host::DecisionHost::new(&vault);
+        let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
         let feedback_flood = crate::api::FloodCap::new(
             config.feedback_inbox.notes_per_sender,
             config.feedback_inbox.notes_per_hour,
@@ -320,6 +353,7 @@ impl SyncServer {
             retained,
             presence,
             usage_ledger: UsageLedger::new(vault.clone()),
+            host_account: oneiron::llm::run_admission::HostAccount::new(),
             transfers: crate::api::Transfers::new(
                 &config.limits,
                 Arc::clone(wire_telemetry.limit_questions()),
@@ -344,9 +378,12 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            account_keys: None,
             mcp_registry,
             mcp_code_host: None,
+            reader_runner,
             browser_guest: None,
+            desktop_guest: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
@@ -355,7 +392,10 @@ impl SyncServer {
             llm: None,
             decision_read: None,
             decision_reads,
-            run_receipts: Arc::default(),
+            decisions,
+            hook_runtime: std::sync::OnceLock::new(),
+            builtin_handles: Arc::default(),
+            run_receipts,
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
             extraction_egress: None,
@@ -363,6 +403,7 @@ impl SyncServer {
             feedback: None,
             feedback_flood,
             artifact_port: None,
+            artifact_socket: false,
             #[cfg(test)]
             booking_test_now_secs: None,
             #[cfg(test)]
@@ -413,11 +454,29 @@ impl SyncServer {
         runs: crate::mcp::CodeRunLimits,
     ) -> Self {
         let provider = provider.with_run_receipts(self.run_receipts());
-        self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
-            Arc::new(provider),
-            runs,
-            Arc::clone(self.wire_telemetry.limit_questions()),
-        )));
+        let host: Arc<dyn crate::mcp::McpCodeExecutionHost> = Arc::new(
+            crate::mcp::McpEngineNativeCodeHost::new(
+                Arc::new(provider),
+                runs,
+                Arc::clone(self.wire_telemetry.limit_questions()),
+            )
+            .with_reader_seats(self.reader_runner.seats()),
+        );
+        // Reader children run on the same provider and pool.
+        self.reader_runner.bind_host(Arc::clone(&host));
+        self.mcp_code_host = Some(host);
+        self
+    }
+
+    /// Installs the node-side account API key verifier a host built
+    /// around its control-plane checker (OF-448). Without one, no account
+    /// key is ever admitted.
+    #[must_use]
+    pub fn with_account_keys(
+        mut self,
+        keys: Option<Arc<crate::managed::key_sync::AccountKeys>>,
+    ) -> Self {
+        self.account_keys = keys;
         self
     }
 
@@ -430,6 +489,17 @@ impl SyncServer {
 
     pub(crate) fn browser_guest(&self) -> Option<&oneiron_browser::BrowserGuest> {
         self.browser_guest.as_ref()
+    }
+
+    /// Gives code runs a desktop guest, from the `[desktop]` section.
+    #[must_use]
+    pub fn with_desktop_guest(mut self, guest: Option<oneiron_browser::DesktopGuest>) -> Self {
+        self.desktop_guest = guest;
+        self
+    }
+
+    pub(crate) fn desktop_guest(&self) -> Option<&oneiron_browser::DesktopGuest> {
+        self.desktop_guest.as_ref()
     }
 
     pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
@@ -486,7 +556,44 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> Self {
         self.decision_read = Some((door, meter));
+        self.decisions = self
+            .decisions
+            .clone()
+            .with_house_read(self.decision_read.as_ref());
         self
+    }
+
+    /// The live allocation shared by all this vault's served runs. The
+    /// trusted host grants newer generations and updates holds on this same
+    /// account; admitted work keeps the allocation it already reserved.
+    #[must_use]
+    pub fn host_account(&self) -> Arc<oneiron::llm::run_admission::HostAccount> {
+        Arc::clone(&self.host_account)
+    }
+
+    /// Enables durable usage facts for the owner the trusted host resolved.
+    /// The vault id comes from the authority log, never an HTTP payload.
+    /// Bind before starting work so every admission has attribution.
+    pub fn with_usage_metering(
+        self,
+        owner: impl Into<String>,
+    ) -> Result<Self, crate::usage::UsageError> {
+        let vault_id = self.vault.authority_fold()?.vault_id.ok_or(
+            crate::usage::UsageError::InvalidField {
+                field: "vaultId",
+                message: "usage metering requires an authority-log genesis",
+            },
+        )?;
+        let vault_id = vault_id.iter().map(|byte| format!("{byte:02x}")).collect();
+        let usage =
+            crate::runtime::VaultUsage::new(self.usage_ledger.clone(), owner.into(), vault_id)?;
+        self.run_receipts.meter(usage);
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn vault_usage(&self) -> Option<Arc<crate::runtime::VaultUsage>> {
+        self.run_receipts.usage()
     }
 
     /// Writes every model call's run receipts to `receipts` instead of the
@@ -516,6 +623,11 @@ impl SyncServer {
         if let (Some(door), Some(raw)) = (ai.decision_read(), &self.llm) {
             self.decision_read = Some((door, raw.meter().clone()));
         }
+        // The house read fills the ladder's escalation rung.
+        self.decisions = self
+            .decisions
+            .clone()
+            .with_house_read(self.decision_read.as_ref());
         self.ai = ai;
         self
     }
@@ -578,6 +690,21 @@ impl SyncServer {
 
     pub(crate) fn artifact_port(&self) -> Option<u16> {
         self.artifact_port
+    }
+
+    /// Records that the artifact-only router serves this server's `/a/` on a
+    /// unix socket of its own (managed serve, OF-356). As with a port, the
+    /// API's own `/a/` then sandboxes code bundles.
+    #[must_use]
+    pub fn with_artifact_socket(mut self) -> Self {
+        self.artifact_socket = true;
+        self
+    }
+
+    /// Whether an artifact-only listener serves this server's `/a/` on an
+    /// origin apart from the API's.
+    pub(crate) fn has_artifact_origin(&self) -> bool {
+        self.artifact_port.is_some() || self.artifact_socket
     }
 
     /// Returns the vault backing this server (used by integration tests to

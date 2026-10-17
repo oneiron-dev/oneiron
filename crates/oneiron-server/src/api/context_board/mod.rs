@@ -4,6 +4,7 @@
 
 mod board;
 mod cursor;
+mod explain;
 mod history;
 mod memories;
 mod prefix;
@@ -12,10 +13,10 @@ mod session;
 mod standing;
 
 pub(crate) use board::{
-    ContextBoardAgentsControls, ContextBoardProjectControls, ContextBoardRenderBudget,
-    ContextBoardRoomControls,
+    ContextBoardProjectControls, ContextBoardRenderBudget, ContextBoardRoomControls,
 };
 pub(crate) use cursor::*;
+pub(crate) use explain::*;
 pub(crate) use history::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
@@ -84,10 +85,6 @@ pub(crate) struct ContextBoardRequest {
     #[serde(default)]
     #[schema(inline)]
     project: Option<ContextBoardProjectControls>,
-    /// AGENTS controls: the run whose children the child lane reads.
-    #[serde(default)]
-    #[schema(inline)]
-    agents: Option<ContextBoardAgentsControls>,
     /// The caller's board token limit. The board renders under the smaller
     /// of it and the harness default; it never widens the cap.
     #[serde(default)]
@@ -131,6 +128,10 @@ pub(crate) struct ContextBoardResponse {
     /// WORLDS rows: the counts line, then each allowed world the caller's
     /// read reads, ACTIVE or AVAILABLE-OFF.
     worlds: Vec<String>,
+    /// The caller's `you:` line: its forks, where each runs and what it
+    /// does; absent when it has no fork.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    you: Option<String>,
     /// TASKS detail rows: the project view when one rides, the caller's
     /// readable task rows, and the overflow footer.
     tasks: Vec<String>,
@@ -152,8 +153,6 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<serde_json::Value>)]
     self_brief: Option<oneiron::context_board::PlacedSelfBrief>,
-    /// The caller's live child agents, then this turn's capability candidates.
-    agents: Vec<String>,
     /// The full-view rows of the frame's SCRATCHPAD section, an agent run's
     /// live session pad; absent for any other caller, a run without a
     /// session, or a session with no live pad.
@@ -284,7 +283,6 @@ pub(crate) async fn context_board_hydrate(
             .and_then(CoreContextPackRequest::conversation_id),
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
         req.project.as_ref(),
-        req.agents.as_ref(),
     )?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
     if let Some(prefix) = &standing
@@ -324,9 +322,21 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(CoreContextPackRequest::named_refs)
         .unwrap_or_default();
+    // The hook blocks that reach this board's session: timed pins on its
+    // MEMORIES and TASKS rows (ARCH-0080 §11, OI-1 = A).
+    let hook_pins = server
+        .vault
+        .board_hook_pins(
+            req.session
+                .as_ref()
+                .and_then(|s| s.session_id.as_deref())
+                .unwrap_or_default(),
+            None,
+        )
+        .map_err(|error| super::core_engine_error("board hook blocks failed", error))?;
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
-            let memories = resolve_memories_request(
+            let mut memories = resolve_memories_request(
                 &server.vault,
                 req.memories.as_ref(),
                 req.session.as_ref(),
@@ -334,6 +344,7 @@ pub(crate) async fn context_board_hydrate(
                 retrieval.retrieval_budget_shape(),
                 &auth,
             )?;
+            memories.hook_pins = hook_pins.clone();
             let (pack, memories, cursor) =
                 run_context_pack(&server, &auth, retrieval, Some(memories)).await?;
             (Some(pack), memories, cursor)
@@ -403,6 +414,15 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(|pack| pack.capabilities.as_slice())
         .unwrap_or_default();
+    // PEOPLE: every person by handle, with names inline for those the
+    // caller's cached prefix roster does not hold.
+    let (people, resident) = board::board_people(
+        &server,
+        &auth,
+        &read,
+        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
+    )
+    .await?;
     let mut parts = board::board_parts(
         &server,
         &auth,
@@ -411,6 +431,8 @@ pub(crate) async fn context_board_hydrate(
         memories.as_ref(),
         hits,
         &observed_reads,
+        &oneiron::context_board::PeopleView::new(&people, &resident),
+        &hook_pins,
     )?;
     // An agent run's own live pad joins the frame as its SCRATCHPAD section.
     let scratchpad = served_scratchpad(
@@ -431,13 +453,15 @@ pub(crate) async fn context_board_hydrate(
             },
             legend: &oneiron::context_board::BoardLegend::canonical(),
             sections: &parts.sections,
+            you: parts.you.as_deref(),
             changes: Some(&changed_line),
         },
         oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: standing.as_ref().map_or(
-                crate::mcp::MCP_BOARD_BUDGET_TOK,
-                |prefix| prefix.other_context_tokens,
-            ),
+            harness_default_tok: standing
+                .as_ref()
+                .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
+                    prefix.other_context_tokens
+                }),
             caller_limit_tok: req.board_budget_tok,
             explicit_override_tok: None,
         },
@@ -465,9 +489,9 @@ pub(crate) async fn context_board_hydrate(
             if run.emitted_epoch.is_none() || run.emitted_epoch != Some(run.epoch) {
                 let mut candidate = run.render.clone();
                 let card = if run.emitted_epoch.is_none() {
-                    candidate.turn_one(&server.vault, &run.state, &observed_reads)
+                    candidate.turn_one(&server.vault, &run.state, &observed_reads, Some(&people))
                 } else {
-                    candidate.fold(&server.vault, &run.state, &observed_reads)
+                    candidate.fold(&server.vault, &run.state, &observed_reads, Some(&people))
                 }
                 .map_err(|error| super::core_engine_error("self brief failed", error))?;
                 staged_prefix = Some((key, candidate, run.epoch));
@@ -475,7 +499,7 @@ pub(crate) async fn context_board_hydrate(
             } else if req.describe_self {
                 Some(
                     run.render
-                        .describe_self(&server.vault, &run.state, &observed_reads)
+                        .describe_self(&server.vault, &run.state, &observed_reads, Some(&people))
                         .map_err(|error| super::core_engine_error("self brief failed", error))?,
                 )
             } else {
@@ -498,12 +522,12 @@ pub(crate) async fn context_board_hydrate(
         board: board_render.text,
         board_budget,
         worlds: parts.worlds,
+        you: parts.you,
         tasks: parts.tasks,
         room: parts.room,
         pack,
         changed,
         skills: parts.skills,
-        agents: parts.agents,
         scratchpad,
         self_brief,
         board_turn: None,
@@ -523,6 +547,15 @@ pub(crate) async fn context_board_hydrate(
             )?;
         }
         None => within_standing_budget(&response)?,
+    }
+    // The response is final: each hook block it carried spends a delivery. A
+    // failed record leaves the block to show again, never to vanish unseen.
+    let mut hook_blocks = parts.hook_blocks.clone();
+    if let Some(memories) = &response.memories {
+        hook_blocks.extend(memories.hook_blocks_delivered(&hook_pins));
+    }
+    if let Err(error) = server.vault.record_board_hook_deliveries(&hook_blocks) {
+        tracing::warn!(kind = ?error.kind(), "board hook delivery record failed");
     }
     let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {
@@ -547,6 +580,15 @@ pub(crate) async fn context_board_hydrate(
         reads
             .observe_rows(&read, &delivered)
             .map_err(|error| super::core_engine_error("board read set failed", error))?;
+        // The tier each MEMORIES row rode, and its hook, for an explain read.
+        for row in response.memories.iter().flat_map(|memories| &memories.rows) {
+            let tier = match row.tier {
+                oneiron::context_board::MemoryTier::Pinned => "pinned",
+                oneiron::context_board::MemoryTier::Snippet => "snippet",
+                oneiron::context_board::MemoryTier::IndexOnly => "index_only",
+            };
+            reads.served_on_board(&row.id, tier, row.hook.as_deref());
+        }
         reads.observe_pack_inventory(&installed_packs);
         // The response is final: the rider it carries is delivered, and a
         // committed prefix now holds the current connector state.
@@ -600,9 +642,7 @@ pub(crate) async fn context_board_hydrate(
 }
 
 /// The capability hits a pack carried.
-fn hits_of(
-    pack: Option<&CoreContextPackResponse>,
-) -> impl Iterator<Item = oneiron::EntityId> + '_ {
+fn hits_of(pack: Option<&CoreContextPackResponse>) -> impl Iterator<Item = oneiron::EntityId> + '_ {
     pack.into_iter()
         .flat_map(|pack| &pack.capabilities)
         .map(|hit| hit.id)
@@ -670,6 +710,8 @@ pub(crate) async fn describe_self_for_auth(
         crate::error::ApiError::bad_request("missing run session", Some("session_id"))
     })?;
     validate_session_id(session_id, "session_id")?;
+    let read = super::scoped_read_for_core_auth(&server.vault, auth)?;
+    let (people, _) = board::board_people(server, auth, &read, Some(session_id)).await?;
     let mut runs = server.self_brief_sessions.lock().await;
     let run = runs
         .get_mut(&(actor, session_id.to_owned()))
@@ -684,7 +726,7 @@ pub(crate) async fn describe_self_for_auth(
         .clone();
     let card = run
         .render
-        .describe_self(&server.vault, &run.state, &read_set)
+        .describe_self(&server.vault, &run.state, &read_set, Some(&people))
         .map_err(|error| super::core_engine_error("self brief failed", error))?;
     let tail = card.tail.ok_or_else(|| {
         crate::error::ApiError::internal_server_error("self brief tail is missing")

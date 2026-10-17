@@ -52,6 +52,10 @@ pub(crate) struct ContextBoardSelectionView {
     allowed: Vec<String>,
     default_on: Vec<String>,
     active: Vec<String>,
+    /// Whether base reality is in each world tier: base is no entity id.
+    allowed_base: bool,
+    default_on_base: bool,
+    active_base: bool,
     pinned: Vec<String>,
     top_snippet: Vec<String>,
 }
@@ -252,19 +256,26 @@ pub(super) fn record_board_turn(
     let mut refused = None;
     let recorded = server
         .vault
-        .record_board_turn_now(turn, owner, memories.as_ref(), Some(worlds), read, |receipt| {
-            response.board_turn = Some(ContextBoardTurnRecord {
-                turn: receipt.turn.to_hex(),
-                source_revision_ref: hex(&receipt.source_revision_ref.0),
-                changed_claims: receipt
-                    .changed_claims
-                    .iter()
-                    .map(EntityId::to_hex)
-                    .collect(),
-            });
-            refused = check(response).err();
-            refused.is_none()
-        })
+        .record_board_turn_now(
+            turn,
+            owner,
+            memories.as_ref(),
+            Some(worlds),
+            read,
+            |receipt| {
+                response.board_turn = Some(ContextBoardTurnRecord {
+                    turn: receipt.turn.to_hex(),
+                    source_revision_ref: hex(&receipt.source_revision_ref.0),
+                    changed_claims: receipt
+                        .changed_claims
+                        .iter()
+                        .map(EntityId::to_hex)
+                        .collect(),
+                });
+                refused = check(response).err();
+                refused.is_none()
+            },
+        )
         .map_err(|error| board_history_error(&turn, error))?;
     match (recorded, refused) {
         (Some(_), _) => Ok(()),
@@ -331,6 +342,9 @@ pub(crate) async fn context_board_turn_history(
             allowed: ids(&board.selection.allowed),
             default_on: ids(&board.selection.default_on),
             active: ids(&board.selection.active),
+            allowed_base: board.selection.allowed_base,
+            default_on_base: board.selection.default_on_base,
+            active_base: board.selection.active_base,
             pinned: ids(&board.selection.pinned),
             top_snippet: ids(&board.selection.top_snippet),
         },

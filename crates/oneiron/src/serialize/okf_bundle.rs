@@ -1,0 +1,426 @@
+//! "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1
+//! bundle for importing into other tools. Each entity is one markdown concept
+//! with YAML frontmatter at `<kind>/<id>.md`; graph edges are bundle-relative
+//! markdown links; `index.md` files list each directory. Lossy by design and
+//! labelled so: it is not a full copy and does not re-import as one. The
+//! whole-vault archive is the full copy. It is cut from the same
+//! credential-nulled document as the archive, and carries no custody secret.
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::io::Write as _;
+
+use serde_json::{Map, Value};
+
+use crate::error::{Error, Result};
+
+/// The OKF spec version this bundle follows.
+pub(crate) const OKF_SPEC_VERSION: &str = "0.1";
+
+const TITLE_KEYS: &[&str] = &["title", "name", "label", "display_name", "predicate"];
+const TEXT_KEYS: &[&str] = &["markdown", "md", "text", "content", "body", "summary"];
+const DESCRIPTION_CHARS: usize = 160;
+
+/// What every OKF reader is told the bundle drops.
+const LOSS_DECLARATION: &str = "This bundle is not a full copy of the vault. It is a lossy \
+Open Knowledge Format view for other tools. It drops bi-temporal validity (only the time \
+each record was learned is kept, as `timestamp`), confidence, approval and lifecycle, \
+per-claim provenance beyond the citations listed, typed edge values (weight, valence, \
+provenance), resolved entity identity across bundles, code-run results, skill and pack \
+source packages, agent bundles and every custody secret. The full copy is the whole-vault \
+archive (`oneiron export`), which re-imports into a fresh vault.";
+
+struct Concept {
+    path: String,
+    kind: String,
+    id: String,
+    title: String,
+    description: String,
+    timestamp: String,
+    entity_type: u8,
+    body: Value,
+}
+
+/// The bundle as one ZIP: `index.md`, one `index.md` per kind, and one
+/// concept per entity.
+pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec<u8>> {
+    let mut concepts = Vec::new();
+    let rows = section(document, &["evidence_ledger", "entities"])
+        .chain(section(document, &["claims"]))
+        .chain(section(document, &["skills"]).filter_map(|bundle| bundle.get("entity")));
+    for row in rows {
+        concepts.push(concept(row)?);
+    }
+    concepts.sort_by(|a, b| a.path.cmp(&b.path));
+    let titles: BTreeMap<&str, (&str, &str)> = concepts
+        .iter()
+        .map(|c| (c.id.as_str(), (c.title.as_str(), c.path.as_str())))
+        .collect();
+
+    let mut links: BTreeMap<&str, Vec<(String, &str)>> = BTreeMap::new();
+    for edge in section(document, &["evidence_ledger", "edges"]) {
+        let (Some(source), Some(target), Some(kind)) = (
+            edge.get("source").and_then(Value::as_str),
+            edge.get("target").and_then(Value::as_str),
+            edge.get("kind").and_then(Value::as_u64),
+        ) else {
+            continue;
+        };
+        let name = u8::try_from(kind)
+            .ok()
+            .and_then(crate::edge::EdgeKind::try_from_u8)
+            .map_or_else(
+                || format!("edge {kind}"),
+                |kind| kind.name().replace('_', " "),
+            );
+        links.entry(source).or_default().push((name, target));
+    }
+    let mut citations: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+    for envelope in section(document, &["derivation_envelopes"]) {
+        if let (Some(id), Some(evidence)) = (
+            envelope.get("id").and_then(Value::as_str),
+            envelope.get("evidence"),
+        ) {
+            match plain(evidence) {
+                Value::Array(items) => citations.entry(id).or_default().extend(items),
+                Value::Null => {}
+                item => citations.entry(id).or_default().push(item),
+            }
+        }
+    }
+
+    let stamp = rfc3339(exported_at);
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .large_file(true);
+    let mut member = |name: &str, text: &str| -> Result<()> {
+        zip.start_file(name, options).map_err(|_| encode_failed())?;
+        zip.write_all(text.as_bytes()).map_err(|_| encode_failed())
+    };
+
+    let mut kinds: BTreeMap<&str, Vec<&Concept>> = BTreeMap::new();
+    for concept in &concepts {
+        kinds
+            .entry(concept.kind.as_str())
+            .or_default()
+            .push(concept);
+        let text = render_concept(
+            concept,
+            links
+                .get(concept.id.as_str())
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            citations
+                .get(concept.id.as_str())
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+            &titles,
+        );
+        member(&concept.path, &text)?;
+    }
+    for (kind, list) in &kinds {
+        let mut text = frontmatter(
+            "Index",
+            &format!("{} ({})", kind_title(kind), list.len()),
+            &format!("Every {kind} record in this lossy OKF view of an Oneiron vault."),
+            &stamp,
+            &[],
+        );
+        let _ = writeln!(text, "# {}\n", kind_title(kind));
+        for concept in list {
+            let _ = writeln!(
+                text,
+                "- [{}](/{}) {}",
+                link_text(&concept.title),
+                concept.path,
+                concept.description
+            );
+        }
+        member(&format!("{kind}/index.md"), &text)?;
+    }
+    let mut root = frontmatter(
+        "Index",
+        "Oneiron vault (OKF export, not a full copy)",
+        "A lossy Open Knowledge Format view of an Oneiron vault, for other tools.",
+        &stamp,
+        &[("okf_version", OKF_SPEC_VERSION)],
+    );
+    let _ = writeln!(
+        root,
+        "# Not a full copy\n\n{LOSS_DECLARATION}\n\n# Contents\n"
+    );
+    for (kind, list) in &kinds {
+        let _ = writeln!(
+            root,
+            "- [{}](/{kind}/index.md) {} records",
+            kind_title(kind),
+            list.len()
+        );
+    }
+    member("index.md", &root)?;
+    Ok(zip.finish().map_err(|_| encode_failed())?.into_inner())
+}
+
+fn concept(row: &Value) -> Result<Concept> {
+    let id = row
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(encode_failed)?
+        .to_owned();
+    let entity_type = row
+        .get("entity_type")
+        .and_then(Value::as_u64)
+        .and_then(|byte| u8::try_from(byte).ok())
+        .ok_or_else(encode_failed)?;
+    let kind = crate::registry::entity_type_registry_entry(entity_type).map_or_else(
+        || format!("type_{entity_type:03}"),
+        |entry| entry.kind.to_ascii_lowercase(),
+    );
+    let body = row.get("body").map(plain_body).unwrap_or(Value::Null);
+    let short = id.get(..8).unwrap_or(&id);
+    let title = first_text(&body, TITLE_KEYS)
+        .map(|title| one_line(&title, 120))
+        .unwrap_or_else(|| format!("{} {short}", kind_title(&kind)));
+    let description = first_text(&body, TEXT_KEYS)
+        .or_else(|| match &body {
+            Value::String(text) => Some(text.clone()),
+            _ => None,
+        })
+        .map(|text| one_line(&text, DESCRIPTION_CHARS))
+        .unwrap_or_else(|| format!("An Oneiron {kind} record."));
+    let learned_at = row.get("learned_at").and_then(Value::as_u64).unwrap_or(0);
+    Ok(Concept {
+        path: format!("{kind}/{id}.md"),
+        kind,
+        id,
+        title,
+        description,
+        timestamp: rfc3339(learned_at),
+        entity_type,
+        body,
+    })
+}
+
+fn render_concept(
+    concept: &Concept,
+    links: &[(String, &str)],
+    citations: &[Value],
+    titles: &BTreeMap<&str, (&str, &str)>,
+) -> String {
+    let entity_type = concept.entity_type.to_string();
+    let mut text = frontmatter(
+        &format!("Oneiron {}", kind_title(&concept.kind)),
+        &concept.title,
+        &concept.description,
+        &concept.timestamp,
+        &[
+            ("oneiron_id", concept.id.as_str()),
+            ("oneiron_entity_type", entity_type.as_str()),
+        ],
+    );
+    let _ = writeln!(text, "# {}\n", concept.title);
+    let main_key = TEXT_KEYS.iter().copied().find(|key| {
+        concept
+            .body
+            .get(*key)
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty())
+    });
+    let main = match &concept.body {
+        Value::String(body) => Some(body.as_str()),
+        body => main_key
+            .and_then(|key| body.get(key))
+            .and_then(Value::as_str),
+    };
+    if let Some(main) = main {
+        let _ = writeln!(text, "{}\n", main.trim_end());
+    }
+    if let Value::Object(fields) = &concept.body {
+        let rest: Vec<_> = fields
+            .iter()
+            .filter(|(key, value)| !value.is_null() && Some(key.as_str()) != main_key)
+            .collect();
+        if !rest.is_empty() {
+            let _ = writeln!(text, "# Fields\n");
+            for (key, value) in rest {
+                let _ = writeln!(text, "- **{key}**: {}", inline(value, titles));
+            }
+            text.push('\n');
+        }
+    }
+    if !links.is_empty() {
+        let _ = writeln!(text, "# Links\n");
+        for (kind, target) in links {
+            match titles.get(target) {
+                Some((title, path)) => {
+                    let _ = writeln!(text, "- {kind}: [{}](/{path})", link_text(title));
+                }
+                None => {
+                    let _ = writeln!(text, "- {kind}: {target}");
+                }
+            }
+        }
+        text.push('\n');
+    }
+    if !citations.is_empty() {
+        let _ = writeln!(text, "# Citations\n");
+        for (index, citation) in citations.iter().enumerate() {
+            let _ = writeln!(text, "[{}] {}", index + 1, inline(citation, titles));
+        }
+        text.push('\n');
+    }
+    text
+}
+
+/// OKF frontmatter: `type` is the one required key; `title`, `description`
+/// and `timestamp` are written too, as Google's reference tooling requires
+/// them. Strings are YAML double-quoted scalars.
+fn frontmatter(
+    kind: &str,
+    title: &str,
+    description: &str,
+    timestamp: &str,
+    extra: &[(&str, &str)],
+) -> String {
+    let quote = |text: &str| serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_owned());
+    let mut text = String::from("---\n");
+    let _ = writeln!(text, "type: {}", quote(kind));
+    let _ = writeln!(text, "title: {}", quote(title));
+    let _ = writeln!(text, "description: {}", quote(description));
+    let _ = writeln!(text, "timestamp: {}", quote(timestamp));
+    let _ = writeln!(text, "tags: [\"oneiron\"]");
+    let _ = writeln!(text, "oneiron_copy: \"lossy\"");
+    for (key, value) in extra {
+        let _ = writeln!(text, "{key}: {}", quote(value));
+    }
+    text.push_str("---\n\n");
+    text
+}
+
+/// A body as plain JSON: MessagePack maps become objects, text stays text,
+/// and a nulled body is null.
+fn plain_body(body: &Value) -> Value {
+    match body.get("codec").and_then(Value::as_str) {
+        Some("message_pack") => body.get("value").map(plain).unwrap_or(Value::Null),
+        Some("utf8") => body.get("value").cloned().unwrap_or(Value::Null),
+        Some("nulled") | None => Value::Null,
+        Some(_) => body.get("value").cloned().unwrap_or(Value::Null),
+    }
+}
+
+/// One exported MessagePack value as plain JSON.
+fn plain(value: &Value) -> Value {
+    let inner = value.get("value");
+    match value.get("type").and_then(Value::as_str) {
+        Some("boolean") => inner.cloned().unwrap_or(Value::Null),
+        Some("integer") => inner.and_then(Value::as_str).map_or(Value::Null, |digits| {
+            digits
+                .parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| digits.parse::<u64>().map(Value::from))
+                .unwrap_or_else(|_| Value::from(digits))
+        }),
+        Some("f32") => inner
+            .and_then(Value::as_u64)
+            .and_then(|bits| u32::try_from(bits).ok())
+            .map_or(Value::Null, |bits| {
+                Value::from(f64::from(f32::from_bits(bits)))
+            }),
+        Some("f64") => inner
+            .and_then(Value::as_u64)
+            .map_or(Value::Null, |bits| Value::from(f64::from_bits(bits))),
+        Some("string" | "binary_text") => inner.cloned().unwrap_or(Value::Null),
+        Some("entity_reference") => inner
+            .and_then(Value::as_array)
+            .map_or(Value::Null, |bytes| {
+                let bytes: Vec<u8> = bytes
+                    .iter()
+                    .filter_map(|byte| byte.as_u64().and_then(|b| u8::try_from(b).ok()))
+                    .collect();
+                Value::from(crate::entity_id::bytes_to_hex_lower(&bytes))
+            }),
+        Some("array") => inner
+            .and_then(Value::as_array)
+            .map_or(Value::Null, |items| items.iter().map(plain).collect()),
+        Some("map") => {
+            let mut object = Map::new();
+            for entry in inner.and_then(Value::as_array).into_iter().flatten() {
+                if let Some([key, value]) = entry.as_array().map(Vec::as_slice) {
+                    let key = match plain(key) {
+                        Value::String(key) => key,
+                        key => key.to_string(),
+                    };
+                    object.insert(key, plain(value));
+                }
+            }
+            Value::Object(object)
+        }
+        _ => Value::Null,
+    }
+}
+
+fn first_text(body: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        body.get(*key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// A value inline in markdown: an exported entity's id becomes its link.
+fn inline(value: &Value, titles: &BTreeMap<&str, (&str, &str)>) -> String {
+    match value {
+        Value::String(text) => match titles.get(text.as_str()) {
+            Some((title, path)) => format!("[{}](/{path})", link_text(title)),
+            None => one_line(text, 400),
+        },
+        Value::Null => "null".to_owned(),
+        value => one_line(&value.to_string(), 400),
+    }
+}
+
+fn one_line(text: &str, limit: usize) -> String {
+    let line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match line.char_indices().nth(limit) {
+        Some((cut, _)) => format!("{}…", &line[..cut]),
+        None => line,
+    }
+}
+
+fn link_text(title: &str) -> String {
+    title.replace(['[', ']'], "")
+}
+
+fn kind_title(kind: &str) -> String {
+    let mut chars = kind.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first
+            .to_uppercase()
+            .chain(chars)
+            .collect::<String>()
+            .replace('_', " ")
+    })
+}
+
+fn rfc3339(seconds: u64) -> String {
+    i64::try_from(seconds)
+        .ok()
+        .and_then(|seconds| chrono::DateTime::from_timestamp(seconds, 0))
+        .map_or_else(
+            || "1970-01-01T00:00:00Z".to_owned(),
+            |stamp| stamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        )
+}
+
+fn section<'a>(document: &'a Value, path: &[&str]) -> impl Iterator<Item = &'a Value> {
+    let mut cursor = Some(document);
+    for key in path {
+        cursor = cursor.and_then(|value| value.get(*key));
+    }
+    cursor.and_then(Value::as_array).into_iter().flatten()
+}
+
+fn encode_failed() -> Error {
+    Error::InvariantViolation("OKF bundle encoding failed")
+}

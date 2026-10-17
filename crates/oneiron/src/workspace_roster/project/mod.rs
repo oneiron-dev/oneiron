@@ -9,6 +9,15 @@ mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
 mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
+mod proposal;
+pub(crate) use proposal::{
+    ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
+    ProjectDetectionVerdict, claim_project_detection, fail_project_detection, project_house_agent,
+    settle_project_detection, stage_project_detection_in_txn,
+};
+pub use proposal::{
+    ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectProposalRequest,
+};
 mod asks;
 mod branch;
 mod capture;
@@ -28,6 +37,7 @@ mod reparent;
 mod resolution;
 mod result_header;
 mod revision;
+mod roster;
 mod validity;
 mod widen;
 pub use asks::ProjectAsk;
@@ -44,12 +54,16 @@ pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
 };
 pub use fold::{
-    ProjectDisposition, ProjectEffective, ProjectFrontier, ProjectRank, ProjectWitness,
+    ProjectDisposition, ProjectEffective, ProjectForkConflict, ProjectFrontier, ProjectRank,
+    ProjectWitness,
 };
 pub(crate) use fork_evidence::ProjectForks;
 pub use fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
 pub(crate) use goal::GoalLimits;
-pub use goal::{GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord};
+pub use goal::{
+    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
+    ProjectGoalInterviewContext,
+};
 pub(crate) use goal::{
     admitted_claim_of_project, guard_claim_put as guard_goal_claim_put, guard_goal_delete,
     guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, retire_goal_for_delete,
@@ -97,6 +111,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
 use crate::error::{Error, RecordError, Result};
 use crate::llm::Scope;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
@@ -192,6 +207,11 @@ pub struct ProjectRecord {
     pub origin_thread: Option<String>,
     #[serde(default)]
     pub origin_at: Option<u64>,
+    /// OF-389: the TASK this subproject was spawned inside, fixed at the
+    /// spawn. The TASK names this project back as its subproject; a link
+    /// either side alone does not stand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrapper_task: Option<String>,
 }
 const fn default_depth_limit() -> u8 {
     10
@@ -429,6 +449,7 @@ impl ProjectRecord {
             origin_room: None,
             origin_thread: None,
             origin_at: None,
+            wrapper_task: None,
         })
     }
 
@@ -505,7 +526,10 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
         return Ok(None);
     }
-    decode(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    #[cfg(feature = "sync")]
+    let body = crate::entity_doc::resolve_record_body(store, txn, &id, body)?;
+    decode(&body).map(Some)
 }
 
 pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
@@ -565,83 +589,90 @@ impl Vault {
         record: &ProjectRecord,
         now: u64,
     ) -> Result<ProjectWriteOutcome> {
-        self.with_write_txn_grouped(|txn| {
-            let body = record.clone();
-            let changed = read::stored(&self.store, txn, id, self.project_type_byte()?)?
-                .is_none_or(|old| {
-                    old.authority() != body.authority() || old.write_proof != body.write_proof
-                });
-            // A leader's signed spawn needs no owner birth; the shared door
-            // verifies its proof.
-            if self.store.entities.get(txn, id.as_bytes())?.is_none() && body.write_proof.is_none()
-            {
-                let posture = self.privacy_posture();
-                match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
-                    Some((_, birth))
-                        if birth.owner.is_none()
-                            && !crate::gate::project_depth::unsigned_birth_trusted(
-                                &self.store,
-                                txn,
-                                posture,
-                                &birth,
-                            )? =>
-                    {
-                        return Err(crate::error::RecordError::InvalidProjectBody(
-                            "unsigned remote project birth is not authorized",
-                        )
-                        .into());
-                    }
-                    Some(_) => {}
-                    None => {
-                        if !crate::gate::project_depth::implicit_birth_applies(
+        self.with_write_txn_grouped(|txn| self.write_project_in_txn(txn, id, record, now))
+    }
+
+    /// [`Self::write_project`] inside `txn`, for a door that does more in the
+    /// same commit.
+    pub(super) fn write_project_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        record: &ProjectRecord,
+        now: u64,
+    ) -> Result<ProjectWriteOutcome> {
+        let body = record.clone();
+        let changed =
+            read::stored(&self.store, txn, id, self.project_type_byte()?)?.is_none_or(|old| {
+                old.authority() != body.authority() || old.write_proof != body.write_proof
+            });
+        // A leader's signed spawn needs no owner birth; the shared door
+        // verifies its proof.
+        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &id, |_| Ok(()))?.is_none()
+            && body.write_proof.is_none()
+        {
+            let posture = self.privacy_posture();
+            match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
+                Some((_, birth))
+                    if birth.owner.is_none()
+                        && !crate::gate::project_depth::unsigned_birth_trusted(
                             &self.store,
                             txn,
                             posture,
-                            id,
-                        )? {
-                            return Err(crate::error::RecordError::InvalidProjectBody(
-                                "a new project requires an owner-signed birth",
-                            )
-                            .into());
-                        }
+                            &birth,
+                        )? =>
+                {
+                    return Err(crate::error::RecordError::InvalidProjectBody(
+                        "unsigned remote project birth is not authorized",
+                    )
+                    .into());
+                }
+                Some(_) => {}
+                None => {
+                    if !crate::gate::project_depth::implicit_birth_applies(
+                        &self.store,
+                        txn,
+                        posture,
+                        id,
+                    )? {
+                        return Err(crate::error::RecordError::InvalidProjectBody(
+                            "a new project requires an owner-signed birth",
+                        )
+                        .into());
                     }
                 }
             }
-            self.batch_in()
-                .put(
-                    &id,
-                    self.project_type_byte()?,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&body)?,
-                )
-                .apply(txn)?;
-            let frontier = ProjectReader::new(&self.store, txn, self.privacy_posture())?
-                .ok_or_else(invalid)?
-                .frontier(id)?
-                .ok_or_else(invalid)?;
-            let head = revision::revisions_of_row(id, &body)?
-                .last()
-                .map(|(hash, _)| *hash);
-            // A changed authority the frozen frontier neither serves nor
-            // applied as a narrowing is held.
-            if let ProjectDisposition::OverBudget { state, .. } = &frontier.disposition
-                && changed
-                && let Some(head) = head
-                && frontier.witness.as_ref().map(|witness| witness.head) != Some(head)
-                && !history_policy::PROJECT_FROZEN_APPLIED.contains(
-                    &self.store,
-                    txn,
-                    &(id, head),
-                )?
-            {
-                return Ok(ProjectWriteOutcome::Held(state.clone()));
-            }
-            Ok(ProjectWriteOutcome::Installed(frontier))
-        })
+        }
+        self.batch_in()
+            .put(
+                &id,
+                self.project_type_byte()?,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode(&body)?,
+            )
+            .apply(txn)?;
+        let frontier = ProjectReader::new(&self.store, txn, self.privacy_posture())?
+            .ok_or_else(invalid)?
+            .frontier(id)?
+            .ok_or_else(invalid)?;
+        let head = revision::revisions_of_row(id, &body)?
+            .last()
+            .map(|(hash, _)| *hash);
+        // A changed authority the frozen frontier neither serves nor
+        // applied as a narrowing is held.
+        if let ProjectDisposition::OverBudget { state, .. } = &frontier.disposition
+            && changed
+            && let Some(head) = head
+            && frontier.witness.as_ref().map(|witness| witness.head) != Some(head)
+            && !history_policy::PROJECT_FROZEN_APPLIED.contains(&self.store, txn, &(id, head))?
+        {
+            return Ok(ProjectWriteOutcome::Held(state.clone()));
+        }
+        Ok(ProjectWriteOutcome::Installed(frontier))
     }
     /// Attach an asset to a project collection with a low-weight `belongs_to`
     /// edge. CLAIMs never link to hubs: their sideways scope is the project id.
@@ -684,6 +715,29 @@ impl Vault {
         proof: ProjectWriteProof,
         now: u64,
     ) -> Result<ProjectRecord> {
+        self.with_write_txn_grouped(|txn| {
+            self.spawn_subproject_in_txn(txn, parent_id, child_id, leader, slice, proof, None, now)
+        })
+    }
+
+    /// [`Self::spawn_subproject`] inside the caller's transaction, so a TASK
+    /// wrapper and its child commit in one write (OF-389). `wrapper_task`
+    /// names the TASK the child is spawned inside.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the spawn's parent, child, leader, slice and proof, plus its wrapper"
+    )]
+    pub(crate) fn spawn_subproject_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        parent_id: EntityId,
+        child_id: EntityId,
+        leader: EntityId,
+        slice: Scope,
+        proof: ProjectWriteProof,
+        wrapper_task: Option<EntityId>,
+        now: u64,
+    ) -> Result<ProjectRecord> {
         let kind = self.project_type_byte()?;
         // Reading the claimed holder here only selects the board seat and
         // refuses early; the door still verifies the whole proof.
@@ -691,56 +745,56 @@ impl Vault {
             .claims
             .holder_ref;
         let actor = EntityId::from_hex(&holder)?;
-        self.with_write_txn_grouped(|txn| {
-            // The parent's effective leader, slice and depth: a rolled-back
-            // stored row grants nothing its signed history does not.
-            let parent = ProjectReader::new(&self.store, txn, self.privacy_posture())?
-                .ok_or_else(invalid)?
-                .effective(parent_id)?
-                .ok_or(RecordError::InvalidProjectBody("missing parent project"))?;
-            if parent.leader != actor.to_hex() {
-                return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
-            }
-            if self.store.entities.get(txn, child_id.as_bytes())?.is_some() {
-                return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
-            }
-            let remaining = parent
-                .depth_remaining
-                .min(parent.depth_limit)
-                .checked_sub(1)
-                .ok_or(RecordError::InvalidProjectBody("project depth exhausted"))?;
-            parent
-                .slice
-                .as_ref()
-                .and_then(|parent_slice| parent_slice.attenuate(slice.clone()).ok())
-                .ok_or(RecordError::InvalidProjectBody(
-                    "subproject slice widens its parent",
-                ))?;
-            let mut child = ProjectRecord::new(
-                child_id,
-                Some(parent_id),
-                EntityId::from_hex(&parent.claims_scope_ref)?,
-                leader,
-            )?;
-            child.slice = slice;
-            child.depth_limit = parent.depth_limit;
-            child.depth_remaining = remaining;
-            child.board.push(actor.to_hex());
-            child.write_proof = Some(proof);
-            self.batch_in()
-                .put(
-                    &child_id,
-                    kind,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&child)?,
-                )
-                .apply(txn)?;
-            Ok(child)
-        })
+        // The parent's effective leader, slice and depth: a rolled-back
+        // stored row grants nothing its signed history does not.
+        let parent = ProjectReader::new(&self.store, txn, self.privacy_posture())?
+            .ok_or_else(invalid)?
+            .effective(parent_id)?
+            .ok_or(RecordError::InvalidProjectBody("missing parent project"))?;
+        if parent.leader != actor.to_hex() {
+            return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
+        }
+        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &child_id, |_| Ok(()))?.is_some()
+        {
+            return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
+        }
+        let remaining = parent
+            .depth_remaining
+            .min(parent.depth_limit)
+            .checked_sub(1)
+            .ok_or(RecordError::InvalidProjectBody("project depth exhausted"))?;
+        parent
+            .slice
+            .as_ref()
+            .and_then(|parent_slice| parent_slice.attenuate(slice.clone()).ok())
+            .ok_or(RecordError::InvalidProjectBody(
+                "subproject slice widens its parent",
+            ))?;
+        let mut child = ProjectRecord::new(
+            child_id,
+            Some(parent_id),
+            EntityId::from_hex(&parent.claims_scope_ref)?,
+            leader,
+        )?;
+        child.slice = slice;
+        child.depth_limit = parent.depth_limit;
+        child.depth_remaining = remaining;
+        child.board.push(actor.to_hex());
+        child.write_proof = Some(proof);
+        child.wrapper_task = wrapper_task.map(|task| task.to_hex());
+        self.batch_in()
+            .put(
+                &child_id,
+                kind,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode(&child)?,
+            )
+            .apply(txn)?;
+        Ok(child)
     }
 
     /// Person-authorized project creation. The signed birth fact commits with
@@ -775,7 +829,7 @@ impl Vault {
                 )
                 .into());
             }
-            if self.store.entities.get(txn, id.as_bytes())?.is_some()
+            if EntityStoreRead::port_entity_with_raw(&self.store, txn, &id, |_| Ok(()))?.is_some()
                 || crate::gate::project_depth::birth_for_project(&self.store, txn, id)?.is_some()
             {
                 return Err(crate::error::RecordError::InvalidProjectBody(

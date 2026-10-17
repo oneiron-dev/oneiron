@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 const MAX_RESPONSE_BYTES: usize = 65_536;
 /// The wire's largest image side; a longer image is sent downscaled.
-const MAX_IMAGE_EDGE: u32 = 1_568;
+pub const MAX_IMAGE_EDGE: u32 = 1_568;
 /// The wire's opt-in for images and Box questions, sent with every request that has one.
 const IMAGES_HEADER: &str = "TypeSafe-Danger-Zone-Images";
 
@@ -77,6 +77,10 @@ impl RemoteDecisionSeat for SystemOneSeat {
         self.pin.clone()
     }
 
+    fn image_edge(&self) -> Option<u32> {
+        Some(MAX_IMAGE_EDGE)
+    }
+
     fn ask<'a>(
         &'a self,
         request: SeatRequest,
@@ -94,7 +98,8 @@ impl RemoteDecisionSeat for SystemOneSeat {
                     ("choice", Some(json!(map)))
                 }
                 AnswerContract::Score { .. } => ("score", Some(json!(request.score_levels))),
-                AnswerContract::Box => ("box", None),
+                // The wire has no point: a Point asks for a box, read as its centre.
+                AnswerContract::Box | AnswerContract::Point => ("box", None),
             };
             let mut question = json!({"type":kind,"instructions":request.question.text});
             if let Some(criteria) = criteria {
@@ -274,7 +279,7 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
                 .ok_or_else(invalid)?;
             (DecisionAnswer::Score(mapped), p)
         }
-        (AnswerContract::Box, "box") => {
+        (AnswerContract::Box | AnswerContract::Point, "box") => {
             // The wire always answers a box; a seat that reports the target absent
             // answers null.
             let found = match value.get("box").ok_or_else(invalid)? {
@@ -290,7 +295,11 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
                 .get("confidence")
                 .and_then(Value::as_f64)
                 .ok_or_else(invalid)?;
-            (DecisionAnswer::Box(found), p)
+            let answer = match request.question.contract {
+                AnswerContract::Point => DecisionAnswer::Point(found.map(ImageBox::point)),
+                _ => DecisionAnswer::Box(found),
+            };
+            (answer, p)
         }
         _ => return Err(invalid()),
     };

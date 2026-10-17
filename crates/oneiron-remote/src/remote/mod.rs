@@ -46,6 +46,11 @@ const FACADE_PREFIX: &str = "v1/core/facade";
 const BINDING_HEADER: &str = "x-oneiron-binding";
 /// Names the room turn a verb runs in; the server resolves its roster.
 const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
+/// The call receipt every facade reply states (OF-538): `call:<32hex>`, or
+/// `none; no-record` for a call inside an anonymous off-record session.
+const RECEIPT_REF_HEADER: &str = "x-oneiron-receipt-ref";
+/// The prefix of a receipt ref the server recorded.
+const RECEIPT_REF_PREFIX: &str = "call:";
 
 /// Connect timeout: finite, so a black-holed address fails instead of hanging.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -68,6 +73,9 @@ pub(crate) struct RemoteClient {
     stream_agent: reqwest::Client,
     /// The room turn every verb runs in, named to the server per request.
     room_turn: Option<oneiron::EntityId>,
+    /// The call receipt the last verb's reply stated, success or refusal
+    /// (OF-538). Per handle: a clone starts with none.
+    last_receipt_ref: std::sync::Mutex<Option<String>>,
 }
 
 /// Hand-written so the bearer cannot reach a log through a derive.
@@ -94,6 +102,7 @@ impl Clone for RemoteClient {
             export_limit: self.export_limit,
             stream_agent: self.stream_agent.clone(),
             room_turn: self.room_turn,
+            last_receipt_ref: std::sync::Mutex::new(None),
         }
     }
 }
@@ -147,6 +156,7 @@ impl RemoteClient {
             export_agent,
             export_limit: MAX_REMOTE_EXPORT_BYTES,
             room_turn: None,
+            last_receipt_ref: std::sync::Mutex::new(None),
         })
     }
 
@@ -180,12 +190,31 @@ impl RemoteClient {
         self.base_url.as_str()
     }
 
+    /// The call receipt the last verb's reply stated (OF-538): its
+    /// `call:<32hex>` ref, success or refusal alike. `None` before any call,
+    /// after a call that reached no server, and for a reply that by design
+    /// has none (an anonymous off-record call).
+    pub(crate) fn last_receipt_ref(&self) -> Option<String> {
+        self.last_receipt_ref
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn note_receipt_ref(&self, receipt_ref: Option<String>) {
+        *self
+            .last_receipt_ref
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = receipt_ref;
+    }
+
     /// POSTs one facade verb and decodes its typed response.
     pub(crate) fn call<Q: Serialize, R: DeserializeOwned>(
         &self,
         verb: &str,
         request: &Q,
     ) -> Result<R, MemoryError> {
+        self.note_receipt_ref(None);
         let url = self.verb_url(verb)?;
         let body = serialize_request(request)?;
         let mut credential = self.credential_headers()?;
@@ -196,7 +225,7 @@ impl RemoteClient {
                     .map_err(|_| transport_error("could not name the room turn"))?,
             );
         }
-        let response = (if verb == "vault.export" {
+        let response = (if long_running(verb) {
             &self.export_agent
         } else {
             &self.agent
@@ -208,9 +237,21 @@ impl RemoteClient {
         .body(body)
         .send()
         .map_err(|error| transport_error(describe_send_failure(&error)))?;
+        // Read before the body: success and refusal state it alike, and the
+        // typed return keeps its shape.
+        self.note_receipt_ref(
+            response
+                .headers()
+                .get(RECEIPT_REF_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| value.starts_with(RECEIPT_REF_PREFIX))
+                .map(str::to_owned),
+        );
 
         let status = response.status();
-        if !status.is_success() {
+        // A 202 is a verb hook's pending ask: the verb did not run, and the
+        // body is the refusal naming the ask (ARCH-0080 §3).
+        if !status.is_success() || status == reqwest::StatusCode::ACCEPTED {
             return Err(read_error_envelope(response, status));
         }
         // The ordinary facade has a strict success-body ceiling. Export alone
@@ -314,6 +355,14 @@ impl RemoteClient {
             .join(&format!("{FACADE_PREFIX}/{verb}"))
             .map_err(|error| transport_error(format!("could not build the {verb} URL: {error}")))
     }
+}
+
+/// Verbs whose one answer can take minutes, so they ride the export client's
+/// total timeout: the whole-vault export, and an embedding-space move's check,
+/// which runs the vault's probes through both spaces with no server deadline
+/// (OF-370).
+fn long_running(verb: &str) -> bool {
+    matches!(verb, "vault.export" | "vault.embedding_spaces.move_check")
 }
 
 /// The blocking client every facade verb and `pair` share.

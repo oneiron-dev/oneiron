@@ -4,11 +4,13 @@
 //!
 //! One read is a pack (idle-fold test 6b): one `/completion` call whose
 //! prompt is an array, one prompt per typed question, each the recipe's
-//! template over the same state with the question's own text and labels. Each
-//! answer forces the end of generation at the position after its prompt and
-//! returns the probabilities the model gave every token there, before any
-//! sampler. A question's labels' share of them, normalized over its labels
-//! alone, is its readout. Each answer is checked: no text came back and
+//! template over the same state with the question's own text and labels; a
+//! question read jointly with the paired question renders the joint
+//! template over its joint labels (ARCH-0076 `#ask-a-person`). Each answer
+//! forces the end of generation at the position after its prompt and returns
+//! the probabilities the model gave every token there, before any sampler. A
+//! question's labels' share of them, normalized over its labels (or joint
+//! labels) alone, is its readout. Each answer is checked: no text came back and
 //! generation stopped at the forced end; a read that fails a check is refused
 //! whole, never read as p = 0. This is the read idle-fold tests 4 to 6
 //! measured (one row, `logit_bias` on the end token, `post_sampling_probs`
@@ -22,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
+use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
 use oneiron::llm::{
     BudgetLease, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
     LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
@@ -108,7 +110,8 @@ impl DecisionReadDoor {
                         LabelSet::Noul => 0,
                         LabelSet::Choice(options) => options.iter().map(String::len).sum(),
                     };
-                    (question.text.len() + options + state.len(), 1)
+                    let paired = question.paired.map_or(0, str::len);
+                    (question.text.len() + paired + options + state.len(), 1)
                 }
             };
             total = total.saturating_add(
@@ -178,8 +181,8 @@ pub(super) fn bind(
     Ok(Some(door))
 }
 
-/// A read admitted as one paid call at the provider's origin: the owner's own
-/// server, or a keyed endpoint paid with the owner's key.
+/// A read admitted as one paid call at the provider's origin, with the
+/// payer and allocation-unit rates the host bound on that provider.
 fn connector(provider: &ProviderConfig, model: &str) -> anyhow::Result<PaidConnector> {
     let origin = reqwest::Url::parse(&provider.base_url)?
         .origin()
@@ -191,11 +194,7 @@ fn connector(provider: &ProviderConfig, model: &str) -> anyhow::Result<PaidConne
         connector: format!("decision-read:{model}"),
         route,
         locality: provider.locality,
-        payer: if keyed.is_some() {
-            Payer::CustomerKey
-        } else {
-            Payer::Local
-        },
+        payer: provider.payer,
         credential_binding: keyed.map(|env| format!("env:{env}")),
         catalog_revision: Some(provider.revision.clone()),
         custody: if keyed.is_some() {
@@ -205,7 +204,7 @@ fn connector(provider: &ProviderConfig, model: &str) -> anyhow::Result<PaidConne
         },
         unit_cost: 1,
         cost_unit: LeaseUnit::tokens(),
-        rates: Vec::new(),
+        rates: provider.rates.clone(),
     })
 }
 
@@ -348,7 +347,7 @@ impl DecisionReader {
         let mut readouts = Vec::with_capacity(prompts.len());
         let mut reads = Vec::with_capacity(prompts.len());
         for ((prompt, question), mut reply) in prompts.iter().zip(questions).zip(replies) {
-            let count = question.labels.len();
+            let count = question.width();
             let (labels, tokens) = (&ids.labels[..count], &self.recipe.tokens()[..count]);
             let mut logprobs = label_logprobs(&reply, labels, tokens);
             let mut spent = None;
@@ -360,8 +359,12 @@ impl DecisionReader {
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
             let mut readout = normalized(&logprobs?);
-            // A readout reports yes, then no, whichever the prompt lists first.
-            if question.labels == LabelSet::Noul && self.recipe.no_first() {
+            // A plain readout reports yes, then no, whichever the prompt lists
+            // first; a joint one lists yes first already.
+            if question.labels == LabelSet::Noul
+                && question.paired.is_none()
+                && self.recipe.no_first()
+            {
                 readout.reverse();
             }
             readouts.push(readout);
@@ -387,7 +390,7 @@ impl LabelReadModel for DecisionReader {
         &self.revision
     }
 
-    /// One label per recipe token.
+    /// One label, or one joint label, per recipe token.
     fn max_labels(&self) -> usize {
         self.recipe.tokens().len()
     }
@@ -430,6 +433,7 @@ fn prompt_of<'a>(state: &'a JsonValue, question: &LabelReadout<'a>) -> ReadPromp
             LabelSet::Noul => None,
             LabelSet::Choice(options) => Some(options),
         },
+        paired: question.paired,
         state,
     }
 }

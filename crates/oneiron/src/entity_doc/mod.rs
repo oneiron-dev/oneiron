@@ -7,7 +7,9 @@
 mod citation_floor;
 mod document;
 mod forks;
+mod history_erase;
 mod message_stream;
+mod metadata;
 pub mod office;
 mod pins;
 mod recovery;
@@ -30,14 +32,18 @@ pub use document::{Birth, EntityDoc, TextChange};
 pub use forks::{
     DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt,
 };
+pub use history_erase::TextHistoryErase;
+pub(crate) use history_erase::admit_history_erase_in_txn;
+pub use metadata::MetadataEdit;
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use registry::EntityDocRegistry;
-pub use registry::RegistryStatus;
+pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
 pub use storage::TextField;
 pub(crate) use storage::{
-    erase_in_txn, guard_record_put, has_record_head, pointer_field_in, record_body_history_in_txn,
-    record_head_bytes, resolve_record_body,
+    document_text_fields, erase_in_txn, guard_record_put, has_record_head, pointer_field_in,
+    record_body_at, record_body_history_in_txn, record_document, record_head_bytes,
+    resolve_record_body,
 };
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 

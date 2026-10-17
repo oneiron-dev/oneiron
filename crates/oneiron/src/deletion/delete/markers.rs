@@ -45,6 +45,37 @@ impl Vault {
         Ok(true)
     }
 
+    /// Archives an imported NOTE whose file left its attached folder
+    /// (OF-554): the local cleanup-archive marker, body and indexes kept, so
+    /// [`Vault::restore_archived`] brings it back when the file returns.
+    /// Never erasure. `false` when `id` is not a live NOTE.
+    pub(crate) fn archive_retracted_note_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        retracted_at: u64,
+    ) -> Result<bool> {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
+        else {
+            return Ok(false);
+        };
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("entity metadata"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_NOTE
+            || crate::deletion::row_deletion_marked(&self.store, wtxn, id, Some(raw.as_slice()))?
+            || self.archive_tombstone_in_txn(wtxn, id)?.is_some()
+        {
+            return Ok(false);
+        }
+        let tombstone = TombstoneValueV2 {
+            reason: TombstoneReason::ArchivedByCleanup,
+            deleted_at: retracted_at,
+            request_id: uuid::Uuid::from_bytes(self.store.clock.ulid()?).into_bytes(),
+        };
+        self.put_archive_tombstone_in_txn(wtxn, id, &tombstone)?;
+        Ok(true)
+    }
+
     /// Completes the deletion authority record in the same TXN3 write as the
     /// active-store purge and REDACTION_AUDIT receipt. Sync-enabled deletes
     /// stage recovery data before the tombstone commit; sync-disabled deletes

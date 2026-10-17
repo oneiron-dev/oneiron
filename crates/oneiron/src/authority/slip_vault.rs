@@ -261,6 +261,7 @@ impl Vault {
             channels: BTreeSet::new(),
             actor_class: None,
             org_ref: None,
+            grant_ref: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
@@ -320,13 +321,10 @@ impl Vault {
     ) -> Result<VerifiedSlip> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        slip.verify(
-            host_public_key,
-            &fold,
-            self.instant_in_txn(&txn)?.secs(),
-            challenge,
-            signature,
-        )
+        let now = self.instant_in_txn(&txn)?.secs();
+        let verified = slip.verify(host_public_key, &fold, now, challenge, signature)?;
+        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        Ok(verified)
     }
     /// Verify a slip and its holder-signed caveats against the logged issuing host key.
     pub fn verify_capability_slip_with_host_key(
@@ -338,13 +336,10 @@ impl Vault {
     ) -> Result<VerifiedSlip> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        slip.verify_with_host_key(
-            host_key,
-            &fold,
-            self.instant_in_txn(&txn)?.secs(),
-            challenge,
-            signature,
-        )
+        let now = self.instant_in_txn(&txn)?.secs();
+        let verified = slip.verify_with_host_key(host_key, &fold, now, challenge, signature)?;
+        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        Ok(verified)
     }
     /// Verify a transport proof without consuming its nonce, using the same
     /// vault clock and signed challenge as atomic request admission.
@@ -364,7 +359,9 @@ impl Vault {
             super::slip_replay::request_now_in_txn(self, &txn)?,
         )?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        slip.verify(host_public_key, &fold, now, &challenge, signature)
+        let verified = slip.verify(host_public_key, &fold, now, &challenge, signature)?;
+        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        Ok(verified)
     }
 
     /// Log-derived minting key is the authority source, not a registry row or
@@ -388,6 +385,7 @@ impl Vault {
             .ok_or_else(invalid_authority)?
             .signer;
         let verified = slip.verify(key, &fold, now, &challenge, signature)?;
+        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
         if verified.claims().single_use {
             return Err(invalid_authority());
         }
@@ -424,7 +422,9 @@ impl Vault {
             .get(&slip.claims.slip_id)
             .ok_or_else(invalid_authority)?
             .signer;
-        slip.verify(key, &fold, now, &challenge, signature)
+        let verified = slip.verify(key, &fold, now, &challenge, signature)?;
+        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        Ok(verified)
     }
 
     /// Appends a signed mint in the same transaction that checks its ancestry.
@@ -582,6 +582,7 @@ impl Vault {
         let challenge =
             super::slip_replay::request_challenge(request_timestamp, request_nonce, request_now)?;
         let verified = slip.verify(&issuer.public_key(), &fold, now, &challenge, signature)?;
+        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
         super::slip_replay::record_nonce(
             self,
             &mut txn,
@@ -602,12 +603,34 @@ impl Vault {
         txn.commit()?;
         Ok(verified)
     }
+    /// Lands the host-signed record of an executed ownership change in the
+    /// change's own writer, answering the entry's hash for the receipt to
+    /// name. The fold admits it as a roster-signed Owner action and keeps no
+    /// state for it; the change itself is the shared act's.
+    pub(crate) fn append_owner_handover_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        handover: OwnerHandover,
+    ) -> Result<AuthorityEntryHash> {
+        handover.validate()?;
+        self.append_hashed_slip_op_in_txn(txn, issuer, AuthorityOp::OwnerHandover(handover))
+    }
     pub(super) fn append_slip_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
     ) -> Result<()> {
+        self.append_hashed_slip_op_in_txn(txn, issuer, op)
+            .map(|_| ())
+    }
+    fn append_hashed_slip_op_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
@@ -631,7 +654,7 @@ impl Vault {
         {
             return Err(invalid_authority());
         }
-        Ok(())
+        Ok(hash)
     }
 }
 pub(super) fn next_entry(

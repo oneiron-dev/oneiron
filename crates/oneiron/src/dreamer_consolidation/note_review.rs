@@ -22,7 +22,7 @@ use super::support::{SCOPE_PROJECT_KEY, TURN_BODY_FACET_REF_KEY, invalid_consoli
 use super::value_projection::json_to_rmpv;
 use crate::claim::{ClaimSource, ClaimSubject, ScopedRead};
 use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims};
-use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{
@@ -61,9 +61,7 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
         if self.scope.is_some() {
-            return Err(invalid_consolidation(
-                "the NOTE review has no branch scope",
-            ));
+            return Err(invalid_consolidation("the NOTE review has no branch scope"));
         }
         let attempt_id = attempt.status.attempt.id;
         let run = DreamerRunContext {
@@ -186,7 +184,10 @@ impl ConsolidationExecutor<'_> {
                 response
             }
             Ok(StepOutcome::Trapped { .. }) => {
-                return Ok(Some(charges.park("durable step trapped for resume")));
+                return Ok(Some(charges.park_for(
+                    "durable step trapped for resume",
+                    DreamerParkCause::Signal,
+                )));
             }
             Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                 charges.record_usage(&usage);
@@ -202,7 +203,11 @@ impl ConsolidationExecutor<'_> {
             Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
                 return Ok(Some(charges.checkpoint()));
             }
-            Err(error) => return Ok(Some(charges.park(&error.to_string()))),
+            Err(error) => {
+                return Ok(Some(
+                    charges.park_for(&error.to_string(), DreamerParkCause::of_step(&error)),
+                ));
+            }
         };
         if ctx.deadline.expired() {
             return Ok(Some(charges.checkpoint()));
@@ -269,8 +274,7 @@ fn readable_notes(
         let Ok(decoded) = crate::note::decode_note_body_in_txn(&vault.store, &txn, &body) else {
             continue;
         };
-        if !allowed.contains(decoded.kind.as_str().as_ref()) || decoded.markdown.trim().is_empty()
-        {
+        if !allowed.contains(decoded.kind.as_str().as_ref()) || decoded.markdown.trim().is_empty() {
             continue;
         }
         let fingerprint = *blake3::hash(decoded.markdown.as_bytes()).as_bytes();
@@ -372,8 +376,9 @@ fn note_candidate(
             Value::Binary(note.project.as_bytes().to_vec()),
         ));
     }
-    let candidate = ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence)
-        .with_scope(Value::Map(fields));
+    let candidate =
+        ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence)
+            .with_scope(Value::Map(fields));
     let facts = super::conflict::candidate_facts(&candidate)?;
     let claim_id = super::conflict::deterministic_claim_id(
         run.attempt_id,

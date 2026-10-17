@@ -3,16 +3,22 @@
 //! Dreamer facets ride the nightly wake: the curator grades the Dreamer's own
 //! consolidations and applies what the owner approved, and the harness audit
 //! flags the Dreamer's tuning config for a retune. Neither deploys anything.
+pub mod action_mode;
+pub mod agent_health;
 pub mod coach;
+pub mod coach_heal;
+pub mod code_fix;
 mod curator;
 mod evaluation;
 pub mod honesty;
+pub mod identity;
 pub(crate) mod optimize;
-pub use optimize::CoachSkillOptimizer;
+pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod proposals;
 mod strength;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
+mod retrieval_policy;
 pub mod stewardship;
 #[cfg(test)]
 mod tests;
@@ -60,8 +66,9 @@ impl DreamerRunnerStore<'_> {
     }
     /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
     /// a Nightly recipe: the curator pass (one per rubric cadence, however
-    /// many wakes ask), the relationship-stewardship pass and the harness
-    /// self-audit (one per wake key each).
+    /// many wakes ask), the relationship-stewardship pass, the identity
+    /// re-check, the action-mode refresh (one per owner, OF-335) and the
+    /// harness self-audit (one per wake key each).
     pub(crate) fn enqueue_dreamer_nightly_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -78,6 +85,8 @@ impl DreamerRunnerStore<'_> {
             now,
         )?;
         self.enqueue_stewardship_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
+        self.enqueue_identity_recheck_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
+        self.enqueue_action_mode_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_harness_audit_in_txn(txn, parent_attempt, wake_key, run_id, now)?;
         Ok(())
     }
@@ -140,13 +149,14 @@ pub(crate) fn execute(
         stewardship::STEWARDSHIP_FACET => {
             stewardship::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
+        identity::IDENTITY_RECHECK_FACET => {
+            identity::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        action_mode::ACTION_MODE_FACET => {
+            action_mode::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
         super::COACH_RETRIEVAL_TUNE_FACET => {
-            // ARCH-0037 #tune-retrieval: the update at sleep. Too few gated
-            // rewards is a quiet night, not a failed attempt.
-            let _ = ctx
-                .vault
-                .store
-                .tune_retrieval_blend_weights_when_ready(Default::default())?;
+            retrieval_policy::run(ctx.vault)?;
         }
         honesty::HONESTY_AUDIT_FACET => {
             let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;
@@ -157,6 +167,18 @@ pub(crate) fn execute(
         coach::COACH_TRIPWIRES_FACET => coach::run_tripwires(ctx.vault, ctx.now_ms / 1000)?,
         coach::COACH_TRADEOFF_ESCALATION_FACET => {
             coach::run_tradeoff_escalation(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_TRAINING_OFFERS_FACET => {
+            coach::run_training_offers(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_RESEARCH_SELECT_FACET => {
+            coach::run_research_select(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_LEARNING_SWEEP_FACET => {
+            coach::run_learning_sweep(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        agent_health::COACH_AGENT_HEALTH_FACET => {
+            agent_health::run(ctx.vault, ctx.now_ms / 1000)?;
         }
         _ => return Err(invalid()),
     }

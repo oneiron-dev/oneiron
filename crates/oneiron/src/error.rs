@@ -4,9 +4,9 @@
 
 pub use oneiron_contracts::error::{
     ArtifactError, ClaimError, CodeError, CompactionPacketError, Error, ErrorKind, GateDenial,
-    GateDenialOutcome, GateDenialReason, GateError, KitRecord, MaintenanceError, OffRecordError,
-    RecordError, RegistryError, RelayError, Result, SecretError, SideTableRowProblem, StoreError,
-    SyncError, VaultRootEntry, VaultRootProblem,
+    GateDenialOutcome, GateDenialReason, GateError, KitRecord, LiveDeckRefusal, MaintenanceError,
+    OffRecordError, RecordError, RegistryError, RelayError, Result, SecretError,
+    SideTableRowProblem, StoreError, SyncError, VaultRootEntry, VaultRootProblem, VerbHookStop,
 };
 #[cfg(feature = "sync")]
 pub use oneiron_contracts::error::{

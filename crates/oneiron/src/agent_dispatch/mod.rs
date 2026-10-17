@@ -20,15 +20,19 @@
 //! enqueued around it — and is still bounded live by the envelope/gate
 //! lattice.
 
+mod agent_run;
 mod attenuation;
+mod budget_hold;
 mod codec;
 mod context;
 mod dispatch;
+mod fanout_statement;
 mod healer_context;
 mod healer_repair;
 pub(crate) use healer_context::validate as validate_healer_case;
 mod kill;
 mod launch;
+mod leader_planner;
 mod leader_starter;
 pub use leader_starter::{
     LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner,
@@ -36,11 +40,17 @@ pub use leader_starter::{
 mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
+mod planner_live;
+mod project_conversation;
+mod project_proposal;
 mod resident;
+mod room_join;
 mod spend_calibration;
 mod spend_lease;
 mod spend_record;
+mod task_type_tree;
 mod team_shape;
+mod team_stamp;
 mod types;
 mod widen;
 mod widen_record;
@@ -55,6 +65,13 @@ pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStep
 mod workflow_tests;
 
 pub use self::widen_record::ContextWidenProposal;
+pub(crate) use self::widen_record::unlanded_widens_by_parent_since;
+
+pub use self::fanout_statement::{
+    ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass,
+};
+pub use self::project_conversation::ProjectConversationSkills;
+pub use self::project_proposal::{ProjectDetection, ProjectDetectionRun};
 
 pub use self::launch::{
     LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView,
@@ -62,16 +79,37 @@ pub use self::launch::{
 pub use self::spend_calibration::{
     AgentSpendCalibration, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, SpendBasis,
 };
+pub(crate) use self::spend_lease::payer_binds_in_txn;
 pub use self::spend_record::{
-    ChildSpend, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal,
-    SpendState,
+    ChildSpend, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement,
+    SpendSignal, SpendState,
 };
 
+pub use self::budget_hold::{
+    BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,
+};
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
     encode_agent_dispatch_input,
 };
+pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp, record_dispatch_input};
 pub use self::dispatch::AgentDispatcher;
+pub use self::leader_planner::VaultLeaderTeamPlanner;
+pub use self::planner::{
+    AvailableModel, CostEnvelope, MeasuredRate, PatternCandidate, PlanBudget, PlannerDecisions,
+    PlannerEvidence, PlannerQuestionContext, PlannerRung, PlannerThresholds, ShapeQuote,
+    SkillRevisionRef, SpawnPlanReceipt, TeamPlan, plan_spawn, plan_spawn_routed, planner_rung_for,
+    resolve_care, top_shapes,
+};
+pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
+pub(crate) use self::task_type_tree::load_team_type_tree_in_txn;
+pub use self::task_type_tree::{
+    TASK_TYPE_TREE_FILE, load_team_type_tree, store_team_type_tree, team_shape_skill_in_force,
+};
+pub use self::team_shape::{
+    CoordinationPattern, TEAM_SHAPE_LESSONS, TEAM_SHAPE_SKILL_NAME, TeamShape, team_shape_skill,
+};
+pub use self::team_stamp::{TeamRunStamp, team_pattern};
 pub use self::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_INPUT_KEYS,
     AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput,
@@ -79,15 +117,6 @@ pub use self::types::{
     AttenuatedDispatchTarget, CareLevel, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer,
     HealerSlot, HealerSlotOutcome, KillOutcome, KillProposal, KillerLease, SpawnNeed,
     SpawnOverride, restrict_agent_ceiling,
-};
-pub use self::planner::{
-    AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung,
-    PlannerThresholds, ShapeQuote, SpawnPlanReceipt, TeamPlan, plan_spawn, plan_spawn_routed,
-    planner_rung_for, resolve_care, top_shapes,
-};
-pub use self::team_shape::{
-    CoordinationPattern, PayoffRow, PlannerCard, SEEDED_SHAPES, SeededShape,
-    TEAM_SHAPE_LESSONS, TEAM_SHAPE_SKILL_NAME, TeamShape, seeded_shape,
 };
 
 #[cfg(test)]
@@ -127,6 +156,7 @@ use crate::failure_ladder::HealerCase;
 #[cfg(test)]
 use rmpv::Value;
 
+pub use agent_run::AgentRun;
 pub use resident::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
 
 #[cfg(test)]

@@ -3,7 +3,6 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::context_board::TASK_LABEL_MAX_BYTES;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::human_task::HumanTaskError;
@@ -55,6 +54,12 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
                     Value::from(ttl.deadline_at),
                 )])
             }),
+        ),
+        (
+            Value::from("type_ref"),
+            spec.type_ref
+                .as_ref()
+                .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
         ),
         (Value::from("created_at"), Value::from(now)),
     ])
@@ -158,18 +163,16 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) consult: Option<ConsultPayload>,
     pub(super) ttl: Option<TaskTtl>,
     pub(super) spec: Value,
+    /// OF-543: the one placed type stamp; always settled before the write.
+    pub(super) type_ref: crate::task_type::TaskTypeRef,
 }
 
-/// Refuses a TASK label the board cannot render: a present label must carry a
-/// non-whitespace character and fit [`TASK_LABEL_MAX_BYTES`].
+/// Refuses a blank TASK label: a present label must carry a non-whitespace
+/// character. A label of any length is stored and read whole; the board shows
+/// a bounded preview of a long one.
 pub fn check_task_label(label: &str) -> MemoryResult<()> {
     if label.trim().is_empty() {
         return Err(MemoryError::bad_request("task label must not be blank"));
-    }
-    if label.len() > TASK_LABEL_MAX_BYTES {
-        return Err(MemoryError::bad_request(format!(
-            "task label must be at most {TASK_LABEL_MAX_BYTES} bytes"
-        )));
     }
     Ok(())
 }
@@ -199,6 +202,23 @@ pub(super) fn validate_task_create_in(
     if let Some(label) = spec.label.as_deref() {
         check_task_label(label)?;
     }
+    // OF-543: placed once, here at the only door to a TASK write, against
+    // the tree in force (OF-541: data inside the team-shape skill, the
+    // brief's project fork when it has one); unsure lands on the root. This
+    // runs in the caller's snapshot, where no model call may hold it, so
+    // the placement skill's rule rung reads alone.
+    let kind_for_hint = spec.kind.unwrap_or(TaskKind::Standard);
+    let project = spec.brief.as_ref().and_then(|brief| brief.project_ref);
+    let mut placement_request = crate::task_type::PlacementRequest::new(spec.label.clone(), None);
+    if let Some(hint) = kind_for_hint.seed_task_type() {
+        placement_request = placement_request.with_kind_hint(hint);
+    }
+    if let Some(project) = project {
+        placement_request = placement_request.with_project(project.to_hex());
+    }
+    let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, project)?;
+    let type_ref =
+        crate::task_type::ensure_type_ref(&tree, spec.type_ref.as_ref(), &placement_request, None);
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -234,6 +254,7 @@ pub(super) fn validate_task_create_in(
                 consult: Some(payload.clone()),
                 ttl: Some(*ttl),
                 spec: Value::Nil,
+                type_ref,
             })
         }
         (TaskKind::Standard, None, assignee, ttl) => {
@@ -258,6 +279,7 @@ pub(super) fn validate_task_create_in(
                 consult: None,
                 ttl: *ttl,
                 spec: spec.spec.clone(),
+                type_ref,
             })
         }
         _ => Err(MemoryError::bad_request("invalid typed task shape")),
@@ -345,6 +367,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         read_receipt: None,
         policy_denial: None,
         wrong_root: None,
+        hook: None,
     }
 }
 

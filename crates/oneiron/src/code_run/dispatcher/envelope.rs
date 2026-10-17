@@ -272,6 +272,10 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // Reaches a counterparty outside the vault; the durable wait it parks
         // on is exactly the boundary crossing lineage records.
         SelfEffect::OutboundFixture => true,
+        // A callable skill's answer is its code's, and imported code runs on
+        // the foreign tier with egress: what the run writes after it may carry
+        // what the outside world said (OF-353).
+        SelfEffect::SkillsCall => true,
         // Vault-local: memory access is not a tool effect, the destructive
         // fixture and delegation park on authority rather than on leaving the
         // vault, and the speech/context family never leaves the run.
@@ -296,6 +300,15 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::InferenceDefaultsRead
         | SelfEffect::InferenceDefaultsReplace => false,
         SelfEffect::WakePolicyWrite | SelfEffect::AgentVerb | SelfEffect::Fold => false,
+        // A reader child reads its parent's own result and answers inside
+        // the run's route: nothing of it leaves the vault.
+        SelfEffect::ReaderSpawn | SelfEffect::ReaderReport | SelfEffect::TasksWaitSet => false,
+        // The leader's advice and pattern are her vault's own skills, read
+        // on her lease.
+        SelfEffect::Leader => false,
+        // A team's members are the run's own children and its receipt a
+        // vault row: nothing of it leaves the vault.
+        SelfEffect::Team => false,
     }
 }
 

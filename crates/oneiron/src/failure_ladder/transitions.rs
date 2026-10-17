@@ -118,6 +118,16 @@ pub(super) fn fail_once_in_txn(
     txn: &mut heed::RwTxn<'_>,
     input: &HandleAttemptFailure,
 ) -> Result<AttemptRecord> {
+    // OF-220: the TASK fails before the try's lease clears.
+    crate::task_verb::highway_runner::report_leased_task_in_txn(
+        vault,
+        txn,
+        input.attempt_id,
+        crate::task_verb::highway_runner::RunnerSettle::Failed {
+            error: &input.evidence.stable_reason,
+            retryable: false,
+        },
+    )?;
     let failed = new_failure(crate::ports::JobQueue::port_job_fail(
         vault,
         txn,
@@ -125,6 +135,11 @@ pub(super) fn fail_once_in_txn(
     )?)?;
     crate::dreamer_runner::DreamerRunnerStore::new(vault)
         .cleanup_step_receipts_in_txn(txn, failed.id)?;
+    // A launch that fails for good settles its spend lease (OF-532) in the
+    // commit that fails it, like `complete` does. A retry shares the launch's
+    // one lease, so `retry_once` leaves it open.
+    crate::agent_dispatch::AgentDispatcher::new(vault)
+        .settle_child_in_txn(txn, &failed.id, input.now)?;
     Ok(failed)
 }
 

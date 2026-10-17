@@ -1,6 +1,7 @@
 //! The owner's own commands on a stopped vault: doctor, backup, restore,
 //! window and clock recovery, export, the secret scan switch, registering and
-//! rotating a secret, import consent and agent-run consent.
+//! rotating a secret, the vault key's wraps, import consent and agent-run
+//! consent.
 //!
 //! Holding the vault's writer lease is the owner proof here, the same local
 //! door the embedded export uses; a running `serve` answers the same actions
@@ -14,9 +15,9 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmsCommand, ImportCommand, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
-    SecretScanSwitch, SecretsCommand, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmsCommand, ImportCommand, RecoverClockArgs,
+    RecoverWindowArgs, RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
+    SecretScanArgs, SecretScanSwitch, SecretsCommand, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
@@ -25,6 +26,11 @@ use crate::owner::backup::{self, BackupPlan};
 use crate::owner::embedder::EmbedderReport;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
+
+mod recovery_kit;
+mod vault_key;
+pub use self::recovery_kit::recovery_kit;
+pub use self::vault_key::vault_key;
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
@@ -237,8 +243,26 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         .backup
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("name the backup file to restore"))?;
-    // A backup opens with this install's keystore, as configured.
+    if args.inspect {
+        let unlocks = oneiron::recovery::checkpoint::CheckpointKey::unlocks(backup)
+            .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?;
+        return emit(&crate::owner::vault_key::BackupUnlocks::from(unlocks));
+    }
+    // A backup opens with this install's keystore, as configured, unless the
+    // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;
+    let unlock = vault_key::HostUnlock::read(&args, backup)?;
+    let pins = args
+        .trust
+        .as_deref()
+        .map(vault_key::read_pins)
+        .transpose()?;
+    if !args.rehearse && !config.vault_path.join("data.mdb").exists() {
+        return emit(&vault_key::restore_fresh(
+            backup, &config, keystore, &unlock, pins,
+        )?);
+    }
+    let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), &unlock, pins)?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
         let mut source =
@@ -246,19 +270,20 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         if let Some(keystore) = keystore {
             source = source.with_keystore(keystore);
         }
-        return emit(&backup::rehearse(
-            backup,
-            vault_config(&config),
-            args.scratch.as_deref(),
-            &source,
-        )?);
+        let scratch = args.scratch.as_deref();
+        return emit(&match key {
+            Some(key) => {
+                backup::rehearse_keyed(backup, vault_config(&config), scratch, &source, key)?
+            }
+            None => backup::rehearse(backup, vault_config(&config), scratch, &source)?,
+        });
     }
-    emit(&backup::restore_over(
-        backup,
-        &config.vault_path,
-        vault_config(&config),
-        keystore,
-    )?)
+    emit(&match key {
+        Some(key) => {
+            backup::restore_over_keyed(backup, &config.vault_path, vault_config(&config), key)?
+        }
+        None => backup::restore_over(backup, &config.vault_path, vault_config(&config), keystore)?,
+    })
 }
 
 #[derive(Serialize)]
@@ -272,6 +297,10 @@ struct RecoveredWindow {
     quarantined: Option<std::path::PathBuf>,
     /// The chunks this recovery rebuilt.
     rebuilt: Vec<String>,
+    /// With `--rebootstrap`: the window's CRDT state now holds no history,
+    /// and this many of its keys took their rebuilt value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rebootstrap_rewritten_keys: Option<usize>,
 }
 
 /// Recovers one window of the stopped vault from a canonical snapshot of its
@@ -285,14 +314,17 @@ pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
     )?;
     let owner = local_owner(&vault)?;
     let dir = config.vault_path.join("recovery");
-    let report = vault
-        .recover_window_from_canonical_snapshot(
-            &owner,
-            &args.window,
-            &dir,
-            oneiron::recovery::RecoveryBudget::default(),
-        )
-        .map_err(|error| anyhow::anyhow!("recover window {}: {error}", args.window))?;
+    let budget = oneiron::recovery::RecoveryBudget::default();
+    let (report, rewritten) = if args.rebootstrap {
+        vault
+            .rebootstrap_window_from_canonical_snapshot(&owner, &args.window, &dir, budget)
+            .map(|done| (done.recovery, Some(done.rewritten_keys)))
+    } else {
+        vault
+            .recover_window_from_canonical_snapshot(&owner, &args.window, &dir, budget)
+            .map(|report| (report, None))
+    }
+    .map_err(|error| anyhow::anyhow!("recover window {}: {error}", args.window))?;
     emit(&RecoveredWindow {
         window: report.window,
         tier: match report.tier {
@@ -303,6 +335,7 @@ pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
         manifest: report.manifest_path,
         quarantined: report.quarantine_path,
         rebuilt: report.obligations,
+        rebootstrap_rewritten_keys: rewritten,
     })
 }
 
@@ -414,24 +447,35 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
     let owner = vault
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))?;
-    let export = vault
-        .memory(owner, oneiron::edge::EdgeActorClass::Human)
-        .export(&oneiron::memory::ExportOptions {
-            format: Some(args.format),
-        })
+    // The owner's own `vault.export`, so its verb hooks run around it
+    // (ARCH-0080 §3). The export's own owner check comes first, so a hook
+    // never fires on an export it refuses.
+    let memory = vault.memory(owner, oneiron::edge::EdgeActorClass::Human);
+    memory
+        .admit_export(None)
         .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+    let export = oneiron::task_verb::verb_hook_boundary::typed_row(
+        &memory,
+        "vault.export",
+        oneiron::memory::ExportOptions {
+            format: Some(args.format),
+            include_secrets: Some(args.include_secrets),
+        },
+        |input| memory.export(&input),
+    )
+    .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
     let Some(out) = args.out else {
-        io::stdout().lock().write_all(export.rendered.as_bytes())?;
+        io::stdout().lock().write_all(&export.archive)?;
         return Ok(());
     };
     write_new_file(&out, |file| {
-        file.write_all(export.rendered.as_bytes())?;
+        file.write_all(&export.archive)?;
         file.sync_all()
     })?;
     emit(&Exported {
         file: &out,
         format: export.format,
-        bytes: export.rendered.len(),
+        bytes: export.archive.len(),
     })
 }
 
@@ -485,6 +529,9 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
     match command {
         SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
         SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
+        // `run_cli` sends revoke straight to `revoke_secret`, before the read.
+        SecretsCommand::Revoke(args) => revoke_secret(*args),
+        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value)?),
     }
 }
 
@@ -573,6 +620,71 @@ fn rotate_secret(args: SecretRotateArgs, value: &[u8]) -> anyhow::Result<secrets
         .into())
 }
 
+/// Revokes a secret through the engine door `POST /v1/owner/secrets/revoke`
+/// uses, as the local owner (OF-422). It reads nothing from stdin.
+pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/revoke --data -")?;
+    let owner = local_owner(&vault)?;
+    emit(&secrets::revoke(&vault, &owner, &args.name)?)
+}
+
+/// Signs a portable secret's current custody transition with the owner
+/// anchor of the recovery kit read from stdin (OF-422), through the engine
+/// door `Vault::sign_custody_with_anchor`, as the local owner. `kit` is one
+/// recovery code per line, after the kit passphrase on the first line when
+/// `--with-passphrase` says the kit has one. The kit and the seed it rebuilds
+/// stay in this process, and every buffer that holds them is wiped on drop;
+/// no route takes them, since no owner route is a this-machine-only channel.
+fn sign_with_anchor(
+    args: crate::cli::SecretAnchorSignArgs,
+    kit: &[u8],
+) -> anyhow::Result<secrets::AnchorSigned> {
+    use oneiron::recovery::{KitPassphrase, KitPiece, KitSecretKind, restore_kit};
+    let text = std::str::from_utf8(kit)
+        .map_err(|_| anyhow::anyhow!("the recovery kit on stdin is not UTF-8"))?;
+    let mut lines = text
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line));
+    let passphrase = if args.with_passphrase {
+        let line = lines.next().unwrap_or_default();
+        Some(KitPassphrase::new(line).map_err(|error| anyhow::anyhow!("kit passphrase: {error}"))?)
+    } else {
+        None
+    };
+    let pieces = lines
+        .filter(|line| !line.trim().is_empty())
+        .map(KitPiece::from_recovery_code)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| anyhow::anyhow!("recovery code: {error}"))?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(
+        &config,
+        "then run this again: the recovery kit is read on this machine and never sent to a server",
+    )?;
+    let owner = local_owner(&vault)?;
+    let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {
+        anyhow::anyhow!("this vault has no authority root yet, so no recovery kit opens for it")
+    })?;
+    let held: Vec<&KitPiece> = pieces.iter().collect();
+    let restored = restore_kit(
+        vault_id,
+        KitSecretKind::RecoveryRoot,
+        &held,
+        passphrase.as_ref(),
+    )
+    .map_err(|error| anyhow::anyhow!("the recovery kit did not open: {error}"))?;
+    let seed = oneiron::world_keys::RecoveryRootSeed::from_restored_kit(restored)?;
+    // This command is an in-process call on this machine.
+    Ok(secrets::sign_with_anchor(
+        &vault,
+        &owner,
+        oneiron::authority::EditOrigin::ThisMachine,
+        &seed,
+        &args.name,
+    )?)
+}
+
 /// A batch file: imported claims, or the notes `import notes` wrote.
 enum Batch {
     Claims(imports::ImportBatch),
@@ -605,6 +717,46 @@ fn read_batch(source: &str) -> anyhow::Result<Batch> {
     read.map_err(|error| anyhow::anyhow!("batch JSON: {error}"))
 }
 
+#[derive(Serialize)]
+struct ImportedArchive {
+    inserted_entities: usize,
+    unchanged_entities: usize,
+    omitted_entities: usize,
+    archived_receipt_sources: usize,
+    imported_results: usize,
+    withheld_results: usize,
+    restored_secrets: usize,
+    unchanged_secrets: usize,
+    /// Secrets the archive carried as handles only: re-enter each one.
+    missing_secrets: Vec<String>,
+}
+
+/// Re-imports a whole-vault archive through the vault's import doors.
+fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
+    let bytes = std::fs::read(&args.path)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", args.path.display()))?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(&config, "stop `serve` to import an archive")?;
+    let receipt = vault
+        .import_whole_vault_archive(&bytes)
+        .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?;
+    emit(&ImportedArchive {
+        inserted_entities: receipt.inserted_entities,
+        unchanged_entities: receipt.unchanged_entities,
+        omitted_entities: receipt.omitted_entities,
+        archived_receipt_sources: receipt.archived_receipt_sources,
+        imported_results: receipt.imported_results,
+        withheld_results: receipt.withheld_results,
+        restored_secrets: receipt.restored_secrets,
+        unchanged_secrets: receipt.unchanged_secrets,
+        missing_secrets: receipt
+            .missing_secrets
+            .into_iter()
+            .map(|secret| secret.name)
+            .collect(),
+    })
+}
+
 pub fn import(command: ImportCommand) -> anyhow::Result<()> {
     use oneiron::ingest::history::HistorySource;
     // A batch decision: preview, or approve / decline with the digest.
@@ -625,6 +777,10 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
             return super::history_import::import_history(HistorySource::HookTranscript, *args);
         }
         ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
+        ImportCommand::Archive(args) => return import_archive(*args),
+        ImportCommand::Folder(command) => {
+            return super::history_import::notes::folder::import_folder(command);
+        }
         ImportCommand::Preview(args) => (args.batch, None, args.serve),
         ImportCommand::Approve(args) => (args.batch, Some((true, args.digest)), args.serve),
         ImportCommand::Decline(args) => (args.batch, Some((false, args.digest)), args.serve),
@@ -680,9 +836,332 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
     let vault = open_vault(&config, "GET /v1/owner/authority/handoff-alarms")?;
     match command {
         HandoffAlarmsCommand::List(_) => emit(&vault.authority_handoff_alarms()?),
-        HandoffAlarmsCommand::Acknowledge(args) => emit(
-            &vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?,
+        HandoffAlarmsCommand::Acknowledge(args) => {
+            emit(&vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?)
+        }
+    }
+}
+
+/// The owner's learned-setting rows on a stopped vault; `serve` answers the
+/// same at `/v1/owner/settings/learning`.
+pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow::Result<()> {
+    use crate::cli::{LearningSettingModeArg, LearningSettingsCommand};
+    use oneiron::learning_setting_doors::{
+        self as doors, LearningSettingClear, LearningSettingMode, LearningSettingPut,
+        LearningSettingsRequest,
+    };
+    let mode = |mode: LearningSettingModeArg| match mode {
+        LearningSettingModeArg::Seed => LearningSettingMode::Seed,
+        LearningSettingModeArg::Pin => LearningSettingMode::Pin,
+    };
+    let serve = match &command {
+        LearningSettingsCommand::List(args) => &args.serve,
+        LearningSettingsCommand::Put(args) => &args.serve,
+        LearningSettingsCommand::Clear(args) => &args.serve,
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, "GET /v1/owner/settings/learning")?;
+    let owner = local_owner(&vault)?;
+    let view = match command {
+        LearningSettingsCommand::List(args) => doors::learning_settings_as_owner(
+            &vault,
+            &owner,
+            &LearningSettingsRequest { key: args.key },
+        )?,
+        LearningSettingsCommand::Put(args) => doors::put_learning_setting_as_owner(
+            &vault,
+            &owner,
+            LearningSettingPut {
+                key: args.key,
+                mode: mode(args.mode),
+                value: args.value,
+                weight_runs: args.weight_runs,
+                why: args.why,
+                project: args.project,
+                task_type: args.task_type,
+            },
+        )?,
+        LearningSettingsCommand::Clear(args) => doors::clear_learning_setting_as_owner(
+            &vault,
+            &owner,
+            LearningSettingClear {
+                key: args.key,
+                mode: mode(args.mode),
+                project: args.project,
+                task_type: args.task_type,
+            },
+        )?,
+    };
+    emit(&view)
+}
+
+/// The owner's legal holds (OF-470) on a stopped vault; `serve` answers the
+/// same at `/v1/owner/legal-holds`. Lifting a hold is only the one "Lift the
+/// hold and erase?" confirm: its title and prompt are printed first, and it
+/// acts only with `--yes`.
+pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()> {
+    use crate::cli::{LegalHoldPlaceArgs, LegalHoldWidenArgs, LegalHoldsCommand};
+    use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
+
+    let (serve, route) = match &command {
+        LegalHoldsCommand::List(args) => (&args.serve, "GET /v1/owner/legal-holds"),
+        LegalHoldsCommand::Log(args) => (&args.serve, "GET /v1/owner/legal-holds/log"),
+        LegalHoldsCommand::Place(args) => (&args.serve, "POST /v1/owner/legal-holds --data -"),
+        LegalHoldsCommand::Widen(args) => {
+            (&args.serve, "POST /v1/owner/legal-holds/widen --data -")
+        }
+        LegalHoldsCommand::LiftAndErase(args) => {
+            eprintln!("{LIFT_AND_ERASE_TITLE}\n{LIFT_AND_ERASE_PROMPT}");
+            anyhow::ensure!(
+                args.yes,
+                "nothing was lifted or erased; run it again with --yes to confirm"
+            );
+            (
+                &args.serve,
+                "POST /v1/owner/legal-holds/lift-and-erase --data -",
+            )
+        }
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, route)?;
+    let owner = local_owner(&vault)?;
+    match command {
+        LegalHoldsCommand::List(_) => emit(&vault.legal_holds(&owner)?),
+        LegalHoldsCommand::Log(_) => emit(&vault.legal_hold_log(&owner)?),
+        LegalHoldsCommand::Place(args) => {
+            let LegalHoldPlaceArgs {
+                targets,
+                matter_ref,
+                ..
+            } = *args;
+            emit(&vault.place_legal_hold(&owner, hold_targets(&targets)?, matter_ref)?)
+        }
+        LegalHoldsCommand::Widen(args) => {
+            let LegalHoldWidenArgs {
+                hold_id, targets, ..
+            } = *args;
+            let hold = hold_id_arg(&hold_id)?;
+            emit(&vault.widen_legal_hold(&owner, hold, hold_targets(&targets)?)?)
+        }
+        LegalHoldsCommand::LiftAndErase(args) => {
+            let records = args
+                .records
+                .iter()
+                .map(|record| hold_id_arg(record))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let outcome = vault.confirm_lift_legal_hold_and_erase(&owner, &records)?;
+            emit(&oneiron::task_verb::sdk::LegalHoldLiftAndErased::from(
+                outcome,
+            ))
+        }
+    }
+}
+
+/// The owner's embedding spaces (OF-370) on a stopped vault, through the SDK
+/// fns the `vault.embedding_spaces.*` rows run, so each answers what the row
+/// and `/v1/owner/embedding-spaces` answer. A move's check runs a server's
+/// own probe towers, so only a running server checks one (`oneiron api raw
+/// POST /v1/owner/embedding-spaces/move/check`).
+pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::Result<()> {
+    use crate::cli::{EmbeddingSpaceProbesCommand as Probes, EmbeddingSpacesCommand as Spaces};
+    use oneiron::task_verb::sdk;
+
+    let (serve, route) = match &command {
+        Spaces::List(args) => (&args.serve, "GET /v1/owner/embedding-spaces"),
+        Spaces::Declare(args) => (&args.serve, "PUT /v1/owner/embedding-spaces --data -"),
+        Spaces::Bind(args) => (&args.serve, "POST /v1/owner/embedding-spaces/bind --data -"),
+        Spaces::OneSpace(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/one-space --data -",
         ),
+        Spaces::Retire(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/retire --data -",
+        ),
+        Spaces::Move(args) => (&args.serve, "POST /v1/owner/embedding-spaces/move --data -"),
+        Spaces::MoveApprove(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/move/approve --data -",
+        ),
+        Spaces::MoveUndo(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/move/undo --data -",
+        ),
+        Spaces::MoveAbandon(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/move/abandon --data -",
+        ),
+        Spaces::Probes(Probes::List(args)) => {
+            (&args.serve, "GET /v1/owner/embedding-spaces/probes")
+        }
+        Spaces::Probes(Probes::Put(args)) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/probes --data -",
+        ),
+        Spaces::Probes(Probes::Delete(args)) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/probes/delete --data -",
+        ),
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, route)?;
+    let owner = local_owner(&vault)?;
+    let candidate = |candidate: String| sdk::EmbeddingSpaceCandidateRequest { candidate };
+    match command {
+        Spaces::List(_) => emit(&sdk::read_embedding_spaces(&vault, &owner)?),
+        Spaces::Declare(args) => emit(&sdk::declare_embedding_space_as(
+            &vault,
+            &owner,
+            declared_space(*args),
+        )?),
+        Spaces::Bind(args) => emit(&sdk::bind_embedding_slot_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceBindRequest {
+                kind: input_kind(args.kind),
+                space: args.space,
+            },
+        )?),
+        Spaces::OneSpace(args) => emit(&sdk::bind_one_embedding_space_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceRequest { space: args.space },
+        )?),
+        Spaces::Retire(args) => emit(&sdk::retire_embedding_space_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceRequest { space: args.space },
+        )?),
+        Spaces::Move(args) => emit(&sdk::begin_embedding_space_move_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceMoveRequest {
+                candidate: args.candidate,
+                incumbent: args.incumbent,
+                margin: args.margin,
+            },
+        )?),
+        Spaces::MoveApprove(args) => emit(&sdk::approve_embedding_space_move_as(
+            &vault,
+            &owner,
+            candidate(args.candidate),
+        )?),
+        Spaces::MoveUndo(args) => emit(&sdk::undo_embedding_space_move_as(
+            &vault,
+            &owner,
+            candidate(args.candidate),
+        )?),
+        Spaces::MoveAbandon(args) => emit(&sdk::abandon_embedding_space_move_as(
+            &vault,
+            &owner,
+            candidate(args.candidate),
+        )?),
+        Spaces::Probes(Probes::List(_)) => emit(&sdk::read_embedding_space_probes(&vault, &owner)?),
+        Spaces::Probes(Probes::Put(args)) => {
+            let args = *args;
+            let family = hold_id_arg(&args.family)?;
+            let targets = args
+                .targets
+                .iter()
+                .map(|target| hold_id_arg(target))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            emit(&sdk::put_embedding_space_probe_as(
+                &vault,
+                &owner,
+                sdk::EmbeddingSpaceProbePutRequest {
+                    kind: input_kind(args.kind),
+                    query: args.query,
+                    family,
+                    targets,
+                    author: args.author,
+                },
+            )?)
+        }
+        Spaces::Probes(Probes::Delete(args)) => emit(&sdk::delete_embedding_space_probe_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceProbeDeleteRequest { id: args.id },
+        )?),
+    }
+}
+
+/// The engine's input kind for a command-line kind.
+fn input_kind(kind: crate::cli::EmbeddingKind) -> oneiron::embed::InputKind {
+    use crate::cli::EmbeddingKind;
+    use oneiron::embed::InputKind;
+    match kind {
+        EmbeddingKind::Text => InputKind::Text,
+        EmbeddingKind::Image => InputKind::Image,
+        EmbeddingKind::Audio => InputKind::Audio,
+    }
+}
+
+/// The space `embedding-spaces declare` names, as the route's body.
+fn declared_space(
+    args: crate::cli::EmbeddingSpaceDeclareArgs,
+) -> oneiron::task_verb::sdk::EmbeddingSpaceDeclareRequest {
+    let kinds =
+        |kinds: &[crate::cli::EmbeddingKind]| kinds.iter().copied().map(input_kind).collect();
+    oneiron::task_verb::sdk::EmbeddingSpaceDeclareRequest(oneiron::embed::EmbeddingSpace {
+        id: args.id,
+        dimensions: args.width,
+        accepts: kinds(&args.accepts),
+        query_towers: kinds(&args.query_towers),
+        evidence: args
+            .floor
+            .zip(args.strong)
+            .map(|(floor, strong)| oneiron::config::VectorEvidenceFloors { floor, strong }),
+    })
+}
+
+/// A 32-hex id given on the command line.
+fn hold_id_arg(hex: &str) -> anyhow::Result<oneiron::EntityId> {
+    oneiron::EntityId::from_hex(hex).map_err(|_| anyhow::anyhow!("{hex} is not a 32-hex id"))
+}
+
+/// The engine's hold targets from `--record` and `--gate-partition`.
+fn hold_targets(
+    args: &crate::cli::LegalHoldTargetArgs,
+) -> anyhow::Result<Vec<oneiron::deletion::LegalHoldTarget>> {
+    use oneiron::deletion::LegalHoldTarget;
+    let mut targets = Vec::with_capacity(args.records.len() + args.gate_partitions.len());
+    for record in &args.records {
+        targets.push(LegalHoldTarget::Record(hold_id_arg(record)?));
+    }
+    for partition in &args.gate_partitions {
+        targets.push(LegalHoldTarget::GatePartition(match partition.as_str() {
+            "none" => None,
+            claim => Some(hold_id_arg(claim)?),
+        }));
+    }
+    Ok(targets)
+}
+
+/// The owner's ask guests (OF-232) on a stopped vault; `serve` answers the
+/// same at `/v1/owner/guests/revoke`. A revoke signs each pact disconnect
+/// with the host's own key, the config's auth secret `serve` signs with; a
+/// config without one has no host key, and the revoke refuses.
+pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
+    use crate::cli::GuestsCommand;
+    match command {
+        GuestsCommand::Revoke(args) => {
+            let grant = hold_id_arg(&args.grant_ref)?;
+            let config = resolve_serve_config(&args.serve)?;
+            let vault = open_vault(&config, "POST /v1/owner/guests/revoke --data -")?;
+            let owner = local_owner(&vault)?;
+            let secret = config
+                .sync_server_config()
+                .auth_secret
+                .filter(|secret| !secret.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "the config names no auth secret, so this host has no key to sign the guest's pact disconnects"
+                    )
+                })?;
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+            let outcome = vault.revoke_guest_access(&owner, &issuer, grant)?;
+            emit(&oneiron::receipt::project_guest_revoke(outcome))
+        }
     }
 }
 

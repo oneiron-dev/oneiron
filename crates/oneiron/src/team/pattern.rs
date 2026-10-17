@@ -80,7 +80,19 @@ impl TeamPattern {
 }
 
 /// Converge on one answer, or diverge into many: a setting of any pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TeamAxis {
     Converge,
@@ -167,6 +179,44 @@ pub fn register_pattern_skill(
             put_cell_prior(vault, &cell, &prior, now)?;
         }
     }
+    Ok(())
+}
+
+/// [`register_pattern_skill`]'s binding inside the caller's write
+/// transaction, with no executor priors: the first-open seed binds each
+/// shipped pattern skill in the transaction that admits it (OF-540), so the
+/// skill must be read on that same transaction.
+///
+/// # Errors
+///
+/// As [`register_pattern_skill`].
+pub(crate) fn bind_pattern_skill_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    binding: &PatternSkill,
+    tree_version: u32,
+) -> Result<()> {
+    let record = vault
+        .get_skill_record_in_txn(wtxn, &binding.skill)?
+        .ok_or(Error::EntityNotFound)?;
+    if record.role != SkillRole::Workflow {
+        return Err(Error::InvalidClaimBody(
+            "a coordination pattern is a workflow skill",
+        ));
+    }
+    if binding.works_well_for.len() > MAX_LINE_BYTES {
+        return Err(Error::InvalidClaimBody(
+            "a works-well-for line is a sentence, not a document",
+        ));
+    }
+    for node in &binding.works_well_for_types {
+        TypeRef {
+            node_id: node.clone(),
+            tree_version,
+        }
+        .validate()?;
+    }
+    PATTERN_SKILL.put(&vault.store, wtxn, &binding.skill, binding)?;
     Ok(())
 }
 

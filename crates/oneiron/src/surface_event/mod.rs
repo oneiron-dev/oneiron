@@ -9,9 +9,16 @@
 use crate::error::{Error, Result};
 
 mod cc_intake;
+mod connector_bridge;
 mod handoff;
 pub use cc_intake::CcAgentIntakeOutcome;
+pub use connector_bridge::{
+    ConnectorWakeBridge, SURFACE_CONNECTOR_EVENT_PREDICATE, SurfaceConnectorPayload,
+    connector_event_from_surface, surface_connector_event_kind,
+};
 mod inbound;
+mod provider_payload;
+pub use self::provider_payload::PROVIDER_EVENT_REF_PREFIX;
 
 pub use self::handoff::{
     SURFACE_EVENT_ATTEMPT_KIND, SurfaceEventAck, SurfaceEventAdmission, SurfaceEventAttemptPayload,

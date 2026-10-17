@@ -91,7 +91,10 @@ pub enum XlsxBodyOp {
         style: Option<u32>,
     },
     /// Empty a cell's content; its format stays.
-    Clear { sheet: String, cell: String },
+    Clear {
+        sheet: String,
+        cell: String,
+    },
     /// Add or replace a defined name, local to `sheet` or the workbook's.
     SetName {
         name: String,
@@ -99,12 +102,21 @@ pub enum XlsxBodyOp {
         formula: String,
         hidden: bool,
     },
-    DeleteName { name: String, sheet: Option<String> },
+    DeleteName {
+        name: String,
+        sheet: Option<String>,
+    },
 }
 
 /// Write the imported workbook into a fresh document.
 pub(super) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<()> {
-    if book.sheets.iter().map(|sheet| sheet.cells.len()).sum::<usize>() > MAX_CELLS {
+    if book
+        .sheets
+        .iter()
+        .map(|sheet| sheet.cells.len())
+        .sum::<usize>()
+        > MAX_CELLS
+    {
         return Err(invalid("the workbook holds more cells than a live body"));
     }
     let office = doc.get_map(OFFICE);
@@ -165,7 +177,8 @@ pub(super) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<()> {
                 style: cell.style,
                 locked: cell.locked,
             };
-            grid.insert(&body.address, encode_cell(&body)).map_err(loro)?;
+            grid.insert(&body.address, encode_cell(&body))
+                .map_err(loro)?;
         }
     }
     let names = doc.get_map(NAMES);
@@ -385,7 +398,9 @@ pub(super) fn admit_at(base: &LoroDoc, head: &LoroDoc, ops: &[XlsxBodyOp]) -> Re
             }
         };
         if moved {
-            return Err(invalid("a cell or name changed since the base; read it again"));
+            return Err(invalid(
+                "a cell or name changed since the base; read it again",
+            ));
         }
     }
     Ok(())
@@ -402,8 +417,12 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
         if before.name != after.name {
             return Err(invalid("the body's sheets changed"));
         }
-        let addresses: BTreeSet<(u32, u32)> =
-            before.cells.keys().chain(after.cells.keys()).copied().collect();
+        let addresses: BTreeSet<(u32, u32)> = before
+            .cells
+            .keys()
+            .chain(after.cells.keys())
+            .copied()
+            .collect();
         for key in addresses {
             let (old, new) = (before.cells.get(&key), after.cells.get(&key));
             if same_cell(old, new) {
@@ -505,8 +524,12 @@ enum State<'a> {
 fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> BTreeMap<String, (ChangeKind, State<'a>)> {
     let mut changes = BTreeMap::new();
     for (before, after) in base.sheets.iter().zip(&other.sheets) {
-        let addresses: BTreeSet<(u32, u32)> =
-            before.cells.keys().chain(after.cells.keys()).copied().collect();
+        let addresses: BTreeSet<(u32, u32)> = before
+            .cells
+            .keys()
+            .chain(after.cells.keys())
+            .copied()
+            .collect();
         for key in addresses {
             let (old, new) = (before.cells.get(&key), after.cells.get(&key));
             if same_cell(old, new) {
@@ -593,7 +616,8 @@ fn write_cell(
     if held.locked.is_some() {
         return Err(invalid("the cell is read-only in the body"));
     }
-    grid.insert(&address, encode_cell(&edit(held))).map_err(loro)
+    grid.insert(&address, encode_cell(&edit(held)))
+        .map_err(loro)
 }
 
 /// Whether the name exists; a read-only one refuses.

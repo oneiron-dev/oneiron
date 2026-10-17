@@ -10,6 +10,7 @@ use crate::store::Store;
 
 use super::address::AssignmentKey;
 use super::codec::decode_channel_identity_body;
+use super::facts::{ChannelIdentityFacts, channel_identity_facts_in_txn};
 use super::lifecycle::ChannelIdentityState;
 use super::record::ChannelIdentity;
 
@@ -78,13 +79,17 @@ fn write_slot(
     Ok(())
 }
 
-/// Read a row named by an index slot, refusing a dangling or mis-keyed index.
+/// Read a row named by an index slot, refusing a dangling or mis-keyed index,
+/// with the identity's claim facts (OF-272). The facts say which channel,
+/// address and state the identity has; the row keeps custody. Facts that are
+/// absent, or name another key, route nothing at this key, though the slot
+/// still holds the address against reuse.
 fn read_indexed_row(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: &AssignmentKey,
     id: EntityId,
-) -> Result<ChannelIdentity> {
+) -> Result<(ChannelIdentity, Option<ChannelIdentityFacts>)> {
     let raw = store
         .port_entity_record(txn, &id)?
         .map(|row| row.encode())
@@ -100,11 +105,15 @@ fn read_indexed_row(
     if &row.assignment_key() != key {
         return Err(Error::CorruptedIndex("channel assignment key mismatch"));
     }
-    Ok(row)
+    let facts = channel_identity_facts_in_txn(store, txn, &id)?
+        .filter(|facts| &AssignmentKey::of(&facts.channel, &facts.address_or_handle) == key);
+    Ok((row, facts))
 }
 
 /// The live occupant or the last retiring delegated predecessor. A pending
 /// occupant does not hide in-flight inbound addressed to the predecessor.
+/// Each state is the identity's state head; whether a predecessor was
+/// delegated is its custody's answer, never a claim's.
 pub(super) fn by_assignment(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -115,12 +124,12 @@ pub(super) fn by_assignment(
         // A deleted self-held row's hold on its address routes nothing.
         Some(id) if ERASED.get(store, txn, &id)?.is_some() => None,
         held => held
-            .map(|id| read_indexed_row(store, txn, key, id).map(|row| (id, row)))
+            .map(|id| read_indexed_row(store, txn, key, id).map(|(row, facts)| (id, row, facts)))
             .transpose()?,
     };
-    if let Some((id, row)) = &occupant
+    if let Some((id, row, Some(facts))) = &occupant
         && matches!(
-            row.state(),
+            facts.state,
             ChannelIdentityState::Active
                 | ChannelIdentityState::Rotating
                 | ChannelIdentityState::Released
@@ -130,12 +139,14 @@ pub(super) fn by_assignment(
         return Ok(Some((*id, row.clone())));
     }
     if let Some(id) = slot.predecessor {
-        let row = read_indexed_row(store, txn, key, id)?;
-        if row.is_delegated() && row.state() == ChannelIdentityState::Released {
+        let (row, facts) = read_indexed_row(store, txn, key, id)?;
+        if row.is_delegated()
+            && facts.is_some_and(|facts| facts.state == ChannelIdentityState::Released)
+        {
             return Ok(Some((id, row)));
         }
     }
-    Ok(occupant)
+    Ok(occupant.and_then(|(id, row, facts)| facts.map(|_| (id, row))))
 }
 
 /// Cheap preflight for typed writers. The put door independently maintains
@@ -274,6 +285,33 @@ pub(crate) fn clear_assignment_for_delete(
     // marker proves that empty body was deleted rather than live corruption,
     // and on either tier marks a kept occupant as a hold. It is retired on put.
     ERASED.put(store, txn, id, &[1])?;
+    Ok(())
+}
+
+/// Closes a deleted ChannelIdentity's own `channel_identity.*` heads, the
+/// claim half of [`clear_assignment_for_delete`] (OF-272). The caller stages
+/// it in the SAME write transaction as the deletion, with the type it read
+/// while the row was still readable, and BEFORE the deletion tears the
+/// `claim_of` edges the heads are found by: each live head is closed
+/// `retracted` at `now` on the family's engine-owned setting, so a deleted
+/// identity has no live facts and its heads leave the live postings. Other
+/// kinds are left alone.
+pub(crate) fn close_claim_heads_for_delete_in_txn(
+    writer: &crate::counterparty_contact::ClaimHeadWriter<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    now: u64,
+) -> Result<()> {
+    if entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+        return Ok(());
+    }
+    writer.retract_subject_heads_in_txn(
+        txn,
+        id,
+        super::codec::is_channel_identity_claim_predicate,
+        now,
+    )?;
     Ok(())
 }
 

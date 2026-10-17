@@ -167,7 +167,10 @@ fn grant_content_preview(scope: &AccessGrantScope) -> Option<String> {
         AccessGrantScope::CompanionProfile {
             person_ref,
             facet_ref: None,
-        } => Some(format!("companion_profile for person {}", person_ref.to_hex())),
+        } => Some(format!(
+            "companion_profile for person {}",
+            person_ref.to_hex()
+        )),
         AccessGrantScope::CompanionProfile {
             person_ref,
             facet_ref: Some(facet_ref),

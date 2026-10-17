@@ -133,6 +133,24 @@ impl EntityStoreRead for Memory {
                 .map(|(id, _)| Ok(*id)),
         ))
     }
+    fn port_entity_type_indexed(&self, txn: &Snapshot, kind: u8, id: &EntityId) -> Result<bool> {
+        let row = txn.entities.get(id);
+        Ok(row.is_some_and(|row| row.entity_type == kind))
+    }
+    fn port_entity_with_raw<R, F>(
+        &self,
+        txn: &Snapshot,
+        id: &EntityId,
+        read: F,
+    ) -> Result<Option<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        txn.entities
+            .get(id)
+            .map(|row| read(&row.encode()))
+            .transpose()
+    }
 }
 
 impl EdgeStoreRead for Memory {
@@ -267,6 +285,34 @@ impl EdgeStoreRead for Memory {
             .map(|value| Ok(crate::edge::parse_strict_edge_record(&key, value)?.into_edge_info()))
             .transpose()
     }
+    fn port_edge_present(
+        &self,
+        txn: &Snapshot,
+        center: &EntityId,
+        direction: EdgeDirection,
+        kind: EdgeKind,
+        peer: &EntityId,
+    ) -> Result<bool> {
+        let out =
+            direction != EdgeDirection::In && txn.edges.contains_key(&(*center, kind as u8, *peer));
+        let incoming = direction != EdgeDirection::Out
+            && txn.edges.contains_key(&(*peer, kind as u8, *center));
+        Ok(out || incoming)
+    }
+    fn port_edge_get_incoming(
+        &self,
+        txn: &Snapshot,
+        center: &EntityId,
+        kind: EdgeKind,
+        peer: &EntityId,
+    ) -> Result<Option<EdgeInfo>> {
+        // One table holds each edge once; the reverse key names the center first.
+        let key = crate::store::Store::encode_edge_key(center, kind, peer);
+        txn.edges
+            .get(&(*peer, kind as u8, *center))
+            .map(|value| Ok(crate::edge::parse_strict_edge_record(&key, value)?.into_edge_info()))
+            .transpose()
+    }
 }
 
 impl TombstoneStoreRead for Memory {
@@ -304,6 +350,31 @@ impl TombstoneStoreRead for Memory {
             deleted: txn.tombstones.contains_key(id),
             stale: txn.stale.contains(id),
         })
+    }
+
+    fn port_deletion_marker(
+        &self,
+        txn: &Snapshot,
+        marker: DeletionMarker,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        use crate::deletion::TombstoneReason as Reason;
+        let Some(value) = txn.tombstones.get(id) else {
+            return Ok(None);
+        };
+        // One tombstone stands for every marker its reason writes.
+        let marked = match marker {
+            DeletionMarker::Archive => value.reason == Reason::ArchivedByCleanup,
+            DeletionMarker::HardDelete => matches!(
+                value.reason,
+                Reason::UserHardDelete | Reason::GdprDelete | Reason::PolicyDelete
+            ),
+            DeletionMarker::RowFence => value.reason != Reason::ArchivedByCleanup,
+            DeletionMarker::IdentitySoftDelete => value.reason == Reason::UserDelete,
+            // The model keeps no sync windows.
+            DeletionMarker::WindowAddress => false,
+        };
+        Ok(marked.then(|| value.encode().to_vec()))
     }
 }
 

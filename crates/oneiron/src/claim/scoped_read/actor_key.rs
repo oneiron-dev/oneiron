@@ -1,5 +1,23 @@
 //! Authenticated identity carried by a scoped read.
 use crate::EntityId;
+use crate::federation::{Scope, ScopeAxis, ScopeId};
+
+/// `worlds` as a world-only Scope: that axis kept, every other axis top.
+/// The world checks meet and compare these projections alone (OF-453 B06);
+/// a row door still judges the whole Scope with `admits`.
+pub(crate) fn world_only(worlds: ScopeAxis<ScopeId>) -> Scope {
+    Scope {
+        worlds,
+        ..Scope::top()
+    }
+}
+
+/// Where one ordinary record sits, as a world-only Scope: a claim's world,
+/// else base reality, which also holds every record that is not a claim.
+pub(crate) fn record_world_scope(world: Option<EntityId>) -> Scope {
+    let world = ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+    world_only(std::iter::once(world).collect())
+}
 
 /// Actor key bound to a scoped read lane over the `core:read` surface.
 ///
@@ -60,6 +78,10 @@ pub(crate) struct RoomTurnCeiling {
     /// Every other member's read key: a row the room reads must be one each
     /// of them may read too, private principal rows and NOTEs included.
     pub(crate) peers: Vec<ScopedReadActorKey>,
+    /// The thread this ceiling reads, when it is a thread's (OF-529): each
+    /// refresh re-proves the caller's standing on that thread, which a
+    /// thread's own Ready receipt gives without a seat. `None` is the room's.
+    pub(crate) branch: Option<EntityId>,
 }
 
 /// What `room_scope` gives for a roster, as two terms.
@@ -199,12 +221,13 @@ impl TurnTerms {
 }
 
 impl RoomTurnCeiling {
-    /// World membership of one ordinary record: a claim's world, else base
-    /// reality, which also holds every record that is not a claim.
-    pub(crate) fn admits_world(&self, world: Option<EntityId>) -> bool {
-        let world = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
-        self.terms
-            .with(|terms| terms.worlds.worlds.contains(&world))
+    /// Whether `record` ([`record_world_scope`]) lies under the room's world
+    /// ceiling.
+    pub(crate) fn admits_world(&self, record: &Scope) -> bool {
+        let ceiling = self
+            .terms
+            .with(|terms| world_only(terms.worlds.worlds.clone()));
+        record.is_narrowing_of(&ceiling)
     }
 
     /// P7 for one record the room reads: with a clearance in the meet, the
@@ -231,7 +254,7 @@ impl RoomTurnCeiling {
     /// and every peer read either holds. A member who joined binds the read;
     /// one who left still binds a lane built while it belonged. Refreshing a
     /// ceiling can therefore narrow the read and never drop a restriction it
-    /// held.
+    /// held. The thread it reads, if any, stays this ceiling's.
     #[must_use]
     pub(crate) fn narrowed_by(&self, now: &Self) -> Self {
         let mut roster = self.roster.clone();
@@ -251,6 +274,7 @@ impl RoomTurnCeiling {
             terms: self.terms.clone(),
             roster,
             peers,
+            branch: self.branch,
         }
     }
 
@@ -503,6 +527,24 @@ impl ScopedReadActorKey {
     /// [`Self::from_verified_slip`] already does.
     pub(crate) fn authority_scope(&self) -> Option<&crate::federation::Scope> {
         self.authority.as_ref()
+    }
+
+    /// The worlds this read asked for, as a world-only ceiling; `None` when
+    /// it asked for none.
+    pub(crate) fn asked_world_ceiling(&self) -> Option<Scope> {
+        self.worlds
+            .as_ref()
+            .map(|worlds| world_only(worlds.scope_axis()))
+    }
+
+    /// The asked worlds met with the worlds the verified credential grants,
+    /// once, as one world-only ceiling: top when neither limits the read.
+    pub(crate) fn world_ceiling(&self) -> Scope {
+        let asked = self.asked_world_ceiling().unwrap_or_else(Scope::top);
+        match self.authority_scope() {
+            Some(credential) => asked.meet(&world_only(credential.worlds.clone())),
+            None => asked,
+        }
     }
 
     /// Whether the read's verified credential grants only some worlds.

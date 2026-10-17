@@ -7,7 +7,7 @@ use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::genui::{ConsentActionRequest, ProjectMintIntent, ProjectProposalCard};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL,
     ENTITY_TYPE_TURN,
@@ -65,6 +65,17 @@ pub(crate) fn project_mint_gate_refs_in_txn(
         .collect())
 }
 
+/// The tap's durable key: blake3 hash32 of the card id.
+pub(super) fn tap_key(card: &ProjectProposalCard) -> [u8; 32] {
+    *blake3::hash(card.card_id.as_bytes()).as_bytes()
+}
+
+/// The tap's digest: the exact card and the owner who tapped it. A different
+/// card under the same id, or another owner, never replays this tap.
+pub(super) fn tap_digest(card: &ProjectProposalCard, actor: EntityId) -> Result<[u8; 32]> {
+    Ok(*blake3::hash(&encode(&(card, actor))?).as_bytes())
+}
+
 fn checked_ref(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -73,14 +84,13 @@ fn checked_ref(
 ) -> Result<EntityId> {
     let id = EntityId::from_hex(reference).map_err(|_| invalid())?;
     if id.to_hex() != reference
-        || !vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
-            .is_some_and(|raw| {
-                EntityMetadataHeader::parse(&raw).is_some_and(|h| h.entity_type == kind)
-                    && raw.len() > ENTITY_METADATA_HEADER_LEN
-            })
+        || !EntityStoreRead::port_entity_with_raw(&vault.store, txn, &id, |raw| {
+            Ok(
+                EntityMetadataHeader::parse(raw).is_some_and(|h| h.entity_type == kind)
+                    && raw.len() > ENTITY_METADATA_HEADER_LEN,
+            )
+        })?
+        .unwrap_or(false)
     {
         return Err(invalid());
     }
@@ -90,7 +100,7 @@ fn checked_ref(
 impl Vault {
     /// Return the durable tap only when its card, project, Grant and receipt
     /// still agree. A revoked Grant is not reminted by replay.
-    fn project_tap_in_txn(
+    pub(super) fn project_tap_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         tap_key: &[u8; 32],
@@ -130,12 +140,26 @@ impl Vault {
         owner: &AuthenticatedOwner,
         signer: &OwnerProjectSigner<'_>,
     ) -> Result<ProjectMintReceipt> {
+        self.mint_card_with(card, tap, owner, signer, |_, _| Ok(()))
+    }
+
+    /// [`Self::mint_project_from_card`], with `after` run on the fresh receipt
+    /// inside the birth's own write: a refusal there commits no project. An
+    /// exact retry returns the recorded receipt and runs nothing.
+    pub(super) fn mint_card_with(
+        &self,
+        card: &ProjectProposalCard,
+        tap: &ConsentActionRequest,
+        owner: &AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
+        after: impl FnOnce(&mut heed::RwTxn<'_>, &ProjectMintReceipt) -> Result<()>,
+    ) -> Result<ProjectMintReceipt> {
         let intent = card.evaluate_action(self, tap, owner)?;
-        let tap_key = *blake3::hash(card.card_id.as_bytes()).as_bytes();
+        let tap_key = tap_key(card);
         let source = EntityId::from_hex(&intent.source_message_ref).map_err(|_| invalid())?;
         let txn = self.store.env.read_txn()?;
         let actor = owner.revalidate_in_txn(self, &txn)?;
-        let digest = *blake3::hash(&encode(&(card, actor))?).as_bytes();
+        let digest = tap_digest(card, actor)?;
         if let Some(receipt) = self.project_tap_in_txn(&txn, &tap_key, &digest)? {
             return Ok(receipt);
         }
@@ -163,6 +187,7 @@ impl Vault {
         let header = WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(header_turn.to_hex()),
+            quote: None,
             messages: vec![WitnessMessage {
                 id: Some(header_message.to_hex()),
                 author: WitnessAuthor::User,
@@ -195,6 +220,7 @@ impl Vault {
                         tap.occurred_at,
                     )
                     .map_err(crate::memory::MemoryError::from)?;
+                after(txn, &receipt).map_err(crate::memory::MemoryError::from)?;
                 minted = Some(receipt);
                 Ok(())
             });
@@ -235,7 +261,7 @@ impl Vault {
         if self.project_tap_in_txn(txn, tap_key, digest)?.is_some() {
             return Err(invalid());
         }
-        if self.store.entities.get(txn, id.as_bytes())?.is_some() {
+        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &id, |_| Ok(()))?.is_some() {
             return Err(invalid());
         }
         let root_id = ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?;
@@ -313,6 +339,38 @@ impl Vault {
             )
             .apply(txn)?;
         self.require_owner_head_in_txn(txn, id, &project)?;
+        // A house mind the roster seats joins the new home room through the
+        // three consents, filed by the owner who tapped (OF-417).
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        crate::workspace_roster::workplace_join::file_house_joins_in_txn(
+            self,
+            txn,
+            EntityId::from_hex(&project.home_room)?,
+            &project.roster,
+            crate::WriteActor::new(actor, EdgeActorClass::Human),
+            now,
+        )?;
+        self.grant_project_tap_in_txn(txn, owner, intent, leader, id, tap_key, digest)
+    }
+
+    /// The tap's Grant move, shared by both card births (a root mint and a
+    /// thread conversion): the leader's bounded `project.run` Grant under the
+    /// card's budget share, its Gate receipt, and the tap's durable mapping
+    /// to them, in the birth's own write.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one authenticated tap's pinned transaction inputs"
+    )]
+    pub(super) fn grant_project_tap_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        intent: &ProjectMintIntent,
+        leader: EntityId,
+        id: EntityId,
+        tap_key: &[u8; 32],
+        digest: &[u8; 32],
+    ) -> Result<ProjectMintReceipt> {
         let bound = GrantBound::action(
             ActorBound::new(leader.to_hex())?.with_actor_class("agent")?,
             ActionClass::new("project.run")?,

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oneiron-hermes"
+version = "1.0.0"
+description = "Oneiron as Hermes Agent's memory provider"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["oneiron>=1.0.0,<2"]
+
+[project.entry-points."hermes_agent.memory_providers"]
+oneiron = "oneiron_hermes"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+oneiron_hermes = ["plugin.yaml"]

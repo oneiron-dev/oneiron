@@ -11,21 +11,40 @@ use crate::dreamer_consolidation::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
+use crate::llm::BoundedAutoChecker;
 
 /// [`ConsolidationSink`] over the one promotion door, owned rather than
 /// borrowed, for executors built once and lent to many passes.
 pub struct AttemptPromotionSink {
     vault: Arc<Vault>,
+    /// The host's write-gate auto check, when it runs one.
+    checker: Option<BoundedAutoChecker>,
 }
 
 impl AttemptPromotionSink {
     #[must_use]
     pub fn new(vault: Arc<Vault>) -> Self {
-        Self { vault }
+        Self {
+            vault,
+            checker: None,
+        }
+    }
+
+    /// The sink, each promotion through `checker`'s auto check.
+    #[must_use]
+    pub fn with_checker(mut self, checker: Option<BoundedAutoChecker>) -> Self {
+        self.checker = checker;
+        self
     }
 }
 
 impl ConsolidationSink for AttemptPromotionSink {
+    fn fork(&self) -> Option<Box<dyn ConsolidationSink>> {
+        Some(Box::new(
+            Self::new(Arc::clone(&self.vault)).with_checker(self.checker.clone()),
+        ))
+    }
+
     /// Unsealed candidates carry no run, so this sink refuses them.
     fn accept(&mut self, _candidates: Vec<PromotionCandidate>) -> Result<()> {
         Err(Error::InvalidClaimBody(
@@ -45,7 +64,8 @@ impl ConsolidationSink for AttemptPromotionSink {
             agent_actor,
             now_ms: self.vault.now_recorded_at().saturating_mul(1_000),
         };
-        let outcome = promote_scoped_consolidation(&self.vault, &run, write, None)?;
+        let outcome =
+            promote_scoped_consolidation(&self.vault, &run, write, self.checker.as_ref())?;
         let outputs: Vec<_> = outcome
             .landed
             .iter()

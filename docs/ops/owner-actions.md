@@ -62,8 +62,10 @@ is written under a hidden partial name and renamed into place only once complete
 is sealed: the records and the result bodies they name are one file of encrypted chunks under a
 key derived from the vault's data key, and a restore checks the whole file before it makes
 anything. The first backup mints that data key, wrapped to this device's keystore, when the vault
-has none; a rehearsal or a restore on this device unlocks it from that wrap (see *Limits*). The
-install that takes a backup signs it, and a restore checks that signature first.
+has none; a rehearsal or a restore on this device unlocks it from that wrap, and one on another
+host from a password, passkey or escrow wrap the backup carries (*The vault key on a new host*).
+The install that takes a backup signs it, and a restore checks that signature first. While any
+legal hold stands, no backup is pruned, whatever `keep` says.
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment:
@@ -276,15 +278,55 @@ the repair for a vault refused after an analyzer or dictionary change. A running
 ## Export
 
 ```sh
-oneiron export --format md --out vault.md      # toon (default), md, json, yaml or txt
-oneiron export --format json > vault.json      # stdout when --out is omitted
+oneiron export --out vault.zip                 # the whole-vault archive (format `archive`)
+oneiron export > vault.zip                     # stdout when --out is omitted
 ```
 
-On a running server, `POST /v1/core/facade/vault.export` with `{"format": "md"}` and an owner
-credential. Each export tries to write a receipt (time, format, bytes, digest, who), and
-`doctor` shows the latest one recorded. The receipt is best effort: if it cannot be written the
-export still succeeds, a warning is logged, and `last_export` stays as it was. An export is a
-readable archive of your knowledge. It is not a backup: restore from a backup file.
+The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per record kind under
+`records/` (`records/entity/<kind>.jsonl` per entity type, then `edge`, `pack`, `agent_pack`,
+`derivation_envelope`, `run` and `result_body`), and each attached file once under
+`files/<blake3>` (skill and pack source files, code-run result bodies). The manifest lists every
+record file and attached file with its length and BLAKE3, and an import refuses an archive whose
+members disagree with it. It is plaintext and re-imports into a fresh vault
+(`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
+Credentials inside records are nulled by the serializer. Result bodies go through the release
+scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
+and credential-bearing bodies are withheld and named in `result_body.jsonl`.
+
+Your own archive also carries your keys, by default: each active secret-custody record's value,
+in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
+the archive as safe as the keys in it. To leave the values out, export with
+`--include-secrets false` (`{"include_secrets": false}` on `vault.export`): each custody record
+then goes as its handle and value-less metadata, the manifest says `secrets_included: false`, and
+a re-import lists those as `missing_secrets` to re-enter. A caller off this device gets values
+only for portable records (device-bound ones go as handles); suspended records always go as
+handles; an export-first removal's archive, like any export to a contact or share, carries no
+custody record.
+
+`oneiron export --format okf --out vault-okf.zip` is "Export to OKF": the vault as an Open
+Knowledge Format v0.1 bundle (Google's markdown-plus-YAML-frontmatter format) for importing into
+other tools. Each entity is one concept at `<kind>/<id>.md` with `type`, `title`, `description`
+and `timestamp` frontmatter; graph edges are markdown links; claim evidence is a `# Citations`
+list; `index.md` files list each folder. It is lossy by design and says so in its root
+`index.md` and in every file's `oneiron_copy: "lossy"`: it drops bi-temporal validity,
+confidence, approval and lifecycle, typed edge values, run results, source packages and every
+custody secret, and it does not re-import as a vault. The archive is the full copy.
+
+A diary is exported as a read of it (OF-490), through the diary door with the reason `export`:
+only the entries the exporter's `diary.read` Grant covers (`POST /v1/owner/diary/grants`) are
+read. Each agent's read is logged in its own read log, where it sees it, and on the export
+receipt. An agent that reviews each read first (on for Eiri) gets a pending review and its
+entries stay out until it says yes; one yes admits one export. Every held entry is named in the
+manifest's `diary_holds` (`not_covered_by_grant`, `agent_review_pending`, `declined`, or
+`read_log_unavailable` when the read log could not be written). An export-first removal reads as
+the removed owner, under their own Grants.
+
+On a running server, `POST /v1/core/facade/vault.export` with `{}` (or `{"format": "archive"}`)
+and an owner credential; the reply's `archive` is the ZIP in standard base64. Each export tries to
+write a receipt (time, format, bytes, digest, who, diary reads), and `doctor` shows the latest one
+recorded. The receipt is best effort: if it cannot be written the export still succeeds, a warning
+is logged, and `last_export` stays as it was. An export is your exit path, not a backup: restore
+from a backup file, the vault's encrypted snapshot.
 
 ## Secret scan switch
 
@@ -295,6 +337,10 @@ oneiron secret-scan on
 ```
 
 Routes: `GET /v1/owner/secret-scan` and `POST /v1/owner/secret-scan` with `{"mode": "off"}`.
+With the scan `on`, a secret the write door can place in text or in a field goes to secret
+custody, and the record keeps its handle in its place: `[secret sc12]` inside text, or `sc12` as a
+field's whole value. The rest of the write lands. A recovery phrase, a key inside a binary file
+and anything else the door finds but cannot place still refuse the whole write.
 `off` skips the write-door scan on ingest. Serve and export still redact credentials either
 way. Each change is receipted with its revision, the owner who made it and the previous
 setting. Only a live owner of the vault can switch it.
@@ -623,6 +669,223 @@ The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inb
 &limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
 carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
 
+## Share failure signals
+
+A participating deployment sends its publisher two things, and nothing else: the content-free
+tier-1 failure counts, and the Coach's sealed code-fix records (an invented example verified in
+the vault, and a candidate fix's fixed or not-fixed result). No world text leaves, and a failure
+that touched a private world sends its counts only. A vault our cloud hosts participates by its
+terms; a self-hosted server participates only once you set `failure_signal_export = true`
+(`ONEIRON_FAILURE_SIGNAL_EXPORT`). Training on what leaves is a separate yes,
+`failure_signal_training` (`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
+
+```toml
+[failure_signals]
+endpoint = "https://…"     # ONEIRON_FAILURE_SIGNALS_ENDPOINT; HTTPS, or HTTP on loopback
+every_secs = 3600          # ONEIRON_FAILURE_SIGNALS_EVERY_SECS
+batch = 64                 # ONEIRON_FAILURE_SIGNALS_BATCH: code-fix records per send
+
+[failure_signals.candidates.tone-fix]    # a publisher candidate; file layers only
+instructions_file = "/etc/oneiron/candidates/tone-fix.txt"
+sha256 = "…"               # the file's SHA-256, lowercase hex
+```
+
+A candidate is an instruction your publisher ships and you install and pin. The Coach replays
+each failure in the vault with the candidate added to the failing agent's instructions, and only
+the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
+fetches or installs it. A file that no longer matches its pin stops the server at start. At most
+8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
+
+The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
+`https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
+sends nothing, and sealed records wait in the vault. Each send is one JSON batch, `POST`ed as an
+ordinary outbound effect on `failure_signals/send` with its recorded receipt. While the deployment
+participates, the vault keeps a standing grant on that channel for the sender, so no send asks
+you; turning participation off revokes it. A record leaves the vault only once the publisher took
+it: a failed send keeps it for the next one.
+
+The counts come from the Coach's detectors. Each diagnostic they raise counts once, ever: a missed
+recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
+`other` with its detector named. Your own refusal of a single consent ask is never counted. A
+diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
+
+## Model-graded self-heal detectors
+
+Canon ships no detector wording, so no model-graded detector runs until you write one. Each
+`[self_heal.detectors.<family>]` table is one detector over the retrieval telemetry:
+
+```toml
+[self_heal.detectors.recall_gaps]
+class = "retrieval_miss"   # the diagnostic class a finding carries (not agent_health)
+tier = "t3"                # t3 (default), t2 or session
+prompt = "…"               # what it looks for
+rubric = "…"               # how a positive is told from a negative
+consecutive = 3            # runs a window needs; for t2, positives in a row that raise
+window_secs = 3600         # one window of time; for session, how long a conversation is quiet
+```
+
+Every five minutes the server reads the newest 1,024 runs and asks each detector's question of
+each window it has not graded yet, up to 8 windows a pass, on the decision ladder's local and big
+rungs (never a person). `t3` judges each completed window of time at once. `t2` asks once per
+run. `session` judges one conversation's runs once it has been quiet for `window_secs`. A raised
+window becomes a proposed diagnostic: nothing is repaired. Changing a prompt or rubric grades
+windows again.
+
+`GET /v1/owner/self-heal/findings?family=<family>` lists one detector's raised `t3` findings,
+newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
+`{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
+`consecutive` positive labels and one negative, a `t2` detector of that family asks with the
+labeled findings.
+
+## Answer the decision ladder's asks
+
+When a typed decision climbs past every model rung (the dial reaches the
+owner, the read says "ask up?", or the clock cut an irreversible step), the
+server's decision ladder queues it for you (run-with-models.md, section 13).
+The ask waits in the vault, through restarts, until you answer.
+
+`GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=true` lists them
+oldest first (50 unless `limit` says fewer, at most 500). Each ask carries:
+- its arrival number `seq`;
+- the question (its text and the answers its contract takes);
+- the principal it is for, and the evidence ids;
+- why it was asked;
+- the answer the ladder held, if any, and the model that read it;
+- your answer, once given.
+`open=true` keeps only the unanswered asks.
+
+Answer one with `POST /v1/owner/decisions/asks/answer`:
+
+```json
+{"seq": 3, "answer": {"kind": "choice", "value": "allow"}}
+```
+
+`kind` is `noul` (`value` true or false), `choice` (one of the question's
+options) or `score` (a number in its range). An abstention is not an answer.
+The decision waiting on the ask gets your answer. When your answer differs
+from the ladder's, the case is kept for the Coach, which tunes when the
+ladder asks you. Sending the same answer again changes nothing. A different
+answer to an answered ask is refused.
+
+## The vault key on a new host
+
+A vault's data key unlocks from any of its wraps: this device's keystore, the vault password, a
+passkey's PRF output, or an escrow recipient whose seed a recovery box keeps. Every backup carries
+the wraps (never the key), so a host with none of the vault's keystore slots restores from one of
+the others. Secrets are read from stdin, or an owner-only `--secret-file`, exactly as given but
+for one trailing line break; a PRF output or a seed is 32 bytes, raw, hex or base64url.
+
+```sh
+oneiron vault-key status                       # the key and its wraps; a passkey's lists its PRF input
+printf %s "$PASSWORD" | oneiron vault-key set-password
+oneiron vault-key prf-input my-yubikey         # the input to evaluate the passkey's PRF at
+oneiron vault-key add-passkey my-yubikey --secret-file prf.bin
+oneiron vault-key add-escrow usb --box-dir /Volumes/KEY/oneiron-box
+oneiron vault-key signer > signer.json         # the pin another host trusts this vault's backups by
+oneiron vault-key remove passkey:my-yubikey    # the last wrap stays
+```
+
+A passkey's PRF input is `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input/v1", vault id ‖
+credential name)`: the vault and the name fix it, so the same authenticator gives the same output
+on any host. A running server takes the same steps at `/v1/owner/vault-key` (`GET` for the wraps,
+`GET /prf-input?credential=NAME`, `POST /passkeys`, `POST /password`, `POST /device`,
+`POST /remove`, `POST /unlock`, `GET /signer`).
+
+An escrow wrap seals to a hybrid key grown from a 32-byte seed; the recovery box keeps the seed.
+`--box-dir DIR` keeps it at `DIR/<vault id>/<label>.seed`, owner-only (removable media, your own
+box). `--box-command PROGRAM` hands it to a program: `PROGRAM store <vault id> <label>` reads the
+seed as 64 hex digits on stdin, and `PROGRAM release <vault id> <label>` prints it after its own
+sign-in. A hosted recovery box plugs in that way.
+
+On the new host:
+
+```sh
+oneiron restore BACKUP --inspect               # what unlocks it, with each passkey's PRF input
+printf %s "$PASSWORD" | oneiron restore BACKUP --unlock password --trust signer.json
+oneiron restore BACKUP --unlock passkey --credential my-yubikey --secret-file prf.bin --trust signer.json
+oneiron restore BACKUP --unlock escrow --label usb --box-dir /Volumes/KEY/oneiron-box --trust signer.json
+```
+
+Every unlock but this device's needs `--trust`: a host holding no signer seed has no other ground
+to trust a backup on, and a backup's own head is never trusted. Where no vault is at the
+configured path, the restore makes it there, unlocks its key the same way and wraps it to this
+install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
+
+## The world recovery kit
+
+The world kit carries your recovery root: the key every private world's key is also wrapped to.
+It is a fixed 2 of 3: any two pieces open it, and one piece alone, or the passphrase alone, opens
+nothing. No piece ever lives on the host. Run these on a stopped vault:
+
+```sh
+oneiron recovery-kit issue --home paper --home password-manager --home passphrase --out /Volumes/KEY/kit
+oneiron recovery-kit confirm --piece /Volumes/KEY/kit/piece-1.txt --piece /Volumes/KEY/kit/piece-2.txt
+oneiron recovery-kit status
+oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
+```
+
+`issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
+`file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
+`security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
+recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`. Nothing
+is published yet: the kit is pending. Put each piece where its home says, then `confirm` with two
+of them, or with one and the passphrase. That re-entry is the proof you saved them. Confirm makes
+the kit's root live on this machine and marks every earlier kit replaced. When this machine's
+keystore opens the vault key, confirm also seals it to the root as the escrow wrap `world-kit`. A
+replaced kit's pieces still open their own old root;
+replacing a kit does not revoke it. `this-machine` is refused until a keystore slot can hold a
+piece.
+
+`status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
+private world's state. `covered` means only that the world's current key has a wrap to the pinned
+root. A running server shows the same at `GET /v1/owner/recovery-kit`; issue, confirm and restore
+run only from the CLI, so no piece crosses HTTP.
+
+`restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
+world's settings. A kit opened with one piece and the passphrase is not verified on its own:
+pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
+
+On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
+`status` prints:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id <hex> --piece piece-1.txt --piece piece-2.txt --trust signer.json
+```
+
+## Contact disclosure
+
+A contact sees only what you cleared it for. An agent or the companion can only offer you a
+clearance (the `vault.disclosure.offer` verb, under an agent credential that carries
+`propose_disclosure_widen`). Only you settle it, here. The generic widen accept refuses a
+contact offer.
+
+- `GET /v1/owner/disclosure/offer?proposal_ref=<64 hex>` shows one frozen offer: the contact,
+  the Scope, the purpose, the channel, the one party it reaches, and its `canonical_delta`.
+- `POST /v1/owner/disclosure/confirm` with
+  `{"proposal_ref": "...", "expected_delta": "<canonical_delta>", "outcome": "once"}` answers it.
+  `once` discloses this once and keeps nothing. `standing` clears the contact for that Scope
+  until you narrow or revoke it. `deny` refuses. An offer settles once. It is refused when it
+  expired, when the delta differs from what you were shown, when the contact's clearance changed
+  since it was filed, or when the credential line that filed it tries to settle it.
+- `POST /v1/owner/disclosure/narrow` with `{"contact": "<hex>", "scope": {...}}` narrows a
+  standing clearance to a Scope inside the current one.
+- `POST /v1/owner/disclosure/revoke` with `{"contact": "<hex>"}` is
+  `consent.revoke_contact_disclosure`. The row stays, revoked, and admits nothing.
+- `POST /v1/owner/disclosure/preclear` with `{"set_name": "...", "contacts": [...], "scope": {...}}`
+  clears a named trusted set in advance, 1 to 256 contacts, one receipt each.
+- `GET` and `PUT /v1/owner/disclosure/mode` read and set the mode: `always_ask` (the companion
+  never offers), `auto` (the default) or `always_yes` (pre-clear trusted sets; offers stay
+  allowed). No mode clears anyone by itself.
+- `POST /v1/owner/disclosure/attendee` with
+  `{"ask_ref": "<hex>", "roster_revision": 4, "choice": "<contact hex>" | "unknown"}` answers a
+  "who is this?" ask once. It names the speaker for that roster revision only. It clears nothing
+  and enrolls no voice, so an unknown speaker stays public-only.
+
+Each clearance answer returns its Gate receipt: `receipt_ref`, the act, the contact, the
+registry row `contact_clearance:<contact hex>`, its revoke command, and the clearance digests
+before and after. A `once` answer also returns the one-time digest the disclosure spends. There
+is no dedicated CLI command; use `oneiron api raw`, as in the last section.
+
 ## Saved queries after a pack update
 
 When a new source of an installed pack is activated, the saved queries that read a predicate it
@@ -650,6 +913,92 @@ Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
 signer is 404, and acknowledging an acknowledged alarm changes nothing.
 
+## Learned settings
+
+A learned setting is a knob the vault fits from its own runs, such as the audit rate
+(`audit_rate`), a planner floor or a health dial (`health.loop.repeats`). You can lay two kinds of
+row on a knob. A **seed** is a prior the fit starts from, weighted in runs. A **pin** is the value,
+whatever the fit says.
+
+A row applies to the vault, to one project, or to one task type (a type row matches its node at
+any tree version). A read takes the narrowest pin (project, then type, then vault). Without a
+pin, it takes the vault's fit once the fit has runs of its own. Failing that, it takes the
+narrowest seed, then the catalog seed. The catalog keeps each knob's bounds; a value outside
+them is refused.
+
+```sh
+oneiron learning-settings list                                  # catalog, values now, your rows
+oneiron learning-settings list --key health.loop.repeats
+oneiron learning-settings put health.loop.repeats pin 5 --why "noisy tools" --project HEX32
+oneiron learning-settings put audit_rate seed 0.1 --weight-runs 20 --why "start low"
+oneiron learning-settings put health.silent.minutes pin 60 --why "slow jobs" --task-type research
+oneiron learning-settings clear health.loop.repeats pin --project HEX32
+```
+
+The commands open a stopped vault. A running server answers the same at
+`GET /v1/owner/settings/learning[?key=…]`, `POST /v1/owner/settings/learning` with
+`{"key", "mode": "seed"|"pin", "value", "weight_runs"?, "why", "project"?, "task_type"?}`, and
+`POST /v1/owner/settings/learning/clear` with `{"key", "mode", "project"?, "task_type"?}`.
+Each answers with the key's catalog entry and rows. The host verbs `vault.settings.learning`,
+`.put` and `.clear` take the same input over the facade and MCP. All of them are the owner's
+alone, and clearing an absent row succeeds.
+
+The app's policy actions have host verbs too. Each runs the same action as
+`POST /v1/core/actions/{verb}`:
+- `vault.settings.wake_policy.set` with `{"policy", "idempotency_key"}` runs
+  `dreamer.wake_policy.set`, which needs the owner's own credential.
+- `vault.settings.inference_defaults` with `{}` runs `inference.defaults.read`.
+- `vault.settings.inference_defaults.replace` with `{"defaults", "idempotency_key"}` runs
+  `inference.defaults.replace`.
+
+The two inference verbs need the caller's Auto ceiling. Each answers with the action's
+`outcome`. A retry with the same idempotency key gets the first call's answer.
+
+## Legal holds
+
+A legal hold keeps records from being deleted. While a hold names a record, its delete fails for
+agents, timers, members and you alike, and every other verb keeps working. A hold names records,
+or a claim's gate-decision key partition, and can carry an opaque matter reference (1 to 128 of
+`A-Z a-z 0-9 . _ : - /`, never free text). You can widen a hold. You lift it only through one
+confirm, "Lift the hold and erase?", which lifts your holds on the records it names and erases
+them. The hold log keeps ids, times and reason codes only, for the hold's life and 24 months
+after.
+
+```sh
+oneiron legal-holds place --record HEX [--record HEX] [--gate-partition HEX|none] [--matter-ref REF]
+oneiron legal-holds widen HOLD --record HEX
+oneiron legal-holds list
+oneiron legal-holds log
+oneiron legal-holds lift-and-erase RECORD [RECORD] --yes   # prints the prompt; acts only with --yes
+```
+
+Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
+`{"gate_partition": null}` (the claim-free partition):
+
+- `POST /v1/owner/legal-holds` with `{"targets": [...], "matter_ref": "..."}` places a hold, and
+  `GET /v1/owner/legal-holds` lists the holds you may see.
+- `POST /v1/owner/legal-holds/widen` with `{"hold_id": "<hex>", "targets": [...]}`.
+- `GET /v1/owner/legal-holds/log` reads the log, oldest first.
+- `GET /v1/owner/legal-holds/lift-and-erase` returns the confirm's title and prompt, to show
+  before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
+  receipt, `completion_pending` where Oneiron hosts the bytes until the deletion receipt
+  completes, `kept_by_legal_order`, or `failed` (the hold is lifted; a plain delete retries).
+
+The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log` and `.lift_and_erase` do the
+same under the owner's credential. Where Oneiron hosts the bytes, a legal order Oneiron must obey
+can also hold records. You cannot lift it, and an erase you confirm waits until it ends.
+
+## Erase a text's history
+
+`POST /v1/owner/history/erase` with `{"entity": "<hex>"}` (and optionally `"through"`, a base64
+frontier) drops a text's edit history below its oldest pin. In a personal vault, or a shared one
+with one live Owner, it erases at once and answers `"outcome": "erased"` with the receipt. In a
+shared vault with two or more live Owners it erases nothing yet: it answers `"outcome":
+"waiting"` with the vault's started `erase` act, and every other Owner is told. Once the window
+passes with no objection, `POST /v1/owner/history/erase/execute` with `{"act_id": "..."}` runs
+it, and a retry returns the same receipt. `GET /v1/owner/history?entity=<hex>` lists the erases
+filed for a text. A legal hold on the text refuses the erase.
+
 ## The model catalog
 
 The model catalog comes from the first-party hub as the knowledge pack `oneiron.models`
@@ -674,6 +1023,109 @@ them. A model in `[models]` needs no catalog row.
 
 A catalog's authority is its content hash and that hash's scan evidence. The commit only says
 where the bytes come from.
+
+## Embedding spaces and model moves
+
+Text, image and audio each search through a kind slot. An unbound text slot reads the vault's
+own text index. A bound slot reads a declared embedding space, whose id is an `ai.embed` rung id
+(as `GET /v1/ai/options` lists it), then `@where`.
+
+- `GET /v1/owner/embedding-spaces` lists the declared spaces, the text index, which space each
+  slot reads, every move with its last check, and how many probes each kind holds.
+- `PUT /v1/owner/embedding-spaces` with `{"id", "dimensions", "accepts", "query_towers"}` (and
+  optional `"evidence": {"floor", "strong"}`) declares a space. `POST .../bind` with
+  `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
+  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included. Both
+  refuse a slot an open move carries until the move ends.
+  With the text slot bound, a text query embeds through that space's text tower in the context
+  pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
+  holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
+  `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
+- **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
+  `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
+  for the preset, apply at each `serve` start. A start declares only spaces the vault does not
+  hold and binds only slots the vault leaves unbound and no open move carries, so a door edit
+  or a model move stays. A listed space the vault holds at another width stops `serve`: a new
+  width needs a new id.
+- **Moving to a new model version.** `POST .../move` with `{"candidate", "incumbent", "margin"}`
+  starts moving every slot the incumbent serves to the candidate. Leave out `incumbent` for the
+  text index. The media backfill fills the candidate while the incumbent keeps serving, and
+  writes probes meanwhile: short queries the chat seat writes from text documents, the
+  captioner or Local-vision seat from images, and the chat seat from audio once the
+  `[models.media]` transcribe seat has transcribed it. Audio and image bytes never go to a
+  third-party seat for a probe. Once the candidate holds every document, the
+  probes run on both spaces, and on the incumbent twice for its retest noise. The candidate swaps
+  in by itself only when every kind is not worse: the low end of the kind's family-grouped
+  paired interval stays at or above minus that noise, or minus your stricter `margin`. A kind
+  whose whole interval is below that closes the move, and the incumbent keeps serving. Fewer
+  than 10 probe families, or an interval across the margin, reads unknown. Unknown never swaps
+  by itself: the move stays open and is checked again every 6 hours. Each swap, keep and undo
+  leaves a short note in the inbox.
+- The media backfill skips any document a space's model refuses by its content (a format it
+  cannot read, a content filter) until the document changes, so one bad file never stalls a
+  space or a move. A model that refuses everything it is sent before it has embedded anything
+  is treated as down, and the backfill retries it. `GET .../embedding-spaces` counts each
+  space's refused documents under `refused`; `GET .../refused?space=<id>` lists them with the
+  reason and time, and `POST .../refused/clear` with `{"space", "id"}` forgets one, so the
+  backfill sends the same bytes again (after a provider's policy or model changed).
+- A move that goes 14 days from its start without one check (its model never filled the
+  candidate, or the probes never ran) closes as kept, with a note: the incumbent keeps serving
+  and the candidate's rows go. Begin the move again once that model answers.
+- `POST .../move/check` with `{"candidate"}` runs the probes now. It answers within 20 seconds:
+  past that it answers `running`, and the check finishes on its own and records its reading on
+  the move. `.../move/approve` swaps a full candidate in on your yes. `.../move/undo` binds the
+  incumbent again after a swap, and `.../move/abandon` ends an open move without one. An undo
+  works for 30 days after the swap. Then the incumbent retires (its rows and declaration go)
+  unless a slot binds it again.
+- `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
+  "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
+  one.
+
+On a stopped vault the same acts run from the command line, and each prints what the route
+answers:
+
+```sh
+oneiron embedding-spaces list
+oneiron embedding-spaces declare ID --width N --accepts text,image [--query-towers text] [--floor F --strong S]
+oneiron embedding-spaces bind text|image|audio [SPACE]   # no SPACE: back to the default
+oneiron embedding-spaces one-space SPACE
+oneiron embedding-spaces retire SPACE
+oneiron embedding-spaces move CANDIDATE [--incumbent SPACE] [--margin F]
+oneiron embedding-spaces move-approve|move-undo|move-abandon CANDIDATE
+oneiron embedding-spaces probes list
+oneiron embedding-spaces probes put --kind text --query Q --family HEX [--target HEX] --author A
+oneiron embedding-spaces probes delete ID
+```
+
+A check runs the server's own `ai.embed` towers, so only a running server checks a move. It can
+take minutes, and `oneiron api raw` waits for it:
+
+```sh
+oneiron api raw POST /v1/owner/embedding-spaces/move/check --data '{"candidate": "SPACE"}'
+```
+
+The SDK verbs `vault.embedding_spaces.list`, `.declare`, `.bind`, `.one_space`, `.retire`,
+`.move`, `.move_check`, `.move_approve`, `.move_undo`, `.move_abandon`, `.probes.list`,
+`.probes.put` and `.probes.delete` do the same under the owner's credential, with the same
+bodies and answers. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
+SDK client waits up to 30 minutes for a check, as for an export.
+
+## Sign a secret's custody with your owner anchor
+
+A portable secret's custody moves between your machines under a signed transition. An install
+that cannot sign as one of your machines can have its current transition signed with the owner
+anchor of your recovery kit instead. The record keeps its generation, status and value, and the
+value is sealed to every machine of yours. The kit is read on this machine only: stop `serve`,
+then pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
+passphrase on the first line, and then one code is enough):
+
+```sh
+oneiron secrets anchor-sign --name NAME < kit.txt
+```
+
+It prints `{"name", "signed"}`. `signed` is false for a record that stays on its device
+(device-bound, cross-vault or "this device only") or a value no machine of yours here can open.
+No route or SDK verb takes the kit.
 
 ## Calling the owner routes
 
@@ -707,9 +1159,12 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 - To cut someone's access, revoke their slip; a revocation is authority and survives a restore.
   Deleting a person who is not a vault owner or member is content, and an older backup brings
   that person back.
-- Backups open only on the device that took them for now: the CLI unlocks the backup's key with
-  this device's keystore (the `[keystore]` settings), and takes no password, passkey or escrow
-  secret yet. A server with `[keystore] backend = "off"` cannot take a backup.
+- A server with `[keystore] backend = "off"` cannot take a backup.
 - A backup is signed (Ed25519 and SLH-DSA) by the install that took it, and chained to the one
-  before it. A restore refuses a signer it does not trust: the CLI trusts only the signers this
-  device's keystore holds, so a backup another machine signed does not restore here yet.
+  before it. A restore refuses a signer it does not trust: the CLI trusts the signers this
+  device's keystore holds, or exactly the ones `--trust` pins.
+- A restore onto a new host brings no exterior key custody with it: gate receipts sealed under
+  claim keys the old host kept do not come back.
+- Host-order legal holds cross a restore over a vault, a rehearsal and `--activate` from the live
+  vault. A restore where no vault is cannot read them; the hosting side carries them
+  (`Vault::carried_host_order_holds`, `Vault::install_carried_host_order_holds`).

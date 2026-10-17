@@ -130,6 +130,7 @@ pub struct RunAdmission {
 }
 
 pub(super) struct RunInner {
+    instance: crate::EntityId,
     run: String,
     declaration: Mutex<Revisioned>,
     pub(super) guard: BudgetGuard,
@@ -195,6 +196,7 @@ impl RunAdmission {
         let run = run.into();
         Self {
             inner: Arc::new(RunInner {
+                instance: crate::EntityId::now(),
                 run,
                 declaration: Mutex::new(Revisioned {
                     revision: 1,
@@ -340,6 +342,37 @@ impl RunAdmission {
             request: &admission,
             offer,
         })
+    }
+
+    /// Admits one bounded media stream (live `ai.transcribe` partials) as
+    /// [`Self::admit_media`] admits one call, on one permit for the whole
+    /// stream. The permit reserves `reserve_units`, the stream's bound at its
+    /// rung's rate ([`MediaStreamLease::reserve_units`](super::MediaStreamLease::reserve_units)), in place of one
+    /// call's reservation; the run's line and the vault's allocation must
+    /// hold all of it before any audio leaves.
+    pub fn admit_media_stream(
+        &self,
+        selector: Option<&str>,
+        request: &MediaRequest,
+        offer: &OfferBinding,
+        reserve_units: u64,
+    ) -> Result<RunPermit, RunDenied> {
+        let admission = request.admission_request();
+        let call = RunCall {
+            selector,
+            request: &admission,
+            offer,
+        };
+        let (revision, declaration) = self.inner.snapshot();
+        let declaration = declaration.with_reserve(reserve_units);
+        let admitted = self.inner.admit_model(&declaration, revision, call, None);
+        self.inner.receipt_for(
+            revision,
+            selector,
+            admission.model.as_str(),
+            admitted,
+            Some(admission.model.clone()),
+        )
     }
 
     /// The only media backend a host hands a run for `offer`: it checks and
@@ -550,6 +583,11 @@ impl RunInner {
         admitted_under.unwrap_or_else(|| self.lock_declaration().revision)
     }
 
+    /// `host.budget.hit` through the run's sink, once `guard` refused.
+    pub(super) fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
+        self.receipts.budget_hit(seat, guard, denied);
+    }
+
     fn receipt_for(
         &self,
         revision: u32,
@@ -587,6 +625,9 @@ impl RunInner {
                         reason: reason.clone(),
                     },
                 );
+                if let RunDenied::Budget { denied } = &reason {
+                    self.budget_hit(subject, &self.guard, denied);
+                }
                 Err(reason)
             }
         }
@@ -594,6 +635,10 @@ impl RunInner {
 
     pub(super) fn record(&self, revision: u32, event: RunEvent) {
         let receipt = RunReceipt {
+            instance: self.instance,
+            occurred_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs()),
             run: self.run.clone(),
             revision,
             event,

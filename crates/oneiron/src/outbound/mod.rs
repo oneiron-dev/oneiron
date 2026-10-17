@@ -6,6 +6,7 @@
 //! delivery-time request stage.
 
 mod capability;
+mod connector_reply;
 mod connector_task;
 mod dispatch_attempt_id;
 mod dispatch_pipeline;
@@ -15,6 +16,7 @@ mod intent;
 mod manifests;
 mod receipt_fields;
 mod retry_audit;
+mod served_sink;
 mod window_door;
 
 #[cfg(test)]
@@ -31,6 +33,7 @@ pub use self::capability::{
     outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
     unsupported_outbound_connector,
 };
+pub use self::connector_reply::{ConnectorReply, ConnectorReplyDispatch, connector_reply_request};
 pub use self::connector_task::{
     CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, connector_actor_id,
 };
@@ -46,9 +49,10 @@ pub use self::dispatch_types::{
 };
 pub use self::executor::ConnectorTaskExecutorError;
 pub use self::intent::{
-    OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft, OutboundIntentSource,
-    OutboundIntentTrigger,
+    MentionProvenance, OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft,
+    OutboundIntentSource, OutboundIntentTrigger,
 };
+pub use self::served_sink::ServedChannelSink;
 
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,

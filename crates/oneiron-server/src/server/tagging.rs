@@ -26,11 +26,15 @@ const MIN_IDLE: Duration = Duration::from_millis(250);
 
 impl SyncServer {
     /// The model-slot workers serve starts: embedding and tagging, each only
-    /// when its slot is configured.
+    /// when its slot is configured, and the resident run pump when a code
+    /// host serves.
     pub(crate) fn spawn_slot_workers(self: &Arc<Self>) -> Vec<tokio::task::JoinHandle<()>> {
         [self.spawn_embedding_worker(), self.spawn_tagging_worker()]
             .into_iter()
-            .chain([self.spawn_media_embedding_worker()])
+            .chain([
+                self.spawn_media_embedding_worker(),
+                self.spawn_resident_pump(),
+            ])
             .flatten()
             .collect()
     }

@@ -13,7 +13,9 @@
 //!   [`FEEDBACK_BUNDLE_ENCODING_V2`] when it carries a [`FeedbackProposal`].
 //! - The typed local verb family: [`FEEDBACK_SEND_VERB`], [`FEEDBACK_VERBS`],
 //!   [`FeedbackVerb`]. The family is local to this module by design — feedback
-//!   is not an agent-visible board verb and joins no shared verb allowlist.
+//!   remains separate from the universal agent-visible [`REPORT_VERB`] verb.
+//! - Free problem/proposal reports, durable ISSUE identity, maker routing and
+//!   entity-local review through [`ReportRequest`] and [`ReportIssue`].
 //! - A redaction seam ([`FeedbackRedactor`]) and preview
 //!   ([`prepare_feedback_preview`]).
 //! - Per-bundle, per-destination consent over the existing
@@ -94,6 +96,7 @@ mod dispatch;
 mod error;
 mod inbox;
 pub mod intake;
+mod report;
 
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
@@ -120,6 +123,11 @@ pub use self::dispatch::{
 };
 pub use self::error::FeedbackError;
 pub use self::inbox::{FeedbackInboxNote, FeedbackInboxVia};
+pub use self::report::{
+    IssueCategory, REPORT_VERB, ReportDisclosure, ReportDisclosureChoice, ReportIssue, ReportKind,
+    ReportReceipt, ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
+    ReportStatus,
+};
 
 #[cfg(test)]
 mod tests;

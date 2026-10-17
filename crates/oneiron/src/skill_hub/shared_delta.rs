@@ -32,7 +32,9 @@ impl Vault {
     /// Offers a clean package to THIS vault's base. The API accepts submitted bytes,
     /// not a source vault handle, source path, or a callback that could read one.
     /// Authenticated membership/transport is the ingress host's job. This creates
-    /// only an untrusted Candidate; merge still needs a local human and two judges.
+    /// only an untrusted Candidate. Its merge lands through the useful-upstream
+    /// question and the held-out replay, and asks the owner only when the scan
+    /// asks for review or the capability surface widens (`merge_needs_owner_in_txn`).
     #[expect(
         clippy::too_many_arguments,
         reason = "the submission names the receiving base, untrusted source provenance, bytes, and temporal stamps explicitly"

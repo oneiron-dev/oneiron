@@ -6,6 +6,11 @@
 //! attenuation: an attenuated fork is the same agent under a narrower
 //! ceiling, so it shares its source's calibration. Seeded rows (`sys.*`) have
 //! pinned entity ids, so the key is stable for them too.
+//!
+//! A peer consult is a TASK delivery, never a local agent, so it has its own
+//! key (`consult:{peer hex}:{unit}`) and never reads an agent's row (OF-393).
+//! No measured consult usage is folded yet, so every consult states the
+//! labelled prior.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +26,8 @@ use super::AgentDispatcher;
 /// ([`crate::llm::DEFAULT_BUDGET_RESERVE_UNITS`]).
 pub const LAUNCH_COST_PRIOR_UNITS: u64 = crate::llm::DEFAULT_BUDGET_RESERVE_UNITS;
 
-/// Per-agent, per-unit spend calibration. Key: `{agent_def hex}:{unit}`.
+/// Per-agent, per-unit spend calibration. Key: `{agent_def hex}:{unit}`; a
+/// peer consult's is `consult:{peer hex}:{unit}`.
 pub(super) const CALIBRATION: SideTable<String, AgentSpendCalibration, LegacyJson> =
     SideTable::new(&side_table::AGENT_DISPATCH_SPEND_CALIBRATION);
 
@@ -84,6 +90,26 @@ pub struct ExpectedSpend {
 }
 
 impl ExpectedSpend {
+    /// The labelled prior: [`LAUNCH_COST_PRIOR_UNITS`], no samples.
+    pub(super) const fn prior() -> Self {
+        Self {
+            units: LAUNCH_COST_PRIOR_UNITS,
+            samples: 0,
+            basis: SpendBasis::Prior,
+        }
+    }
+
+    fn from_row(row: Option<AgentSpendCalibration>) -> Self {
+        match row {
+            Some(row) if row.samples > 0 => Self {
+                units: row.ewma_units,
+                samples: row.samples,
+                basis: SpendBasis::Calibrated,
+            },
+            _ => Self::prior(),
+        }
+    }
+
     /// A tree's expected spend: the saturating sum. It is a prior if any node is.
     #[must_use]
     pub fn sum(nodes: impl IntoIterator<Item = Self>) -> Self {
@@ -112,6 +138,10 @@ fn calibration_key(agent: &EntityId, unit: &LeaseUnit) -> String {
     format!("{}:{}", agent.to_hex(), unit.as_str())
 }
 
+fn consult_calibration_key(peer: &EntityId, unit: &LeaseUnit) -> String {
+    format!("consult:{}:{}", peer.to_hex(), unit.as_str())
+}
+
 impl AgentDispatcher<'_> {
     /// One agent's expected spend in `unit`: its calibrated mean, or the
     /// labelled prior when it has no settled launch.
@@ -136,20 +166,36 @@ impl AgentDispatcher<'_> {
         agent: EntityId,
         unit: &LeaseUnit,
     ) -> Result<ExpectedSpend> {
-        Ok(
-            match CALIBRATION.get(&self.vault.store, txn, &calibration_key(&agent, unit))? {
-                Some(row) if row.samples > 0 => ExpectedSpend {
-                    units: row.ewma_units,
-                    samples: row.samples,
-                    basis: SpendBasis::Calibrated,
-                },
-                _ => ExpectedSpend {
-                    units: LAUNCH_COST_PRIOR_UNITS,
-                    samples: 0,
-                    basis: SpendBasis::Prior,
-                },
-            },
-        )
+        Ok(ExpectedSpend::from_row(CALIBRATION.get(
+            &self.vault.store,
+            txn,
+            &calibration_key(&agent, unit),
+        )?))
+    }
+
+    /// One consult's expected spend in `unit` when delivered to `peer`: its
+    /// calibrated mean once consult samples exist, the labelled prior until
+    /// then. Never an agent's row.
+    pub fn expected_consult_spend(
+        &self,
+        peer: EntityId,
+        unit: &LeaseUnit,
+    ) -> Result<ExpectedSpend> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.expected_consult_spend_in_txn(&txn, peer, unit)
+    }
+
+    pub(super) fn expected_consult_spend_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        peer: EntityId,
+        unit: &LeaseUnit,
+    ) -> Result<ExpectedSpend> {
+        Ok(ExpectedSpend::from_row(CALIBRATION.get(
+            &self.vault.store,
+            txn,
+            &consult_calibration_key(&peer, unit),
+        )?))
     }
 
     /// Folds one settled launch's spend into its agent's calibration.

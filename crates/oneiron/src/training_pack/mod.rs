@@ -9,10 +9,10 @@ mod types;
 
 use serde::Serialize;
 
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
-use crate::Vault;
 
 pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
 pub use promotion::TrainingEvalInput;
@@ -40,7 +40,8 @@ fn hash_json(value: &impl Serialize) -> Result<[u8; 32]> {
 }
 
 fn run_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<TrainingRun> {
-    RUNS.get(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)
+    RUNS.get(&vault.store, txn, id)?
+        .ok_or(Error::EntityNotFound)
 }
 
 impl TrainingRun {
@@ -52,8 +53,14 @@ impl TrainingRun {
     /// Failed checks are evidence for the owner, never an automatic deployment.
     pub fn can_propose_swap(&self) -> bool {
         self.corpus.exact_hash_overlaps == 0
-            && self.result.as_ref().is_some_and(|result| result.checks.passed())
-            && self.evaluation.as_ref().is_some_and(|eval| eval.passed && eval.harness == self.plan.harness)
+            && self
+                .result
+                .as_ref()
+                .is_some_and(|result| result.checks.passed())
+            && self
+                .evaluation
+                .as_ref()
+                .is_some_and(|eval| eval.passed && eval.harness == self.plan.harness)
     }
 }
 

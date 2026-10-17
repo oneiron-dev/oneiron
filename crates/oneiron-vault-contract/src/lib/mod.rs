@@ -11,18 +11,21 @@
 //! Consumers pin this crate at an exact revision and run cross-repo
 //! conformance before moving the pin.
 
+pub mod artifact_origin;
 mod ctl;
+/// The vault's data-key escrow capsules on their way to the registry.
+pub mod escrow;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
-/// Private, lease-bound live process ports.
-pub mod preview;
-/// Account and organization vault bindings with per-vault lifecycle hooks.
-pub mod tenancy;
 mod ledger;
 mod limits;
 mod managed_holder;
+/// Private, lease-bound live process ports.
+pub mod preview;
 mod secrets;
+/// Account and organization vault bindings with per-vault lifecycle hooks.
+pub mod tenancy;
 mod version;
 /// The vault-VM wire shared by the guest adapter and the host's VMM driver.
 pub mod vm;

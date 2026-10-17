@@ -2,8 +2,15 @@
 mod history;
 mod hosting;
 mod liveness;
+mod offer_liveness;
+mod offer_settle;
+mod offers;
+mod participants;
+mod participation;
+mod replica;
 #[cfg(test)]
 mod tests;
+mod thread_projection;
 mod upkeep;
 mod witness;
 use super::ProjectRoom;
@@ -13,16 +20,33 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
+pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
+pub(crate) use history::erase_room_side_rows;
 pub(in crate::workspace_roster) use history::thread_turns_in;
-pub use hosting::{RoomHosting, RoomSpeakingRole, RoomStanding};
+pub(crate) use hosting::room_project_in;
+pub use hosting::{
+    HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
+};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
 pub(in crate::workspace_roster) use liveness::{thread_root_map, thread_task_bindings};
+pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
+pub use offers::{OfferCard, OfferDraft, OfferState, OffersPage, OffersRequest};
+pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
+pub use participation::JoinCause;
+pub(super) use participation::record_bound_task_in_txn;
+pub(crate) use participation::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    record_participation_in_txn, require_join_covering_in_txn,
+};
+use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thread_reader};
+pub(crate) use replica::{TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use witness::admit_witness;
 
@@ -114,6 +138,9 @@ pub struct RoomTurn {
     pub task_ids: Vec<String>,
     #[serde(default)]
     pub converted_project: Option<String>,
+    /// A trunk turn's quote (OF-460). A thread reply's quote stays in its
+    /// TURN's reply pointer, never here.
+    pub quote: Option<crate::conversation_dag::RoomQuote>,
 }
 /// The first trunk entry is the origin card when this room came from a thread.
 /// It points to that thread without copying any of its messages.
@@ -185,14 +212,18 @@ pub enum RoomClaimOutcome {
 
 /// Project rooms use the PROJECT roster instead of the ordinary membership
 /// ledger. Return None for other conversations so their historical membership
-/// windows remain authoritative at the ordinary audience door.
+/// windows remain authoritative at the ordinary audience door. Each audience
+/// actor stands as [`participation::reads_room_in_txn`] reads the room: its
+/// seat, or a live Ready receipt for the room (OF-417). A thread's receipt
+/// opens no room-wide read.
 pub(crate) fn project_room_audience_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     audience: &[EntityId],
 ) -> Result<Option<bool>> {
-    let Some(raw) = vault.store.entities.get(txn, room.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &room)?
+    else {
         return Ok(None);
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
@@ -208,13 +239,35 @@ pub(crate) fn project_room_audience_in(
     {
         return Ok(None);
     }
-    let room = room_in(vault, txn, room)?;
-    let members: BTreeSet<&str> = room.member_ids.iter().map(String::as_str).collect();
-    Ok(Some(
-        audience
-            .iter()
-            .all(|actor| members.contains(actor.to_hex().as_str())),
-    ))
+    let record = room_in(vault, txn, room)?;
+    let at = vault.store.clock.now_recorded_at();
+    for actor in audience {
+        let subject = participation::participant_in_txn(vault, txn, *actor, at)?;
+        if !participation::reads_room_in_txn(vault, txn, room, &record, *actor, subject)? {
+            return Ok(Some(false));
+        }
+    }
+    Ok(Some(true))
+}
+
+/// Whether `actor` stands in the ordinary room `room`'s audience on a live
+/// Ready receipt for the room (OF-417): a home-room join, or a companion's
+/// filed through its principal. The receipt is current read standing, re-proved
+/// live, and grants no claim; a thread's receipt never satisfies it. Seats and
+/// membership windows are the caller's own, so their history keeps its meaning.
+pub(crate) fn room_join_audience_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    let at = vault.store.clock.now_recorded_at();
+    let Some(subject) = participation::participant_in_txn(vault, txn, actor, at)? else {
+        return Ok(false);
+    };
+    let receipt =
+        participation::require_join_covering_in_txn(vault, txn, room, None, &subject, None);
+    Ok(participation::joined(receipt)?.is_some())
 }
 
 /// The validated project room `room` is, or `None` for an ordinary
@@ -307,7 +360,18 @@ impl Vault {
             return Err(invalid());
         }
         self.with_write_txn_grouped(|txn| {
-            require_member(self, txn, room, actor)?;
+            // A handle may name an agent with no seat: naming enrolls no one
+            // and grants nothing (OF-529). A person stands on its seat or a
+            // live Ready join for the room (OF-417).
+            let record = room_in(self, txn, room)?;
+            let now = self.store.clock.now_recorded_at();
+            let subject = participation::participant_in_txn(self, txn, actor, now)?;
+            if !record.member_ids.contains(&actor.to_hex())
+                && !participation::addressable_agent_in_txn(self, txn, actor, now)?
+                && !participation::person_stands_in_txn(self, txn, room, None, actor, subject)?
+            {
+                return Err(invalid());
+            }
             HANDLES.put(&self.store, txn, &(room, handle.to_owned()), &actor)?;
             Ok(())
         })
@@ -326,21 +390,34 @@ impl Memory<'_> {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             return Ok(vec![(
                 room,
-                require_member(self.vault(), &txn, room, self.actor())?,
+                require_reader(self.vault(), &txn, room, self.actor())?,
             )]);
         }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        // OF-529: an agent also lists the rooms a Ready receipt admits it to.
+        let subject = participation::participant_in_txn(
+            self.vault(),
+            &txn,
+            self.actor(),
+            self.vault().store.clock.now_recorded_at(),
+        )?;
         let mut result = Vec::new();
-        for row in self
-            .vault()
-            .store
-            .type_index
-            .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_CONVERSATION])?
-        {
-            let (key, _) = row?;
-            let id = EntityId::from_bytes(key[1..].try_into().map_err(|_| invalid())?)?;
+        for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.vault().store,
+            &txn,
+            crate::registry::ENTITY_TYPE_CONVERSATION,
+            None,
+        )? {
+            let id = row?;
             if let Ok(room) = room_in(self.vault(), &txn, id)
-                && room.member_ids.contains(&self.actor().to_hex())
+                && participation::reads_room_in_txn(
+                    self.vault(),
+                    &txn,
+                    id,
+                    &room,
+                    self.actor(),
+                    subject,
+                )?
             {
                 result.push((id, room));
             }
@@ -360,37 +437,52 @@ impl Memory<'_> {
         turn: EntityId,
         now: u64,
     ) -> MemoryResult<RoomClaimOutcome> {
+        // OF-529: a person claims from its seat, as before; an agent on a
+        // Ready receipt for the turn's thread or the room. Checked before
+        // the room's scope is read, and again in the writer.
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let claimed = turn_in(self.vault(), &txn, turn)?;
+        if claimed.room_id != room.to_hex() {
+            return Err(MemoryError::from(invalid()));
+        }
+        Claimant::admit_in_txn(self.vault(), &txn, room, &claimed, self.actor())?;
+        drop(txn);
         if !turns_readable(&self.room_read_worlds(room)?) {
             return Err(outside_scope());
         }
         // A claim names who holds the turn, so the turn must be one this
         // caller may read.
-        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        let claimed = turn_in(self.vault(), &txn, turn)?;
-        drop(txn);
-        if claimed.room_id != room.to_hex() || self.admitted_turns(vec![claimed])?.is_empty() {
+        if self.admitted_turns(vec![claimed])?.is_empty() {
             return Err(MemoryError::from(invalid()));
         }
         self.with_verified_actor_write_txn(|txn| {
-            require_member(self.vault(), txn, room, self.actor())?;
-            // Claiming a turn is speaking: engine upkeep holds no speaking
-            // role, and winning the turn appoints no host.
-            hosting::admit_room_speech_in(self.vault(), txn, room, self.actor())?;
             let addressed = turn_in(self.vault(), txn, turn)?;
             if addressed.room_id != room.to_hex() {
                 return Err(MemoryError::from(invalid()));
             }
-            if !addressed.addressed_agents.is_empty()
-                && !addressed.addressed_agents.contains(&self.actor().to_hex())
+            let claimant =
+                Claimant::admit_in_txn(self.vault(), txn, room, &addressed, self.actor())?;
+            // Claiming a turn is speaking: engine upkeep holds no speaking
+            // role, and winning the turn appoints no host.
+            claimant.admit_speech_in(self.vault(), txn)?;
+            // An agent holding the thread's open task counts as addressed.
+            // An agent speaks only when it is addressed or holds a task
+            // there (ARCH-0006a, ruled 2026-09-23), so it claims no turn
+            // that names no one either; a person still may.
+            let named = addressed.addressed_agents.contains(&self.actor().to_hex());
+            let task = claimant.held_task_in_txn(self.vault(), txn, &addressed)?;
+            if (claimant.is_agent() || !addressed.addressed_agents.is_empty())
+                && !named
+                && task.is_none()
             {
                 return Ok(RoomClaimOutcome::NotAddressed);
             }
             if let Some(claim) = CLAIMS.get(&self.vault().store, txn, &turn)? {
-                return Ok(if claim.actor == self.actor().to_hex() {
-                    RoomClaimOutcome::Claimed(claim)
-                } else {
-                    RoomClaimOutcome::HeldBy(claim)
-                });
+                if claim.actor != self.actor().to_hex() {
+                    return Ok(RoomClaimOutcome::HeldBy(claim));
+                }
+                claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
+                return Ok(RoomClaimOutcome::Claimed(claim));
             }
             let receipt = RoomClaimReceipt {
                 room_id: room.to_hex(),
@@ -403,6 +495,7 @@ impl Memory<'_> {
                 at: now,
             };
             CLAIMS.put(&self.vault().store, txn, &turn, &receipt)?;
+            claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
             Ok(RoomClaimOutcome::Claimed(receipt))
         })
     }
@@ -410,12 +503,14 @@ impl Memory<'_> {
     /// the claim, membership, reply binding, and addressing before any message.
     pub fn rooms_speak(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         let room = EntityId::from_hex(&turn.conversation_ref)?;
+        // OF-529: an agent speaks on a Ready receipt, checked before the
+        // room's scope is read; a person from its seat, as before.
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        participation::require_speaker_in_txn(self.vault(), &txn, room, turn, self.actor())?;
+        drop(txn);
         if !turns_readable(&self.room_read_worlds(room)?) {
             return Err(outside_scope());
         }
-        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        require_member(self.vault(), &txn, room, self.actor())?;
-        drop(txn);
         self.witness(turn)
     }
 }

@@ -22,6 +22,7 @@ use super::research::{
     CandidateRef, ResearchBindRequest, ResearchTarget, bind_research, research_nodes,
 };
 use super::{CampaignComparisonReport, CampaignConfig};
+use crate::agent_dispatch::TeamRunStamp;
 use crate::dreamer_runner::{DreamerClaimAuthoringAdmission, DreamerTournamentClaim};
 use crate::dreamer_tournament::{
     DreamerTournamentEvidenceStore, DreamerTournamentRunResult, DreamerTournamentStopReason,
@@ -165,7 +166,8 @@ fn check_strategy_skill(vault: &Vault, pin: &ClaimAuthoringSkillPin) -> Result<(
         return Err(invalid("the strategy skill is not admitted and active"));
     }
     if record.version != pin.version
-        || record.content_hash.map(|hash| hash.to_hex()).as_deref() != Some(pin.content_hash.as_str())
+        || record.content_hash.map(|hash| hash.to_hex()).as_deref()
+            != Some(pin.content_hash.as_str())
     {
         return Err(invalid(
             "the strategy skill moved since it was pinned; bind a new campaign",
@@ -260,6 +262,16 @@ pub fn claim_authoring_admission(
     }
 }
 
+/// The team-run stamp of tournament `run_id` (OF-540 (c)). The host passes
+/// it as `AgentSpawnContext.team` on the run's author dispatches, so their
+/// attempts join the Market team receipt [`finalize_claim_tournament`]
+/// records under the same reference.
+/// # Errors
+/// A run id the team reference bound refuses.
+pub fn tournament_team_stamp(run_id: &str) -> Result<TeamRunStamp> {
+    TeamRunStamp::new(format!("autoreason:{run_id}"), TeamPattern::Market)
+}
+
 /// Finalize one tournament run after the unchanged gated writer landed its
 /// winner: check the run's branch evidence and the winner claim, record the
 /// run's team receipt (a Market team decided by its pre-signed ranking rule)
@@ -284,18 +296,22 @@ pub fn finalize_claim_tournament(
         .iter()
         .any(|node| node.attempt == attempt)
     {
-        return Err(invalid("the run attempt is not an experiment of this campaign"));
+        return Err(invalid(
+            "the run attempt is not an experiment of this campaign",
+        ));
     }
     let evidence = DreamerTournamentEvidenceStore::new(vault).list_run(run_id)?;
     let winner = &result.winner;
     if !evidence.iter().any(|row| {
         row.branch_attempt == winner.branch_attempt && row.candidate_ref == winner.candidate_ref
     }) {
-        return Err(invalid("the tournament winner has no persisted branch evidence"));
+        return Err(invalid(
+            "the tournament winner has no persisted branch evidence",
+        ));
     }
-    let claim = vault
-        .get_claim(&winner.claim_id)?
-        .ok_or(invalid("the tournament winner never landed through the gate"))?;
+    let claim = vault.get_claim(&winner.claim_id)?.ok_or(invalid(
+        "the tournament winner never landed through the gate",
+    ))?;
     if team.rule_signed_at > at {
         return Err(invalid("the ranking rule must be signed before the work"));
     }
@@ -306,7 +322,17 @@ pub fn finalize_claim_tournament(
     let width = u32::try_from(branches.len()).map_err(|_| invalid("too many branches"))?;
     let mut roles = team.roles;
     roles.insert("author".to_owned(), width);
-    let team_ref = format!("autoreason:{run_id}");
+    let stamp = tournament_team_stamp(run_id)?;
+    // A stamped run attempt worked in this tournament's team, or its terminal
+    // receipt would join another run's.
+    if let Some(record) = crate::attempt_queue::AttemptQueue::new(vault).get(attempt)?
+        && crate::agent_dispatch::attempt_team_stamp(&record)?.is_some_and(|frozen| frozen != stamp)
+    {
+        return Err(invalid(
+            "the run attempt was dispatched into another team run",
+        ));
+    }
+    let team_ref = stamp.team_ref;
     record_team_receipt(
         vault,
         &TeamReceipt {
@@ -429,7 +455,9 @@ pub fn promote_authoring_strategy(
         return Err(invalid("the comparison belongs to another campaign root"));
     }
     if campaign.promotion.is_some() {
-        return Err(invalid("the campaign's strategy promotion is already spent"));
+        return Err(invalid(
+            "the campaign's strategy promotion is already spent",
+        ));
     }
     check_strategy_skill(vault, &campaign.skill)?;
     let receipt = measure_once(vault, report, campaign.strategy.clone(), measure)?;

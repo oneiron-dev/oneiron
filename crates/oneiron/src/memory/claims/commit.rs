@@ -13,11 +13,15 @@ impl Memory<'_> {
         for input in claims {
             match self.commit_one(input, auto_supersede, forced_approval) {
                 Ok(receipt) => receipts.push(receipt),
+                // Nothing landed: the attempted id stays a plain field and
+                // the receipt names no record (OF-063).
                 Err(err) => receipts.push(CommitReceipt {
                     claim_short_id: input.id.clone().unwrap_or_default(),
                     approval: "rejected".to_owned(),
                     superseded_short_id: None,
                     receipt_ref: format!("rejected:{}", err.code),
+                    claim: None,
+                    superseded: None,
                 }),
             }
         }
@@ -211,6 +215,13 @@ impl Memory<'_> {
                     }
                     let publication_write =
                         input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
+                    // OF-187: a promise recorded here owes its reminders, so a
+                    // commitment series is indexed in this same transaction.
+                    let commitment_write =
+                        input.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD;
+                    if commitment_write {
+                        content.stage_claim_support(id, |_| Ok(()))?;
+                    }
                     if publication_write {
                         content.stage_claim_support(id, |txn| {
                             super::booking_publication::stage_publication_write(self.vault, txn, id)
@@ -255,6 +266,12 @@ impl Memory<'_> {
                             )
                         })?;
                     }
+                    if commitment_write {
+                        content.finish_claim_support(id, |txn| {
+                            self.vault
+                                .index_landed_commitment_series_in_txn(txn, &id, now)
+                        })?;
+                    }
                     if publication_write {
                         content.finish_claim_support(id, |txn| {
                             crate::booking::publication::index_publication_in_txn(
@@ -291,14 +308,14 @@ impl Memory<'_> {
             return Err(hard_deleted_refusal(&id));
         }
 
-        let superseded_short_id = match prior {
+        let superseded = match prior {
             Some(old_id)
                 if self
                     .vault
                     .get_claim(&old_id)?
                     .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Superseded) =>
             {
-                Some(self.short_ref_or_hex(&old_id)?)
+                Some((old_id, self.short_ref_of(&old_id)?))
             }
             Some(_) => None,
             None => None,
@@ -310,10 +327,19 @@ impl Memory<'_> {
         let receipt_ref = self
             .latest_decision_ref_for(&id)?
             .unwrap_or_else(|| format!("claim:{}", id.to_hex()));
+        let short = self.short_ref_of(&id)?;
+        let claim_ref = |id: &EntityId, short: Option<&str>| {
+            crate::lens::RecordRef::from_id(crate::registry::ENTITY_TYPE_CLAIM, id, short)
+        };
         Ok(CommitReceipt {
-            claim_short_id: self.short_ref_or_hex(&id)?,
+            claim: Some(claim_ref(&id, short.as_deref())),
+            claim_short_id: short.unwrap_or_else(|| id.to_hex()),
             approval: final_approval,
-            superseded_short_id,
+            superseded: superseded
+                .as_ref()
+                .map(|(old_id, short)| claim_ref(old_id, short.as_deref())),
+            superseded_short_id: superseded
+                .map(|(old_id, short)| short.unwrap_or_else(|| old_id.to_hex())),
             receipt_ref,
         })
     }

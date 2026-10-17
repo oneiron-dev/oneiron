@@ -6,7 +6,7 @@ use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;
 use super::host::{UnitRate, Unpriced, convert};
 use super::permit::RunPermit;
-use super::receipt::RunEvent;
+use super::receipt::{RunEvent, RunTokenUsage};
 
 /// How a permitted call ended, for its settlement.
 #[derive(Debug, Clone, Copy)]
@@ -86,6 +86,18 @@ impl RunInner {
             permit.revision,
             RunEvent::Settled {
                 lease: permit.lease.id().to_owned(),
+                dispatched: started,
+                usage: match outcome {
+                    CallOutcome::Answered(usage) => Some(RunTokenUsage {
+                        input: usage.input,
+                        output: usage.output,
+                    }),
+                    _ => None,
+                },
+                service_quantity: match outcome {
+                    CallOutcome::Used(quantity) => Some(quantity),
+                    _ => None,
+                },
                 units: charged,
                 unit: line_unit.clone(),
                 allocation_units: allocation.as_ref().map(|(units, _)| *units),

@@ -63,6 +63,8 @@ pub(crate) fn capture(
             storage::TextField::MapField(field) => Some(field),
         },
         text: doc.text(),
+        metadata: doc.metadata_bytes()?,
+        record_fields: doc.record_fields()?,
         birth_actor: raw(&doc.birth().actor)?,
         birth_at: doc.birth().at,
         history: history(&vault.store, txn, &entity, &doc)?,
@@ -103,7 +105,7 @@ impl Versions {
 struct ForkAt {
     record: ForkRecord,
     base: Option<usize>,
-    output: Option<String>,
+    output: Option<(String, BTreeMap<String, Vec<u8>>)>,
     index: u16,
     len: u16,
     settled: bool,
@@ -187,7 +189,8 @@ fn history(
             let bytes = ENTITY_DOC_FORK_SNAPSHOT
                 .get(store, txn, &record.fork)?
                 .ok_or(invalid("entity document pending fork lost its output"))?;
-            Some(EntityDoc::from_snapshot(&bytes)?.text())
+            let fork = EntityDoc::from_snapshot(&bytes)?;
+            Some((fork.text(), fork.metadata_bytes()?))
         } else {
             None
         };
@@ -215,11 +218,14 @@ fn history(
     }
 
     let mut texts = Vec::with_capacity(versions.frontiers.len());
+    let mut metadata = Vec::with_capacity(versions.frontiers.len());
     for frontier in &versions.frontiers {
-        texts.push(doc.fork(&frontier.encode())?.text());
+        let version = doc.fork(&frontier.encode())?;
+        texts.push(version.text());
+        metadata.push(version.metadata_bytes()?);
     }
     let parents = hasse(&versions.vvs);
-    let order = canonical_order(&parents, &texts)?;
+    let order = canonical_order(&parents, &texts, &metadata)?;
     if order[head] != texts.len() - 1 {
         return Err(Error::InvariantViolation(
             "live head is not the last version",
@@ -238,6 +244,7 @@ fn history(
             .map_or("", |&p| texts[by_index[p as usize]].as_str());
         let mut version = CanonicalEntityDocumentHistory::splice(first, &texts[node])?;
         version.parents = mapped;
+        version.metadata = metadata[node].clone();
         carried.push(version);
     }
     let at = |node: usize| order[node] as u32;
@@ -295,7 +302,8 @@ fn history(
                     ForkStatus::Rejected => CanonicalForkStatus::Rejected,
                 },
                 base: fork.base.map(at),
-                output: fork.output,
+                output: fork.output.as_ref().map(|(text, _)| text.clone()),
+                output_metadata: fork.output.map(|(_, metadata)| metadata),
                 proposal_index: fork.index,
                 proposal_len: fork.len,
                 proposal_settled: fork.settled,
@@ -365,7 +373,11 @@ fn hasse(vvs: &[VersionVector]) -> Vec<Vec<usize>> {
 /// among the ready versions, the least by (parent indices, text). The same
 /// causal shape and texts give the same order on every capture, including
 /// the recapture of a replayed document.
-fn canonical_order(parents: &[Vec<usize>], texts: &[String]) -> Result<Vec<usize>> {
+fn canonical_order(
+    parents: &[Vec<usize>],
+    texts: &[String],
+    metadata: &[BTreeMap<String, Vec<u8>>],
+) -> Result<Vec<usize>> {
     let mut order = vec![usize::MAX; parents.len()];
     for index in 0..parents.len() {
         let mut best: Option<(Vec<usize>, usize)> = None;
@@ -376,9 +388,13 @@ fn canonical_order(parents: &[Vec<usize>], texts: &[String]) -> Result<Vec<usize
             }
             let mut key: Vec<usize> = parents[node].iter().map(|&p| order[p]).collect();
             key.sort_unstable();
-            let ordering = best
-                .as_ref()
-                .map(|(known, other)| (&key, &texts[node]).cmp(&(known, &texts[*other])));
+            let ordering = best.as_ref().map(|(known, other)| {
+                (&key, &texts[node], &metadata[node]).cmp(&(
+                    known,
+                    &texts[*other],
+                    &metadata[*other],
+                ))
+            });
             match ordering {
                 None | Some(std::cmp::Ordering::Less) => {
                     best = Some((key, node));
@@ -449,6 +465,9 @@ pub(crate) fn restore(
     match &row.history {
         None => {
             let doc = EntityDoc::rebuild_value(entity, &row.text, birth_actor, row.birth_at)?;
+            EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
+            EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
+            doc.doc.commit();
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
         }
@@ -535,6 +554,8 @@ fn replay(
         EntityId::from_bytes(row.birth_actor)?,
         row.birth_at,
     )?;
+    EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
+    doc.doc.commit();
     let root = doc.doc.oplog_frontiers();
     let mut frontiers: Vec<Frontiers> = Vec::with_capacity(texts.len());
     for (index, (version, text)) in history.versions.iter().zip(&texts).enumerate() {
@@ -562,6 +583,7 @@ fn replay(
             .get_text(BODY)
             .update(text, UpdateOptions::default())
             .map_err(|_| invalid("entity document version replay"))?;
+        EntityDoc::replace_metadata(&branch, &version.metadata)?;
         branch
             .get_map("meta")
             .insert(
@@ -586,7 +608,10 @@ fn replay(
     let head = frontiers
         .last()
         .ok_or(invalid("entity document history has no head"))?;
-    if &doc.doc.oplog_frontiers() != head || doc.text() != row.text {
+    if &doc.doc.oplog_frontiers() != head
+        || doc.text() != row.text
+        || doc.metadata_bytes()? != row.metadata
+    {
         return Err(Error::InvariantViolation("replayed head differs"));
     }
     let doc = if history.shallow {
@@ -715,6 +740,12 @@ fn bind_rows(
                 .get_text(BODY)
                 .update(output, UpdateOptions::default())
                 .map_err(|_| invalid("entity document fork replay"))?;
+            EntityDoc::replace_metadata(
+                &branch.doc,
+                fork.output_metadata
+                    .as_ref()
+                    .ok_or(invalid("entity document fork metadata"))?,
+            )?;
             branch.doc.commit();
             ENTITY_DOC_FORK_SNAPSHOT.put(
                 store,

@@ -33,8 +33,12 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.depth_remaining,
         &spawn.project_ref,
         &spawn.scope,
+        &spawn.type_ref,
         &spawn.budget,
         &spawn.spend,
+        &spawn.room,
+        &spawn.team,
+        &spawn.plan,
     ))
     .map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -205,16 +209,17 @@ impl<'a> AgentDispatcher<'a> {
     }
 
     /// Dispatches an in-process child that REALIZES a TASK: identical to
-    /// [`Self::dispatch`] except the queued attempt carries the TASK backlink,
-    /// and the caller owns the transaction so the TASK and its realizing
-    /// dispatch commit together (ONE-1700 assignee routing).
+    /// [`Self::dispatch_with_context`] except the queued attempt carries the
+    /// TASK backlink, and the caller owns the transaction so the TASK and its
+    /// realizing dispatch commit together (ONE-1700 assignee routing).
     pub(crate) fn dispatch_for_task_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         task_ref: EntityId,
         input: DispatchAgent,
+        spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
-        self.dispatch_in_txn(wtxn, Some(task_ref), input, AgentSpawnContext::default())
+        self.dispatch_in_txn(wtxn, Some(task_ref), input, spawn)
     }
 
     pub(super) fn dispatch_in_txn(
@@ -246,6 +251,14 @@ impl<'a> AgentDispatcher<'a> {
             input.now,
         )?;
         dispatch_input.launch = Some(launch.statement.clone());
+        // OF-531: a room-bound launch re-proves its agent's join, before any
+        // reservation or enqueue, under the scope it reserves under.
+        dispatch_input.join = self.require_room_join_in_txn(
+            wtxn,
+            dispatch_input.room.as_ref(),
+            requested_ref,
+            launch.statement.parent_scope.as_ref(),
+        )?;
         let encoded = super::origin::with_origin_conversation(
             encode_agent_dispatch_input(&dispatch_input)?,
             origin,
@@ -305,6 +318,19 @@ impl<'a> AgentDispatcher<'a> {
                         input.now,
                     ),
                 )?;
+                // OF-368: a TASK a comment's assignment made waits while that
+                // comment is unattached. Its attempt is minted paused for the
+                // hold, never dropped; a reattach resumes it.
+                if let Some(task) = task_ref
+                    && let Some(hold) = self.vault.annotation_task_hold_in_txn(wtxn, &task)?
+                {
+                    status.attempt = AttemptQueue::new(self.vault).hold_for_annotation_in_txn(
+                        wtxn,
+                        status.attempt.id,
+                        hold,
+                        input.now,
+                    )?;
+                }
                 AgentDispatchOutcome::Dispatched(status)
             }
             EnqueueDreamerAttemptOutcome::Existing(status) => {
@@ -344,6 +370,7 @@ impl<'a> AgentDispatcher<'a> {
     ) -> Result<AgentDispatchInput> {
         let requested_parent = input.parent_attempt;
         let spawn_intent = spawn_intent_digest(&input, &spawn)?;
+        let requested_target = input.target.agent_definition_ref()?;
 
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted
@@ -408,6 +435,76 @@ impl<'a> AgentDispatcher<'a> {
             }
         };
 
+        // OF-543/OF-541: placed once, here at spawn, against the tree in
+        // force for the spawn's project (the team-shape skill's data). A
+        // planned spawn takes the stamp its plan read and is never placed
+        // again; a supplied stamp the current tree accepts is kept; anything
+        // else is placed, and unsure is the root — never an untyped spawn.
+        let tree =
+            super::task_type_tree::load_team_type_tree_in_txn(self.vault, wtxn, Some(project_ref))?;
+        if spawn
+            .type_ref
+            .as_ref()
+            .is_some_and(|type_ref| type_ref.node_id.is_empty())
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "task_type_ref node_id must not be empty",
+            )));
+        }
+        let type_ref = match &spawn.plan {
+            Some(plan) => {
+                plan.validate()?;
+                if spawn
+                    .type_ref
+                    .as_ref()
+                    .is_some_and(|type_ref| *type_ref != plan.asked.type_ref)
+                {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "spawn type stamp differs from the one its plan read",
+                    )));
+                }
+                if requested_target != plan.plan.agent_def {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "dispatch target is not the seat its plan resolved",
+                    )));
+                }
+                tree.validate_current_ref(&plan.asked.type_ref)
+                    .map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "the plan's type stamp is not in the tree in force; plan again",
+                        ))
+                    })?;
+                plan.asked.type_ref.clone()
+            }
+            // Inside the write transaction no model call may run: the
+            // placement skill's rule rung reads alone. A host that wants its
+            // rungs to place does so before dispatch (`place_spawn_type`).
+            None => super::task_type_tree::place_in_tree(
+                &tree,
+                spawn.type_ref.as_ref(),
+                None,
+                None,
+                Some(project_ref),
+                None,
+            ),
+        };
+
+        // OF-540: the team run, frozen once here. An explicit stamp wins (a
+        // nested team names its own); otherwise a child keeps its parent's
+        // frozen stamp; a root without one is no team run.
+        let team = match (spawn.team, requested_parent) {
+            (Some(team), _) => {
+                team.validate()?;
+                Some(team)
+            }
+            (None, Some(parent)) => AttemptQueue::new(self.vault)
+                .get_in_write_txn(wtxn, parent)?
+                .map(|record| super::codec::attempt_team_stamp(&record))
+                .transpose()?
+                .flatten(),
+            (None, None) => None,
+        };
+
         // 3. The descriptor rides the payload UNRESOLVED. It was validated
         //    against live parent state in `dispatch_with_context`; the executor
         //    resolves it again at read time, which is what keeps it fresh.
@@ -421,8 +518,13 @@ impl<'a> AgentDispatcher<'a> {
             project_ref: Some(project_ref),
             spawn_intent: Some(spawn_intent),
             scope,
+            type_ref,
             budget: spawn.budget,
             launch: None,
+            room: spawn.room,
+            join: None,
+            team,
+            plan: spawn.plan,
         })
     }
 
