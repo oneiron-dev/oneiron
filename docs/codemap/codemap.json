@@ -11162,7 +11162,7 @@
      "path": "src/code_run/payload.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -11539,6 +11539,7 @@
       "AgentVerbAnswer",
       "AgentVerbDoor",
       "AgentVerbRefusal",
+      "AgentVerbRefusalWords",
       "RunCall",
       "SelfAgentDefinitionPutCall",
       "SelfAgentDefinitionPutResult",
@@ -11581,7 +11582,7 @@
       "const": 2,
       "enum": 7,
       "fn": 20,
-      "struct": 29,
+      "struct": 30,
       "trait": 2
      }
     },
