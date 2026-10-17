@@ -17,7 +17,6 @@ use crate::code_run::actions::{
 use crate::consent::AuthenticatedOwner;
 use crate::lens::{LensPrincipalBinding, LensText, SelfUiActionId};
 use crate::memory::{Memory, MemoryResult};
-use crate::task_verb::sdk::EmptyRequest;
 use crate::{EdgeActorClass, EntityId, Error, Result, WriteActor};
 
 /// `vault.settings.wake_policy.set`'s input.
@@ -163,10 +162,7 @@ pub fn wake_policy_set_embedded(
 /// `vault.settings.inference_defaults` on an embedded handle.
 /// # Errors
 /// The action's refusal: the handle's actor needs an Auto ceiling.
-pub fn inference_defaults_embedded(
-    memory: &Memory<'_>,
-    _input: EmptyRequest,
-) -> MemoryResult<PolicyActionOutcome> {
+pub fn inference_defaults_embedded(memory: &Memory<'_>) -> MemoryResult<PolicyActionOutcome> {
     run_embedded(memory, inference_defaults_read_action()?, None)
 }
 

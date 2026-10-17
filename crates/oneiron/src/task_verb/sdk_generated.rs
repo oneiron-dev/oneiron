@@ -4827,7 +4827,7 @@ pub fn vault_settings_inference_defaults(
     memory: &Memory<'_>,
     _input: EmptyRequest,
 ) -> MemoryResult<crate::policy_setting_doors::PolicyActionOutcome> {
-    crate::policy_setting_doors::inference_defaults_embedded(memory, input)
+    crate::policy_setting_doors::inference_defaults_embedded(memory)
 }
 pub fn vault_settings_inference_defaults_replace(
     memory: &Memory<'_>,

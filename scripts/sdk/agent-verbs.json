@@ -1416,7 +1416,7 @@
       "description": "Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling.",
       "input": "EmptyRequest",
       "output": "crate::policy_setting_doors::PolicyActionOutcome",
-      "call": "crate::policy_setting_doors::inference_defaults_embedded(memory, input)?",
+      "call": "crate::policy_setting_doors::inference_defaults_embedded(memory)?",
       "host_door": true,
       "scope": "Read",
       "mcp_fields": {},
