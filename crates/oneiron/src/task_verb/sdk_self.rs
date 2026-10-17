@@ -10,13 +10,13 @@ use super::presence_scan::superseded_attempt_ids;
 use super::rate_limit::task_create_owner_in;
 use crate::attempt_queue::AttemptQueue;
 use crate::consent::AuthenticatedOwner;
-use crate::{EdgeActorClass, EntityId};
 use crate::memory::{
     EntityRefReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError,
     MemoryResult,
 };
 use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
 use crate::run_tree::{RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter};
+use crate::{EdgeActorClass, EntityId};
 
 /// `self.memory.diary`'s input: one private entry, and the kind of entry it
 /// is (`reflection`, `daily`), when the agent names one.

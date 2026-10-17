@@ -198,7 +198,11 @@ pub(crate) fn run_verdict(
     let settings = server.ai.chat_settings();
     let meter = vault
         .policy_budget_guard(
-            format!("ai.verdict:{}:{}", principal.to_hex(), vault.now_recorded_at()),
+            format!(
+                "ai.verdict:{}:{}",
+                principal.to_hex(),
+                vault.now_recorded_at()
+            ),
             settings.turn_budget_units,
             oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
             BudgetExhaustionPolicy::Suspend,

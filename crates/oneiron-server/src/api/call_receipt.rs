@@ -104,7 +104,13 @@ pub(crate) fn record_socket_reply(
     record(
         server,
         false,
-        connection_call(CallTransport::Ws, verb, outcome, request_digest, result_digest),
+        connection_call(
+            CallTransport::Ws,
+            verb,
+            outcome,
+            request_digest,
+            result_digest,
+        ),
     )
 }
 
@@ -303,10 +309,9 @@ fn receipted_door(path: &str) -> Option<(CallTransport, String)> {
         return Some((CallTransport::HttpFacade, verb.to_owned()));
     }
     match path {
-        "/mcp" | "/mcp/tool-first" => Some((
-            CallTransport::Mcp,
-            path.trim_start_matches('/').to_owned(),
-        )),
+        "/mcp" | "/mcp/tool-first" => {
+            Some((CallTransport::Mcp, path.trim_start_matches('/').to_owned()))
+        }
         "/ws" => Some((CallTransport::Ws, "ws.upgrade".to_owned())),
         _ => None,
     }

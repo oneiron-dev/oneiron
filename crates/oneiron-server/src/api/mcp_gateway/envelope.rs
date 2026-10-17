@@ -473,8 +473,8 @@ async fn mcp_endpoint(
         Ok(_) => method == "tools/call",
         Err(error) => error.call_receipt.is_some(),
     };
-    let stamp = (!covered)
-        .then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
+    let stamp =
+        (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
     let reply = mcp_envelope(id, result);
     if let Some(claim) = claim {
         let mut saved = reply.clone();
