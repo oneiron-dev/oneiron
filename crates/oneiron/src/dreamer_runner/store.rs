@@ -771,6 +771,7 @@ impl<'a> DreamerRunnerStore<'a> {
         let record = DreamerParkedAttemptRecord {
             attempt_id: input.attempt_id,
             reason: input.reason,
+            cause: input.cause,
             park_owner: input.park_owner,
             parked_at: input.now,
         };
