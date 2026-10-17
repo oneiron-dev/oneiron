@@ -22977,6 +22977,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/record_references/blocks.rs",
+     "purpose": "The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -26418,7 +26428,7 @@
      "path": "src/lens/proposal.rs",
      "purpose": "Pack lens proposals (OF-250): one frozen compiled tree bound to an installed pack's skill, with its authored…",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 11,
       "enum": 1,
       "fn": 2,
@@ -30610,7 +30620,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -30657,7 +30667,7 @@
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
       "crate-vis": 33,
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -50684,7 +50694,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51547,7 +51557,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3115,
+   "source_files": 3116,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59480,6 +59490,7 @@
       "NapiReadScope",
       "NapiRecallMedia",
       "NapiRecallScope",
+      "NapiRecordRef",
       "NapiRetrievalMeta",
       "NapiScopeHonesty",
       "NapiStructuralEdgeSpec",
@@ -59493,7 +59504,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 54
+      "struct": 55
      }
     },
     {
@@ -62454,7 +62465,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -62980,7 +62991,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 27
      }
     },
     {
