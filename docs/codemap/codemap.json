@@ -5819,6 +5819,7 @@
       "ConstraintAgentCapability",
       "ConstraintContinuation",
       "ConstraintDeflect",
+      "ConstraintFrontConfig",
       "ConstraintFrontCopy",
       "ConstraintFrontOutcome",
       "ConstraintSlotReply",
@@ -5829,8 +5830,8 @@
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 1,
-      "struct": 5
+      "fn": 5,
+      "struct": 6
      }
     },
     {
@@ -63449,7 +63450,17 @@
      "path": "src/api/booking/free_text.rs",
      "purpose": "A booking page's free-text constraint (ONE-1816), parsed on the cheap seat…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/booking/front.rs",
+     "purpose": "ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -71027,7 +71038,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 288,
+     "files": 289,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71393,7 +71404,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 571,
+   "source_files": 572,
    "test_files": 182
   },
   "oneiron-spawn": {
