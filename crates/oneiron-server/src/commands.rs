@@ -93,6 +93,8 @@ mod init;
 pub use init::init;
 mod reembed;
 pub use reembed::reembed;
+mod device;
+pub use device::device_enrol;
 mod serve;
 use self::serve::serve_with_config;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -600,11 +602,15 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         org_ref: None,
         write_facet: None,
     };
-    let body = serde_json::to_vec(&json!({
+    let mut body = json!({
         "scope": scope,
         "lifetime_secs": args.lifetime_secs,
         "principal": principal,
-    }))?;
+    });
+    if let Some(machine) = args.machine {
+        body["machine"] = machine.into();
+    }
+    let body = serde_json::to_vec(&body)?;
     let credential = api::CurlCredential {
         secret: Some(&token),
         binding: Some(&binding),
