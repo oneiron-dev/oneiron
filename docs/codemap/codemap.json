@@ -13692,7 +13692,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConnectorConsentRowView",
@@ -17943,7 +17943,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -18659,7 +18659,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 18,
+      "const": 19,
       "crate-vis": 8,
       "fn": 10,
       "trait": 1
@@ -18854,7 +18854,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 12,
+      "mod": 13,
       "re-export": 5
      }
     },
@@ -18975,6 +18975,23 @@
      "purpose": "The Coach's retrieval-policy update on the shared nightly maintenance lane",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealCheck",
+      "SealCheckReport",
+      "SealChecker"
+     ],
+     "path": "src/dreamer_runner/maintenance/seal_checks.rs",
+     "purpose": "The seal's checks, run (ARCH-0079 #stuck-confession-and-the-seal, OF-544, OF-420): \"A confession triggers a…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -19141,7 +19158,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 13,
-      "fn": 18,
+      "fn": 19,
       "struct": 26
      }
     },
@@ -28928,7 +28945,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -33158,7 +33175,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/tool_schema.rs",
@@ -52185,7 +52202,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53186,9 +53203,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 165,
+   "over_bar": 166,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3224,
+   "source_files": 3225,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60858,7 +60875,7 @@
      "purpose": "Named deterministic non-LLM fallback runners",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1,
       "trait": 1
      }
@@ -63593,13 +63610,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_host/seal_checks.rs",
+     "purpose": "The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/code_fix.rs",
      "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -70874,7 +70901,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -70904,7 +70931,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 3
      }
     },
@@ -70993,7 +71020,7 @@
      "path": "src/server/resident_pump.rs",
      "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -71778,7 +71805,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72172,7 +72199,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 587,
+   "source_files": 588,
    "test_files": 182
   },
   "oneiron-spawn": {
