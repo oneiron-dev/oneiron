@@ -122,23 +122,31 @@ enum Source<'a> {
         /// The install's configured keystore; the platform's at its defaults
         /// when none was given ([`SideRestoreSource::with_keystore`]).
         keystore: Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
+        /// A sealed vault's page seal, which every read of it opens with.
+        page_seal: Option<crate::world_keys::VaultPageSeal>,
     },
 }
 impl SideRestoreSource<'static> {
     /// The vault at `vault_dir`, read without opening it, so a running
     /// server may hold it; a vault open in this process is
-    /// [`Vault::side_restore_source`]. Refuses when no vault is there, when
-    /// it cannot be read, or when it is archived. Each restore reads it again
-    /// at its start, and refuses if the vault there is no longer the store
-    /// read here, bound to the custody it bound here.
-    pub fn read(vault_dir: &Path) -> Result<Self> {
-        let first = crate::store::read_live_custody(vault_dir)?;
+    /// [`Vault::side_restore_source`]. A sealed vault (OF-570 maximum tier)
+    /// reads with `page_seal`, its seal unlocked from its mirror, here and at
+    /// each restore's start. Refuses when no vault is there, when it cannot
+    /// be read, or when it is archived. Each restore reads it again at its
+    /// start, and refuses if the vault there is no longer the store read
+    /// here, bound to the custody it bound here.
+    pub fn read(
+        vault_dir: &Path,
+        page_seal: Option<crate::world_keys::VaultPageSeal>,
+    ) -> Result<Self> {
+        let first = crate::store::read_live_custody(vault_dir, page_seal.as_ref())?;
         Ok(Self(Source::Disk {
             dir: vault_dir.to_path_buf(),
             first,
             #[cfg(unix)]
             shared: crate::store::shared_vault_root(vault_dir)?,
             keystore: None,
+            page_seal,
         }))
     }
 
@@ -185,12 +193,29 @@ impl SideRestoreSource<'_> {
             Source::Disk { dir, .. } => CheckpointKey::unlock_on_this_device(checkpoint, dir),
         }
     }
+    /// The source's page seal while its pages are sealed (OF-570 maximum
+    /// tier): a copy restored beside it takes a fresh incarnation of it, and
+    /// so keeps the source's tier. `None` for a plain source.
+    pub fn page_seal(&self) -> Option<&crate::world_keys::VaultPageSeal> {
+        match &self.0 {
+            Source::Open(vault) => vault
+                .vault_pages_sealed()
+                .then_some(vault.config.page_seal.as_ref())
+                .flatten(),
+            Source::Disk { page_seal, .. } => page_seal.as_ref(),
+        }
+    }
     /// The source's live custody state, read now, at a restore's start.
     fn capture(&self) -> Result<LiveCustody> {
         match &self.0 {
             Source::Open(vault) => vault.store.live_custody(),
-            Source::Disk { dir, first, .. } => {
-                let live = crate::store::read_live_custody(dir)?;
+            Source::Disk {
+                dir,
+                first,
+                page_seal,
+                ..
+            } => {
+                let live = crate::store::read_live_custody(dir, page_seal.as_ref())?;
                 if !first.same_vault(&live) {
                     return Err(Error::InvalidConfig(
                         "the vault read as this side restore's source has changed".into(),
@@ -489,6 +514,30 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
+        Self::restore_checkpoint_finishing(
+            path,
+            key,
+            destination,
+            config,
+            reason,
+            restored_at,
+            |_| Ok(()),
+        )
+    }
+    /// [`Vault::restore_checkpoint`], with `finish` run on the restored vault
+    /// once its rows are in and it reopened, before it is kept: how a host
+    /// wraps a restored sealed vault's key to itself before the vault is
+    /// published. A refusal from `finish` removes the vault, and the
+    /// page-seal mirror its open wrote, as any refusal does.
+    pub fn restore_checkpoint_finishing(
+        path: &Path,
+        key: &CheckpointKey,
+        destination: &Path,
+        config: VaultConfig,
+        reason: RestoreReason,
+        restored_at: u64,
+        finish: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
         let (made, forked, mut vault, report) = Self::restore_image(
@@ -501,6 +550,7 @@ impl Vault {
             restored_at,
             Custody::Keep,
         )?;
+        finish(&vault)?;
         forked.keep();
         made.keep(&mut vault);
         Ok((vault, report))
@@ -758,7 +808,12 @@ impl Vault {
         // it: only a committed restore keeps them (C8). The config is checked
         // first, as an owned open checks it before it touches the disk.
         Self::check_open_config(&config)?;
-        let made = MadeDestination::make(destination, home)?;
+        let mut made = MadeDestination::make(destination, home)?;
+        // A sealed copy's open writes its page-seal mirror beside it, outside
+        // the directory: a refusal removes that too.
+        if config.page_seal.is_some() {
+            made.owns_page_seal_mirror()?;
+        }
         let mut forked = ForkedCustody(None);
         let vault = Self::open_under_lease(destination, config.clone(), made.lease()?)?;
         #[cfg(test)]

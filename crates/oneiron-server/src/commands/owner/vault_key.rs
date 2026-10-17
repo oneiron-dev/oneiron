@@ -50,7 +50,7 @@ use crate::cli::{
 };
 use crate::commands::credential_file;
 use crate::config::{ServeConfig, resolve_serve_config};
-use crate::owner::backup::{self, RestoredFresh};
+use crate::owner::backup::{self, RestoreTarget, RestoredFresh};
 use crate::owner::local_owner;
 use crate::owner::vault_key::{self as view, SignerPin, hex, secret32};
 
@@ -228,6 +228,53 @@ pub(crate) fn prepare_page_seal(
          `oneiron init --maximum-tier --secret-file <file>`"
     );
     Ok(Some(world_keys::new_page_seal(path)?))
+}
+
+/// The page seal of the sealed vault at `path` (OF-570 maximum tier), for a
+/// restore that reads or replaces it, or an archive it activates: unlocked
+/// from its mirror with this install's keystore, else with `unlock` when
+/// that names another way. `None` for a plain vault; a mirror whose vault's
+/// data is missing is refused.
+pub(crate) fn page_seal_at(
+    config: &ServeConfig,
+    path: &Path,
+    unlock: Option<&HostUnlock>,
+) -> anyhow::Result<Option<VaultPageSeal>> {
+    refuse_orphaned_page_seal(path)?;
+    if !world_keys::vault_is_sealed(path)? {
+        return Ok(None);
+    }
+    let mut device = None;
+    if let Some(keystore) = config.keystore.open(path)? {
+        match world_keys::unlock_page_seal(path, &VaultKeyUnlock::Device(keystore.as_ref())) {
+            Ok(seal) => return Ok(Some(seal)),
+            Err(error) => device = Some(error),
+        }
+    }
+    if let Some(unlock) = unlock
+        && let Some(engine) = unlock.engine()
+    {
+        return world_keys::unlock_page_seal(path, &engine)
+            .map(Some)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "vault {} is sealed (maximum tier) and did not unlock with {}: {error}",
+                    path.display(),
+                    unlock.name()
+                )
+            });
+    }
+    match device {
+        Some(error) => anyhow::bail!(
+            "vault {} is sealed (maximum tier) and did not unlock with this install's keystore: \
+             {error}",
+            path.display()
+        ),
+        None => anyhow::bail!(
+            "vault {} is sealed (maximum tier) and the keystore backend is off",
+            path.display()
+        ),
+    }
 }
 
 /// Refuses a page-seal mirror with no vault beside it, before anything can
@@ -804,7 +851,9 @@ pub(super) struct FreshRestore {
 }
 
 /// Restores `backup` where no vault is yet, unlocks the new vault's data key
-/// the same way and wraps it to this install's keystore.
+/// the same way and wraps it to this install's keystore. The vault is sealed
+/// (OF-570 maximum tier) when the config asks for the tier, under the
+/// backup's own data key, and is kept only once its key is wrapped here.
 pub(super) fn restore_fresh(
     backup: &Path,
     config: &ServeConfig,
@@ -823,20 +872,23 @@ pub(super) fn restore_fresh(
         }
         .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?,
     };
-    let (vault, restored) =
-        backup::restore_fresh(backup, &config.vault_path, vault_config(config), &key)?;
-    let installed = config.keystore.install_on(&vault, &config.vault_path);
-    unlock.unlock_live(&vault).map_err(|error| {
-        anyhow::anyhow!(
-            "the restored vault at {} did not unlock with {}: {error}",
-            restored.vault.display(),
-            unlock.name()
-        )
+    let mut target = vault_config(config);
+    target.page_seal = backup::restore_target_seal(RestoreTarget::Fresh {
+        maximum_tier: config.maximum_tier,
+        key: &key,
     })?;
-    // A device unlock wraps the key to this install on its own.
-    if installed && !matches!(unlock, HostUnlock::Device) {
-        vault.add_vault_key_device()?;
-    }
+    let path = &config.vault_path;
+    // Before the vault is kept: its key unlocks the same way and is wrapped
+    // to this install, so a sealed one is published only once it opens here.
+    let (vault, restored) = backup::restore_fresh(backup, path, target, &key, |vault| {
+        let installed = config.keystore.install_on(vault, path);
+        unlock.unlock_live(vault)?;
+        // A device unlock wraps the key to this install on its own.
+        if installed && !matches!(unlock, HostUnlock::Device) {
+            vault.add_vault_key_device()?;
+        }
+        vault.check_page_custody()
+    })?;
     Ok(FreshRestore {
         wraps: view::report(&vault)?.wraps,
         unlocked_with: unlock.name(),
