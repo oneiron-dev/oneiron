@@ -390,6 +390,8 @@ class Oneiron:
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
+        @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs": ...
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs": ...
@@ -652,6 +654,9 @@ class Oneiron:
             """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
         def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+    class _VaultSecretsVerbs:
+        def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
     class _VaultWidenProposalsVerbs:
         def __call__(self, spec: Facade.WidenProposalsRequest) -> Facade.WidenProposalsView:
             """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
