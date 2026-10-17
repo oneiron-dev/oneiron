@@ -206,6 +206,7 @@ impl<'v> Memory<'v> {
                 task_grant: self.task_grant,
                 origin_conversation: self.origin_conversation,
                 task_host: None,
+                task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
                 credential: self.credential,
                 credential_instrument: self.credential_instrument.clone(),
