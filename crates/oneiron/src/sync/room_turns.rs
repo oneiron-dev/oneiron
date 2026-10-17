@@ -219,8 +219,8 @@ fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
 impl Vault {
     /// Mirrors TURN `turn`'s room row into the live window that carries the
     /// TURN, after a door changed the row: a thread-task binding or a
-    /// conversion (OF-522). Best effort: a window opened later mirrors it as
-    /// it opens.
+    /// conversion (OF-522), and the side rows the door wrote with it (FIX
+    /// 1794). Best effort: a window opened later mirrors it as it opens.
     pub(crate) fn refresh_room_turn_in_live_window(&self, turn: &EntityId) {
         let hex = turn.to_hex();
         for window in self.live_windows() {
@@ -241,5 +241,6 @@ impl Vault {
                 }
             }
         }
+        self.refresh_room_turn_facts_in_live_windows(*turn);
     }
 }

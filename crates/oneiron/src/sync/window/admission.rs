@@ -202,6 +202,11 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::room_turns::ROOM_TURNS_MAP),
         )?;
+        // FIX 1794: and every room side row.
+        crate::sync::room_facts::admit_room_fact_map(
+            key,
+            &candidate.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
+        )?;
         // A snapshot can also carry the state at a root, where a carrier
         // deleted after the root survives outside the retained ops, and
         // later exports reuse that root as encoded. Two Loro readers decode
@@ -245,6 +250,10 @@ fn validate_window_update(
             crate::sync::room_turns::admit_room_turn_map(
                 key,
                 &root.get_map(crate::sync::room_turns::ROOM_TURNS_MAP),
+            )?;
+            crate::sync::room_facts::admit_room_fact_map(
+                key,
+                &root.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
             )?;
         }
         if misplaced {
@@ -323,6 +332,8 @@ fn validate_window_update(
     let custody = ContainerID::new_root(crate::sync::custody::CUSTODY_MAP, ContainerType::Map);
     let room_turns =
         ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
+    let room_facts =
+        ContainerID::new_root(crate::sync::room_facts::ROOM_FACTS_MAP, ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -338,6 +349,8 @@ fn validate_window_update(
             crate::sync::custody::admit_custody_carrier(vault, key, &map_key, &value)?;
         } else if op.container == room_turns {
             crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
+        } else if op.container == room_facts {
+            crate::sync::room_facts::admit_room_fact_carrier(key, &map_key, &value)?;
         } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)

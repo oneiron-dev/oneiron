@@ -127,6 +127,11 @@ fn reverse_rematerialize_scan(
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
     super::egress::scrub_local_only_carriers(vault, window_key, doc)?;
     super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
+    // FIX 1794: an erased room's or thread's side rows leave the window as
+    // it opens; a live pass leaves that to export.
+    if committed.is_none() {
+        crate::sync::room_facts::scrub_room_facts(vault, doc)?;
+    }
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let redacted_authors = {
         let rtxn = vault.store.env.read_txn()?;
@@ -449,6 +454,25 @@ fn reverse_rematerialize_scan(
                     .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
                 && map_contains_binary(&entities_map, &hex_id)
                 && crate::sync::room_turns::mirror_room_turn(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
+            // FIX 1794: a room's side rows ride beside its carrier, and a
+            // turn's claim, response and thread facts beside the turn's.
+            if window_key.world().is_none()
+                && let Some(header) = EntityMetadataHeader::parse(&raw)
+                && matches!(
+                    header.entity_type,
+                    ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
+                )
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::room_facts::mirror_room_facts(
+                    vault,
+                    doc,
+                    id,
+                    header.entity_type,
+                    None,
+                )?
             {
                 wrote_any = true;
             }

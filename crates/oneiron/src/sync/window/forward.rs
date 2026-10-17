@@ -256,6 +256,9 @@ fn forward_with_recovery(
     // OF-522: the room turn rows the window carries, before its tombstones,
     // so a room deleted in this window takes its rows with it.
     crate::sync::room_turns::apply_room_turn_map(vault, doc, window_key);
+    // FIX 1794: the room side rows it carries, after the turn rows their
+    // responses name.
+    crate::sync::room_facts::apply_room_fact_map(vault, doc, window_key);
     // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
     // Parent obligation left by a different window whose doc is not loaded.
     vault.with_write_txn_grouped(|txn| super::bridge::retry_in_txn(vault, txn))?;
