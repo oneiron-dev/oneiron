@@ -22,6 +22,8 @@ test-support = ["dep:rcgen", "dep:tokio-rustls"]
 [dependencies]
 base64 = "0.22"
 blake3 = { workspace = true }
+# OF-603: gzip request bodies to the one route that takes them.
+flate2 = "1"
 memchr = "2"
 # rustls only, and both root stores. `retry(never())` and `Policy::none()` are
 # set on the client itself, so no feature another crate turns on can make it
