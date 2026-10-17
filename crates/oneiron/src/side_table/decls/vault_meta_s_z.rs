@@ -92,13 +92,13 @@ side_tables! {
     /// only relays a caller-encoded `&[u8]` (`crate::receipt::send_receipt_txn`
     /// already ran `rmp_serde::to_vec_named` before calling in); binding it
     /// `Named` here would re-encode already-encoded bytes on every write.
-    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw;
+    SEND_RECEIPT_SUMMARY: VaultMeta b"send_receipt:v0:" Raw Authored;
     /// Connector-send attempt audit row. Key: id16 + bytes32.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as
     /// [`SEND_RECEIPT_SUMMARY`]: `store::send_receipt_audit` relays the same
     /// caller-encoded bytes verbatim.
-    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw;
+    SEND_RECEIPT_ATTEMPT_AUDIT: VaultMeta b"send_receipt_attempt:v0:" Raw Authored;
     /// Open SESSION per actor and machine. Key: actor id16 + machine id16.
     SESSION_LIFECYCLE_OPEN: VaultMeta b"session_lifecycle:v0:open:" Raw;
     /// Per-session lifecycle clock record (started_at, last_activity, ended_at, end_reason), keyed by
@@ -121,7 +121,7 @@ side_tables! {
     /// Key: ().
     DREAMER_ACTION_MODE_POLICY: VaultMeta b"settings:dreamer:action_mode:v1" LegacyJson;
     /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
-    DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson;
+    DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson Authored;
     /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
     DREAMER_HARNESS_THRESHOLDS: VaultMeta b"settings:dreamer:harness:thresholds:v1" LegacyJson;
     /// Owner-set cadence dial for the proactivity digest. Key: ().
@@ -129,13 +129,13 @@ side_tables! {
     /// Owner-confirmed digest policy claim revision. Key: id16, value: hash32.
     DREAMER_PROACTIVITY_CONFIRMED: VaultMeta b"settings:dreamer:proactivity:confirmed:v1:" Raw;
     /// Owner-confirmed presentation row. Key: singleton.
-    DREAMER_PROACTIVITY_PRESENTATION: VaultMeta b"settings:dreamer:proactivity:presentation:v1" LegacyJson;
+    DREAMER_PROACTIVITY_PRESENTATION: VaultMeta b"settings:dreamer:proactivity:presentation:v1" LegacyJson Authored;
     /// Owner-set projector surprise policy. Key: ().
     DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson;
     /// Owner-set continuous sieve policy. Key: ().
     DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson;
     /// Owner-set relationship-stewardship rules. Key: ().
-    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson;
+    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson Authored;
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().

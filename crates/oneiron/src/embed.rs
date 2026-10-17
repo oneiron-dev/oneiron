@@ -3,6 +3,7 @@ mod device;
 mod eligibility;
 mod locality;
 mod media;
+mod session_media;
 mod space;
 mod space_move;
 mod space_probe;
@@ -25,8 +26,9 @@ pub use space::{
     KindSlotBindings, MediaRefused,
 };
 pub(crate) use space::{
-    delete_media_vectors_in_txn, delete_text_media_vectors_in_txn, embedding_space_in_txn,
-    search_media_space_in_txn,
+    TEXT_HASH_LEN, delete_media_vectors_in_txn, delete_text_media_vectors_in_txn,
+    embedding_space_in_txn, replay_media_vector_in_txn, search_media_space_in_txn,
+    stage_media_vector_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use space::{
