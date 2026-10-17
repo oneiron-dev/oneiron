@@ -49962,7 +49962,7 @@
      "path": "src/workspace_roster/rooms/replica.rs",
      "purpose": "OF-522: a room's turn rows on the owner's other machines",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
