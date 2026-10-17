@@ -101,41 +101,54 @@ impl Vault {
         targets: Vec<LegalHoldTarget>,
         matter_ref: Option<String>,
     ) -> Result<LegalHold> {
+        self.with_write_txn_grouped(|txn| {
+            self.place_legal_hold_in_txn(txn, owner, targets, matter_ref)
+        })
+    }
+
+    /// [`Self::place_legal_hold`] inside the caller's writer, so the hold
+    /// commits or rolls back with what else that writer records. Fails as
+    /// that door does.
+    pub(crate) fn place_legal_hold_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        targets: Vec<LegalHoldTarget>,
+        matter_ref: Option<String>,
+    ) -> Result<LegalHold> {
         if let Some(matter) = &matter_ref {
             check_opaque(matter, "matter reference")?;
         }
         let targets = distinct(targets)?;
-        self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
-            self.refuse_erased_targets_in_txn(txn, &targets)?;
-            let now = self.store.clock.now_recorded_at();
-            let hold = LegalHold {
-                hold_id: self.store.clock.entity_id()?,
-                kind: LegalHoldKind::Customer,
-                targets: targets.clone(),
-                placed_by: Some(actor.to_hex()),
-                placed_by_kind: LegalHoldActorKind::Owner,
-                placed_at: now,
-                ends_at: None,
-                secret_until: None,
-                matter_ref: matter_ref.clone(),
-                lifted_at: None,
-                owner_told: true,
-            };
-            hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
-            hold_store::log_in_txn(
-                &self.store,
-                txn,
-                &hold,
-                LegalHoldEventKind::Placed,
-                LegalHoldReason::OwnerPlaced,
-                targets.clone(),
-                &HoldActor::owner(actor),
-                now,
-                None,
-            )?;
-            Ok(hold)
-        })
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        self.refuse_erased_targets_in_txn(txn, &targets)?;
+        let now = self.store.clock.now_recorded_at();
+        let hold = LegalHold {
+            hold_id: self.store.clock.entity_id()?,
+            kind: LegalHoldKind::Customer,
+            targets: targets.clone(),
+            placed_by: Some(actor.to_hex()),
+            placed_by_kind: LegalHoldActorKind::Owner,
+            placed_at: now,
+            ends_at: None,
+            secret_until: None,
+            matter_ref,
+            lifted_at: None,
+            owner_told: true,
+        };
+        hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
+        hold_store::log_in_txn(
+            &self.store,
+            txn,
+            &hold,
+            LegalHoldEventKind::Placed,
+            LegalHoldReason::OwnerPlaced,
+            targets,
+            &HoldActor::owner(actor),
+            now,
+            None,
+        )?;
+        Ok(hold)
     }
 
     /// Adds `targets` to the owner's standing hold `hold_id`, logged as a
