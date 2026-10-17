@@ -1803,7 +1803,7 @@
      "purpose": "OF-393: the fan-out launch hold",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
