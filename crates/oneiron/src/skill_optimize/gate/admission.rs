@@ -168,6 +168,11 @@ fn resolve_skill_edit_tradeoff_with_cycle(
         {
             return Err(invalid("tradeoff approval exceeds the cycle admission cap"));
         }
+        if matches!(choice, TradeoffChoice::Approve)
+            && !judge_cadence_allows_in_txn(vault, txn, &granting_cycle, proposal, &latest.skill)?
+        {
+            return Err(invalid("the judge's rubric waits on its revision cadence"));
+        }
         record_tradeoff_resolution_in_txn(vault, txn, latest, decision, choice, &granting_cycle, at)
     })
 }
