@@ -13672,7 +13672,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 18,
+      "crate-vis": 21,
       "struct": 5
      }
     },
@@ -65586,7 +65586,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/connector_admission_routes.rs",
@@ -67665,12 +67665,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BigReply",
       "BigSettings",
       "BookingParseSettings",
+      "ConnectorSlateSettings",
       "DecisionsSettings",
       "ImagePickSettings",
       "SeatPickSettings",
@@ -67681,7 +67682,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -68072,7 +68073,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 22,
+      "fn": 23,
       "struct": 1
      }
     },
@@ -71970,7 +71971,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 48,
+   "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 585,
    "test_files": 182
