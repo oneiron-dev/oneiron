@@ -1,7 +1,9 @@
 //! Actor-bound write-policy preflight for the append operation, and the
 //! caller binding of its two public doors (OF-063): every typed ref an
 //! append names reads for its writer in the append's own transaction, and
-//! an AI writer's prose links are receipted when they do not.
+//! an AI writer's prose links are receipted when they do not. The stages are
+//! crate-visible for appends made inside another door's writer, such as a
+//! summary's header reply.
 
 use super::{AppendRecord, AppendedRecord};
 use crate::claim::{
@@ -19,14 +21,14 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 /// The row an append's receipts name.
-pub(super) const APPEND_ROW: &str = "conversation.append_record";
+pub(crate) const APPEND_ROW: &str = "conversation.append_record";
 /// The row a thread reply's receipts name.
 pub(super) const REPLY_ROW: &str = "conversation.reply_in_thread";
 /// The longest field pointer a reference-refusal receipt holds.
 const MAX_POINTER_BYTES: usize = 256;
 
 /// Why a caller-bound append did not land.
-pub(super) enum AppendFailure {
+pub(crate) enum AppendFailure {
     /// The engine refused or failed the append.
     Engine(Error),
     /// The ref at this pointer does not read for the writer; the append's
@@ -66,7 +68,7 @@ pub(super) fn open_append<'m>(
 /// the parent (a thread reply's is the door's, checked once chosen), the
 /// reply target, the quoted MESSAGE, the session, the thread's trunk and
 /// every recipient. Ids are typed; no body field or prose is read as a ref.
-pub(super) fn append_references(
+pub(crate) fn append_references(
     input: &AppendRecord,
     trunk: Option<EntityId>,
 ) -> Vec<(String, EntityId)> {
@@ -114,7 +116,7 @@ pub(super) fn unresolved_append_reference_in_txn(
 /// [`unresolved_append_reference_in_txn`] over `refs`, then over the TURN
 /// holding a quoted MESSAGE: the MESSAGE is read first, so an unreadable one
 /// says nothing of its TURN.
-pub(super) fn require_append_references_in_txn(
+pub(crate) fn require_append_references_in_txn(
     vault: &Vault,
     lane: &ScopedRead<'_>,
     txn: &RoTxn<'_>,
@@ -171,7 +173,7 @@ fn append_engine_error(error: Error) -> MemoryError {
 /// the field pointer, never the ref, and returns the refusal; if the receipt
 /// cannot be written, the store's error instead. Inside an anonymous
 /// off-record session the refusal stands with no receipt.
-pub(super) fn receipt_append_refusal(
+pub(crate) fn receipt_append_refusal(
     writer: &Memory<'_>,
     row: &'static str,
     pointer: &str,
@@ -195,7 +197,7 @@ pub(super) fn receipt_append_refusal(
 /// both read once. A link that does not resolve for the writer leaves an
 /// `unlinked` receipt; the text is never refused or rewritten. A body that
 /// does not decode is refused later, by the append.
-pub(super) fn admit_append_prose(writer: &Memory<'_>, row: &'static str, input: &AppendRecord) {
+pub(crate) fn admit_append_prose(writer: &Memory<'_>, row: &'static str, input: &AppendRecord) {
     if writer.actor_class() == EdgeActorClass::Human {
         return;
     }

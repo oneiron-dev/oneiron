@@ -930,3 +930,134 @@ impl Memory<'_> {
         })
     }
 }
+
+/// One reader a `diary.read` Grant admits to an agent's diary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiaryReader {
+    /// The reader, as the Grant names it.
+    pub actor_ref: String,
+    /// Its class, when the Grant pins one.
+    pub actor_class: Option<String>,
+    /// Whether a Grant covers the whole diary; else `entries` of its
+    /// entries.
+    pub whole: bool,
+    pub entries: usize,
+}
+
+/// A ruled reader of an agent's sealed scratchpads, who needs no Grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedPadReader {
+    /// A live vault owner, for their own agents.
+    Owner,
+    /// The Coach's health check, for an agent that is not a companion.
+    Coach,
+}
+
+/// Who may read an agent's diary and its sealed scratchpads: the list the
+/// agent sees on its board (ARCH-0032 #private-reads: no secret readers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiaryReaderList {
+    pub diary: Vec<DiaryReader>,
+    pub sealed_pads: Vec<SealedPadReader>,
+}
+
+impl Memory<'_> {
+    /// The ruled readers of this agent's sealed scratchpads, as
+    /// `read_agent_sealed_pads` admits them: a live vault owner, and the
+    /// Coach unless the agent is a companion.
+    pub fn sealed_pad_readers(&self) -> MemoryResult<Vec<SealedPadReader>> {
+        super::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        let coach = self
+            .vault
+            .get_agent_definition(&self.actor)
+            .is_ok_and(|definition| {
+                definition.is_some_and(|definition| {
+                    !matches!(
+                        definition.wake_cadence,
+                        Some(crate::agent_def::AgentWakeCadence::Companion { .. })
+                    )
+                })
+            });
+        Ok(std::iter::once(SealedPadReader::Owner)
+            .chain(coach.then_some(SealedPadReader::Coach))
+            .collect())
+    }
+
+    /// This agent's reader list. Its diary's readers are the actors that an
+    /// active, owner-minted `diary.read` Grant admits, to the whole diary or
+    /// to some of its entries, as [`DiaryReadGate`] admits them. Its sealed
+    /// pads' readers are the ruled ones, as `read_agent_sealed_pads` admits
+    /// them. An unrooted vault delegates no Grant, so its diary has none.
+    pub fn diary_reader_list(&self) -> MemoryResult<DiaryReaderList> {
+        let sealed_pads = self.sealed_pad_readers()?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let agent = self.actor;
+        let Ok(root) = root_id(self.vault, &txn) else {
+            return Ok(DiaryReaderList {
+                diary: Vec::new(),
+                sealed_pads,
+            });
+        };
+        let entries = diary_entries_in_txn(self.vault, &txn, agent)?;
+        let mut diary: BTreeMap<(String, Option<String>), DiaryReader> = BTreeMap::new();
+        for grant in self.vault.active_standing_consent_grants_in_txn(&txn)? {
+            let bound = grant.bound();
+            let Some(actor) = bound.actor() else {
+                continue;
+            };
+            let covers = |target: EntityId| -> Result<bool> {
+                let mut subject = ActorBound::new(actor.actor_ref())?;
+                if let Some(class) = actor.actor_class() {
+                    subject = subject.with_actor_class(class)?;
+                }
+                let required = GrantBound::action(
+                    subject,
+                    ActionClass::new(DIARY_READ_VERB)?,
+                    ActionEnvelope::new([target.to_hex()])?.with_target(root.clone())?,
+                )?;
+                Ok(bound.contains(&required))
+            };
+            let whole = covers(agent)?;
+            let mut covered = 0;
+            if !whole {
+                for (entry, _, _) in &entries {
+                    covered += usize::from(covers(*entry)?);
+                }
+                if covered == 0 {
+                    continue;
+                }
+            }
+            // As `delegated_grant` admits: only an active Grant the root
+            // owner minted delegates.
+            let Some(row) = self
+                .vault
+                .consent_grant_in_txn(&txn, &bound.digest().to_hex())?
+            else {
+                continue;
+            };
+            // A minter that no longer reads as a live owner delegates nothing:
+            // the gate's own check refuses it too.
+            if !row.is_active()
+                || !is_root_owner(self.vault, &txn, row.owner_stamp.actor).unwrap_or(false)
+            {
+                continue;
+            }
+            let key = (
+                actor.actor_ref().to_owned(),
+                actor.actor_class().map(str::to_owned),
+            );
+            let reader = diary.entry(key).or_insert_with(|| DiaryReader {
+                actor_ref: actor.actor_ref().to_owned(),
+                actor_class: actor.actor_class().map(str::to_owned),
+                whole: false,
+                entries: 0,
+            });
+            reader.whole |= whole;
+            reader.entries = reader.entries.max(covered);
+        }
+        Ok(DiaryReaderList {
+            diary: diary.into_values().collect(),
+            sealed_pads,
+        })
+    }
+}

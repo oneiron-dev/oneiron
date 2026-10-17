@@ -28,7 +28,7 @@ pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use client_address::ClientAddress;
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality};
-pub(crate) use slips::{BindingProof, parse_signature, parse_slip_id};
+pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
 
@@ -589,9 +589,16 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
+        let path = parts
+            .extensions
+            .get::<axum::extract::OriginalUri>()
+            .map_or_else(|| parts.uri.path(), |uri| uri.0.path());
         Self::for_server_async(&parts.headers, server)
             .await
-            .map(|auth| auth.at(caller_locality(&parts.headers, &parts.extensions)))
+            .map(|auth| {
+                auth.at(caller_locality(&parts.headers, &parts.extensions))
+                    .at_invitee_door(path)
+            })
             .map_err(Into::into)
     }
 }
