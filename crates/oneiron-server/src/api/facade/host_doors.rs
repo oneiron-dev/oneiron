@@ -438,6 +438,7 @@ async fn answered(
 ) -> MemoryResult<AiAnswer> {
     let (request, voices) = admit(server, auth, operation, input)?;
     let media = server.ai.model_runtime().media();
+    let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match &voices {
         Some(voices) => media.run_voiced(request, voices).await,
         None => media.run(request).await,
@@ -459,8 +460,24 @@ async fn answered(
         }
         Err(_) if voices.as_ref().is_some_and(RungVoices::withdrawn) => Err(withdrawn()),
         Ok(response) => Ok(response.into()),
+        Err(error) if error.is_provider_unavailable() => {
+            Err(unavailable(operation, &error, hint.seconds()))
+        }
         Err(error) => Err(failure(operation, &error)),
     }
+}
+
+/// A media call no offer answered (FIX 3194): `MODEL_UNAVAILABLE`, with the
+/// seconds until the first offer that could serve it is back as
+/// `retry_after` and in its suggestion. Nothing keeps the call; its caller
+/// sends it again.
+fn unavailable(operation: AiOperation, error: &LlmError, retry_after: u64) -> MemoryError {
+    let mut refusal = failure(operation, error);
+    refusal.suggestions = vec![format!(
+        "Retry in {retry_after} s, or name another row ai.options lists."
+    )];
+    refusal.retry_after = Some(retry_after);
+    refusal
 }
 
 /// `ai.image`: one image out; reference images make it an edit.

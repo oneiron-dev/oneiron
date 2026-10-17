@@ -25,6 +25,7 @@ pub(super) fn dimensions_to_engine(value: f64) -> Result<usize, MemoryError> {
             policy_denial: None,
             wrong_root: None,
             hook: None,
+            retry_after: None,
         });
     }
     // The whole number is positive and at most MAX_DIMENSIONS (16,384).
@@ -48,6 +49,7 @@ pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
             policy_denial: None,
             wrong_root: None,
             hook: None,
+            retry_after: None,
         });
     }
     // Positive whole u32 values are exact JS integers and fit usize on N-API targets.
