@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
 use crate::batch::export::VAULT_ARCHIVE_FORMAT;
 use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeActorClass;
 use crate::federation::{
     FederationGrantRole as Role, PendingAuthorityAct, SharedActExecution,
-    SharedActExecutionReceipt, SharedActOutcome, SharedVaultDeletion,
+    SharedActExecutionReceipt, SharedActKind, SharedActOutcome, SharedVaultDeletion,
 };
 use crate::memory::{MemoryError, MemoryExport, MemoryResult};
 use crate::{EntityId, Vault};
@@ -185,13 +186,28 @@ pub fn propose_shared_remove_owner(
 }
 
 /// `vault.shared.execute`: run a matured act once; running it again answers
-/// the same receipt.
+/// the same receipt. A held `erase` act runs its own executor, then its
+/// receipt tells the Owners.
 pub fn execute_shared_act(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
     input: SharedActRequest,
 ) -> MemoryResult<SharedActExecuted> {
+    let erase = vault
+        .pending_authority_act(&input.act_id)?
+        .is_some_and(|act| SharedActKind::parse(&act.act) == Some(SharedActKind::Erase));
+    if erase {
+        // A held erase runs through its own executor, which binds the
+        // record; its receipt then tells the Owners (OF-150).
+        vault
+            .memory(executor.actor(), EdgeActorClass::Human)
+            .execute_completed_entity_erase(executor, &input.act_id)?;
+        return Ok(SharedActExecuted {
+            receipt: vault.record_erase_completion(executor, &input.act_id)?,
+            export: None,
+        });
+    }
     Ok(vault
         .execute_completed_shared_act(executor, &input.act_id, slips)?
         .into())
