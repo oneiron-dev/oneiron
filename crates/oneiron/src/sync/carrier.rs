@@ -14,6 +14,8 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::error::{Error as WsError, UrlError};
 
+use crate::sync::transport::{MAX_CODEC_INNER_BYTES, WireSocket};
+
 /// An ordered, reliable byte stream a sync socket can ride on.
 pub trait SyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> SyncStream for T {}
@@ -74,8 +76,9 @@ impl AsyncWrite for SyncIo {
     }
 }
 
-/// A sync WebSocket on either carrier.
-pub(crate) type SyncSocket = WebSocketStream<SyncIo>;
+/// A sync WebSocket on either carrier, speaking the codec frame toward our own
+/// server (ARCH-0081 §7).
+pub(crate) type SyncSocket = WireSocket<WebSocketStream<SyncIo>>;
 
 /// Opens `request`'s WebSocket on `dialer`'s carrier when there is one, else on
 /// TCP to the request's host. TCP carries `ws` only: this build has no TLS, so
@@ -108,5 +111,8 @@ pub(crate) async fn connect_sync_socket(
         }
     };
     let (socket, response) = tokio_tungstenite::client_async(request, io).await?;
-    Ok((socket, response.into_parts().0.headers))
+    Ok((
+        WireSocket::to_our_server(socket, MAX_CODEC_INNER_BYTES),
+        response.into_parts().0.headers,
+    ))
 }
