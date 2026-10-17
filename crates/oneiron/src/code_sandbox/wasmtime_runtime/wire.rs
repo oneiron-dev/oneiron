@@ -442,6 +442,14 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                     .is_some_and(|result| !result.is_null())
             {
                 let request: crate::task_verb::sdk::TaskUpdateRequest = decode(args.input)?;
+                // A typed report sent beside the result would be dropped
+                // here, so the call is refused instead.
+                if request.report.is_some()
+                    || request.report_key.is_some()
+                    || request.attempt.is_some()
+                {
+                    return Err(failure("task_update_report_conflicts_with_result"));
+                }
                 let result_ref = request
                     .result_ref
                     .ok_or_else(|| failure("invalid task update"))?;
