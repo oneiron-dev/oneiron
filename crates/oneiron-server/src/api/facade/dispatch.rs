@@ -525,6 +525,25 @@ async fn tasks_create(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn tasks_wave(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "tasks.wave")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("tasks.wave", &value)?;
+    let hooks = facade_hooks_pre(server, call, "tasks.wave", value).await?;
+    let output = facade_output(
+        super::host_doors::tasks_wave(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn tasks_update(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -2529,6 +2548,50 @@ async fn vault_artifacts_view(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_code_diff(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.code.diff",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_code_blame(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.code.blame",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_artifacts_export(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -2783,6 +2846,7 @@ async fn can(
     auth.require_unrestricted_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "can", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2811,6 +2875,7 @@ async fn ask(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "ask", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2825,6 +2890,7 @@ async fn wait(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "wait", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2839,6 +2905,7 @@ async fn tasks_answer(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -4757,6 +4824,7 @@ pub(crate) async fn call_verb(
         "steer" => steer(server, call, input).await,
         "describe" => describe(server, call, input).await,
         "tasks.create" => tasks_create(server, call, input).await,
+        "tasks.wave" => tasks_wave(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
         "vault.witness" => vault_witness(server, call, input).await,
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
@@ -4881,6 +4949,8 @@ pub(crate) async fn call_verb(
         "vault.shares.view" => vault_shares_view(server, call, input).await,
         "vault.hooks.replay" => vault_hooks_replay(server, call, input).await,
         "vault.artifacts.view" => vault_artifacts_view(server, call, input).await,
+        "vault.code.diff" => vault_code_diff(server, call, input).await,
+        "vault.code.blame" => vault_code_blame(server, call, input).await,
         "vault.artifacts.export" => vault_artifacts_export(server, call, input).await,
         "vault.artifacts.born_from" => vault_artifacts_born_from(server, call, input).await,
         "vault.artifacts.proposals" => vault_artifacts_proposals(server, call, input).await,

@@ -105,6 +105,7 @@ pub fn preserve_review_dissent(
                 posture: None,
                 media: questions::QuestionMedia::default(),
                 deadline_ms: None,
+                artifacts: Vec::new(),
             },
             artifact.created_at,
         )?;

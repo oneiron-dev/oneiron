@@ -110,6 +110,11 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "tasks.wave" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::TaskWaveReceipt>(
+                        client, verb, &input,
+                    )
+                }
                 "tasks.update" => {
                     remote_agent_verb_output::<oneiron::task_verb::TaskUpdateReceipt>(
                         client, verb, &input,
@@ -214,7 +219,7 @@ impl OneironClient {
                     Option<oneiron::federation::SharedVaultDeletion>,
                 >(client, verb, &input),
                 "vault.members.add" => remote_agent_verb_output::<
-                    oneiron::federation::SharedActExecutionReceipt,
+                    oneiron::task_verb::sdk::SharedMemberInvited,
                 >(client, verb, &input),
                 "vault.members.change" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
@@ -387,6 +392,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.artifacts.view" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
+                >(client, verb, &input),
+                "vault.code.diff" => remote_agent_verb_output::<
+                    Option<oneiron::code_document::CodeDiffView>,
+                >(client, verb, &input),
+                "vault.code.blame" => remote_agent_verb_output::<
+                    Option<oneiron::code_document::CodeBlameView>,
                 >(client, verb, &input),
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
@@ -1016,6 +1027,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("tasks.create", value)
     }
+    pub fn tasks_wave(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskWaveRequest,
+    ) -> Result<oneiron::task_verb::sdk::TaskWaveReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.wave", value)
+    }
     pub fn tasks_update(
         &self,
         input: &oneiron::task_verb::sdk::TaskUpdateRequest,
@@ -1459,7 +1482,7 @@ impl OneironClient {
     pub fn vault_members_add(
         &self,
         input: &oneiron::task_verb::sdk::SharedMemberAddRequest,
-    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::SharedMemberInvited, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -2144,6 +2167,32 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.view", value)
+    }
+    /// The semantic changes between two tested states of one code file, each with the operations that made it.
+    pub fn vault_code_diff(
+        &self,
+        input: &oneiron::code_document::CodeDiffRequest,
+    ) -> Result<Option<oneiron::code_document::CodeDiffView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.diff", value)
+    }
+    /// Every unit of one tested code file state, blamed by the operations that wrote it.
+    pub fn vault_code_blame(
+        &self,
+        input: &oneiron::code_document::CodeStateRequest,
+    ) -> Result<Option<oneiron::code_document::CodeBlameView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.blame", value)
     }
     /// One version's export file (base64), with its pinned name and media type.
     pub fn vault_artifacts_export(

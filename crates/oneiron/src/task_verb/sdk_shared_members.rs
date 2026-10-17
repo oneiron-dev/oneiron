@@ -199,7 +199,7 @@ pub struct GuestSlipMinted {
     pub expires_at: u64,
 }
 
-fn holder_key(hex: &str) -> MemoryResult<[u8; 32]> {
+pub(super) fn holder_key(hex: &str) -> MemoryResult<[u8; 32]> {
     let refused = || MemoryError::bad_request("holder_key is not 32 bytes of hex");
     if hex.len() != 64 {
         return Err(refused());

@@ -128,6 +128,7 @@ declare const tasks: {
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
   update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
   wait(input: { all?: boolean | null; n_of?: number | null; step_key: string; tasks: string[]; until?: number | null }): Promise<unknown>;
+  wave(input: { constraints?: unknown; epic_task_ref: string; objective: string; planner_ref: string }): Promise<unknown>;
 };
 declare const vault: {
   artifacts: {
@@ -163,6 +164,10 @@ declare const vault: {
     seed(input: { claims: object[] }): Promise<unknown>;
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
     upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
+  };
+  code: {
+    blame(input: { path: string; repo: string; revision_ref?: string | null }): Promise<unknown>;
+    diff(input: { after: { path: string; repo: string; revision_ref?: string | null }; before: { path: string; repo: string; revision_ref?: string | null } }): Promise<unknown>;
   };
   commit(input: { claims: object[] }): Promise<unknown>;
   companions: {
@@ -257,7 +262,7 @@ declare const vault: {
   };
   members: {
     accept(input: { invitation: string; vault_id: number }): Promise<unknown>;
-    add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
+    add(input: { holder_key?: string | null; member: string; role?: string | null; vault_id: number }): Promise<unknown>;
     change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
     decline(input: { invitation: string; vault_id: number }): Promise<unknown>;
     invitations(input: { vault_id: number }): Promise<unknown>;

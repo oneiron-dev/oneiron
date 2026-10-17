@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 269 code-mode rows (252 host rows, 17 run rows), 804 declarations.
-// Replies: 203 fully typed, 36 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
-// Opaque serde_json::Value leaves: 52; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 272 code-mode rows (255 host rows, 17 run rows), 821 declarations.
+// Replies: 203 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) & { budget?: BudgetLegibilityEnvelope };
@@ -127,6 +127,8 @@ declare namespace Sdk {
   type AttemptId = { bytes: number[] };
   type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } };
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
+  type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
+  type TaskWaveReceipt = { attempt_ref: string; state: string };
   type TaskUpdateRequest = { task_ref: string; resultRef?: string | null };
   type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean };
   type QuoteSpan = { message: EntityId; start: number; end: number };
@@ -301,7 +303,9 @@ declare namespace Sdk {
   type SharedReceiptRequest = { receipt_id: string };
   type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: number; recipient: string; change: SharedVaultChange; completed_at: number };
   type SharedVaultDeletion = { vault_id: number; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number };
-  type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null };
+  type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null; holder_key?: string | null };
+  type InvitationSlip = { slip_id: string; slip: string; expires_at: number };
+  type SharedMemberInvited = { receipt: SharedActExecutionReceipt; credential?: InvitationSlip | null };
   type SharedMemberRoleRequest = { vault_id: number; member: string; role: FederationGrantRole };
   type SharedMemberRequest = { vault_id: number; member: string };
   type SharedInvitationState = "pending" | { accepted: { at: number } } | { declined: { at: number } } | { withdrawn: { by: string; at: number } };
@@ -428,6 +432,16 @@ declare namespace Sdk {
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[] };
   type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
+  type CodeStateRequest = { repo: string; path: string; revision_ref?: string | null };
+  type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
+  type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
+  type CodeUnitVersionView = { content_hash: string; text: string; start_line: number; end_line: number };
+  type CodeOperationView = { operation_ref: string; sequence: number; session_ref: string; actor_ref: string; actor_class: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
+  type CodeChangeView = { path: string; symbol: string; before?: CodeUnitVersionView | null; after?: CodeUnitVersionView | null; inserted_by: CodeOperationView[]; deleted_by: CodeOperationView[] };
+  type CodeDiffView = { before: CodeStateView; after: CodeStateView; changes: CodeChangeView[]; rendered: string };
+  type CodeSpanView = { start: number; end: number; op?: CodeOperationView | null };
+  type CodeUnitBlameView = { path: string; symbol: string; version: CodeUnitVersionView; spans: CodeSpanView[] };
+  type CodeBlameView = { at: CodeStateView; units: CodeUnitBlameView[] };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type BornFromRequest = { task_ref?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; agent_run?: string | null };
@@ -493,11 +507,11 @@ declare namespace Sdk {
   type WidthCheckClass = { kind: "auto_clear"; policy_ref?: string | null } | { kind: "asked"; row_ref: string };
   type ExceptionalWidthCheck = { count: number; threshold: number; classification: WidthCheckClass };
   type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
-  type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null };
+  type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[] };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
   type TaskAskEffectAuthorization = "not_evaluated_by_ask";
   type TaskAskCoverage = { met: boolean; required: number; responded: EntityId[]; unknown: EntityId[]; unmet_people: EntityId[] };
-  type TaskAskAnswer = { task_ref: EntityId; actor_ref: EntityId; result_ref: EntityId; word_ref: EntityId };
+  type TaskAskAnswer = { task_ref: EntityId; actor_ref: EntityId; result_ref: EntityId; word_ref: EntityId; task_record: RecordRef; actor_record: RecordRef; result_record: RecordRef; word_record: RecordRef };
   type TaskAskDecision = "collected" | { first: TaskAskAnswer } | { answer: TaskAskOptionId } | "no" | "conflict" | "unknown";
   type TaskAskFallback = { branch: TaskAskDefault; surface: TaskAskSurface };
   type TaskAskSource = "human" | "foreign_stated" | "companion" | "inform" | "executor";
@@ -670,7 +684,10 @@ declare namespace Sdk {
   type QuestionAudience = "asker";
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
   type QuestionMedia = { images?: boolean; audio?: boolean };
-  type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null };
+  type FolderItemInput = { artifact_ref: string; row: number };
+  type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
+  type ArtifactUnits = { artifact: string; selection: ArtifactAskUnits };
+  type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
   type QuestionCreateRequest = { definition: QuestionDefinition };
   type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition; created_at: number };
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinition };
@@ -1020,6 +1037,8 @@ declare const tasks: {
   /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
   update(input: Sdk.TaskUpdateRequest): Promise<Sdk.Reply<Sdk.TaskUpdateReceipt>>;
   wait(input: Sdk.TaskWaitSetRequest): Promise<Sdk.Reply<unknown>>;
+  /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
+  wave(input: Sdk.TaskWaveRequest): Promise<Sdk.Reply<Sdk.TaskWaveReceipt>>;
 };
 declare const vault: {
   artifacts: {
@@ -1080,6 +1099,12 @@ declare const vault: {
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.Reply<unknown>>;
     /** Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate. */
     upsert(input: Sdk.ClaimInput): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
+  };
+  code: {
+    /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
+    blame(input: Sdk.CodeStateRequest): Promise<Sdk.Reply<Sdk.CodeBlameView | null>>;
+    /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
+    diff(input: Sdk.CodeDiffRequest): Promise<Sdk.Reply<Sdk.CodeDiffView | null>>;
   };
   /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
   commit(input: Sdk.CommitRequest): Promise<Sdk.Reply<Sdk.CommitReceipt[]>>;
@@ -1221,8 +1246,8 @@ declare const vault: {
   members: {
     /** The invitee accepts their own invitation and joins the shared vault at its role. */
     accept(input: Sdk.SharedInvitationRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
-    /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
-    add(input: Sdk.SharedMemberAddRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
+    add(input: Sdk.SharedMemberAddRequest): Promise<Sdk.Reply<Sdk.SharedMemberInvited>>;
     /** An Admin assigns another non-root role to a member who is not an Owner. */
     change(input: Sdk.SharedMemberRoleRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
     /** The invitee declines their own invitation; nothing is granted. */
