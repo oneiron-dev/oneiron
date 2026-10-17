@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 328 code-mode rows (309 host rows, 19 run rows), 1114 declarations.
+// Census: 328 code-mode rows (309 host rows, 19 run rows), 1118 declarations.
 // Replies: 267 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -994,7 +994,10 @@ declare namespace Sdk {
   type DeckNodeView = { id: NodeId; kind: NodeKind; parent?: NodeId | null; name?: string | null; imported: boolean; geometry: GeometryProps; placeholder?: [string, number] | null; preset?: Preset | null; payload?: NodePayload | null; text?: TextBody | null; made_by?: string | null };
   type DeckBodyView = { frontier: number[]; version: number; nodes: DeckNodeView[] };
   type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView } | { format: "pptx"; body: DeckBodyView };
+  type OfficeBodyCommitsRequest = { artifact_ref: string; actor_ref?: string | null };
   type TextCommitReceipt = { document: string; peer: number; start: number; end: number; made_by: MadeBy };
+  type OfficeBodyCommitGap = "receipt_missing";
+  type OfficeBodyCommitView = { actor?: string | null; receipt?: TextCommitReceipt | null; reason?: OfficeBodyCommitGap | null };
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
   type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
@@ -1025,9 +1028,10 @@ declare namespace Sdk {
   type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
   type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
-  type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null };
+  type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
+  type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
   type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[] };
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
@@ -1367,8 +1371,8 @@ declare const vault: Sdk.VaultHost & {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.BlobVersionView | StoredResult>;
     body: {
-      /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
-      commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.TextCommitReceipt[] | StoredResult>;
+      /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone. */
+      commits(input: Sdk.OfficeBodyCommitsRequest): Promise<Sdk.OfficeBodyCommitView[] | StoredResult>;
       deck: {
         /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep. */
         export(input: Sdk.DeckExportRequest): Promise<Sdk.DeckExportView | StoredResult>;
@@ -1403,8 +1407,8 @@ declare const vault: Sdk.VaultHost & {
       head(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.OfficeBodyHead | null | StoredResult>;
       /** Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document. */
       import(input: Sdk.OfficeBodyImportRequest): Promise<Sdk.OfficeBodyHead | StoredResult>;
-      /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
-      preview(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.XlsxPreview | StoredResult>;
+      /** The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands. */
+      preview(input: Sdk.OfficeBodyPreviewRequest): Promise<Sdk.XlsxPreview | StoredResult>;
       proposal: {
         /** An office proposal on the artifact: its opener and run, each member fork with its verdict and answer, and its settlement. */
         read(input: Sdk.OfficeBodyProposalRequest): Promise<Sdk.OfficeBodyProposal | StoredResult>;
