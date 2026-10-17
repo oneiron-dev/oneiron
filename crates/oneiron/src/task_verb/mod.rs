@@ -231,6 +231,7 @@ pub mod sdk;
 mod sdk_catalog_fragment;
 mod sdk_connector;
 mod sdk_connector_call;
+mod sdk_courtesy_delete;
 mod sdk_diary;
 mod sdk_disclosure;
 mod sdk_embedding_space;

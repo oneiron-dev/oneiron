@@ -553,6 +553,7 @@ impl Import<'_> {
             conversation_ref: self.conversation_id.to_hex(),
             turn_ref: Some(turn_id.to_hex()),
             quote: None,
+            thread_audience: None,
             messages,
             occurred_at: occurred[0],
         };

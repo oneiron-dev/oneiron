@@ -130,7 +130,11 @@ impl<'a> ScopedRead<'a> {
             && self.audience.is_none()
             && self.peer_reads.is_empty()
         {
-            return Ok(true);
+            // An unnarrowed read still meets each private thread's audience.
+            let Some(record) = self.entity_record_in(txn, id)? else {
+                return Ok(true);
+            };
+            return self.private_threads_readable_in(txn, id, &record.encode());
         }
         let Some(record) = self.entity_record_in(txn, id)? else {
             return Ok(false);
@@ -153,6 +157,9 @@ impl<'a> ScopedRead<'a> {
         raw: &[u8],
     ) -> Result<bool> {
         if self.device_withholds_in(txn, id, Some(raw))? {
+            return Ok(false);
+        }
+        if !self.private_threads_readable_in(txn, id, raw)? {
             return Ok(false);
         }
         if self.actor_key.room_turn.is_none() && self.actor_key.worlds.is_none() {
@@ -195,6 +202,20 @@ impl<'a> ScopedRead<'a> {
             }
         }
         self.audience_conjunct_in(txn, id, raw)
+    }
+
+    /// Whether the caller this read authenticates stands in each private
+    /// thread (FIX 2951) the revision `raw` of `id` sits in. No read is
+    /// exempt, the owner's and an unbound one included; one that
+    /// authenticates no one reads no private thread.
+    fn private_threads_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let viewers: Vec<_> = self.actor_key.authenticated_person().into_iter().collect();
+        crate::conversation::private_threads_readable_raw_in(self.vault, txn, *id, raw, &viewers)
     }
 
     /// Whether this read serves a caller off this device.
@@ -314,6 +335,13 @@ impl<'a> ScopedRead<'a> {
         if !reads {
             return Ok(None);
         }
+        // A private thread's ceiling binds its audience alone (FIX 2951).
+        let roster = match turn.branch {
+            Some(thread) => crate::workspace_roster::thread_members_in(
+                self.vault, txn, turn.room, thread, &roster,
+            )?,
+            None => roster,
+        };
         let mut held = self
             .room_ceiling
             .lock()

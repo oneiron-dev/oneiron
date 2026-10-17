@@ -78,7 +78,8 @@ pub use self::launch::{
     LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView,
 };
 pub use self::spend_calibration::{
-    AgentSpendCalibration, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, SpendBasis,
+    AgentSpendCalibration, DollarBasis, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, LaunchUsdPrices,
+    SpendBasis, UsdPriceTarget, UsdUnitPrice,
 };
 pub(crate) use self::spend_lease::payer_binds_in_txn;
 pub use self::spend_record::{
