@@ -203,14 +203,27 @@ impl<'a> HostSelfDispatcher<'a> {
             return Err(invalid());
         }
         let now = crate::unix_seconds_now();
-        // OF-541: an ask is placed and planned on the host's planner over
-        // the agent's lease; without one, the target dispatches directly.
-        let (target, context) = match call.ask {
-            None => (call.target, call.context),
-            Some(_) if !self.planner_bound() => {
-                return Ok(Self::planner_unbound(SelfEffect::AgentsSpawn));
+        // OF-541: with the host's planner and the agent's lease, an ask is
+        // placed and planned; otherwise the named target runs, under the
+        // carve the ask's budget narrows.
+        let planned = self.planner_bound() && self.agent_lease.is_some();
+        let (target, context) = match (call.ask, call.target) {
+            (Some(ask), _) if planned => self.planned_spawn(call.context, ask, now)?,
+            (ask, Some(target)) => {
+                let mut context = call.context;
+                super::leader::narrow_budget(
+                    &mut context,
+                    ask.as_ref().and_then(|ask| ask.budget_cap_units.as_ref()),
+                );
+                (target, context)
             }
-            Some(ask) => self.planned_spawn(call.context, ask, now)?,
+            (Some(_), None) if self.planner_bound() => {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "a planned spawn requires the agent's acquired lease",
+                )));
+            }
+            (Some(_), None) => return Ok(Self::planner_unbound(SelfEffect::AgentsSpawn)),
+            (None, None) => return Err(invalid()),
         };
         let result = AgentDispatcher::new(vault).dispatch_with_context(
             DispatchAgent {

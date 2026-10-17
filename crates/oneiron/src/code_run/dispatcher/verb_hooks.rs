@@ -389,12 +389,12 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
 fn hook_args(call: &SelfCall) -> Result<Value> {
     Ok(match call {
         SelfCall::AgentsSpawn(spawn) => {
-            let (kind, target) = match spawn.target {
-                AgentDispatchTarget::Custom(id) => ("agent_def", id),
-                AgentDispatchTarget::Workflow(id) => ("workflow", id),
-            };
+            let target = spawn.target.as_ref().map(|target| match target {
+                AgentDispatchTarget::Custom(id) => json!({"kind": "agent_def", "id": id.to_hex()}),
+                AgentDispatchTarget::Workflow(id) => json!({"kind": "workflow", "id": id.to_hex()}),
+            });
             json!({
-                "target": {"kind": kind, "id": target.to_hex()},
+                "target": target,
                 "intentKey": spawn.intent_key,
                 "contextSpec": to_json(&spawn.context.context_spec)?,
                 "contextFrom": spawn
