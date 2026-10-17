@@ -372,6 +372,15 @@ proposals, with the cleanup view to restore any of them. Each proposal and
 your accept or reject count in the healer oversight receipts
 (`/v1/owner/healer/oversight`).
 
+The Coach's nightly room upkeep (`coach.room_upkeep`) reads only the rooms
+a grant lets the Coach read, and there only turn refs and times, never words.
+A room whose readable turns moved since its last pass gets its summary
+declared on the scope-summary path, when the Coach reads the room's whole
+conversation; the Dreamer writes the summary and nothing is posted. A thread
+with open TASKs that has been quiet for a day gets one Proposed
+`coach.room_upkeep.nudge` finding, addressed to the room's host, in the owner
+run tray. The Coach never speaks in a room; a nudge is the host's to voice.
+
 The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
 detectors (refused Dreamer consolidations, consent storms and denials,
 per-actor write drift) over the last day of Gate receipts, and the read-side

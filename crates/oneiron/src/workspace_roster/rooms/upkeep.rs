@@ -142,3 +142,51 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
         threads: threads.into_values().collect(),
     })
 }
+
+/// Every room in the vault, unread: a caller reads each through its own
+/// scoped read ([`room_upkeep_input`]), which refuses a room it cannot read.
+/// It lists ids only and grants nothing.
+pub(crate) fn upkeep_rooms(vault: &Vault) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut rooms = Vec::new();
+    for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        &txn,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        None,
+    )? {
+        let id = row?;
+        if room_in(vault, &txn, id).is_ok() {
+            rooms.push(id);
+        }
+    }
+    Ok(rooms)
+}
+
+/// Who hosts `room` for its upkeep, which the engine resolves and a request
+/// never names: the stored pin or handoff, else the present pool of the
+/// session `turn` was spoken in, its live participants in arrival order. With
+/// no such session live, no one is present and only a stored host holds.
+/// Knowing the host grants nothing.
+pub(crate) fn room_upkeep_host(
+    vault: &Vault,
+    room: EntityId,
+    turn: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    let session = match turn {
+        Some(turn) => crate::compaction::turn_session_membership_in_txn(&vault.store, &txn, &turn)?,
+        None => None,
+    };
+    let present = match session {
+        Some(session) => vault
+            .conversation_presence
+            .lock()
+            .map_err(|_| invalid())?
+            .get(&session)
+            .cloned()
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    Ok(room_host_in(vault, &txn, room, &present)?.host)
+}
