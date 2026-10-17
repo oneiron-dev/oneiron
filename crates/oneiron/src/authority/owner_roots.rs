@@ -117,33 +117,56 @@ impl Vault {
 }
 
 /// [`Vault::owner_root_records`] in the caller's snapshot, against the fold
-/// read in it.
+/// read in it. On a vault that adopted a checkpoint image, the root records
+/// the image carries and the vault does not store count as stored ones do
+/// (OF-469, slice E).
 pub(super) fn owner_root_records_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
 ) -> Result<BTreeMap<RecoveryRootId, (AuthorityEntryHash, OwnerRootRecord)>> {
     let mut records = BTreeMap::new();
+    let mut stored = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
         let entry = decode_authority_log_entry_body(&body)?;
         let hash = authority_entry_hash(&entry)?;
         let AuthorityOp::OwnerRoot(record) = entry.op else {
             continue;
         };
+        stored.insert(hash);
         if !fold.valid_entries.contains(&hash) {
             continue;
         }
-        match records.entry(record.root) {
-            Entry::Vacant(slot) => {
-                slot.insert((hash, record));
+        keep_smallest(&mut records, hash, record);
+    }
+    if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(store, txn)? {
+        for (hash, entry) in evidence.carried_past(&stored) {
+            if let AuthorityOp::OwnerRoot(record) = &entry.op
+                && fold.valid_entries.contains(hash)
+            {
+                keep_smallest(&mut records, *hash, record.clone());
             }
-            Entry::Occupied(mut slot) if hash < slot.get().0 => {
-                slot.insert((hash, record));
-            }
-            Entry::Occupied(_) => {}
         }
     }
     Ok(records)
+}
+
+/// Keeps `record` for its root unless a smaller entry hash already stands
+/// for that root.
+fn keep_smallest(
+    records: &mut BTreeMap<RecoveryRootId, (AuthorityEntryHash, OwnerRootRecord)>,
+    hash: AuthorityEntryHash,
+    record: OwnerRootRecord,
+) {
+    match records.entry(record.root) {
+        Entry::Vacant(slot) => {
+            slot.insert((hash, record));
+        }
+        Entry::Occupied(mut slot) if hash < slot.get().0 => {
+            slot.insert((hash, record));
+        }
+        Entry::Occupied(_) => {}
+    }
 }
 
 /// The next entry `signer`, a key outside the roster, signs on `fold`'s

@@ -86,7 +86,7 @@ pub(crate) fn spawn(
                 let now = oneiron_vault_contract::now_ts();
                 let mut read = after;
                 let result = (|| {
-                    let home = crate::decision_graph::at_home(server.vault(), now)?;
+                    let home = crate::decision_graph::at_home(&server, now)?;
                     let more = reactive_pass(&server, &mut read, home, now)?;
                     if wake && home {
                         sweep_pass(&server, &mut cursors, now)?;
