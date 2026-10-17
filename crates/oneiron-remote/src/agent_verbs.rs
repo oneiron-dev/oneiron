@@ -1227,6 +1227,7 @@ impl OneironClient {
             as_of,
             deadline_ms,
             media,
+            ..Default::default()
         };
         oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit_nonzero(
