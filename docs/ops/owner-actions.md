@@ -942,6 +942,9 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
   `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included. Both
   refuse a slot an open move carries until the move ends.
+  With the text slot bound, a text query embeds through that space's text tower in the context
+  pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
+  holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
@@ -966,14 +969,68 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
 - The media backfill skips any document a space's model refuses by its content (a format it
   cannot read, a content filter) until the document changes, so one bad file never stalls a
   space or a move. A model that refuses everything it is sent before it has embedded anything
-  is treated as down, and the backfill retries it.
-- `POST .../move/check` with `{"candidate"}` runs the probes now. `.../move/approve` swaps a
-  full candidate in on your yes. `.../move/undo` binds the incumbent again after a swap, and
-  `.../move/abandon` ends an open move without one. An undo works for 30 days after the swap.
-  Then the incumbent retires (its rows and declaration go) unless a slot binds it again.
+  is treated as down, and the backfill retries it. `GET .../embedding-spaces` counts each
+  space's refused documents under `refused`; `GET .../refused?space=<id>` lists them with the
+  reason and time, and `POST .../refused/clear` with `{"space", "id"}` forgets one, so the
+  backfill sends the same bytes again (after a provider's policy or model changed).
+- A move that goes 14 days from its start without one check (its model never filled the
+  candidate, or the probes never ran) closes as kept, with a note: the incumbent keeps serving
+  and the candidate's rows go. Begin the move again once that model answers.
+- `POST .../move/check` with `{"candidate"}` runs the probes now. It answers within 20 seconds:
+  past that it answers `running`, and the check finishes on its own and records its reading on
+  the move. `.../move/approve` swaps a full candidate in on your yes. `.../move/undo` binds the
+  incumbent again after a swap, and `.../move/abandon` ends an open move without one. An undo
+  works for 30 days after the swap. Then the incumbent retires (its rows and declaration go)
+  unless a slot binds it again.
 - `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
   one.
+
+On a stopped vault the same acts run from the command line, and each prints what the route
+answers:
+
+```sh
+oneiron embedding-spaces list
+oneiron embedding-spaces declare ID --width N --accepts text,image [--query-towers text] [--floor F --strong S]
+oneiron embedding-spaces bind text|image|audio [SPACE]   # no SPACE: back to the default
+oneiron embedding-spaces one-space SPACE
+oneiron embedding-spaces retire SPACE
+oneiron embedding-spaces move CANDIDATE [--incumbent SPACE] [--margin F]
+oneiron embedding-spaces move-approve|move-undo|move-abandon CANDIDATE
+oneiron embedding-spaces probes list
+oneiron embedding-spaces probes put --kind text --query Q --family HEX [--target HEX] --author A
+oneiron embedding-spaces probes delete ID
+```
+
+A check runs the server's own `ai.embed` towers, so only a running server checks a move. It can
+take minutes, and `oneiron api raw` waits for it:
+
+```sh
+oneiron api raw POST /v1/owner/embedding-spaces/move/check --data '{"candidate": "SPACE"}'
+```
+
+The SDK verbs `vault.embedding_spaces.list`, `.declare`, `.bind`, `.one_space`, `.retire`,
+`.move`, `.move_check`, `.move_approve`, `.move_undo`, `.move_abandon`, `.probes.list`,
+`.probes.put` and `.probes.delete` do the same under the owner's credential, with the same
+bodies and answers. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
+SDK client waits up to 30 minutes for a check, as for an export.
+
+## Sign a secret's custody with your owner anchor
+
+A portable secret's custody moves between your machines under a signed transition. An install
+that cannot sign as one of your machines can have its current transition signed with the owner
+anchor of your recovery kit instead. The record keeps its generation, status and value, and the
+value is sealed to every machine of yours. The kit is read on this machine only: stop `serve`,
+then pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
+passphrase on the first line, and then one code is enough):
+
+```sh
+oneiron secrets anchor-sign --name NAME < kit.txt
+```
+
+It prints `{"name", "signed"}`. `signed` is false for a record that stays on its device
+(device-bound, cross-vault or "this device only") or a value no machine of yours here can open.
+No route or SDK verb takes the kit.
 
 ## Calling the owner routes
 

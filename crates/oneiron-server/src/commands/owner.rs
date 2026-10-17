@@ -529,6 +529,7 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
         SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
         // `run_cli` sends revoke straight to `revoke_secret`, before the read.
         SecretsCommand::Revoke(args) => revoke_secret(*args),
+        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value)?),
     }
 }
 
@@ -624,6 +625,62 @@ pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
     let vault = open_vault(&config, "POST /v1/owner/secrets/revoke --data -")?;
     let owner = local_owner(&vault)?;
     emit(&secrets::revoke(&vault, &owner, &args.name)?)
+}
+
+/// Signs a portable secret's current custody transition with the owner
+/// anchor of the recovery kit read from stdin (OF-422), through the engine
+/// door `Vault::sign_custody_with_anchor`, as the local owner. `kit` is one
+/// recovery code per line, after the kit passphrase on the first line when
+/// `--with-passphrase` says the kit has one. The kit and the seed it rebuilds
+/// stay in this process, and every buffer that holds them is wiped on drop;
+/// no route takes them, since no owner route is a this-machine-only channel.
+fn sign_with_anchor(
+    args: crate::cli::SecretAnchorSignArgs,
+    kit: &[u8],
+) -> anyhow::Result<secrets::AnchorSigned> {
+    use oneiron::recovery::{KitPassphrase, KitPiece, KitSecretKind, restore_kit};
+    let text = std::str::from_utf8(kit)
+        .map_err(|_| anyhow::anyhow!("the recovery kit on stdin is not UTF-8"))?;
+    let mut lines = text
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line));
+    let passphrase = if args.with_passphrase {
+        let line = lines.next().unwrap_or_default();
+        Some(KitPassphrase::new(line).map_err(|error| anyhow::anyhow!("kit passphrase: {error}"))?)
+    } else {
+        None
+    };
+    let pieces = lines
+        .filter(|line| !line.trim().is_empty())
+        .map(KitPiece::from_recovery_code)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| anyhow::anyhow!("recovery code: {error}"))?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(
+        &config,
+        "then run this again: the recovery kit is read on this machine and never sent to a server",
+    )?;
+    let owner = local_owner(&vault)?;
+    let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {
+        anyhow::anyhow!("this vault has no authority root yet, so no recovery kit opens for it")
+    })?;
+    let held: Vec<&KitPiece> = pieces.iter().collect();
+    let restored = restore_kit(
+        vault_id,
+        KitSecretKind::RecoveryRoot,
+        &held,
+        passphrase.as_ref(),
+    )
+    .map_err(|error| anyhow::anyhow!("the recovery kit did not open: {error}"))?;
+    let seed = oneiron::world_keys::RecoveryRootSeed::from_restored_kit(restored)?;
+    // This command is an in-process call on this machine.
+    Ok(secrets::sign_with_anchor(
+        &vault,
+        &owner,
+        oneiron::authority::EditOrigin::ThisMachine,
+        &seed,
+        &args.name,
+    )?)
 }
 
 /// A batch file: imported claims, or the notes `import notes` wrote.
@@ -896,6 +953,163 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
             ))
         }
     }
+}
+
+/// The owner's embedding spaces (OF-370) on a stopped vault, through the SDK
+/// fns the `vault.embedding_spaces.*` rows run, so each answers what the row
+/// and `/v1/owner/embedding-spaces` answer. A move's check runs a server's
+/// own probe towers, so only a running server checks one (`oneiron api raw
+/// POST /v1/owner/embedding-spaces/move/check`).
+pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::Result<()> {
+    use crate::cli::{EmbeddingSpaceProbesCommand as Probes, EmbeddingSpacesCommand as Spaces};
+    use oneiron::task_verb::sdk;
+
+    let (serve, route) = match &command {
+        Spaces::List(args) => (&args.serve, "GET /v1/owner/embedding-spaces"),
+        Spaces::Declare(args) => (&args.serve, "PUT /v1/owner/embedding-spaces --data -"),
+        Spaces::Bind(args) => (&args.serve, "POST /v1/owner/embedding-spaces/bind --data -"),
+        Spaces::OneSpace(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/one-space --data -",
+        ),
+        Spaces::Retire(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/retire --data -",
+        ),
+        Spaces::Move(args) => (&args.serve, "POST /v1/owner/embedding-spaces/move --data -"),
+        Spaces::MoveApprove(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/move/approve --data -",
+        ),
+        Spaces::MoveUndo(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/move/undo --data -",
+        ),
+        Spaces::MoveAbandon(args) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/move/abandon --data -",
+        ),
+        Spaces::Probes(Probes::List(args)) => {
+            (&args.serve, "GET /v1/owner/embedding-spaces/probes")
+        }
+        Spaces::Probes(Probes::Put(args)) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/probes --data -",
+        ),
+        Spaces::Probes(Probes::Delete(args)) => (
+            &args.serve,
+            "POST /v1/owner/embedding-spaces/probes/delete --data -",
+        ),
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, route)?;
+    let owner = local_owner(&vault)?;
+    let candidate = |candidate: String| sdk::EmbeddingSpaceCandidateRequest { candidate };
+    match command {
+        Spaces::List(_) => emit(&sdk::read_embedding_spaces(&vault, &owner)?),
+        Spaces::Declare(args) => emit(&sdk::declare_embedding_space_as(
+            &vault,
+            &owner,
+            declared_space(*args),
+        )?),
+        Spaces::Bind(args) => emit(&sdk::bind_embedding_slot_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceBindRequest {
+                kind: input_kind(args.kind),
+                space: args.space,
+            },
+        )?),
+        Spaces::OneSpace(args) => emit(&sdk::bind_one_embedding_space_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceRequest { space: args.space },
+        )?),
+        Spaces::Retire(args) => emit(&sdk::retire_embedding_space_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceRequest { space: args.space },
+        )?),
+        Spaces::Move(args) => emit(&sdk::begin_embedding_space_move_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceMoveRequest {
+                candidate: args.candidate,
+                incumbent: args.incumbent,
+                margin: args.margin,
+            },
+        )?),
+        Spaces::MoveApprove(args) => emit(&sdk::approve_embedding_space_move_as(
+            &vault,
+            &owner,
+            candidate(args.candidate),
+        )?),
+        Spaces::MoveUndo(args) => emit(&sdk::undo_embedding_space_move_as(
+            &vault,
+            &owner,
+            candidate(args.candidate),
+        )?),
+        Spaces::MoveAbandon(args) => emit(&sdk::abandon_embedding_space_move_as(
+            &vault,
+            &owner,
+            candidate(args.candidate),
+        )?),
+        Spaces::Probes(Probes::List(_)) => emit(&sdk::read_embedding_space_probes(&vault, &owner)?),
+        Spaces::Probes(Probes::Put(args)) => {
+            let args = *args;
+            let family = hold_id_arg(&args.family)?;
+            let targets = args
+                .targets
+                .iter()
+                .map(|target| hold_id_arg(target))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            emit(&sdk::put_embedding_space_probe_as(
+                &vault,
+                &owner,
+                sdk::EmbeddingSpaceProbePutRequest {
+                    kind: input_kind(args.kind),
+                    query: args.query,
+                    family,
+                    targets,
+                    author: args.author,
+                },
+            )?)
+        }
+        Spaces::Probes(Probes::Delete(args)) => emit(&sdk::delete_embedding_space_probe_as(
+            &vault,
+            &owner,
+            sdk::EmbeddingSpaceProbeDeleteRequest { id: args.id },
+        )?),
+    }
+}
+
+/// The engine's input kind for a command-line kind.
+fn input_kind(kind: crate::cli::EmbeddingKind) -> oneiron::embed::InputKind {
+    use crate::cli::EmbeddingKind;
+    use oneiron::embed::InputKind;
+    match kind {
+        EmbeddingKind::Text => InputKind::Text,
+        EmbeddingKind::Image => InputKind::Image,
+        EmbeddingKind::Audio => InputKind::Audio,
+    }
+}
+
+/// The space `embedding-spaces declare` names, as the route's body.
+fn declared_space(
+    args: crate::cli::EmbeddingSpaceDeclareArgs,
+) -> oneiron::task_verb::sdk::EmbeddingSpaceDeclareRequest {
+    let kinds =
+        |kinds: &[crate::cli::EmbeddingKind]| kinds.iter().copied().map(input_kind).collect();
+    oneiron::task_verb::sdk::EmbeddingSpaceDeclareRequest(oneiron::embed::EmbeddingSpace {
+        id: args.id,
+        dimensions: args.width,
+        accepts: kinds(&args.accepts),
+        query_towers: kinds(&args.query_towers),
+        evidence: args
+            .floor
+            .zip(args.strong)
+            .map(|(floor, strong)| oneiron::config::VectorEvidenceFloors { floor, strong }),
+    })
 }
 
 /// A 32-hex id given on the command line.
