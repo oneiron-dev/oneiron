@@ -169,6 +169,15 @@ A `key_secret` provider answers whole chat replies only for now: a streamed chat
 call to it is refused before it starts. Its media calls go through the same
 broker (§10).
 
+A managed vault (`serve --managed-by-hypnos`) reads no config file and no
+environment. Its supervisor passes the models table as `--models-file <path>`.
+The path is absolute and names a TOML file that holds only the `[models]`
+table, written as above. Relative `prompt_file` paths resolve beside it. Every
+provider there names its key with `key_secret`; a `key_env` provider or a
+`[models.decisions.system_one]` seat (whose bearer is an environment variable)
+stops the vault at start. Without the flag a managed vault runs with no model
+seats: its ladder is the rule table and the owner's asks.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
@@ -485,17 +494,32 @@ summary. A mark that fails its pass keeps why and waits for the next
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
 
+A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
+field's value, never as its value. `describe("sc12")` says what it names,
+where it was found and whether a reveal would deliver at once, ask the owner
+or be refused. `reveal({handle, why})` returns a pending reveal every time,
+and `wait(pending)` answers `pending`, `denied`, `expired` or `granted`. The
+first `granted` answer carries the value as `value` (or `value_base64`), and
+later ones carry only the receipt. The run's record keeps that answer without
+the value, so a resumed step must reveal again. The rows are `reveal`,
+`reveal.wait` and `reveal.describe` on every other door too.
+
 ### Reader children, summaries and fold receipts
 
 A run reads a result too big for its window with reader children
 (ARCH-0079 #reader-forks). `can({read})` answers what a child may take: the
-children's cutoff, what the run's spend scope may still spend, the active
-window of the code-mode seat's model in tokens (from the model's described
-context; 32768 when none is described) and the memory one child may hold
+children's cutoff, the meter they spend on (`scope` with what the run's spend
+scope may still spend, or `host`), the active window of the code-mode seat's
+model in tokens (from the model's described context; 32768 when none is
+described) and the memory one child may hold
 (`[limits] code_result_session_memory_bytes` shared by the children one run
 may have running, at 32 MiB each). `self.spawn` queues one child over one
 range, and `tasks.wait` waits on them. Children run on the vault's reader
-runner, never inside a step, and spend from the run's spend scope. Past
+runner, never inside a step. A paid or attempt-scoped run's children spend
+under its spend scope. An `execute_code` run's children, and those of a
+resident run with no spend scope, spend on the host's code-mode meter
+(`budget_units`), the one the run's own model calls take, with no per-run
+cap: one run's children can exhaust it for every code-mode run. Past
 `[limits] code_reader_backlog` queued children (default 256) the row asks
 once, on its crossing, and keeps queueing; it never refuses.
 
