@@ -4,9 +4,9 @@
 //! facet names. The session distill drafts craft notes on the generative
 //! seat; skill discovery classifies each finished attempt's use of the skills
 //! it loaded; the person-threshold tune reads each case where a person changed
-//! the ladder's answer and files a proposed row. A facet with no host drafter
-//! yet (the training offer and its check) is settled with nothing done, and
-//! the next night queues it again.
+//! the ladder's answer and files a proposed row; the training offer prices
+//! each busy seat's options and asks whether one is worth raising, and the
+//! offer check reads the meter against an approved offer's promise.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,8 +16,9 @@ use oneiron::actor_claims::{
     SessionActorDistiller, SessionDistillBrief,
 };
 use oneiron::dreamer_runner::maintenance::coach::{
-    COACH_JUDGE_SWAP_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_SKILL_DISCOVERY_FACET,
-    COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET, PersonThresholdPolicy,
+    COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
+    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET,
+    COACH_TRAINING_OFFER_FACET, PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
@@ -136,6 +137,8 @@ fn run_one(
         COACH_SKILL_DISTILL_FACET => distill(server, admitted),
         COACH_SKILL_DISCOVERY_FACET => super::skill_discovery::run(server, admitted),
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
+        COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
+        COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_TRADEOFF_ROUTE_FACET => {
             let report = vault.run_coach_tradeoff_route(admitted, now)?;
             tracing::debug!(?report, "the Coach's tradeoff routes");
