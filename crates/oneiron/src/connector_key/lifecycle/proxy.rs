@@ -3,7 +3,9 @@
 //! admission. Each paired actor holds one catalog key on [`PROXY_CONNECTOR`],
 //! its catalog name the actor's, over a fixed two-row slate the owner
 //! stamps. No probe suite runs: the engine is the connector, so the key
-//! activates under a proxy admission receipt.
+//! activates under a proxy admission receipt. A revoked or removed key keeps
+//! its catalog name for the vault's life, so a re-admission takes the next
+//! free generation of the actor's name.
 
 use std::collections::BTreeMap;
 
@@ -18,13 +20,17 @@ use super::super::slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateToolManifest,
     read_connector_slate_in_txn,
 };
-use super::super::txn::{append_connector_key_op_record, rewrite_connector_key_in_txn};
+use super::super::txn::{
+    CATALOG_NAME_INDEX, append_connector_key_op_record, rewrite_connector_key_in_txn,
+};
 use super::catalog_views::ActorConnectorRegistration;
 use super::registration::catalog_key_record;
 use crate::Vault;
+use crate::authority::PairingRedeemed;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::{GateDecisionId, Store};
 
 /// The connector the OpenAI proxy registers as.
 pub const PROXY_CONNECTOR: &str = "openai_proxy";
@@ -107,14 +113,31 @@ fn admission_digest(actor: &EntityId, slate: &ConnectorGrantSlate) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
+/// The actor's catalog name on the proxy connector: `openai_proxy_<actor
+/// hex>`, then `_<n>` from 1 for each admission after a revoked or removed
+/// key, whose name stays taken.
+fn proxy_catalog_name(store: &Store, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<String> {
+    let first = format!("{PROXY_CONNECTOR}_{}", actor.to_hex());
+    if !CATALOG_NAME_INDEX.contains(store, txn, &first)? {
+        return Ok(first);
+    }
+    for generation in 1..=u32::MAX {
+        let name = format!("{first}_{generation}");
+        if !CATALOG_NAME_INDEX.contains(store, txn, &name)? {
+            return Ok(name);
+        }
+    }
+    Err(invalid_body("no free proxy catalog name"))
+}
+
 impl Vault {
     /// The owner admits the OpenAI proxy for `actor`. The proxy's fixed
     /// slate is drafted and stamped under the owner; then the actor's
     /// catalog key on [`PROXY_CONNECTOR`] is registered and activated in one
     /// transaction, under a proxy admission receipt. A live registration is
     /// returned as it stands, so a re-pair admits nothing twice. A key the
-    /// actor already holds that is not live is refused: the owner's switch
-    /// and stamp own it.
+    /// actor already holds that is not live, and not revoked, is refused: the
+    /// owner's switch and stamp own it.
     pub fn admit_proxy_connector(
         &self,
         owner: &AuthenticatedOwner,
@@ -126,7 +149,9 @@ impl Vault {
         }
         if self
             .connector_key_for(PROXY_CONNECTOR, Some(&actor))?
-            .is_some_and(|(_, key)| key.actor_entity_ref == Some(actor))
+            .is_some_and(|(_, key)| {
+                key.actor_entity_ref == Some(actor) && key.status != ConnectorKeyStatus::Revoked
+            })
         {
             return Err(invalid_body(
                 "the actor's proxy connector key is not live: switch it on or stamp its slate",
@@ -140,25 +165,6 @@ impl Vault {
             serde_json::to_string(&rows).map_err(|_| invalid_body("proxy slate draft"))?;
         let slate_ref = self.store_connector_slate(&manifest, &drafted)?;
         let slate = self.override_connector_slate(owner, slate_ref, 0, &BTreeMap::new())?;
-        let pending = catalog_key_record(
-            ConnectorCatalogEntry {
-                name: format!("{PROXY_CONNECTOR}_{}", actor.to_hex()),
-                connector: PROXY_CONNECTOR.to_owned(),
-                summary: PROXY_SUMMARY.to_owned(),
-                verbs: manifest.iter().map(|tool| tool.name.clone()).collect(),
-                call_class: ConnectorCallClass::ScopedMcp,
-                registered_at: at,
-            },
-            ConnectorKeySpec {
-                connector: PROXY_CONNECTOR.to_owned(),
-                actor_entity_ref: Some(actor),
-                budgets: Vec::new(),
-                secret_ref: None,
-                slate_ref: Some(slate_ref),
-                protocol_revision: Some(PROXY_PROTOCOL_REVISION.to_owned()),
-            },
-            at,
-        )?;
         let key_ref = self.store.clock.entity_id()?;
         let key = self.with_write_txn_grouped(|wtxn| {
             owner.revalidate_in_txn(self, wtxn)?;
@@ -166,6 +172,25 @@ impl Vault {
             if read_connector_slate_in_txn(self, wtxn, slate_ref)?.as_ref() != Some(&slate) {
                 return Err(Error::ConcurrentWrite("connector slate revision"));
             }
+            let pending = catalog_key_record(
+                ConnectorCatalogEntry {
+                    name: proxy_catalog_name(&self.store, wtxn, &actor)?,
+                    connector: PROXY_CONNECTOR.to_owned(),
+                    summary: PROXY_SUMMARY.to_owned(),
+                    verbs: manifest.iter().map(|tool| tool.name.clone()).collect(),
+                    call_class: ConnectorCallClass::ScopedMcp,
+                    registered_at: at,
+                },
+                ConnectorKeySpec {
+                    connector: PROXY_CONNECTOR.to_owned(),
+                    actor_entity_ref: Some(actor),
+                    budgets: Vec::new(),
+                    secret_ref: None,
+                    slate_ref: Some(slate_ref),
+                    protocol_revision: Some(PROXY_PROTOCOL_REVISION.to_owned()),
+                },
+                at,
+            )?;
             self.register_connector_key_in_txn(wtxn, &key_ref, &pending)?;
             let active = ConnectorKeyRecord {
                 qualification_receipt: Some(ConnectorQualificationReceipt::proxy_admission(
@@ -200,5 +225,23 @@ impl Vault {
             slate_ref,
             slate,
         })
+    }
+
+    /// The owner who made a redeemed link admits the OpenAI proxy for its
+    /// holder, so a link-paired actor needs no second step. That owner
+    /// authenticated when the link was made, and each transaction of the
+    /// admission revalidates them as a live owner of this vault. A link no
+    /// owner made admits nothing (`None`).
+    pub fn admit_linked_proxy_connector(
+        &self,
+        redeemed: &PairingRedeemed,
+        at: u64,
+    ) -> Result<Option<ActorConnectorRegistration>> {
+        let Some(owner) = redeemed.link_owner else {
+            return Ok(None);
+        };
+        let actor = EntityId::from_hex(&redeemed.slip.claims.holder_ref)?;
+        let owner = self.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+        self.admit_proxy_connector(&owner, actor, at).map(Some)
     }
 }

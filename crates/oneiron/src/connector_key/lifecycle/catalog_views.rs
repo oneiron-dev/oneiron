@@ -11,6 +11,7 @@ use super::super::record::{
 use super::super::slate::{ConnectorGrantSlate, read_connector_slate_in_txn};
 use super::super::slate_setting::callable_verbs_in_txn;
 use super::super::txn::{CATALOG_NAME_INDEX, governing_connector_key, read_connector_key_in_txn};
+use super::proxy::PROXY_CONNECTOR;
 
 /// The HISTORY lens over one catalogued connector: what it is, plus the
 /// VALUE-LESS metadata of the key that governs it. `secret_ref` is a custody
@@ -146,7 +147,9 @@ impl Vault {
             // Removed connectors keep their index row and their entry; the
             // discovery lens is live-only, so the status filter is what
             // hides them here while `describe_connector` still resolves them.
-            if record.status != ConnectorKeyStatus::Active {
+            // The OpenAI proxy's keys have no endpoint to call: none is
+            // discovered.
+            if record.status != ConnectorKeyStatus::Active || record.connector == PROXY_CONNECTOR {
                 continue;
             }
             let Some(mut catalog) = record.catalog.clone() else {
@@ -199,13 +202,14 @@ impl Vault {
     ///
     /// This is metadata only. The live chokepoint keeps charging through
     /// `charge_effector_budgets` until the named wiring follow-on consults
-    /// this route.
+    /// this route. The OpenAI proxy's keys have no endpoint, so no call
+    /// routes to one.
     pub fn route_connector_call(&self, name: &str) -> Result<Option<ConnectorCallRoute>> {
         let rtxn = self.store.env.read_txn()?;
         let Some((key_ref, record)) = self.catalog_record_in_txn(&rtxn, name)? else {
             return Ok(None);
         };
-        if record.status != ConnectorKeyStatus::Active {
+        if record.status != ConnectorKeyStatus::Active || record.connector == PROXY_CONNECTOR {
             return Ok(None);
         }
         let Some(mut entry) = record.catalog.clone() else {

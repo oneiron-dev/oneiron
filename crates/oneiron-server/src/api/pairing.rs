@@ -31,16 +31,29 @@ pub(super) async fn create_link(
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<CreateLink>,
 ) -> Result<Json<oneiron::authority::PairingLink>, EnvelopedApiError> {
-    super::check_api_auth(&headers, &server)?;
+    let auth = super::check_api_auth(&headers, &server)?;
     let link = match request.machine {
-        None => with_issuer(&server, |issuer| {
-            server.vault().issue_pairing_link_for_principal(
-                issuer,
-                request.scope,
-                request.lifetime_secs,
-                request.principal,
-            )
-        })?,
+        // A link the owner makes records them: a holder that can propose has
+        // the OpenAI proxy admitted under that owner when it redeems.
+        None => match super::owner_routes::owner(&auth, &server).ok() {
+            Some(owner) => with_issuer(&server, |issuer| {
+                server.vault().issue_owner_pairing_link(
+                    issuer,
+                    &owner,
+                    request.scope,
+                    request.lifetime_secs,
+                    request.principal,
+                )
+            })?,
+            None => with_issuer(&server, |issuer| {
+                server.vault().issue_pairing_link_for_principal(
+                    issuer,
+                    request.scope,
+                    request.lifetime_secs,
+                    request.principal,
+                )
+            })?,
+        },
         // Only the owner, in person, answers for a machine.
         Some(ownership) => {
             let auth =
@@ -233,11 +246,13 @@ pub(super) async fn redeem(
             machine.as_ref(),
         )
     })?;
-    let slip = redeemed.slip;
+    let slip = &redeemed.slip;
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
     // The already redeemed/logged slip is the credential. MCP registration
     // only records its immutable adapter ceiling; it creates no authority.
-    if let Some(record) = paired_mcp_record(server.vault(), &slip.claims)? {
+    let record = paired_mcp_record(server.vault(), &slip.claims)?;
+    let proxied = record.is_some() && slip_proposes(&slip.claims);
+    if let Some(record) = record {
         server
             .mcp_registry
             .lock()
@@ -245,10 +260,29 @@ pub(super) async fn redeem(
             .register(&token, record)
             .map_err(|_| ApiError::unauthorized())?;
     }
+    // A connector that can propose has the OpenAI proxy admitted under the
+    // owner who made its link (ARCH-0028). The pairing stands without it.
+    if proxied
+        && let Err(error) = server
+            .vault()
+            .admit_linked_proxy_connector(&redeemed, super::unix_seconds_now())
+    {
+        tracing::warn!(%error, "pairing: the OpenAI proxy was not admitted for the linked holder");
+    }
     Ok(Json(Paired {
         token,
         pin: redeemed.pin,
     }))
+}
+
+/// Whether a paired slip proposes or writes: the OpenAI proxy's write leg.
+fn slip_proposes(claims: &oneiron::authority::SlipClaims) -> bool {
+    [
+        crate::auth::CoreScope::Propose,
+        crate::auth::CoreScope::Write,
+    ]
+    .into_iter()
+    .any(|scope| claims.scope.verbs.contains(&scope.as_str().to_owned()))
 }
 
 /// The MCP adapter record a paired slip's claims map to, or `None` for a slip
