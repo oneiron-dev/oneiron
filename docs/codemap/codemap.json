@@ -14211,7 +14211,7 @@
      "path": "src/connector_key/slate_setting.rs",
      "purpose": "The four capability settings at call time (DEC-0006 §MCP connector permissions)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -49615,6 +49615,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/connector_reach.rs",
+     "purpose": "The reach's connector rows (ARCH-0070 `shape:reach-line`): each key's outward tools under the setting its…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ShapeGrantBound"
      ],
@@ -49729,10 +49740,20 @@
      "purpose": "The reach line (ARCH-0070 `shape:reach-line`, OSH p3): what each actor can send, read as a set join over…",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/retire.rs",
+     "purpose": "A retire line for a world or a mask lands as a person's delete of it: a user delete under the owner's gate…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -49773,7 +49794,7 @@
      "path": "src/vault_shape/skill.rs",
      "purpose": "Where a declared skill comes from, as a seed writes it (ARCH-0053)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1
      }
     },
@@ -54256,7 +54277,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 14,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54328,7 +54349,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3299,
+   "source_files": 3301,
    "test_files": 902
   },
   "oneiron-android": {
