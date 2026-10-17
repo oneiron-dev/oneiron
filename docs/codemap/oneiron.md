@@ -1063,10 +1063,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/lifecycle/catalog_views.rs` | src | s | 2 struct · 5 fn | ConnectorCallRoute, ConnectorDescription | Read lenses: HISTORY/EXECUTION/DISCOVERY views over the catalog plus key lookups |
 | `src/connector_key/lifecycle/charter_ops.rs` | src | s | 3 fn | — | GOV-10 charter gate: stage proposal, human approve-and-stamp, discard |
 | `src/connector_key/lifecycle/manifest_ops.rs` | src | m | 1 struct · 1 trait · 3 fn | ConnectorManifestQualifier, ProbeManifestQualifier | Manifest updates: qualify immutable resolved input, retain the approved snapshot, and bind an owner stamp to… |
-| `src/connector_key/lifecycle/mod.rs` | src | s | 3 re-export | — | — |
+| `src/connector_key/lifecycle/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | — |
 | `src/connector_key/lifecycle/qualification.rs` | src | s | 1 enum · 2 fn | ConnectorQualificationError | Qualification is a vault door: callers cannot submit a self-graded report |
 | `src/connector_key/lifecycle/registration.rs` | src | m | 3 fn · 1 crate-vis | — | Key minting: both register doors, shared in-txn core, unbudgeted mint, entity-body writer |
 | `src/connector_key/lifecycle/status.rs` | src | s | 6 fn | — | Key state machine: suspend/resume, terminal revoke/remove, custody rotation and generation log |
+| `src/connector_key/lifecycle/tool_grant.rs` | src | m | 5 struct · 1 enum · 2 fn · 2 const · 3 crate-vis | ConnectorConsentRowView, ConnectorConsentTarget, ConnectorConsentView, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant | The owner's consent to a catalog connector's tools (ONE-1794, OF-189) |
 | `src/connector_key/manifest_drift.rs` | src | m | 3 struct · 1 enum · 7 fn · 2 crate-vis | ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest | Resolved connector-schema snapshots and conservative, typed drift classification |
 | `src/connector_key/meter.rs` | src | m | 5 struct · 5 const · 18 crate-vis | ConnectorDispatchTelemetry, ConnectorKeyDispatchTally, EffectorBudgetCharge, EffectorBudgetRead, EffectorBudgetRowRead | — |
 | `src/connector_key/mod.rs` | src | s | 2 mod · 11 re-export · 9 crate-vis | — | Connector-key registry records with effector budgets for OF-277 GOV-01 |
@@ -2539,9 +2540,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_chokepoint/tests.rs` | test | m | — | — | Recovery-side governance tests (ONE-1885) |
 | `src/outbound_chokepoint/types.rs` | src | s | 12 crate-vis | — | Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper… |
 | `src/outbound_consent/authority.rs` | src | m | 3 struct · 1 enum · 5 fn · 7 crate-vis | FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization | Frozen payload, keyed binding authority, and grant-scope digest |
-| `src/outbound_consent/connector_call.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const | ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, UntrustedToolResult | The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare… |
+| `src/outbound_consent/connector_call.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const · 1 crate-vis | ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, UntrustedToolResult | The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare… |
 | `src/outbound_consent/execution.rs` | src | m | 1 struct · 3 fn · 3 crate-vis | ScopedMcpDispatchResult | Scoped-call execution, post-effect decision, and result transport |
-| `src/outbound_consent/mod.rs` | src | s | 1 mod · 7 re-export · 1 crate-vis | — | Payload-aware consent and transport boundary for scoped outbound tools |
+| `src/outbound_consent/mod.rs` | src | s | 1 mod · 7 re-export · 2 crate-vis | — | Payload-aware consent and transport boundary for scoped outbound tools |
 | `src/outbound_consent/recovery.rs` | src | s | 2 struct · 1 enum · 1 fn | AuthorizedRecoveryError, AuthorizedRecoveryReport, StaleConnectorManifestRefusal | Authorized recovery sweep, report, and best-effort lease |
 | `src/outbound_consent/result_scrub.rs` | src | s | 6 struct · 1 trait · 8 fn | OutboundResultSender, OutboundTransportPolicy, OutboundTransportResult, QuarantinedOutboundResult, RawOutboundResult, ScrubbedOutboundResult, StdioSandboxPolicy | Result redaction types, sender trait, and transport hardening policy |
 | `src/outbound_consent/scope.rs` | src | s | 4 struct · 3 enum · 6 fn | DataClass, ScopedMcpBatchVerdict, ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason, ScopedMcpGrantRef | Payload-aware scope axes, consent decisions, and batch evaluation |
@@ -2553,7 +2554,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_grant/consume.rs` | src | s | 1 fn · 1 const · 3 crate-vis | — | Channel-identity consume door with usage accounting |
 | `src/outbound_grant/grant.rs` | src | s | 1 struct · 1 enum · 8 fn | StandingOutboundGrant, StandingOutboundGrantStatus | Standing grant record, status, and its validators |
 | `src/outbound_grant/index.rs` | src | s | 7 crate-vis | — | Principal index maintenance and lookup |
-| `src/outbound_grant/mint.rs` | src | m | 6 fn · 2 crate-vis | — | Vault mint, revoke, get, and apply doors plus binding handles |
+| `src/outbound_grant/mint.rs` | src | m | 6 fn · 4 crate-vis | — | Vault mint, revoke, get, and apply doors plus binding handles |
 | `src/outbound_grant/mod.rs` | src | s | 4 re-export · 5 crate-vis | — | Standing outbound-grant records for OF-367 RS6.2/RS6.5 |
 | `src/outbound_grant/scope.rs` | src | s | 2 struct · 1 enum · 4 fn · 11 crate-vis | BookingPageInviteGrantMintIntent, ScopedMcpGrantMintIntent, StandingOutboundGrantScope | Scope dials, scope vocabularies, mint intents, and scope validation |
 | `src/outbound_grant/tests.rs` | test | L | — | — | — |
