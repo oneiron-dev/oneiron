@@ -248,12 +248,22 @@ impl Memory<'_> {
     /// membership the room's own history reads check. A change mid-turn can
     /// only narrow the turn, and the turn keeps the narrowing for its later
     /// reads. Each row is checked again against the room as its own snapshot
-    /// reads it.
+    /// reads it. A turn bound to one thread rebuilds through that thread's
+    /// ceiling ([`thread_ceiling_in`]), so a thread-only reader keeps reading
+    /// it; a room turn reads as before.
     pub(crate) fn room_turn_now(&self) -> MemoryResult<Option<RoomTurnCeiling>> {
         let Some(turn) = self.room_turn() else {
             return Ok(None);
         };
-        let now = self.room_ceiling(turn.room)?;
+        let now = match turn.branch {
+            Some(thread) => {
+                let vault = self.vault();
+                let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+                thread_ceiling_in(vault, &txn, turn.room, thread, self.actor())?
+                    .ok_or_else(unknown_room)?
+            }
+            None => self.room_ceiling(turn.room)?,
+        };
         turn.terms.meet(&now.terms.get());
         Ok(Some(RoomTurnCeiling {
             terms: turn.terms.clone(),
