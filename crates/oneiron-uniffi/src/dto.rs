@@ -97,6 +97,9 @@ pub struct WitnessTurn {
     /// A quote on a project room's thread reply: a scalar span of one MESSAGE
     /// in the room. Omitted means no quote.
     pub quote: Option<QuoteSpan>,
+    /// A new project room thread root's audience, as 32-hex PERSON and
+    /// AGENT_DEF ids, fixed once set. Omitted means it reads as its room does.
+    pub thread_audience: Option<Vec<String>>,
     /// Messages, attributed to the bound actor unless authored by `System`.
     pub messages: Vec<WitnessMessage>,
     /// Unix seconds; omitted is stamped with the current time at the call

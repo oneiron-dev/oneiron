@@ -10,7 +10,7 @@ use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, authority_append_for,
     authority_range_for, authority_tail_for, authority_wanted, home_search_candidates,
-    index_selection_revision, promotion_snapshot_with, sealed_shelf_after, sealed_shelf_packet,
+    index_selection_revision, promotion_snapshot_with, sealed_shelf_after,
     sealed_shelf_packet_part, selected_item_blob_with, shelve_sealed_window,
     shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
     wanted_sealed_replacements, window_index_page, window_index_projection_with,
@@ -113,12 +113,6 @@ struct SealedListRequest {
     after: u64,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SealedGetRequest {
-    id: String,
-}
-
 /// One part of a sealed packet too large for one request: `upload` is the
 /// blake3 digest of the whole packet in hex, `offset` the bytes staged before.
 #[derive(Deserialize)]
@@ -218,7 +212,6 @@ pub(super) fn run(
             "residence.search" => search(server, auth, peer, request.params, budgets),
             "residence.sealed.put" => sealed_put(server, auth, peer, request.params),
             "residence.sealed.list" => sealed_list(server, peer, request.params),
-            "residence.sealed.get" => sealed_get(server, peer, request.params),
             "residence.sealed.stage" => sealed_stage(server, auth, peer, request.params),
             "residence.sealed.commit" => sealed_commit(server, auth, peer, request.params),
             "residence.sealed.read" => sealed_read(server, peer, request.params),
@@ -801,25 +794,6 @@ fn sealed_list(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<
         })
         .collect();
     Ok((json!({"entries": entries}), Some(Vec::new())))
-}
-
-/// One live or retired sealed packet, for a proved machine that reads its
-/// world.
-fn sealed_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
-    let input: SealedGetRequest =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let id = SealedContentId::from_hex(&input.id).map_err(|_| AppError::invalid_params())?;
-    let (window, packet) = sealed_shelf_packet(&server.vault, peer, &id)
-        .map_err(|_| AppError::not_found("sealed packet", None))?
-        .ok_or_else(|| AppError::not_found("sealed packet", None))?;
-    Ok((
-        json!({
-            "id": id.to_hex(),
-            "window": window.as_str(),
-            "packet": base64::engine::general_purpose::STANDARD.encode(packet),
-        }),
-        Some(Vec::new()),
-    ))
 }
 
 /// Stages one part of a sealed packet too large for one request (OF-534 G7);

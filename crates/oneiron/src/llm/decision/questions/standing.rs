@@ -614,6 +614,7 @@ fn backfill_answer(
                     images: Vec::new(),
                     think_row: None,
                     person_row: None,
+                    rule: None,
                 },
                 human_ask: None,
             },
