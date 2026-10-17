@@ -197,6 +197,12 @@ pub trait DecisionProvider: Send + Sync {
     fn reads_audio(&self) -> bool {
         false
     }
+    /// Whether its calls send unit text off the host: a remote seat, or a model on a
+    /// third-party route. [`DecisionLadder::under_posture`] empties its slot where the
+    /// posture keeps the text local.
+    fn leaves_host(&self) -> bool {
+        false
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// The pack as one request, one answer per question in order. The default asks each
     /// question over the same state in turn, so a server's prompt cache carries the shared
@@ -274,6 +280,10 @@ pub trait DecisionModel: Send + Sync {
     fn reads_audio(&self) -> bool {
         false
     }
+    /// See [`DecisionProvider::leaves_host`].
+    fn leaves_host(&self) -> bool {
+        false
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -317,6 +327,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn reads_audio(&self) -> bool {
         self.model.reads_audio()
+    }
+    fn leaves_host(&self) -> bool {
+        self.model.leaves_host()
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)
@@ -1094,6 +1107,35 @@ impl DecisionLadder<'_> {
             }
             rung = next_rung(rung);
         }
+    }
+
+    /// The ladder with every slot whose provider leaves the host emptied, when `posture`
+    /// keeps unit text local. Text leaves only under MANAGED posture or an explicit
+    /// `remote_opt_in`, and never under RELAY ([`super::SeatRequest::validate_remote`]'s
+    /// rule; ARCH-0076 #posture). A step up skips an emptied slot as it skips any absent
+    /// one.
+    #[must_use]
+    pub fn under_posture(
+        mut self,
+        posture: crate::HostingPrivacyPosture,
+        remote_opt_in: bool,
+    ) -> Self {
+        use crate::HostingPrivacyPosture::{Hosted, Relay};
+        if (posture == Hosted || remote_opt_in) && posture != Relay {
+            return self;
+        }
+        for slot in [
+            &mut self.rule,
+            &mut self.local,
+            &mut self.system_one,
+            &mut self.escalation,
+            &mut self.big,
+        ] {
+            if slot.is_some_and(|provider| provider.leaves_host()) {
+                *slot = None;
+            }
+        }
+        self
     }
 
     fn slot(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
