@@ -3104,7 +3104,6 @@ pub fn steer(
     memory: &Memory<'_>,
     input: SteerRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SteerReceipt> {
-    crate::gate::record_references::admit_row_references(memory, "steer", &input, &["/task_ref"])?;
     crate::task_verb::sdk::steer_child(memory, input)
 }
 pub fn describe(
@@ -4276,7 +4275,7 @@ pub fn vault_forget(
         memory,
         "vault.forget",
         &input,
-        &["/claim_ref", "/subject_ref"],
+        &["/claim_ref"],
     )?;
     memory_requests::forget_claims(memory, input)
 }
@@ -4297,12 +4296,6 @@ pub fn vault_delete(
     memory: &Memory<'_>,
     input: SafeDeleteRequest,
 ) -> MemoryResult<crate::memory::DeleteReceipt> {
-    crate::gate::record_references::admit_row_references(
-        memory,
-        "vault.delete",
-        &input,
-        &["/entity_ref"],
-    )?;
     memory.safe_delete(&input.entity_ref, input.reason)
 }
 pub fn vault_writes_pending(

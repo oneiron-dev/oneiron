@@ -763,10 +763,11 @@ pub(crate) const WITNESS_PROSE_ROW: &str = "vault.witness";
 const WITNESS_PROSE_SLOT: &str = "/messages/*[author=companion]/content";
 
 /// The witness program's prose-link check (OF-063 prose links: Engine
-/// ruling 10-17), run once for every turn it lands in base, whatever door
-/// the turn came through: the verb table's `vault.witness` and
-/// `vault.rooms.speak`, first-party speech, a streamed message's final
-/// witness, the AI chat reply. Each companion message is read as
+/// ruling 10-17), run once for every turn it lands, at base or in a
+/// non-anonymous off-record session's overlay, whatever door the turn came
+/// through: the verb table's `vault.witness` and `vault.rooms.speak`,
+/// first-party speech, a streamed message's final witness, the AI chat
+/// reply. An imported turn is not read. Each companion message is read as
 /// [`admit_prose_links`] reads a declared slot. Receipt-only: it never
 /// refuses or rewrites the message, and a read or receipt that fails is
 /// logged and the witness goes on.

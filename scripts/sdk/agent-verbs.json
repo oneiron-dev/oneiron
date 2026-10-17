@@ -200,7 +200,6 @@
     },
     {
       "name": "steer",
-      "refs": ["/task_ref"],
       "input": "SteerRequest",
       "output": "crate::task_verb::sdk::SteerReceipt",
       "call": "crate::task_verb::sdk::steer_child(memory, input)?",
@@ -2389,7 +2388,7 @@
     },
     {
       "name": "vault.forget",
-      "refs": ["/claim_ref", "/subject_ref"],
+      "refs": ["/claim_ref"],
       "uniffi": {
         "args": {
           "selector": "ForgetSelector"
@@ -2454,7 +2453,6 @@
     },
     {
       "name": "vault.delete",
-      "refs": ["/entity_ref"],
       "uniffi": {
         "args": {
           "entity_ref": "String",
