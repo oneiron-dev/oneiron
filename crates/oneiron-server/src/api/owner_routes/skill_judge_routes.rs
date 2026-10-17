@@ -4,7 +4,9 @@
 //!
 //! The judge swaps (OF-184): the owner reads the shadow passes and the
 //! incumbent, sets the swap policy, and hand-tests a swap by picking the
-//! judge whose answer is right on a case the two judges disagreed on.
+//! judge whose answer is right on a case the two judges disagreed on. A
+//! blind preference case settles on the owner's pick between its pair's two
+//! responses (`/skills/judge/pairs`).
 //!
 //! The goal joins and the learned picks: the owner joins a skill's goal to a
 //! project's goal record, reads the preferences its picks taught, answers the
@@ -21,9 +23,10 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::skill_optimize::{
     GoalAxisReport, JudgeIncumbent, JudgeSwapPick, JudgeSwapPolicy, JudgeSwapReceipt,
-    ProjectGoalRevisionProposal, SkillTradeoffAsk, SkillTradeoffPreferences, TradeoffChoice,
-    judge_incumbent, judge_swap_policy, judge_swap_receipts, measure_skill_edit_goal_axes,
-    pick_judge_swap_case, project_goal_revision_proposals, set_judge_swap_policy,
+    PreferredResponse, ProjectGoalRevisionProposal, ResponsePairPick, SkillTradeoffAsk,
+    SkillTradeoffPreferences, TradeoffChoice, judge_incumbent, judge_swap_policy,
+    judge_swap_receipts, measure_skill_edit_goal_axes, pick_judge_swap_case, pick_response_pair,
+    project_goal_revision_proposals, response_pair_picks, set_judge_swap_policy,
     set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project, skill_tradeoff_asks_for,
     skill_tradeoff_preferences,
 };
@@ -54,10 +57,21 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/skills/judge/goal-revisions", get(goal_revisions))
         .route("/skills/judge/swaps", get(swaps))
         .route("/skills/judge/swaps/pick", post(swap_pick))
+        .route("/skills/judge/pairs", get(pair_picks))
+        .route("/skills/judge/pairs/pick", post(pair_pick))
         .route(
             "/skills/judge/swap-policy",
             get(swap_policy).post(set_swap_policy),
         )
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PairPick {
+    /// The blind preference pair, `first|second` (the two receipts).
+    pair_ref: String,
+    /// The better response: `first` or `second`.
+    preferred: PreferredResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -408,6 +422,43 @@ async fn swap_pick(
             &request.receipt,
             &request.case_ref,
             &request.judge,
+            unix_seconds(),
+        )?)
+    })
+    .await?;
+    Ok(Json(pick))
+}
+
+/// `GET /v1/owner/skills/judge/pairs`: every pick the owner made between a
+/// blind preference pair's two responses.
+async fn pair_picks(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<ResponsePairPick>> {
+    owner(&auth, &server)?;
+    let picks = blocking(move || -> OwnerResult<Vec<ResponsePairPick>> {
+        Ok(response_pair_picks(server.vault())?)
+    })
+    .await?;
+    Ok(Json(picks))
+}
+
+/// `POST /v1/owner/skills/judge/pairs/pick`: the owner's pick between a
+/// blind preference pair's two responses. It settles every judge-swap
+/// disagreement asked about that pair; it is final.
+async fn pair_pick(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<PairPick>, JsonRejection>,
+) -> OwnerReply<ResponsePairPick> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let pick = blocking(move || -> OwnerResult<ResponsePairPick> {
+        Ok(pick_response_pair(
+            server.vault(),
+            &owner,
+            &request.pair_ref,
+            request.preferred,
             unix_seconds(),
         )?)
     })

@@ -30,6 +30,9 @@ pub struct SkillOptimizeDecisions<'a> {
     pub wording: &'a BTreeMap<String, String>,
 }
 
+/// Most blind preference pairs one contrastive audit judges.
+const MAX_BLIND_PAIRS: usize = 32;
+
 /// A response-only pair sampled without the instructions, scores or labels.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkillReplayPair {
@@ -226,9 +229,13 @@ impl dyn HeldOutReplayNotes + '_ {
         task: &str,
         receipts: &[String],
     ) -> Result<Vec<BlindPreference>> {
-        let pairs = self.blind_pairs(task, receipts)?;
-        if pairs.is_empty() || pairs.len() > 32 {
-            return Err(invalid("contrastive audit requires 1..=32 response pairs"));
+        // The sample is the first 32 pairs, same-task pairs first as
+        // `blind_pairs` orders them: a size that selects, never one that
+        // refuses. No pair at all abstains.
+        let mut pairs = self.blind_pairs(task, receipts)?;
+        pairs.truncate(MAX_BLIND_PAIRS);
+        if pairs.is_empty() {
+            return Err(invalid("contrastive audit has no response pair to judge"));
         }
         let mut preferences = Vec::with_capacity(pairs.len());
         for pair in pairs {
