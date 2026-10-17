@@ -27,7 +27,8 @@ pub use self::authority::{
 };
 pub use self::connector_call::{
     CONNECTOR_REPLY_MAX_BYTES, ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome,
-    ConnectorCallRequest, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
+    ConnectorCallRequest, ConnectorCallState, ConnectorToolSchema, PendingConnectorCallRef,
+    UntrustedToolResult,
 };
 pub(crate) use self::connector_call::{connector_call_effector, held_connector_call_in_txn};
 pub use self::execution::ScopedMcpDispatchResult;

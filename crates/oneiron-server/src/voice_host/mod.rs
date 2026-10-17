@@ -17,6 +17,7 @@ mod backend;
 mod boot;
 mod brain;
 mod connection;
+mod entry_barrier;
 mod extraction;
 mod media_bridge;
 mod serve_bindings;
@@ -25,6 +26,7 @@ mod wire;
 
 pub(crate) use boot::VoiceBoot;
 pub use brain::{ChatBrain, ChatBrainBindings};
+pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, VoiceBrainOut, VoicePlayout};
@@ -95,6 +97,9 @@ pub struct VoiceHost {
     /// The vault's call-mode deadline: every speculative fire and finalize
     /// of a live call runs under it (ARCH-0061 §6 #recall-in-call).
     call_deadline: std::time::Duration,
+    /// The container the session is bound to, whose attendees' entries
+    /// stop the call's output (OF-365 P5); `None` for no room's call.
+    container: Option<(Arc<oneiron::Vault>, oneiron::EntityId)>,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -151,8 +156,14 @@ impl VoiceHost {
             bindings.extraction_prompt,
         )?;
         let call_deadline = vault.call_mode_deadline();
+        let container = bindings
+            .session
+            .container
+            .as_ref()
+            .map(|bound| (Arc::clone(&vault), bound.container));
         Ok(Self {
             call_deadline,
+            container,
             state: Arc::new(Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,
                 open: None,

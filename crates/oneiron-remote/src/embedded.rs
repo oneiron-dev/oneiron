@@ -341,6 +341,10 @@ pub(crate) struct EmbeddedClient {
     actor_class: EdgeActorClass,
     /// The room turn every verb runs in, when the host opened one.
     room_turn: Option<EntityId>,
+    /// The off-record session every verb runs inside, when the host named
+    /// one, bound to this handle's actor: the app host's principal (OF-063,
+    /// FIX 1668).
+    off_record_session: Option<String>,
 }
 
 impl EmbeddedClient {
@@ -359,6 +363,7 @@ impl EmbeddedClient {
             actor,
             actor_class: EdgeActorClass::Human,
             room_turn: None,
+            off_record_session: None,
         })
     }
 
@@ -376,6 +381,7 @@ impl EmbeddedClient {
             actor,
             actor_class: EdgeActorClass::Human,
             room_turn: None,
+            off_record_session: None,
         })
     }
 
@@ -399,6 +405,7 @@ impl EmbeddedClient {
             actor,
             actor_class,
             room_turn: None,
+            off_record_session: None,
         })
     }
 
@@ -424,7 +431,24 @@ impl EmbeddedClient {
     /// reach the engine and it is the facade — never `Vault`'s storage doors
     /// (I1/T2).
     pub(crate) fn memory(&self) -> oneiron::memory::Memory<'_> {
-        self.shared.vault().memory(self.actor, self.actor_class)
+        let memory = self.shared.vault().memory(self.actor, self.actor_class);
+        match self.off_record_session.as_deref() {
+            Some(session) => memory.in_off_record_session(session),
+            None => memory,
+        }
+    }
+
+    /// The same handle with every verb run inside the off-record session
+    /// `session_ref` names, for this handle's actor, the app host's
+    /// principal (OF-063, FIX 1668). Inside an anonymous one that actor is
+    /// verified in, a refusal writes no receipt; anywhere else it binds
+    /// nothing and grants nothing.
+    pub(crate) fn in_off_record_session(&self, session_ref: &str) -> Result<Self, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        Ok(Self {
+            off_record_session: Some(session_ref.to_owned()),
+            ..self.clone()
+        })
     }
 
     /// The same handle with every verb run as a turn in `room`. The engine
