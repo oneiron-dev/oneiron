@@ -31,7 +31,7 @@ use oneiron::skill_optimize::{
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     SkillOptimizeDecisions, SkillReplayPair, register_held_out_replay_scorer, skill_edit_goal,
 };
-use oneiron::skill_reliability::SkillReliabilityPosterior;
+use oneiron::skill_reliability::{SkillReliabilityPosterior, effective_skill_outcome};
 use oneiron::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -709,9 +709,12 @@ impl GoalAxisBandit for ServeAxisBandit<'_> {
                 && judgment.evidence_receipts.contains(&run.receipt_id)
         });
         // A run that failed or carries a defect misses every axis; only a
-        // clean run is put to the axis question.
-        let success =
-            run.outcome == COMPLETED && !defect && self.met(arm, &run.receipt_id, criterion)?;
+        // clean run is put to the axis question. The arm's outcome ledger,
+        // once it holds the run (amendments and late credit applied),
+        // outranks the attempt's own state.
+        let won = effective_skill_outcome(vault, &arm.skill, &run.receipt_id)?
+            .unwrap_or(run.outcome == COMPLETED);
+        let success = won && !defect && self.met(arm, &run.receipt_id, criterion)?;
         Ok(OnlineAxisSample {
             success,
             human_minutes: person_minutes(vault, &run.receipt_id)?,
