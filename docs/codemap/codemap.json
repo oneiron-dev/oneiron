@@ -4867,7 +4867,7 @@
      "path": "src/blob_artifact/born_from.rs",
      "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
