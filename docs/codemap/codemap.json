@@ -49457,6 +49457,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/voice_cascade/speakable.rs",
+     "purpose": "Text past one call's bound is spoken as several calls, in order, never refused (Rule 5)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "VoiceStreamConfig",
       "VoiceStreamFailure"
@@ -53694,7 +53704,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "voice_cascade": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -53752,7 +53762,7 @@
    },
    "over_bar": 176,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3262,
+   "source_files": 3263,
    "test_files": 902
   },
   "oneiron-android": {
