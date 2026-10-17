@@ -55942,7 +55942,7 @@
      "path": "src/edit/structure/check.rs",
      "purpose": "The independent check for structural edits",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -56480,10 +56480,10 @@
       "Relationship"
      ],
      "path": "src/retained_opc/package/parts.rs",
-     "purpose": "The add-part door",
+     "purpose": "The add-part and remove-part doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 9,
+      "fn": 11,
       "struct": 1
      }
     },
