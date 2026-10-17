@@ -23,7 +23,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::adopted_fold::{AdoptedImageFold, AdoptedTail};
-use super::checkpoint_image::{CheckpointAggregate, carries_body};
+use super::checkpoint_image::{
+    CheckpointAggregate, carries_body, local_archive_custodian_in_txn, local_archive_manifest,
+};
 use super::fold_resume::ImageFold;
 use super::*;
 use crate::error::{Error, RecordError, Result};
@@ -209,6 +211,35 @@ impl Vault {
                 .collect(),
             stale_approvals: stale_approvals.into_iter().collect(),
         };
+        // Custody is proved on the fold under the building install's pin,
+        // before the image drops it. The local manifest names only the
+        // covered rows this vault physically holds; inherited manifests stay.
+        let custodian = local_archive_custodian_in_txn(self, txn, &once)?;
+        let local = local_archive_manifest(
+            &image.vault_id,
+            held_covered
+                .iter()
+                .chain(closed.iter())
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            custodian,
+        )?;
+        let mut archive_manifests = image.archive_manifests.clone();
+        if let Some(local) = local {
+            match archive_manifests
+                .binary_search_by(|manifest| manifest.archive.cmp(&local.archive))
+            {
+                Ok(at) => {
+                    let custodians = &mut archive_manifests[at].custodians;
+                    custodians.extend(local.custodians);
+                    custodians.sort_unstable();
+                    custodians.dedup();
+                }
+                Err(at) => archive_manifests.insert(at, local),
+            }
+        }
         once.install = InstallBound::default();
         once.pinned_root = None;
         let mut rows = image.rows.clone();
@@ -242,7 +273,7 @@ impl Vault {
             },
             safety,
             unresolved,
-            archive_manifests: image.archive_manifests.clone(),
+            archive_manifests,
             root_policy: self.checkpoint_root_policy_in_txn(txn)?,
             building_pin: pin,
             parent: None,
