@@ -173,6 +173,11 @@ impl CdpDriver {
         }
     }
 
+    /// The page's URL as it is now.
+    pub(crate) fn url(&self) -> Result<String, BrowserError> {
+        Ok(self.page_info()?.0)
+    }
+
     /// The page's URL and title as they are now.
     fn page_info(&self) -> Result<(String, String), BrowserError> {
         let info = self.pipe.call(
@@ -229,6 +234,7 @@ impl CdpDriver {
             rows: shown,
             removed,
             receipt: None,
+            library: Vec::new(),
         })
     }
 

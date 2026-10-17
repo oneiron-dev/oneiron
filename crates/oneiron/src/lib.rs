@@ -194,6 +194,7 @@ pub mod vault_cleanup;
 pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod blob_artifact;
+pub mod browser_library;
 pub mod build_cache;
 pub mod checkout;
 pub mod code_artifact;
