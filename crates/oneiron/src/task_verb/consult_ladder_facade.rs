@@ -245,7 +245,10 @@ impl Memory<'_> {
             approval: ClaimApprovalStatus::Auto,
             effected: true,
             route: Some(route),
-        })
+            task_record: None,
+            proposal_record: None,
+        }
+        .with_record_refs())
     }
 
     /// Writes the OLD task's terminal row: rejected on the ONE-1699 axis,

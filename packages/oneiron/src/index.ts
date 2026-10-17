@@ -149,6 +149,10 @@ export class Oneiron {
       settle: (input: Facade.IdentityActNowRequest): Facade.IdentityActNow => this.#call(() => this.#client.selfIdentitySettle(input) as Facade.IdentityActNow),
     },
     inbox: {
+      /** Lists one page of notifications delivered to the bound actor, without marking them. */
+      list: (input: Facade.InboxListRequest): Facade.NotificationPage => this.#call(() => this.#client.selfInboxList(input) as Facade.NotificationPage),
+      /** Marks one delivered notification seen or acknowledged for the bound actor. */
+      mark: (input: Facade.InboxMarkRequest): Facade.NotificationRow => this.#call(() => this.#client.selfInboxMark(input) as Facade.NotificationRow),
       concern: Object.assign((input: Facade.ConcernCardRequest): Facade.AgentHealthCardView => this.#call(() => this.#client.selfInboxConcern(input) as Facade.AgentHealthCardView), {
         outcome: (input: Facade.ConcernOutcomeRequest): Facade.ConcernCardSummary => this.#call(() => this.#client.selfInboxConcernOutcome(input) as Facade.ConcernCardSummary),
         move: (input: Facade.ConcernMoveRequest): Facade.ConcernMoveOutcome => this.#call(() => this.#client.selfInboxConcernMove(input) as Facade.ConcernMoveOutcome),
@@ -194,6 +198,8 @@ export class Oneiron {
       history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
+      /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
+      seed: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitReceipt[]),
     },
     /**
    * Recalls a memory pack.
@@ -546,6 +552,12 @@ export class Oneiron {
     habits: {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
+    },
+    consolidation: {
+      /** Enqueues one consolidation attempt and returns its durable job reference. */
+      enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
+      /** Reads the status of one consolidation attempt by its durable job reference. */
+      status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
     },
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */

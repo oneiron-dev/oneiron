@@ -293,6 +293,10 @@ class Oneiron:
         def settle(self, spec: Facade.IdentityActNowRequest) -> Facade.IdentityActNow:
             """Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."""
     class _SelfInboxVerbs:
+        def list(self, spec: Facade.InboxListRequest) -> Facade.NotificationPage:
+            """Lists one page of notifications delivered to the bound actor, without marking them."""
+        def mark(self, spec: Facade.InboxMarkRequest) -> Facade.NotificationRow:
+            """Marks one delivered notification seen or acknowledged for the bound actor."""
         @property
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs": ...
     class _SelfInboxConcernVerbs:
@@ -392,6 +396,8 @@ class Oneiron:
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
         @property
+        def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
+        @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
@@ -408,6 +414,8 @@ class Oneiron:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
+        def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
+            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
     class _VaultReceiptsVerbs:
         def __call__(self, limit: int = 100) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
@@ -700,6 +708,11 @@ class Oneiron:
     class _VaultHabitsVerbs:
         def checkin(self, input: Facade.HabitCheckinInput) -> Facade.EntityRefReceipt:
             """Appends one immutable check-in under a Habit TASK."""
+    class _VaultConsolidationVerbs:
+        def enqueue(self, spec: Facade.ConsolidationEnqueueRequest) -> Facade.DreamerAttemptRef:
+            """Enqueues one consolidation attempt and returns its durable job reference."""
+        def status(self, spec: Facade.ConsolidationStatusRequest) -> Facade.DreamerAttemptView | None:
+            """Reads the status of one consolidation attempt by its durable job reference."""
     class _VaultNotesVerbs:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""

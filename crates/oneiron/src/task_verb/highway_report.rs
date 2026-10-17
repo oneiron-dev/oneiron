@@ -13,6 +13,10 @@
 //! An engine runner reports from inside its own write transaction, through
 //! the same bodies: its reads, asks and commit run in that transaction, with
 //! no decisions, so no model or ladder runs under the writer.
+//!
+//! A report that names its try is journaled with its receipt in the
+//! committing transaction ([`report_journal`]); the same report again is
+//! answered from the journal before anything else runs.
 
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, CompleteAttempt, FailAttempt,
@@ -42,6 +46,7 @@ use super::highway_types::{
     AttemptHandle, TaskCallReceipt, TaskHandle, TaskLifecycleRecord, TaskOutcome, TaskPhase,
     TaskReport, TaskReportBody, TaskVia,
 };
+use super::report_journal::{self, ReportIdentity};
 use super::runner_done::RunnerDoneAnswer;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::wire_decode::task_verb_body;
@@ -123,6 +128,8 @@ pub(super) struct ReportTxn<'a, 't> {
     refused: Vec<String>,
     /// The runner's own answer to "Done means met?", asked before its write.
     judged: Option<RunnerDoneAnswer>,
+    /// The report's journal identity, when it names a try.
+    journal: Option<ReportIdentity>,
 }
 
 impl ReportTxn<'_, '_> {
@@ -132,6 +139,7 @@ impl ReportTxn<'_, '_> {
             txn: None,
             refused: Vec::new(),
             judged: None,
+            journal: None,
         }
     }
 }
@@ -147,8 +155,37 @@ impl<'a, 't> ReportTxn<'a, 't> {
             txn: Some(txn),
             refused: Vec::new(),
             judged,
+            journal: None,
         }
     }
+
+    /// This report, journaled under `journal` when it names a try.
+    fn journaled(mut self, journal: Option<ReportIdentity>) -> Self {
+        self.journal = journal;
+        self
+    }
+}
+
+/// What one report's write did: the receipt it answers with, whether the
+/// TASK settled, and whether this call applied it (not a replay or a fence
+/// refusal).
+struct ReportCommit {
+    receipt: TaskCallReceipt,
+    settled: bool,
+    applied: bool,
+}
+
+/// What one report's write commits: its door, TASK, fence handle and
+/// journal identity, and the receipt it answers with.
+struct StagedReport<'r> {
+    via: &'r TaskVia,
+    task_ref: EntityId,
+    attempt: Option<&'r AttemptHandle>,
+    journal: Option<&'r ReportIdentity>,
+    lifecycle: TaskLifecycleRecord,
+    related: Vec<TaskHandle>,
+    asked_up: Option<TaskAskHandle>,
+    now: u64,
 }
 
 fn handle_entity(handle: &TaskHandle) -> EntityId {
@@ -370,6 +407,10 @@ impl Memory<'_> {
         let key = qualified_key(via, &report.report_key, "report key")?;
         let task_ref = report.task_ref;
         let now = self.vault().now_recorded_at();
+        let journal = match report.body {
+            TaskReportBody::Ack | TaskReportBody::Brief(_) => None,
+            _ => report_journal::identity(self.actor(), via, &report, &key)?,
+        };
         match report.body {
             TaskReportBody::Ack => self.report_ack(via, task_ref, &key, now),
             TaskReportBody::Brief(next) => self.report_brief(via, task_ref, &key, *next, now),
@@ -386,7 +427,7 @@ impl Memory<'_> {
                 let lifecycle =
                     self.work_lifecycle(via, task_ref, &key, report.attempt.as_ref(), &body, now);
                 self.report_work(
-                    &mut ReportTxn::own(),
+                    &mut ReportTxn::own().journaled(journal),
                     via,
                     task_ref,
                     &key,
@@ -418,6 +459,7 @@ impl Memory<'_> {
                 "an acknowledgement or brief revision is not a runner report",
             ));
         }
+        let journal = report_journal::identity(self.actor(), via, &report, &key)?;
         let lifecycle = self.work_lifecycle(
             via,
             task_ref,
@@ -427,7 +469,7 @@ impl Memory<'_> {
             now,
         );
         self.report_work(
-            &mut ReportTxn::runner(wtxn, judged),
+            &mut ReportTxn::runner(wtxn, judged).journaled(journal),
             via,
             task_ref,
             &key,
@@ -592,13 +634,13 @@ impl Memory<'_> {
                         if same_try
                             && record.lease_owner.as_deref() == Some(lease_owner.as_str()) =>
                     {
-                        // An external try carries a brief stamp, never a
-                        // dispatch payload, so it names no team run.
+                        // OF-540: the team run the try froze at its accept.
+                        let team = crate::agent_dispatch::attempt_team_stamp(&record)?;
                         Fence::Held {
                             lane,
                             attempt: Some(record),
                             lease_owner: Some(lease_owner),
-                            team: None,
+                            team,
                         }
                     }
                     AttemptState::Completed | AttemptState::Failed
@@ -860,6 +902,15 @@ impl Memory<'_> {
         mut lifecycle: TaskLifecycleRecord,
         now: u64,
     ) -> MemoryResult<TaskCallReceipt> {
+        // The same report again answers its journaled receipt, before any
+        // fence, question or ask.
+        if let Some(identity) = rt.journal.as_ref()
+            && let Some(receipt) = self.report_read(rt, |txn| {
+                report_journal::replay_in(self.vault(), txn, identity)
+            })?
+        {
+            return Ok(receipt);
+        }
         let late_result = match &body {
             TaskReportBody::Done { result_ref, .. } => Some(*result_ref),
             _ => None,
@@ -911,6 +962,7 @@ impl Memory<'_> {
                     attempt.as_ref(),
                     lifecycle,
                     Vec::new(),
+                    None,
                     now,
                     |queue, wtxn, body, held| {
                         if renew_lease {
@@ -1022,6 +1074,7 @@ impl Memory<'_> {
                     attempt.as_ref(),
                     lifecycle,
                     related,
+                    None,
                     now,
                     |_, _, body, _| {
                         block(body, &waits, now);
@@ -1086,6 +1139,7 @@ impl Memory<'_> {
                     attempt.as_ref(),
                     lifecycle,
                     related,
+                    None,
                     now,
                     |queue, wtxn, body, held| {
                         if retryable {
@@ -1131,6 +1185,7 @@ impl Memory<'_> {
                     attempt.as_ref(),
                     lifecycle,
                     Vec::new(),
+                    None,
                     now,
                     |queue, wtxn, body, held| {
                         if let Some((record, lease_owner)) = held_try(held) {
@@ -1224,6 +1279,7 @@ impl Memory<'_> {
                     attempt.as_ref(),
                     lifecycle,
                     related,
+                    None,
                     now,
                     |queue, wtxn, body, held| {
                         land_done_in(queue, wtxn, body, held_try(held), result_ref, now)?;
@@ -1256,6 +1312,7 @@ impl Memory<'_> {
                     attempt.as_ref(),
                     lifecycle,
                     related,
+                    None,
                     now,
                     |queue, wtxn, body, held| {
                         fail_unmet_in(queue, wtxn, body, held_try(held), now)?;
@@ -1313,6 +1370,7 @@ impl Memory<'_> {
                         attempt.as_ref(),
                         lifecycle,
                         related,
+                        None,
                         now,
                         |_, _, body, _| {
                             block(body, &[result_ref], now);
@@ -1345,7 +1403,7 @@ impl Memory<'_> {
             .fields
             .insert("ask".to_owned(), handle.group_ref.to_hex());
         let waits = [result_ref, handle.group_ref];
-        let mut receipt = self.commit_report(
+        self.commit_report(
             rt,
             via,
             task_ref,
@@ -1354,22 +1412,20 @@ impl Memory<'_> {
             vec![TaskHandle::Ask {
                 group_ref: handle.group_ref,
             }],
+            Some(handle),
             now,
             |_, _, body, _| {
                 block(body, &waits, now);
                 Ok(false)
             },
-        )?;
-        if matches!(receipt.outcome, TaskOutcome::Reported { .. }) {
-            receipt.outcome = TaskOutcome::AskedUp { ask: handle };
-        }
-        Ok(receipt)
+        )
     }
 
     /// One report's write: re-check the fence in the committing
     /// transaction, apply `apply` to the try and the TASK, write the TASK,
     /// and, when the TASK settled on a call of its own, signal its waiters
     /// after commit. In a runner's write the caller's commit announces it.
+    /// `asked_up` names the ask a parked Done answers with.
     #[expect(
         clippy::too_many_arguments,
         reason = "one report's door, identity, fence handle, receipt and its one write"
@@ -1382,6 +1438,7 @@ impl Memory<'_> {
         attempt: Option<&AttemptHandle>,
         mut lifecycle: TaskLifecycleRecord,
         related: Vec<TaskHandle>,
+        asked_up: Option<TaskAskHandle>,
         now: u64,
         apply: impl FnOnce(
             &AttemptQueue<'_>,
@@ -1396,33 +1453,88 @@ impl Memory<'_> {
                 .insert("ask_refused".to_owned(), rt.refused.join("; "));
         }
         let own = rt.txn.is_none();
+        let staged = StagedReport {
+            via,
+            task_ref,
+            attempt,
+            journal: rt.journal.as_ref(),
+            lifecycle,
+            related,
+            asked_up,
+            now,
+        };
         let committed = match rt.txn.as_deref_mut() {
             None => self.with_verified_actor_write_txn(|wtxn| {
-                self.commit_report_in_txn(wtxn, via, task_ref, attempt, now, apply)
+                self.commit_report_in_txn(wtxn, staged, apply)
             })?,
-            Some(wtxn) => self.commit_report_in_txn(wtxn, via, task_ref, attempt, now, apply)?,
+            Some(wtxn) => self.commit_report_in_txn(wtxn, staged, apply)?,
         };
-        let (phase, settled) = match committed {
-            Ok(committed) => committed,
-            Err(fence) => {
-                let outcome = fence.outcome().unwrap_or(TaskOutcome::StaleFence);
-                let late = lifecycle
-                    .fields
-                    .get("result_ref")
-                    .and_then(|hex| EntityId::from_hex(hex).ok());
-                return Ok(Self::fenced_out(task_ref, outcome, lifecycle, late));
-            }
-        };
-        if own {
+        if own && committed.applied {
             self.vault().store.notify_attempt_observers();
             self.vault().store.notify_task_updates([task_ref]);
-            if settled {
+            if committed.settled {
                 // The terminal record committed before the signal goes out; a
                 // crash in this gap is replayed from the local binding index.
                 crate::llm::send_peer_result_signal(self.vault(), task_ref, now)?;
                 crate::llm::reconcile_peer_result_signals(self.vault(), now)?;
             }
         }
+        Ok(committed.receipt)
+    }
+
+    /// The body of one report's write, in `wtxn`: the journal first, so the
+    /// same report again answers its first receipt and moves nothing; then
+    /// the fence again, the try and the TASK moved together, the TASK
+    /// written, and the receipt journaled beside it. A fence that refuses
+    /// writes nothing and journals nothing.
+    fn commit_report_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        staged: StagedReport<'_>,
+        apply: impl FnOnce(
+            &AttemptQueue<'_>,
+            &mut heed::RwTxn<'_>,
+            &mut TaskVerbBody,
+            &(Lane, Option<AttemptRecord>, Option<String>),
+        ) -> MemoryResult<bool>,
+    ) -> MemoryResult<ReportCommit> {
+        let StagedReport {
+            via,
+            task_ref,
+            attempt,
+            journal,
+            mut lifecycle,
+            related,
+            asked_up,
+            now,
+        } = staged;
+        if let Some(identity) = journal
+            && let Some(receipt) = report_journal::replay_in(self.vault(), &*wtxn, identity)?
+        {
+            return Ok(ReportCommit {
+                receipt,
+                settled: false,
+                applied: false,
+            });
+        }
+        let queue = AttemptQueue::new(self.vault());
+        let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+        let fence = self.report_fence_in(&*wtxn, via, task_ref, &body, attempt)?;
+        let Some(held) = fence.held() else {
+            let outcome = fence.outcome().unwrap_or(TaskOutcome::StaleFence);
+            let late = lifecycle
+                .fields
+                .get("result_ref")
+                .and_then(|hex| EntityId::from_hex(hex).ok());
+            return Ok(ReportCommit {
+                receipt: Self::fenced_out(task_ref, outcome, lifecycle, late),
+                settled: false,
+                applied: false,
+            });
+        };
+        let settled = apply(&queue, wtxn, &mut body, &held)?;
+        let phase = phase_of(&body);
+        self.rewrite_task_in_txn(wtxn, task_ref, body, now)?;
         lifecycle.outcome = match &phase {
             TaskPhase::Terminal { disposition } => disposition.as_str(),
             TaskPhase::Blocked { .. } => "blocked",
@@ -1434,45 +1546,27 @@ impl Memory<'_> {
             | TaskPhase::Asked { .. } => "reported",
         }
         .to_owned();
-        Ok(TaskCallReceipt {
+        let receipt = TaskCallReceipt {
             handle: attempt.map_or(TaskHandle::Task { task_ref }, |attempt| {
                 TaskHandle::Attempt(*attempt)
             }),
             related,
-            outcome: TaskOutcome::Reported { phase },
+            outcome: match asked_up {
+                Some(ask) => TaskOutcome::AskedUp { ask },
+                None => TaskOutcome::Reported { phase },
+            },
             receipt_ref: None,
             lifecycle: Some(lifecycle),
             idempotent_replay: false,
-        })
-    }
-
-    /// The body of one report's write, in `wtxn`: the fence again, the
-    /// try and the TASK moved together, the TASK written. `Err` carries
-    /// the fence that refused, with nothing written.
-    fn commit_report_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        via: &TaskVia,
-        task_ref: EntityId,
-        attempt: Option<&AttemptHandle>,
-        now: u64,
-        apply: impl FnOnce(
-            &AttemptQueue<'_>,
-            &mut heed::RwTxn<'_>,
-            &mut TaskVerbBody,
-            &(Lane, Option<AttemptRecord>, Option<String>),
-        ) -> MemoryResult<bool>,
-    ) -> MemoryResult<Result<(TaskPhase, bool), Fence>> {
-        let queue = AttemptQueue::new(self.vault());
-        let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-        let fence = self.report_fence_in(&*wtxn, via, task_ref, &body, attempt)?;
-        let Some(held) = fence.held() else {
-            return Ok(Err(fence));
         };
-        let settled = apply(&queue, wtxn, &mut body, &held)?;
-        let phase = phase_of(&body);
-        self.rewrite_task_in_txn(wtxn, task_ref, body, now)?;
-        Ok(Ok((phase, settled)))
+        if let Some(identity) = journal {
+            report_journal::put_in(self.vault(), wtxn, identity, &receipt)?;
+        }
+        Ok(ReportCommit {
+            receipt,
+            settled,
+            applied: true,
+        })
     }
 
     /// Done means met? A parked Done whose ask settled answers from the ask;

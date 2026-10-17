@@ -32,6 +32,10 @@ pub struct DiaryEntryReceipt {
     pub entry_id: String,
     pub entry_ref: String,
     pub receipt_ref: String,
+    /// The entry's NOTE as a typed record ref (OF-063), as the writing door
+    /// named it, with no read.
+    #[serde(default)]
+    pub record: Option<crate::lens::RecordRef>,
 }
 
 impl From<EntityRefReceipt> for DiaryEntryReceipt {
@@ -40,6 +44,7 @@ impl From<EntityRefReceipt> for DiaryEntryReceipt {
             entry_id: receipt.id_hex,
             entry_ref: receipt.entity_ref,
             receipt_ref: receipt.receipt_ref,
+            record: receipt.record,
         }
     }
 }

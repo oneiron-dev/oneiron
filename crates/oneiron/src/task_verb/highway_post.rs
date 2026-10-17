@@ -258,13 +258,15 @@ impl Memory<'_> {
             TaskHandle::Task { task_ref } => Some(*task_ref),
             _ => None,
         });
-        Ok(match (receipt.handle, receipt.outcome) {
+        let created = match (receipt.handle, receipt.outcome) {
             (TaskHandle::Task { task_ref }, TaskOutcome::Created { route }) => TaskCreateReceipt {
                 task_ref: Some(task_ref),
                 proposal_ref: None,
                 approval: ClaimApprovalStatus::Auto,
                 effected: true,
                 route,
+                task_record: None,
+                proposal_record: None,
             },
             (TaskHandle::Proposed { proposal_ref }, TaskOutcome::Created { route }) => {
                 TaskCreateReceipt {
@@ -273,6 +275,8 @@ impl Memory<'_> {
                     approval: ClaimApprovalStatus::Approved,
                     effected: true,
                     route,
+                    task_record: None,
+                    proposal_record: None,
                 }
             }
             (TaskHandle::Proposed { proposal_ref }, TaskOutcome::Rejected { .. }) => {
@@ -282,6 +286,8 @@ impl Memory<'_> {
                     approval: ClaimApprovalStatus::Rejected,
                     effected: false,
                     route: None,
+                    task_record: None,
+                    proposal_record: None,
                 }
             }
             (TaskHandle::Proposed { proposal_ref }, _) => TaskCreateReceipt {
@@ -290,13 +296,16 @@ impl Memory<'_> {
                 approval: ClaimApprovalStatus::Proposed,
                 effected: false,
                 route: None,
+                task_record: None,
+                proposal_record: None,
             },
             _ => {
                 return Err(MemoryError::from(Error::InvariantViolation(
                     "a post answered with neither a task nor a proposal",
                 )));
             }
-        })
+        };
+        Ok(created.with_record_refs())
     }
 
     /// Post: under Auto, one transaction mints the TASK at an id derived
@@ -316,6 +325,7 @@ impl Memory<'_> {
     ) -> MemoryResult<TaskCallReceipt> {
         let key = qualified_key(via, &post.intent_key, "intent key")?;
         let now = self.vault().now_recorded_at();
+        post.brief.admit_references(self, "tasks.create")?;
         let type_ref = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             post.brief.validate_in(self.vault(), &txn)?;
@@ -343,10 +353,11 @@ impl Memory<'_> {
             if self.vault().get_raw_in(&*wtxn, &task_ref)?.is_some() {
                 return Err(MemoryError::bad_request("task post id is already occupied"));
             }
-            let origin = match via {
-                TaskVia::Host(binding) => Some(task_create_origin_in_txn(self, &*wtxn, binding)?),
+            let creator = match via {
+                TaskVia::Host(binding) => Some(binding),
                 TaskVia::Wire => None,
             };
+            let origin = task_create_origin_in_txn(self, &*wtxn, creator)?;
             if task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?
                 != PolicyApprovalCeiling::Auto
             {
@@ -684,6 +695,7 @@ impl Memory<'_> {
         if self.credential_withholds(task_ref)? {
             return Err(not_found());
         }
+        next.admit_references(self, "tasks.update")?;
         let base_rev = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let body = task_body_in_txn(self.vault(), &txn, task_ref)?;

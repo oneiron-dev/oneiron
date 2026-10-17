@@ -2,7 +2,8 @@
 //!
 //! A plan an agent queued keeps that agent's run as its creator (OF-532): the
 //! cut states the creator's cap, and its agent TASKs run inside the
-//! creator's lease tree. Host-created planning stays root.
+//! creator's lease tree. Host-created planning stays root, linked to the
+//! conversation the host stamped, if any (OF-221).
 use super::create_origin::{
     TaskCreateOrigin, put_wave_plan_origin_in_txn, require_creator_in_txn,
     task_create_origin_in_txn, wave_plan_origin_in,
@@ -60,7 +61,8 @@ pub struct VaultWaveTaskPort<'a> {
     actor_class: EdgeActorClass,
     attempt: Option<crate::attempt_queue::AttemptRecord>,
     /// The agent run that queued the plan, as its planning attempt's witness
-    /// holds it; `None`: host-created planning, whose TASKs stay roots.
+    /// holds it; `None` or a root witness: host-created planning, whose
+    /// TASKs stay roots (a root witness carries only its conversation).
     origin: Option<TaskCreateOrigin>,
 }
 impl<'a> VaultWaveTaskPort<'a> {
@@ -118,7 +120,7 @@ fn wave_statement_in(
                 }
                 Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => FanoutWork::Agent(DispatchAgent {
                     target: AgentDispatchTarget::Custom(actor_ref),
-                    parent_attempt: origin.map(TaskCreateOrigin::parent_attempt),
+                    parent_attempt: origin.and_then(TaskCreateOrigin::parent_attempt),
                     dedupe_key: None,
                     run_id: origin.and_then(TaskCreateOrigin::run_id),
                     now,
@@ -132,7 +134,7 @@ fn wave_statement_in(
         });
     }
     let caller = FanoutCaller {
-        parent_attempt: origin.map(TaskCreateOrigin::parent_attempt),
+        parent_attempt: origin.and_then(TaskCreateOrigin::parent_attempt),
         ..FanoutCaller::default()
     };
     let mut statement = AgentDispatcher::new(vault).plan_fanout_in_txn(txn, &caller, &work, now)?;
@@ -682,8 +684,10 @@ impl Memory<'_> {
     /// exact creator in an engine witness, never in its payload; its cut
     /// states the creator's cap, and its agent TASKs run inside the
     /// creator's lease tree. Two creators asking for the same plan get two
-    /// planning attempts. With no creator bound this is
-    /// [`Vault::enqueue_wave_plan`]: host-created planning stays root.
+    /// planning attempts. With no creator bound the plan is root; one the
+    /// host stamped with its conversation (OF-221) keeps that conversation
+    /// in the same witness, so its TASKs land still linked to it. With
+    /// neither this is [`Vault::enqueue_wave_plan`].
     pub fn enqueue_wave_plan(
         &self,
         epic: EntityId,
@@ -691,16 +695,28 @@ impl Memory<'_> {
         constraints: serde_json::Value,
         now: u64,
     ) -> MemoryResult<crate::attempt_queue::EnqueueOutcome> {
-        let Some(binding) = self.task_host() else {
+        if self.task_host().is_none() && self.origin_conversation().is_none() {
             return Ok(self
                 .vault()
                 .enqueue_wave_plan(epic, objective, constraints, now)?);
-        };
+        }
         let payload = serde_json::to_vec(&serde_json::json!({"epic": epic.to_hex(), "objective": objective, "constraints": constraints}))
             .map_err(|_| Error::InvariantViolation("wave request encoding"))?;
+        let unwitnessed = || {
+            MemoryError::from(Error::InvariantViolation(
+                "a bound or stamped wave plan has an origin",
+            ))
+        };
         self.with_verified_actor_write_txn(|wtxn| {
-            let origin = task_create_origin_in_txn(self, &*wtxn, binding)?;
-            let creator = crate::entity_id::bytes_to_hex_lower(origin.parent_attempt().as_bytes());
+            let origin = task_create_origin_in_txn(self, &*wtxn, self.task_host())?
+                .ok_or_else(unwitnessed)?;
+            // Two creators, or two conversations, asking for the same plan
+            // get two planning attempts.
+            let creator = match (origin.parent_attempt(), origin.origin_conversation()) {
+                (Some(parent), _) => crate::entity_id::bytes_to_hex_lower(parent.as_bytes()),
+                (None, Some(conversation)) => format!("conversation:{}", conversation.to_hex()),
+                (None, None) => return Err(unwitnessed()),
+            };
             let outcome = crate::ports::JobQueue::port_job_enqueue(
                 self.vault(),
                 wtxn,

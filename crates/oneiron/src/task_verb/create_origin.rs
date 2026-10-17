@@ -12,12 +12,18 @@
 //! landing rechecks the stored creator and its spend scope rather than the
 //! lease: a creator whose row is gone, whose project moved or whose spend
 //! scope has settled refuses, rather than landing as free work.
+//!
+//! A root create keeps a witness too when the host stamped the conversation
+//! whose request started it (OF-221, [`Memory::with_origin_conversation`]):
+//! no creator, only that conversation, so an approval or a wave cut that
+//! lands after the chat has moved on still links the work back to it.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    AgentDispatchInput, AgentDispatcher, SpendState, agent_dispatch_actor, record_dispatch_input,
+    AgentDispatchInput, AgentDispatcher, SpendState, TeamRunStamp, agent_dispatch_actor,
+    dispatch_origin_conversation, record_dispatch_input,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::entity_id::EntityId;
@@ -37,19 +43,35 @@ const ORIGINS: SideTable<[u8; 16], TaskCreateOrigin, Named> =
     SideTable::new(&side_table::TASK_CREATE_ORIGIN);
 
 /// The creator one TASK create runs under: the creator's attempt, the
-/// project its frozen dispatch input holds, and its queue run tag. Built
-/// only from a verified host binding; no caller writes any field.
+/// project its frozen dispatch input holds, its queue run tag, the
+/// conversation its work started from and the team run it works in. Built
+/// only from a verified host binding, or, for a root, from the host's
+/// conversation stamp alone; no caller writes any field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TaskCreateOrigin {
-    parent_attempt: AttemptId,
+    /// `None`: a root create the host stamped with its conversation.
+    parent_attempt: Option<AttemptId>,
     project_ref: Option<EntityId>,
     run_id: Option<String>,
+    /// OF-221: the conversation whose request started the work: the host's
+    /// stamp for a root, the creator's stored origin for a child.
+    origin_conversation: Option<EntityId>,
+    /// OF-540: the team run the creator's dispatch froze; `None` is no team.
+    team: Option<TeamRunStamp>,
 }
 
 impl TaskCreateOrigin {
-    pub(super) const fn parent_attempt(&self) -> AttemptId {
+    pub(super) const fn parent_attempt(&self) -> Option<AttemptId> {
         self.parent_attempt
+    }
+
+    pub(super) const fn origin_conversation(&self) -> Option<EntityId> {
+        self.origin_conversation
+    }
+
+    pub(super) const fn team(&self) -> Option<&TeamRunStamp> {
+        self.team.as_ref()
     }
 
     pub(super) const fn project_ref(&self) -> Option<EntityId> {
@@ -93,16 +115,28 @@ fn require_creator_actor(memory: &Memory<'_>, input: &AgentDispatchInput) -> Mem
     Ok(())
 }
 
-/// Resolves a live host binding into the origin its create runs under, in
-/// the create's own transaction: the bound attempt must still be leased by
-/// the binding's owner at its generation, be an agent dispatch, and be run
-/// by this surface's actor. A lost lease refuses; it never falls back to a
-/// root.
+/// Resolves the origin a create runs under, in the create's own
+/// transaction. A live host binding's: the bound attempt must still be
+/// leased by the binding's owner at its generation, be an agent dispatch,
+/// and be run by this surface's actor; a lost lease refuses, it never falls
+/// back to a root. With no binding the create is a root, witnessed only when
+/// the host stamped its conversation; `None` otherwise.
 pub(crate) fn task_create_origin_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
-    binding: &HostBinding,
-) -> MemoryResult<TaskCreateOrigin> {
+    binding: Option<&HostBinding>,
+) -> MemoryResult<Option<TaskCreateOrigin>> {
+    let Some(binding) = binding else {
+        return Ok(memory
+            .origin_conversation()
+            .map(|conversation| TaskCreateOrigin {
+                parent_attempt: None,
+                project_ref: None,
+                run_id: None,
+                origin_conversation: Some(conversation),
+                team: None,
+            }));
+    };
     let (record, input) = creator_run_in(memory.vault(), txn, binding.parent())?;
     if !record.state.is_running()
         || record.lease_owner.as_deref() != Some(binding.lease_owner())
@@ -114,31 +148,40 @@ pub(crate) fn task_create_origin_in_txn(
         ));
     }
     require_creator_actor(memory, &input)?;
+    let origin_conversation =
+        crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
+            .ok()
+            .and_then(|payload| dispatch_origin_conversation(&payload));
     let origin = TaskCreateOrigin {
-        parent_attempt: record.id,
+        parent_attempt: Some(record.id),
         project_ref: input.project_ref,
         run_id: record.run_id.clone(),
+        origin_conversation,
+        team: input.team,
     };
     require_creator_in_txn(memory, txn, &origin)?;
-    Ok(origin)
+    Ok(Some(origin))
 }
 
 /// Rechecks an origin where its agent launches, live or stored: the creator
 /// row is still an agent dispatch run by this surface's actor, in the
 /// project the origin recorded, and its spend scope, when it has one, is
-/// still open. Dispatch then admits the launch under that scope.
+/// still open. Dispatch then admits the launch under that scope. A root
+/// witness names no creator, so there is nothing to recheck.
 pub(super) fn require_creator_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     origin: &TaskCreateOrigin,
 ) -> MemoryResult<()> {
-    let (_, input) = creator_run_in(memory.vault(), txn, origin.parent_attempt)?;
+    let Some(parent) = origin.parent_attempt else {
+        return Ok(());
+    };
+    let (_, input) = creator_run_in(memory.vault(), txn, parent)?;
     require_creator_actor(memory, &input)?;
     if input.project_ref != origin.project_ref {
         return Err(creator_gone());
     }
-    let scope = AgentDispatcher::new(memory.vault())
-        .attempt_spend_scope_in_txn(txn, origin.parent_attempt)?;
+    let scope = AgentDispatcher::new(memory.vault()).attempt_spend_scope_in_txn(txn, parent)?;
     if scope.is_some_and(|scope| scope.state != SpendState::Open) {
         return Err(invalid_state(
             "the creator's spend lease has settled",
