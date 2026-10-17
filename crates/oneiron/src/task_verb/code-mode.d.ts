@@ -250,7 +250,7 @@ declare const vault: {
     render(input: { room_ref: string }): Promise<unknown>;
     reply_strips(input: { after?: string | null; limit?: number | null; room_ref: string; thread_ref: string }): Promise<unknown>;
     sharing(input: { room_ref: string }): Promise<unknown>;
-    speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
+    speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; quote?: object | null; turn_ref?: string | null }): Promise<unknown>;
     trunk(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
   };
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
@@ -282,7 +282,7 @@ declare const vault: {
     };
     report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
   };
-  witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
+  witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; quote?: object | null; turn_ref?: string | null }): Promise<unknown>;
   workspace: {
     work_companion: {
       get(input: { workspace_ref: string }): Promise<unknown>;
