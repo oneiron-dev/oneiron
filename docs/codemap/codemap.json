@@ -11052,7 +11052,7 @@
      "path": "src/code_run/dispatcher/fold_verbs.rs",
      "purpose": "The fold verbs (ARCH-0067 §2.2): `self.fold`, `self.compact`, `self.unfold`, `self.folds` and…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -46385,7 +46385,7 @@
      "path": "src/task_verb/highway_types.rs",
      "purpose": "The task highway's typed calls, durable handles, outcomes and status view (OF-220)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 6,
       "fn": 1,
       "struct": 10
