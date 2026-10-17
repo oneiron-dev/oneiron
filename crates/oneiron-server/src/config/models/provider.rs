@@ -160,6 +160,32 @@ pub enum ResponseFormatWire {
     Omitted,
 }
 
+/// Whether an OpenAI-compatible provider serves Responses over a held socket
+/// (ARCH-0081 §5), as written: `true`, `false`, or the socket's age limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub(super) enum ResponsesSocketFile {
+    Switch(bool),
+    Limits { max_age_secs: u64 },
+}
+
+/// A provider's Responses socket: each call runs as one response on a held
+/// socket, and the socket is replaced before it reaches its age limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResponsesSocket {
+    pub max_age_secs: u64,
+}
+
+/// The origins known to serve Responses over a socket, with each socket's age
+/// limit (ARCH-0081 §5): an OpenAI-compatible provider at one holds a socket
+/// unless its entry says `responses_socket = false`. Any other origin (a CPA
+/// route, say) holds one only when its entry asks.
+const RESPONSES_SOCKET_ORIGINS: [(&str, u64); 2] =
+    [("https://api.openai.com", 3600), ("https://api.x.ai", 3540)];
+/// The age limit of a socket an entry asks for with `true` at an origin not
+/// in [`RESPONSES_SOCKET_ORIGINS`]: the shorter of the two known limits.
+const DEFAULT_RESPONSES_SOCKET_AGE_SECS: u64 = 3540;
+
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_CONTEXT_TOKENS: u64 = 128_000;
 /// Headers that carry credentials. Keys arrive through `key_env` or
@@ -195,6 +221,7 @@ pub(super) struct ProviderFile {
     payer: Option<Payer>,
     #[serde(default)]
     rates: Vec<UnitRate>,
+    responses_socket: Option<ResponsesSocketFile>,
 }
 
 /// A validated provider entry.
@@ -234,6 +261,10 @@ pub struct ProviderConfig {
     pub payer: Payer,
     /// Host-supplied token conversions for the allocation's named unit.
     pub rates: Vec<UnitRate>,
+    /// The Responses socket an OpenAI-compatible provider's calls hold, or
+    /// `None` for the chat HTTP path alone. A broker-held key always takes
+    /// HTTP: the broker runs no socket yet.
+    pub responses_socket: Option<ResponsesSocket>,
 }
 
 impl ProviderFile {
@@ -322,6 +353,13 @@ impl ProviderFile {
                 );
             }
         }
+        let responses_socket = responses_socket(
+            name,
+            kind,
+            &base_url,
+            self.key_secret.is_some(),
+            self.responses_socket,
+        )?;
         let payer = self.payer.unwrap_or_else(|| {
             if self.key_env.is_some() || self.key_secret.is_some() {
                 Payer::CustomerKey
@@ -348,8 +386,54 @@ impl ProviderFile {
             revision,
             payer,
             rates: self.rates,
+            responses_socket,
         })
     }
+}
+
+/// The Responses socket an entry holds: what it wrote, else the default its
+/// origin has. Only a hosted OpenAI-compatible provider whose key is not the
+/// broker's holds one.
+fn responses_socket(
+    name: &str,
+    kind: ProviderKind,
+    base_url: &str,
+    brokered: bool,
+    file: Option<ResponsesSocketFile>,
+) -> anyhow::Result<Option<ResponsesSocket>> {
+    let known = RESPONSES_SOCKET_ORIGINS
+        .iter()
+        .find(|(origin, _)| {
+            base_url
+                .strip_prefix(origin)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+        .map(|&(_, max_age_secs)| max_age_secs);
+    let max_age_secs = match file {
+        None => known,
+        Some(ResponsesSocketFile::Switch(false)) => None,
+        Some(ResponsesSocketFile::Switch(true)) => {
+            Some(known.unwrap_or(DEFAULT_RESPONSES_SOCKET_AGE_SECS))
+        }
+        Some(ResponsesSocketFile::Limits { max_age_secs }) => Some(max_age_secs),
+    };
+    let Some(max_age_secs) = max_age_secs else {
+        return Ok(None);
+    };
+    if kind != ProviderKind::OpenaiCompat || brokered {
+        if file.is_some() {
+            anyhow::bail!(
+                "models.providers.{name}.responses_socket applies to an openai-compat provider whose key is not key_secret"
+            );
+        }
+        return Ok(None);
+    }
+    if max_age_secs == 0 {
+        anyhow::bail!(
+            "models.providers.{name}.responses_socket.max_age_secs must be greater than zero"
+        );
+    }
+    Ok(Some(ResponsesSocket { max_age_secs }))
 }
 
 /// A key the credential broker sends: one way to name the key, a generating
