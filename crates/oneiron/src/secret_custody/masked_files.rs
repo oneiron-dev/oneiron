@@ -139,8 +139,9 @@ pub(crate) fn put_masked_file_in_txn(
     MASKED_FILE.put(store, txn, hash, file)
 }
 
-/// Drops `custody`'s key from the mark of the file `hash` names, and the mark
-/// with its last key: the owner ruled it no secret.
+/// Drops `custody`'s key from the mark of the file `hash` names, in its
+/// stored bytes and in each member, and the mark with its last key: the
+/// owner ruled it no secret.
 pub(crate) fn drop_masked_key_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -151,7 +152,11 @@ pub(crate) fn drop_masked_key_in_txn(
         return Ok(());
     };
     file.keys.retain(|key| key.custody != *custody);
-    if file.keys.is_empty() {
+    for member in &mut file.members {
+        member.keys.retain(|key| key.custody != *custody);
+    }
+    file.members.retain(|member| !member.keys.is_empty());
+    if file.keys.is_empty() && file.members.is_empty() {
         MASKED_FILE.delete(store, txn, hash)?;
         return Ok(());
     }

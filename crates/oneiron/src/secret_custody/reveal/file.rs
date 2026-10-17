@@ -69,7 +69,13 @@ impl Vault {
             let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
             let mut keys: Vec<(EntityId, String)> = Vec::new();
             let mut class = None;
-            for key in &mark.keys {
+            // Every key the mark places: in the stored bytes, and in each
+            // member of a container.
+            let marked = mark
+                .keys
+                .iter()
+                .chain(mark.members.iter().flat_map(|member| member.keys.iter()));
+            for key in marked {
                 if keys.iter().any(|(secret, _)| *secret == key.custody) {
                     continue;
                 }
