@@ -458,6 +458,22 @@ impl<'a> DreamerWakeDriver<'a> {
                 }
                 outcome => outcome,
             };
+            // Then the weave lens renders: each published digest period
+            // through the weave-report skill, for the reader it is for.
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty if !self.consolidation_only => {
+                    self.store.admit_next_weave_lens(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
             // Only the NEW recipe-vs-connector choice is policy data. Cleanup
             // and maintenance remain first; consolidation's home-node stop
             // remains last. Read the owner row once per pass below.

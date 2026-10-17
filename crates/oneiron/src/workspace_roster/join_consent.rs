@@ -184,10 +184,16 @@ pub enum AdmissionBasis {
     /// The subject's own PERSON holds the room's delegate action.
     DelegatedHost,
     /// The room is a project home room and the subject sits on the project's
-    /// effective roster (home-room members are the project's roster).
+    /// effective roster (home-room members are the project's roster): a
+    /// person by its PERSON or by a seat that acts as that person.
     StandingHomeRoster,
     /// The room's owner or a delegated host answered yes for this join.
     HostAnswer { answer_ref: String },
+    /// A companion attends the rooms her member attends (ARCH-0063): her
+    /// live principal stands in the room, on the home room's roster or as
+    /// the ordinary room's owner or a current ledger member. Decided again
+    /// on every use, so the principal leaving or losing standing ends it.
+    ThroughPrincipal { principal: EntityId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,8 +202,8 @@ pub struct AdmissionConsent {
     pub room: EntityId,
     pub branch: Option<EntityId>,
     pub subject: JoinSubject,
-    /// The host that admitted, the subject itself as host, or the project
-    /// whose roster seats it.
+    /// The host that admitted, the subject itself as host, the project
+    /// whose roster seats it, or the principal a companion attends through.
     pub granted_by: EntityId,
     pub basis: AdmissionBasis,
 }
@@ -291,7 +297,7 @@ pub(super) fn decide_with_in_txn(
 ) -> Result<(JoinDecision, ConsentSet)> {
     let spend = spend_in_txn(vault, txn, request, answers)?;
     let membership = membership_in_txn(vault, txn, &request.subject, principal, now)?;
-    let admission = admission_in_txn(vault, txn, request, answers)?;
+    let admission = admission_in_txn(vault, txn, request, answers, &membership.state, now)?;
     let refusal = spend.refusal.or(membership.refusal).or(admission.refusal);
     let consents = ConsentSet {
         spend: spend.state,
@@ -788,13 +794,46 @@ pub(super) fn home_room_seats_in_txn(
     )))
 }
 
+/// Whether a home room's effective seats hold `subject`. An agent sits by
+/// its own id. A person sits by its PERSON, or by any seat that takes part
+/// as that person (its own pen: an AGENT_DEF whose live PERSON anchor names
+/// it), resolved by OF-529's one resolver. The signed roster is only read.
+fn seats_hold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seats: &[String],
+    subject: &JoinSubject,
+    at: u64,
+) -> Result<bool> {
+    if seats.contains(&subject.id().to_hex()) {
+        return Ok(true);
+    }
+    let JoinSubject::Person(person) = *subject else {
+        return Ok(false);
+    };
+    for seat in seats {
+        let seat = EntityId::from_hex(seat)?;
+        if vault.get_entity_type_in_txn(txn, &seat)? == Some(ENTITY_TYPE_AGENT_DEF)
+            && super::rooms::join_subject_for_actor_in_txn(vault, txn, seat, at)?
+                == JoinSubject::Person(person)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The room's admission. Addressing, a task assignment, a claim or presence
-/// is never admission.
+/// is never admission. `membership` is this decision's own membership part:
+/// a companion is admitted through her principal only while it reads
+/// [`MembershipConsent::CompanionOfMember`] for her.
 fn admission_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     request: &JoinRequest,
     answers: &[RecordedAnswer],
+    membership: &ConsentState<MembershipConsent>,
+    now: u64,
 ) -> Result<Loaded<AdmissionConsent>> {
     let need = ConsentNeed {
         part: ConsentPart::Admission,
@@ -836,9 +875,47 @@ fn admission_in_txn(
         }
     }
     if let Some((project, seats)) = home_room_seats_in_txn(vault, txn, request.room)?
-        && seats.contains(&request.subject.id().to_hex())
+        && seats_hold_in_txn(vault, txn, &seats, &request.subject, now)?
     {
         return Ok(admitted(project, AdmissionBasis::StandingHomeRoster));
     }
+    // A companion is her member's pen: she attends the rooms her member
+    // attends, never on standing of her own and never for a non-companion.
+    if let JoinSubject::Person(person) = request.subject
+        && let ConsentState::Granted(MembershipConsent::CompanionOfMember {
+            companion,
+            principal,
+            ..
+        }) = membership
+        && *companion == person
+        && principal_stands_in_txn(vault, txn, request.room, *principal, now)?
+    {
+        return Ok(admitted(
+            *principal,
+            AdmissionBasis::ThroughPrincipal {
+                principal: *principal,
+            },
+        ));
+    }
     Ok(Loaded::missing(need))
+}
+
+/// Whether `principal` stands in `room` for its companions to attend
+/// through: seated by a project home room's roster (a person by its PERSON
+/// or its own pen), or an ordinary room's owner or current ledger member.
+pub(super) fn principal_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    principal: EntityId,
+    at: u64,
+) -> Result<bool> {
+    if let Some((_, seats)) = home_room_seats_in_txn(vault, txn, room)? {
+        return seats_hold_in_txn(vault, txn, &seats, &JoinSubject::Person(principal), at);
+    }
+    let own = WriteActor::new(principal, EdgeActorClass::Human);
+    Ok(matches!(
+        room_host_in_txn(vault, txn, room, own)?,
+        Some(RoomHost::Owner)
+    ) || vault.members_in_txn(txn, room)?.contains(&principal))
 }
