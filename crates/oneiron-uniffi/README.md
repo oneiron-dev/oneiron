@@ -66,9 +66,9 @@ JSON body: there is no generic `call(name, json)`.
   `describe(taskRef:)`, `vaultExport(format:)`.
 - **`WireJson` input, typed result (2):** `vault.notes.create`,
   `vault.notes.from_entity` (both return `EntityRefReceipt`).
-- **`WireJson` in and out:** every other facade row (124 on this head). The
-  generated file is the authoritative list; each method is named for its row
-  (`vault.kv.get` is `vaultKvGet(input:)`).
+- **`WireJson` in and out:** every other facade row, host doors included.
+  The generated file is the authoritative list; each method is named for its
+  row (`vault.kv.get` is `vaultKvGet(input:)`).
 - **Definition-only (3):** `vault.consolidation.enqueue`,
   `vault.consolidation.status`, `vault.claims.seed` keep their typed
   signatures and fail closed with `INVALID_STATE` until the table gives them
