@@ -43,7 +43,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::provenance::text_commit::TextCommitReceipt;
-use crate::side_table::{self, Named, Raw, SideTable};
+use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::typed_body::{
@@ -66,13 +66,8 @@ use serde::{Deserialize, Serialize};
 /// Each artifact's office facts: its format and the version it imported.
 const SOURCES: SideTable<EntityId, OfficeBodySource, Named> =
     SideTable::new(&side_table::OFFICE_BODY_HEAD);
-/// Open deck forks, by fork id.
-const DOCS: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::OFFICE_BODY_DOC);
-/// Deck fork receipts by fork id, and those of the forks landed into a deck by
-/// artifact, each by sequence.
-const COMMITS: SideTable<Vec<u8>, TextCommitReceipt, Named> =
-    SideTable::new(&side_table::OFFICE_BODY_COMMIT);
-/// Deck forks, by artifact and fork.
+/// Deck forks' office records (the run each belongs to), by artifact and
+/// fork; the fork's document is its typed-body fork.
 const FORKS: SideTable<(EntityId, EntityId), OfficeBodyFork, Named> =
     SideTable::new(&side_table::OFFICE_BODY_FORK);
 const EXPORTS: SideTable<Vec<u8>, OfficeBodyExportRecord, Named> =
@@ -154,6 +149,9 @@ pub struct OfficeBodyFork {
     pub commits: u64,
     pub opened_at: u64,
     pub state: ForkState,
+    /// The run a deck fork belongs to, whose approve-all scope covers it.
+    #[serde(default)]
+    pub run_root: Option<EntityId>,
 }
 
 pub struct OfficeBodyExportRequest<'a> {
@@ -292,28 +290,14 @@ impl Vault {
         xlsx::read(&self.loro_body(&txn, artifact, OfficeBodyKind::Xlsx, at)?.1)
     }
 
-    /// Every commit receipt of the body, in commit order. A deck's are then
-    /// followed by the receipts of the machine forks landed into it, in
-    /// landing order.
+    /// Every commit receipt of the body, in commit order, a landed fork's
+    /// included.
     pub fn office_body_commits(&self, artifact: &EntityId) -> Result<Vec<TextCommitReceipt>> {
-        let landed: Vec<TextCommitReceipt> = {
-            let txn = self.store.env.read_txn()?;
-            match source(&self.store, &txn, artifact)?.kind {
-                OfficeBodyKind::Pptx => COMMITS
-                    .scan_from(&self.store, &txn, artifact.as_bytes())?
-                    .into_iter()
-                    .map(|(_, receipt)| receipt)
-                    .collect(),
-                _ => Vec::new(),
-            }
-        };
-        let mut receipts: Vec<TextCommitReceipt> = self
+        Ok(self
             .typed_body_receipts(artifact)?
             .into_iter()
             .flatten()
-            .collect();
-        receipts.extend(landed);
-        Ok(receipts)
+            .collect())
     }
 
     /// A person's operations on the live body. Operations read against an older
@@ -771,31 +755,14 @@ impl Vault {
         typed_body_in_txn(&self.store, txn, artifact, kind.schema(), at)?
             .ok_or(Error::CorruptedIndex("office body document missing"))
     }
-
-    fn record_commit(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        owner: &EntityId,
-        sequence: &mut u64,
-        receipt: &TextCommitReceipt,
-    ) -> Result<()> {
-        COMMITS.put(&self.store, wtxn, &version_key(owner, *sequence), receipt)?;
-        *sequence += 1;
-        Ok(())
-    }
 }
 
-/// Removes `artifact`'s office rows: its format record, its deck forks with
-/// their receipts and the landed forks' receipts, and its export records. The
-/// body itself, a Loro document in every format, goes with the typed body's
-/// own eraser. Registered in `deletion/derived_rows.rs`.
+/// Removes `artifact`'s office rows: its format record, its deck forks'
+/// office records and its export records. The body itself, a Loro document in
+/// every format, goes with its forks in the typed body's own eraser.
+/// Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
-    for (_, fork) in FORKS.scan_keys(store, txn, entity.as_bytes())? {
-        DOCS.delete(store, txn, &fork)?;
-        COMMITS.delete_from(store, txn, fork.as_bytes())?;
-    }
     FORKS.delete_from(store, txn, entity.as_bytes())?;
-    COMMITS.delete_from(store, txn, entity.as_bytes())?;
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
@@ -857,6 +824,7 @@ fn fork_view(record: TypedBodyFork) -> OfficeBodyFork {
             TypedForkState::Merged { by, at, head } => ForkState::Merged { by, at, head },
             TypedForkState::Discarded { by, at } => ForkState::Discarded { by, at },
         },
+        run_root: None,
     }
 }
 
