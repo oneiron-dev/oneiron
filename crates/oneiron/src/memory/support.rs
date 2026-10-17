@@ -829,7 +829,8 @@ impl Memory<'_> {
     /// on this surface is something a resumed call could not rebuild: no
     /// credential or read proof, on this device, a room's own turn rather
     /// than a thread's, and no owner authorship, host origin, machine signer,
-    /// producer list, birth position or TASK host. A verb hook's ask saves
+    /// producer list, birth position, TASK host, off-record session or door
+    /// rewrite admission. A verb hook's ask saves
     /// them, so settlement runs the call again as this caller (ARCH-0080 §3
     /// Ask); `None` resumes only on the caller's retry.
     pub(crate) fn resume_bounds(
@@ -850,7 +851,9 @@ impl Memory<'_> {
             && self.machine_signer.is_none()
             && self.producers.is_none()
             && self.birth_position == crate::federation::record_scope::BirthPosition::default()
-            && self.task_host.is_none();
+            && self.task_host.is_none()
+            && self.off_record_session.is_none()
+            && self.rewrite_admit.is_none();
         plain.then(|| {
             (
                 self.session_key,
