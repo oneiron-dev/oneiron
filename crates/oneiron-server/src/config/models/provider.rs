@@ -37,6 +37,10 @@ pub enum ProviderKind {
     /// for image output) or a `[models.media.video]` rung (a Veo
     /// `predictLongRunning` job) only.
     Gemini,
+    /// Soniox's real-time speech-to-text WebSocket
+    /// (`wss://stt-rt.soniox.com/transcribe-websocket`, the key as a bearer
+    /// on the upgrade only): a live `[models.media.transcribe]` rung only.
+    Soniox,
 }
 
 impl ProviderKind {
@@ -56,7 +60,7 @@ impl ProviderKind {
     /// Whether this kind serves media seats and nothing else.
     #[must_use]
     pub fn media_only(self) -> bool {
-        self.speech_only() || matches!(self, Self::Gemini)
+        self.speech_only() || matches!(self, Self::Gemini | Self::Soniox)
     }
 
     /// Whether this kind is a hosted speech wire, which serves the speech
@@ -85,7 +89,8 @@ impl ProviderKind {
             | Self::AnthropicCompat
             | Self::Cartesia
             | Self::Elevenlabs
-            | Self::Gemini => ModelLocality::ThirdParty,
+            | Self::Gemini
+            | Self::Soniox => ModelLocality::ThirdParty,
             Self::LocalOpenaiCompat | Self::Oneironer | Self::Voxcpm2 => ModelLocality::OwnServer,
         }
     }
@@ -110,9 +115,12 @@ impl ProviderKind {
                 LlmCapability::ToolCalling,
                 LlmCapability::ToolResults,
             ],
-            Self::Oneironer | Self::Cartesia | Self::Elevenlabs | Self::Voxcpm2 | Self::Gemini => {
-                Vec::new()
-            }
+            Self::Oneironer
+            | Self::Cartesia
+            | Self::Elevenlabs
+            | Self::Voxcpm2
+            | Self::Gemini
+            | Self::Soniox => Vec::new(),
         }
     }
 }
@@ -243,6 +251,11 @@ impl ProviderFile {
         }
         if let Some(key_secret) = &self.key_secret {
             validate_key_secret(name, kind, &base_url, key_secret, self.key_env.is_some())?;
+        }
+        // The live socket sends its key as the upgrade's bearer, read from the
+        // environment; there is no keyless Soniox.
+        if kind == ProviderKind::Soniox && self.key_env.is_none() {
+            anyhow::bail!("models.providers.{name}.key_env is required for a soniox provider");
         }
         for header in self.headers.keys() {
             if CREDENTIAL_HEADERS.contains(&header.to_ascii_lowercase().as_str()) {
@@ -382,6 +395,16 @@ fn validate_base_url(name: &str, kind: ProviderKind, url: &str) -> anyhow::Resul
         anyhow::bail!(
             "models.providers.{name}.base_url: a voxcpm2 worker is reached at http://127.0.0.1:<port> only"
         );
+    }
+    // Soniox's live socket is a TLS WebSocket and nothing else; no other
+    // kind takes a ws(s) origin.
+    if kind == ProviderKind::Soniox {
+        if parsed.scheme() != "wss" {
+            anyhow::bail!(
+                "models.providers.{name}.base_url: a soniox provider is reached at a wss:// URL only"
+            );
+        }
+        return Ok(());
     }
     let near = host_is_near(&parsed);
     match (parsed.scheme(), kind) {
