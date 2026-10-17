@@ -384,6 +384,7 @@ async fn box_answer(
                 model: ASK_IMAGE_BOX.name.to_owned(),
                 version: ASK_IMAGE_BOX.version.to_string(),
             },
+            ask_to: None,
             person: None,
             presence: None,
         };
