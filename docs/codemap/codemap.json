@@ -11054,7 +11054,7 @@
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
       "crate-vis": 5,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -35327,7 +35327,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PixelPull",
@@ -35339,7 +35339,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -66948,7 +66948,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -67027,7 +67027,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "McpQuickJsProvider"
