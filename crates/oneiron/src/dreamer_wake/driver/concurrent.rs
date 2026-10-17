@@ -52,6 +52,7 @@ impl DreamerWakeDriver<'_> {
                             live: optimizer.live,
                         }
                     });
+                    worker.contribution_host = self.contribution_host;
                 }
                 worker
             })

@@ -358,6 +358,18 @@ impl AgentDispatcher<'_> {
         Err(invalid("spend scope ancestor bound"))
     }
 
+    /// The payer consent the root of `scope`'s tree carries (OF-531), with
+    /// that root's id: the PERSON a call spending under `scope` bills. `None`
+    /// when the root carries none, as a launch no room pays for. A missing
+    /// scope or ancestor is an error, never a payer.
+    pub fn root_payer(&self, scope: &SpendScopeId) -> Result<Option<(SpendScopeId, SpendPayer)>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let (_, root) = self
+            .scope_with_root_in_txn(&txn, scope)?
+            .ok_or_else(|| invalid("spend scope is missing"))?;
+        Ok(root.payer.map(|payer| (root.scope, payer)))
+    }
+
     /// The scope an attempt spends under. A retry spends under the scope of
     /// the try it retries: one logical launch, one lease. `None`: unmetered.
     pub fn spend_scope_for_attempt(&self, attempt: AttemptId) -> Result<Option<SpendScopeId>> {

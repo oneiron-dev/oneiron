@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | — |
 | `src/lib/alloc.rs` | src | s | 6 crate-vis | — | Rust-owned buffer/array constructors and generic free_vec |
-| `src/lib/engine.rs` | src | m | 4 struct · 8 fn | OneironAppHost, OneironEngine, OneironReply, OneironSecretSink | The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault… |
+| `src/lib/engine.rs` | src | m | 5 struct · 13 fn | OneironAppHost, OneironEngine, OneironEngineConnection, OneironReply, OneironSecretSink | The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault… |
 | `src/lib/entity.rs` | src | m | 12 fn | — | Free fns plus vault lifecycle, health, and entity entry points |
 | `src/lib/guard.rs` | src | s | 6 crate-vis | — | Panic guard and raw-pointer slice/out/vault helpers |
 | `src/lib/mod.rs` | src | s | 4 re-export | — | C ABI for on-device iOS and macOS access to the Oneiron vault |
