@@ -11,6 +11,7 @@ use serde::Deserialize;
 use super::backup::{BackupConfig, BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
+use super::failure_signals::{FailureSignalsConfigOverride, lookup_failure_signals_override};
 use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::import::ImportConfigOverride;
 use super::keystore::{KeystoreConfigOverride, lookup_keystore_override};
@@ -120,6 +121,7 @@ impl EnvConfig {
         values.oneironer = lookup_oneironer_override(&mut lookup)?;
         values.backup = lookup_backup_override(&mut lookup)?;
         values.feedback = lookup_feedback_override(&mut lookup)?;
+        values.failure_signals = lookup_failure_signals_override(&mut lookup)?;
         values.recall = lookup_recall_override(&mut lookup)?;
         values.skills = lookup_skills_override(&mut lookup)?;
         values.keystore = lookup_keystore_override(&mut lookup)?;
@@ -286,6 +288,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     }
     config.backup.validate()?;
     config.feedback.validate()?;
+    config.failure_signals.validate()?;
     config.recall.validate()?;
     config.skills.validate()?;
     config.keystore.validate()?;
@@ -504,6 +507,7 @@ struct FileServeConfig {
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
+    failure_signals: Option<FailureSignalsConfigOverride>,
     recall: Option<RecallConfigOverride>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
@@ -561,6 +565,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oneironer: value.oneironer,
             backup: value.backup,
             feedback: value.feedback,
+            failure_signals: value.failure_signals,
             recall: value.recall,
             skills: value.skills,
             keystore: value.keystore,
@@ -619,6 +624,7 @@ struct PartialServeConfig {
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
+    failure_signals: Option<FailureSignalsConfigOverride>,
     recall: Option<RecallConfigOverride>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
@@ -693,6 +699,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
+            .field("failure_signals", &self.failure_signals)
             .field("recall", &self.recall)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
@@ -841,6 +848,9 @@ impl PartialServeConfig {
         if let Some(value) = self.feedback {
             resolved.feedback.apply_override(value);
         }
+        if let Some(value) = self.failure_signals {
+            resolved.failure_signals.apply_override(value);
+        }
         if let Some(value) = self.keystore {
             resolved.keystore.apply_override(value);
         }
@@ -934,6 +944,7 @@ impl From<&ServeArgs> for PartialServeConfig {
                 .filter(|over| !over.is_empty()),
             backup: None,
             feedback: None,
+            failure_signals: None,
             recall: None,
             skills: None,
             keystore: value

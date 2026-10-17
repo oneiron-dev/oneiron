@@ -7,6 +7,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
+use super::failure_signals::FailureSignalsConfig;
 use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
 use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
@@ -277,6 +278,9 @@ pub struct ServeConfig {
     pub backup: BackupConfig,
     /// The `[feedback]` section: where the owner's feedback goes.
     pub feedback: FeedbackConfig,
+    /// The `[failure_signals]` section: the publisher this deployment's
+    /// failure signals go to.
+    pub failure_signals: FailureSignalsConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
     /// The `[skills]` section: the skill-edit gate's live pull budget.
@@ -361,6 +365,7 @@ impl Default for ServeConfig {
             oneironer: None,
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
+            failure_signals: FailureSignalsConfig::default(),
             recall: RecallConfig::default(),
             skills: SkillsConfig::default(),
             keystore: KeystoreConfig::default(),
@@ -432,6 +437,7 @@ impl fmt::Debug for ServeConfig {
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
+            .field("failure_signals", &self.failure_signals)
             .field("recall", &self.recall)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
