@@ -272,6 +272,8 @@ pub enum ErrorKind {
     MicroVmBackendError,
     MicroVmOverlayError,
     MicroVmCredentialDestinationDenied,
+    /// A code step was cancelled while it ran.
+    CodeStepCancelled,
     RelayAttestationInvalidServiceIdentity,
     RelayAttestationClassMismatch,
     RelayAttestationEdgeServiceConflict,
