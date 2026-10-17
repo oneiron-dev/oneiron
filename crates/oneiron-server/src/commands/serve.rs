@@ -244,6 +244,19 @@ pub(super) async fn serve_with_config(
     workers.push(crate::ai_host::identity::spawn(&sync_server));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     workers.push(crate::ai_host::coach_heal::spawn(&sync_server));
+    // Failure signals reach the deployment's publisher (OF-380).
+    workers.extend(crate::ai_host::failure_signals::spawn(
+        &sync_server,
+        crate::ai_host::failure_signals::FailureSignalHost::new(
+            &config.failure_signals,
+            config.privacy_posture == oneiron::HostingPrivacyPosture::Hosted,
+            std::env::var("ONEIRON_FAILURE_SIGNALS_TOKEN")
+                .ok()
+                .filter(|token| !token.is_empty())
+                .map(zeroize::Zeroizing::new),
+        ),
+        crate::server::admit_every_pass(),
+    ));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
     workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
