@@ -3,7 +3,6 @@
 //! the credential the connection bound, meeting the admission its HTTP route
 //! applies. A Write row is a write here as there. Board, browser and run rows
 //! stay off the socket: the dispatch refuses each by the context it needs.
-use std::future::Future;
 use std::sync::Arc;
 
 use oneiron::EntityId;
@@ -11,7 +10,6 @@ use serde_json::Value;
 
 use super::AppError;
 use crate::auth::CoreAuth;
-use crate::protocol::ProtocolError;
 use crate::server::SyncServer;
 
 /// Runs facade verb `method` over `params` as `auth`'s call. Beside the
@@ -59,22 +57,24 @@ fn named_rows(vault: &oneiron::Vault, value: &Value, rows: &mut Vec<EntityId>) -
     Some(())
 }
 
-/// Runs `call` to its answer from the app tier's synchronous RPC door, until
-/// the owner loop completes calls off the loop (L03's seam):
-/// [`crate::server::blocking`] leaves this socket's worker first, so every
-/// other task keeps a worker while this socket waits, and the call runs on
-/// the server's own runtime. Outside any runtime, a runtime of its own runs
-/// it.
+/// Runs `call` to its answer from a synchronous test door (a socket's owner
+/// loop awaits its calls off the loop): [`crate::server::blocking`] leaves
+/// this worker first, so every other task keeps a worker while the caller
+/// waits, and the call runs on the server's own runtime. Outside any runtime,
+/// a runtime of its own runs it.
+#[cfg(test)]
 pub(super) fn blocking<T: Send>(
-    call: impl Future<Output = Result<T, ProtocolError>> + Send,
-) -> Result<T, ProtocolError> {
+    call: impl std::future::Future<Output = Result<T, crate::protocol::ProtocolError>> + Send,
+) -> Result<T, crate::protocol::ProtocolError> {
     let runtime = tokio::runtime::Handle::try_current().ok();
     crate::server::blocking(move || match runtime {
         Some(runtime) => runtime.block_on(call),
         None => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|_| ProtocolError::InvalidPayload("no runtime answers this RPC"))?
+            .map_err(|_| {
+                crate::protocol::ProtocolError::InvalidPayload("no runtime answers this RPC")
+            })?
             .block_on(call),
     })
 }

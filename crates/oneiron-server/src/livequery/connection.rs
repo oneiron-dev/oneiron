@@ -91,10 +91,11 @@ impl Hub {
         hub
     }
 
-    /// The served handle of `server`, through the hub its sockets share: the
-    /// app tier's synchronous RPC door holds only `&SyncServer`, and the
-    /// facade dispatch it runs takes the handle its server and host doors
-    /// take. `None` for a server no socket has opened a hub for.
+    /// The served handle of `server`, through the hub its sockets share: a
+    /// synchronous test door holds only `&SyncServer`, and the facade
+    /// dispatch it runs takes the handle its server and host doors take.
+    /// `None` for a server no socket has opened a hub for.
+    #[cfg(test)]
     pub(crate) fn served(server: &SyncServer) -> Option<Arc<SyncServer>> {
         let hubs = HUBS
             .get()?

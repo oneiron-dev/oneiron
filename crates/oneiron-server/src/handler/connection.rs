@@ -138,7 +138,13 @@ enum ConnEvent {
     Broadcast(Result<Option<Vec<u8>>, crate::broadcast::BroadcastError>),
     Direct(Option<Vec<u8>>),
     AppDelivery,
+    /// A verb RPC run off the loop ended; its answer is already queued.
+    Answered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
 }
+
+/// How many verb RPCs one socket runs at once, off its loop. The loop reads
+/// no further frame from the socket while this many are in flight.
+const MAX_VERB_CALLS_IN_FLIGHT: usize = 8;
 
 /// Main connection lifecycle.
 ///
@@ -241,6 +247,10 @@ async fn handle_connection(
         conn_id,
     );
     let mut app_tick = tokio::time::interval(Duration::from_millis(25));
+    // Verb RPCs answer off this loop, which serves the socket meanwhile; their
+    // answers queue on `direct_tx`. Dropped with the loop, a call still running
+    // ends with the socket, at its next await.
+    let mut verb_calls = tokio::task::JoinSet::new();
 
     // One loop, one owner. The outbound arms used to run in a spawned task over
     // the split sink; they are folded in here because two tasks cannot share
@@ -259,13 +269,29 @@ async fn handle_connection(
             // the subscription. Drain those direct frames before a concurrent
             // broadcast can overtake their causal prefix on this socket.
             direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
-            msg = transport.read_next(), if direct_rx.is_empty() => ConnEvent::Inbound(msg),
+            Some(answered) = verb_calls.join_next(), if !verb_calls.is_empty() => {
+                ConnEvent::Answered(answered)
+            }
+            msg = transport.read_next(),
+                if direct_rx.is_empty() && verb_calls.len() < MAX_VERB_CALLS_IN_FLIGHT =>
+            {
+                ConnEvent::Inbound(msg)
+            }
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
             _ = app_tick.tick(), if app_connection.has_active_subscriptions() => ConnEvent::AppDelivery,
         };
 
         let next_message = match event {
             ConnEvent::Inbound(msg) => msg,
+            ConnEvent::Answered(Ok(Ok(()))) => continue,
+            ConnEvent::Answered(Ok(Err(error))) => {
+                tracing::warn!(conn_id, %error, "verb RPC answer failed — closing");
+                break;
+            }
+            ConnEvent::Answered(Err(error)) => {
+                tracing::warn!(conn_id, %error, "verb RPC ended without an answer — closing");
+                break;
+            }
             ConnEvent::AppDelivery => {
                 if conn_state.bound_auth.is_some() {
                     if require_bound_app_auth(&server, &conn_state).is_err() {
@@ -605,7 +631,12 @@ async fn handle_connection(
                         &payload,
                         &direct_tx,
                         Some(&mut app_connection),
-                    ),
+                    )
+                    .map(|call| {
+                        if let Some(call) = call {
+                            verb_calls.spawn(call.answer(Arc::clone(&server), direct_tx.clone()));
+                        }
+                    }),
                     SyncMessage::Sub(payload) => handle_app_message_with_connection(
                         &server,
                         &mut conn_state,
@@ -613,7 +644,8 @@ async fn handle_connection(
                         &payload,
                         &direct_tx,
                         Some(&mut app_connection),
-                    ),
+                    )
+                    .map(drop),
                     msg => {
                         handle_sync_message(&server, conn_id, msg, &direct_tx, &mut conn_state)
                             .await
