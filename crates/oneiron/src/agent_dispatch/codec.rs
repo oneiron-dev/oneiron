@@ -539,7 +539,7 @@ pub(crate) fn attempt_team_stamp(record: &AttemptRecord) -> Result<Option<super:
         .transpose()
 }
 
-pub(super) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispatchInput> {
+pub(crate) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispatchInput> {
     if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
         return None;
     }

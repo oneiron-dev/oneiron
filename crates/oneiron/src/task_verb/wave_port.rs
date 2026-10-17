@@ -1,4 +1,12 @@
 //! Vault-backed, atomic wave plan application through the ordinary TASK doors.
+//!
+//! A plan an agent queued keeps that agent's run as its creator (OF-532): the
+//! cut states the creator's cap, and its agent TASKs run inside the
+//! creator's lease tree. Host-created planning stays root.
+use super::create_origin::{
+    TaskCreateOrigin, put_wave_plan_origin_in_txn, require_creator_in_txn,
+    task_create_origin_in_txn, wave_plan_origin_in,
+};
 use super::create_validation::ValidatedTaskCreate;
 use super::{TaskAssignee, TaskKind};
 use crate::agent_dispatch::{
@@ -9,7 +17,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::Error;
 use crate::gate::PolicyApprovalCeiling;
 use crate::linear_sync::{LinearSyncError, WaveResult};
-use crate::memory::{MemoryError, facade_provenance};
+use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance};
 use crate::side_table::{self, Raw, SideTable};
 use crate::wave_orchestration::*;
 use crate::{EntityId, Vault};
@@ -51,6 +59,9 @@ pub struct VaultWaveTaskPort<'a> {
     actor: EntityId,
     actor_class: EdgeActorClass,
     attempt: Option<crate::attempt_queue::AttemptRecord>,
+    /// The agent run that queued the plan, as its planning attempt's witness
+    /// holds it; `None`: host-created planning, whose TASKs stay roots.
+    origin: Option<TaskCreateOrigin>,
 }
 impl<'a> VaultWaveTaskPort<'a> {
     pub fn new(vault: &'a Vault, actor: EntityId, actor_class: EdgeActorClass) -> Self {
@@ -59,6 +70,7 @@ impl<'a> VaultWaveTaskPort<'a> {
             actor,
             actor_class,
             attempt: None,
+            origin: None,
         }
     }
 }
@@ -82,14 +94,17 @@ fn statement_key(plan: &str) -> [u8; 32] {
 
 /// What applying `plan` mints and spends, stated before any TASK (OF-393): a
 /// task assigned to an AGENT_DEF is a local agent launch, one assigned to a
-/// person a peer TASK, one with no assignee the default realization. Wave
-/// TASKs dispatch as roots, so the statement states no cap. Width is checked,
-/// never refused.
+/// person a peer TASK, one with no assignee the default realization. A
+/// host-created plan's TASKs dispatch as roots, so its statement states no
+/// cap; an agent-created plan's dispatch under their creator, so its
+/// statement states the creator's cap (OF-532). Width is checked, never
+/// refused.
 fn wave_statement_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     plan: &ValidatedWavePlan,
+    origin: Option<&TaskCreateOrigin>,
     now: u64,
 ) -> Result<FanoutStatement, MemoryError> {
     let mut work = Vec::with_capacity(plan.tasks().len());
@@ -103,9 +118,9 @@ fn wave_statement_in(
                 }
                 Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => FanoutWork::Agent(DispatchAgent {
                     target: AgentDispatchTarget::Custom(actor_ref),
-                    parent_attempt: None,
+                    parent_attempt: origin.map(TaskCreateOrigin::parent_attempt),
                     dedupe_key: None,
-                    run_id: None,
+                    run_id: origin.and_then(TaskCreateOrigin::run_id),
                     now,
                 }),
                 _ => {
@@ -116,12 +131,11 @@ fn wave_statement_in(
             },
         });
     }
-    let mut statement = AgentDispatcher::new(vault).plan_fanout_in_txn(
-        txn,
-        &FanoutCaller::default(),
-        &work,
-        now,
-    )?;
+    let caller = FanoutCaller {
+        parent_attempt: origin.map(TaskCreateOrigin::parent_attempt),
+        ..FanoutCaller::default()
+    };
+    let mut statement = AgentDispatcher::new(vault).plan_fanout_in_txn(txn, &caller, &work, now)?;
     super::fanout_check::raise_unheld_width_check(
         vault,
         txn,
@@ -185,6 +199,11 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                         ));
                     }
                 }
+                // A plan an agent queued lands under its creator only while
+                // that creator's run and spend lease still stand.
+                if let Some(origin) = &self.origin {
+                    require_creator_in_txn(&memory, &*txn, origin)?;
+                }
                 if super::rate_limit::task_actor_ceiling(
                     self.vault,
                     txn,
@@ -220,7 +239,14 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                     .get(&self.vault.store, txn, &frozen_key)?
                     .is_none()
                 {
-                    let statement = wave_statement_in(self.vault, txn, self.actor, plan, now)?;
+                    let statement = wave_statement_in(
+                        self.vault,
+                        txn,
+                        self.actor,
+                        plan,
+                        self.origin.as_ref(),
+                        now,
+                    )?;
                     let encoded = serde_json::to_vec(&statement)
                         .map_err(|_| Error::InvariantViolation("wave statement encoding"))?;
                     WAVE_PLAN_INDEX.put(&self.vault.store, txn, &frozen_key, &encoded)?;
@@ -289,7 +315,13 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                             &facade_provenance(WAVE_PLAN_ATTEMPT_KIND),
                             now,
                         )?;
-                        memory.route_created_task_in_txn(txn, id, &validated, now)?;
+                        memory.route_created_task_with_origin_in_txn(
+                            txn,
+                            id,
+                            &validated,
+                            self.origin.as_ref(),
+                            now,
+                        )?;
                         WAVE_PLAN_INDEX.put(
                             &self.vault.store,
                             txn,
@@ -374,7 +406,7 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
         {
             return Ok(Some(decode_statement(&raw)?));
         }
-        wave_statement_in(self.vault, &txn, self.actor, plan, now)
+        wave_statement_in(self.vault, &txn, self.actor, plan, self.origin.as_ref(), now)
             .map(Some)
             .map_err(engine_error)
     }
@@ -601,6 +633,10 @@ impl Vault {
     /// Apply a host-produced cut and complete its planning attempt in one
     /// transaction. A crash cannot leave TASKs committed under a reclaimable
     /// lease, even if the agent would propose a different cut on retry.
+    ///
+    /// A plan an agent queued ([`Memory::enqueue_wave_plan`]) applies under
+    /// the creator its planning attempt witnessed, as that creator: its agent
+    /// TASKs run inside the creator's lease tree (OF-532).
     pub fn apply_wave_plan_attempt(
         &self,
         actor: EntityId,
@@ -621,9 +657,61 @@ impl Vault {
             )
             .into());
         }
+        let origin = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            wave_plan_origin_in(self, &txn, attempt.id).map_err(engine_error)?
+        };
         let mut port = VaultWaveTaskPort::new(self, actor, actor_class);
         port.attempt = Some(attempt.clone());
+        port.origin = origin;
         let validated = WaveOrchestrator::<VaultWaveTaskPort<'_>>::validate(plan)?;
         WaveOrchestrator::new(port).apply(validated, now)
+    }
+}
+
+impl Memory<'_> {
+    /// Queue a planning attempt as the creator a host bound to this surface
+    /// ([`Memory::with_task_host`], OF-532). The planning attempt keeps that
+    /// exact creator in an engine witness, never in its payload; its cut
+    /// states the creator's cap, and its agent TASKs run inside the
+    /// creator's lease tree. Two creators asking for the same plan get two
+    /// planning attempts. With no creator bound this is
+    /// [`Vault::enqueue_wave_plan`]: host-created planning stays root.
+    pub fn enqueue_wave_plan(
+        &self,
+        epic: EntityId,
+        objective: &str,
+        constraints: serde_json::Value,
+        now: u64,
+    ) -> MemoryResult<crate::attempt_queue::EnqueueOutcome> {
+        let Some(binding) = self.task_host() else {
+            return Ok(self
+                .vault()
+                .enqueue_wave_plan(epic, objective, constraints, now)?);
+        };
+        let payload = serde_json::to_vec(&serde_json::json!({"epic": epic.to_hex(), "objective": objective, "constraints": constraints}))
+            .map_err(|_| Error::InvariantViolation("wave request encoding"))?;
+        self.with_verified_actor_write_txn(|wtxn| {
+            let origin = task_create_origin_in_txn(self, &*wtxn, binding)?;
+            let creator = crate::entity_id::bytes_to_hex_lower(origin.parent_attempt().as_bytes());
+            let outcome = crate::ports::JobQueue::port_job_enqueue(
+                self.vault(),
+                wtxn,
+                crate::attempt_queue::EnqueueAttempt {
+                    kind: WAVE_PLAN_ATTEMPT_KIND.to_owned(),
+                    dedupe_key: Some(format!(
+                        "wave.plan:{}:{creator}",
+                        blake3::hash(&payload).to_hex()
+                    )),
+                    payload: payload.clone(),
+                    run_id: None,
+                    now,
+                },
+            )?;
+            let (crate::attempt_queue::EnqueueOutcome::Enqueued(record)
+            | crate::attempt_queue::EnqueueOutcome::Existing(record)) = &outcome;
+            put_wave_plan_origin_in_txn(self.vault(), wtxn, record.id, &origin)?;
+            Ok(outcome)
+        })
     }
 }

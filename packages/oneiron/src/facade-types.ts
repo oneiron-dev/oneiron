@@ -94,6 +94,7 @@ export type DescribeRequest = {
 export type TaskCreateRequest = {
   spec: unknown
   label?: string | null
+  assignee?: unknown | null
 }
 export type BoardRefreshRequest = {
   frame_epoch?: number | null

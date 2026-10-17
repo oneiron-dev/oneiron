@@ -82,7 +82,7 @@ pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
     encode_agent_dispatch_input,
 };
-pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp};
+pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp, record_dispatch_input};
 pub use self::dispatch::AgentDispatcher;
 pub use self::planner::{
     AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung,
