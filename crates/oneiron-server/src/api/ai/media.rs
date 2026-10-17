@@ -285,7 +285,13 @@ fn admit(
                             locality,
                         )
                     } else {
-                        BankVoiceBinding::bind(&server.vault, &voice_id, &target, include_generated)
+                        BankVoiceBinding::bind(
+                            &server.vault,
+                            &voice_id,
+                            &target,
+                            include_generated,
+                            locality,
+                        )
                     };
                     binding.ok().map(|binding| (rung, binding))
                 },
