@@ -222,6 +222,37 @@ impl Vault {
         )
     }
 
+    /// Transaction-composable [`Self::put_agent_definition`]: the definition
+    /// and its person land in the caller's writer, which owns commit.
+    pub(crate) fn put_agent_definition_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_agent_definition(def)?;
+        crate::ports::EntityStore::port_entity_put(
+            self,
+            wtxn,
+            id,
+            &crate::ports::EntityRecord {
+                entity_type: ENTITY_TYPE_AGENT_DEF,
+                occurred,
+                learned_at,
+                body: data,
+            },
+        )?;
+        crate::context_board::ensure_agent_person_in_txn(
+            self,
+            wtxn,
+            *id,
+            def.display_name.as_deref().unwrap_or(&def.agent_id),
+            learned_at,
+        )
+    }
+
     /// Discoverability alias for `put_agent_definition` so the registry verb
     /// name `define_agent` greps to the vault surface. The house
     /// `put_/get_/update_` naming stays canonical.

@@ -5,6 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::serialize::ExportBody;
+use crate::share_travel::{AGENT_PACK_TRAVEL_SCHEMA, AgentPackTravelProjection};
 use crate::skill::SkillContentHash;
 use crate::skill_hub::HubFile;
 use serde::Deserialize;
@@ -26,6 +27,19 @@ struct AgentPolicyFacet {
     schema: String,
     entity_id: String,
     definition: ExportBody,
+}
+
+/// The schema tag alone, read before either format's typed decode.
+#[derive(Deserialize)]
+struct PolicySchema {
+    schema: String,
+}
+
+/// Whether a policy facet carries the reference-free travel format (FIX
+/// 2041): a pack another party shared, not the owner's native backup.
+pub(super) fn is_travel_policy(policy: &[u8]) -> bool {
+    serde_json::from_slice::<PolicySchema>(policy)
+        .is_ok_and(|tag| tag.schema == AGENT_PACK_TRAVEL_SCHEMA)
 }
 
 #[derive(Deserialize)]
@@ -60,7 +74,37 @@ impl AgentPackFacets {
         Ok(())
     }
 
+    /// The projection a travelling pack's whole folder holds, `None` for
+    /// the native facets. Each skill's SKILL.md must name the skill and
+    /// version its `skills.json` row pins, so the skill the common door
+    /// installs is the one the agent depends on.
+    pub(super) fn travel(&self, files: &[HubFile]) -> Result<Option<AgentPackTravelProjection>> {
+        let policy = files
+            .iter()
+            .find(|f| f.path == self.policy)
+            .ok_or_else(|| invalid("declared agent facet is absent"))?;
+        if !is_travel_policy(&policy.content) {
+            return Ok(None);
+        }
+        let projection = AgentPackTravelProjection::from_files(files)?;
+        for skill in &projection.skills {
+            let package = super::super::folder::package_from_files(skill.files.clone())?;
+            if package.record.skill_id != skill.skill_id
+                || package.record.version != skill.version
+                || package.content_hash()?.to_hex() != skill.content_hash
+            {
+                return Err(invalid(
+                    "a travelling skill's SKILL.md disagrees with its skills.json row",
+                ));
+            }
+        }
+        Ok(Some(projection))
+    }
+
     pub(super) fn validate_files(&self, manifest: &PackManifest, files: &[HubFile]) -> Result<()> {
+        if self.travel(files)?.is_some() {
+            return Ok(());
+        }
         let file = |path: &str| -> Result<&[u8]> {
             files
                 .iter()

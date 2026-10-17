@@ -315,12 +315,21 @@ impl Vault {
             predicates: source.manifest.predicates.iter().cloned().collect(),
             kinds: source.manifest.kinds.iter().cloned().collect(),
             skills: skills.into_iter().map(|id| id.to_hex()).collect(),
+            agent: None,
             installed_at: at,
         };
         if status == PackInstallStatus::Candidate {
             PACK_CANDIDATE.put(&self.store, txn, &candidate_key(&source), &receipt)?;
             return Ok(PackInstallDisposition::Candidate(Box::new(receipt)));
         }
+        // An active travelling AgentPack mints its inert agent here, after its
+        // skills went through the common door (FIX 2041, 3168).
+        let receipt = PackInstallReceipt {
+            agent: self
+                .admit_travel_agent_in_txn(txn, source, at)?
+                .map(|agent| agent.to_hex()),
+            ..receipt
+        };
         let identities = source.kind_identities()?;
         self.install_pack_kinds_in_txn(txn, &identities)?;
         for predicate in &source.manifest.predicates {

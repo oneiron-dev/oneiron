@@ -211,6 +211,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             predicates: source.manifest.predicates.iter().cloned().collect(),
             kinds: source.manifest.kinds.iter().cloned().collect(),
             skills: skills.iter().map(EntityId::to_hex).collect(),
+            agent: None,
             installed_at: 0,
         };
         admission::PACK_CANDIDATE.put(&vault.store, &mut txn, &receipt.content_hash, &receipt)?;

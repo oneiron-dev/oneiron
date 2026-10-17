@@ -198,9 +198,15 @@ pub const GLOBAL_SETTING_SUBJECT: &[u8] = b"oneiron.learning.setting.global_subj
 /// names the child the first try linked. Parts: the wrapper TASK.
 pub const TASK_SUBPROJECT: &[u8] = b"oneiron/task-subproject/v1/";
 
+/// What a received AgentPack mints (`skill_hub::pack_catalog::agent_admission`).
+/// Parts: `agent` and the pack source's content hash, so a reinstall of the
+/// same bytes finds the agent it minted; or `knowledge`, the agent and the
+/// row's index (u32be).
+pub const AGENT_PACK_TRAVEL: &[u8] = b"oneiron/agent-pack-travel/v1/";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 49] = [
+pub(crate) const ALL: [&[u8]; 50] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -250,4 +256,5 @@ pub(crate) const ALL: [&[u8]; 49] = [
     SIDE_ROW_MASK,
     GLOBAL_SETTING_SUBJECT,
     TASK_SUBPROJECT,
+    AGENT_PACK_TRAVEL,
 ];
