@@ -14,19 +14,26 @@ per such field, most specific first, then its own. Every type they reach is
 written out once, nested types included, in one namespace. The types come
 from the facade type inventory (`facade_types.Inventory`), walked here over
 the code-mode rows. The facade's own TypeScript and Python outputs keep their
-own inventory, so this module changes neither. Verbs are laid out as the
-engine's `code_mode_declarations()` lays them out, so either text can stand
-for the other.
+own inventory, so this module changes neither.
+
+There is one text at two paths: `catalog_fragment.d.ts`, which the executor
+teaches and its shadow check reads, and `code-mode.d.ts`, which the
+code-check oracle fixtures and the hook contract stamp read. The engine's
+`code_mode_declarations()` returns that same text. Neither file is written
+by hand.
 
 The revision is the digest of the text, written as a Rust constant beside it.
-A change to the table or to a reached type changes both, and
-`generate.py --check` flags either one when it falls behind.
+A change to the table or to a reached type changes all three files, and
+`generate.py --check` flags any one that falls behind. The text is read back
+before it is written: it must declare exactly the code-mode rows.
 """
 import hashlib
 import json
+import re
 from facade_types import Inventory, compound, ts_key
 
 FRAGMENT = 'crates/oneiron/src/task_verb/catalog_fragment.d.ts'
+CODE_MODE = 'crates/oneiron/src/task_verb/code-mode.d.ts'
 REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 
 # The calls (canon silent), each in one place:
@@ -56,9 +63,8 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 #   extends, so another declaration file can add members to it (the
 #   executor's WIT-root members) by merging, and this text stays valid alone.
 # - CONNECTOR_TOOLS: `connector.<name>.<tool>(args)`, any tool of any
-#   catalogued connector beside the root's fixed members, as
-#   `code_mode_declarations()` renders it. The guest's proxy sends it as
-#   `connector.call`, so it resolves with that row's reply.
+#   catalogued connector beside the root's fixed members. The guest's proxy
+#   sends it as `connector.call`, so it resolves with that row's reply.
 NAMESPACE = 'Sdk'
 REVISION_ALGORITHM = 'sha256'
 REPLY = 'Promise<{output} | StoredResult>'
@@ -75,8 +81,8 @@ VAULT_HOST = 'VaultHost'
 VAULT_HOST_DOC = ('/** Members the `vault` root holds beside its verbs; another declaration file adds them '
                   'by merging into this interface. */')
 CONNECTOR_TOOLS = '{{ readonly [name: string]: {{ readonly [tool: string]: (args?: object) => {result} }} }} & '
-# `self.fold` is the one positional verb (ARCH-0067 #folds), as
-# `code_mode_declarations()` and bootstrap.js take it.
+# `self.fold` is the one positional verb (ARCH-0067 #folds), as bootstrap.js
+# takes it.
 POSITIONAL = {'self.fold': '(span: readonly [number, number], options?: { note?: string | null })'}
 # Names no reached type may take: the global the fragment names from inside
 # the namespace, and the fragment's own interface.
@@ -138,7 +144,9 @@ class Fragment:
         'Whether the row\'s reply names its output type.'
         return row['name'] not in COORDINATION and 'output' in row
 
-    # ---- verbs, laid out as `code_mode_declarations()` lays them out
+    # ---- verbs: `self` a namespace of constants, every other root a constant,
+    # a bare verb a function, so a row named by a reserved word (`vault.export`)
+    # is a valid method: a namespace's `function export` does not parse.
 
     def tree(self):
         root = {'row': None, 'children': {}}
@@ -248,10 +256,37 @@ def revision(text):
     return REVISION_ALGORITHM + ':' + hashlib.new(REVISION_ALGORITHM, text.encode()).hexdigest()
 
 
+# A line of the verb layout opens a root or a namespace, declares a verb, or
+# both: `declare namespace self {`, `declare const ai: {`, `declare function
+# describe(input: …`, `const fold: (span: …`, `update(input: …`, a verb that
+# holds verbs `video: ((input: …) => …) & {`, or an overload literal
+# `{ (input: …): …; … }`. `connector`'s tool index `{ readonly [name: …` is
+# no verb.
+LAYOUT_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(|: | \{$)')
+
+
+def declared(text):
+    'The verb paths a fragment text declares, read back from its verb layout past the type namespace.'
+    names, scope = set(), []
+    types = text.index(f'declare namespace {NAMESPACE} {{\n')
+    for line in text[text.index('\n}\n', types) + 3:].splitlines():
+        line = line.strip()
+        if line in ('}', '};'):
+            scope.pop(); continue
+        head = LAYOUT_LINE.match(line)
+        if not head: continue
+        name, form = head.groups()
+        if form == '(' or line[head.end():].startswith(('(', '{ (')): names.add('.'.join(scope + [name]))
+        if line.endswith('{'): scope.append(name)
+    return names
+
+
 def catalog_fragment(root, rows, header):
-    'The fragment and its revision constant, by path: the files `generate.py` writes and checks.'
+    'The fragment, at both its paths, and its revision constant: the files `generate.py` writes and checks.'
     text = Fragment(root, rows).text()
+    differ = declared(text) ^ {row['name'] for row in rows}
+    if differ: raise ValueError('the catalog fragment must declare exactly the code-mode rows; it differs at ' + ', '.join(sorted(differ)))
     constant = (header + '/// The code-mode catalog fragment\'s revision: `' + REVISION_ALGORITHM + ':` and the hex\n'
                 '/// digest of `catalog_fragment.d.ts`, so it changes exactly when that text does.\n'
                 f'pub const CATALOG_FRAGMENT_REVISION: &str = {json.dumps(revision(text))};\n')
-    return {FRAGMENT: text, REVISION: constant}
+    return {FRAGMENT: text, CODE_MODE: text, REVISION: constant}

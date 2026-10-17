@@ -140,6 +140,19 @@ fn propose(
     campaign: &str,
     evidence: &str,
     reason: JudgeAskReason,
+    options: [&str; 2],
+) -> Result<JudgeAsk> {
+    let question = ask_identity(skill, responsible, campaign, evidence, reason, options)?;
+    vault.with_write_txn_grouped(|txn| propose_in_txn(vault, txn, question))
+}
+
+/// The ask these words make, its id bound to all of them; not yet delivered.
+fn ask_identity(
+    skill: EntityId,
+    responsible: EntityId,
+    campaign: &str,
+    evidence: &str,
+    reason: JudgeAskReason,
     [option_a, option_b]: [&str; 2],
 ) -> Result<JudgeAsk> {
     if option_a == option_b {
@@ -155,7 +168,7 @@ fn propose(
         option_b,
     ))?;
     let id = *blake3::hash(&identity).as_bytes();
-    let question = JudgeAsk {
+    Ok(JudgeAsk {
         id,
         skill,
         responsible,
@@ -165,49 +178,64 @@ fn propose(
         option_a: option_a.into(),
         option_b: option_b.into(),
         delivered_at: None,
-    };
-    vault.with_write_txn_grouped(|txn| {
-        let policy = super::policy::resolved_in_txn(vault, &*txn)?;
-        if [campaign, evidence, option_a, option_b]
-            .iter()
-            .any(|text| !valid_text(text, policy.max_context_bytes))
-        {
-            return Err(invalid());
-        }
-        if !matches!(
-            crate::vault::live_entity_row_in_txn(&vault.store, &*txn, &skill)?,
-            crate::vault::LiveEntityRow::Live {
-                entity_type: crate::registry::ENTITY_TYPE_SKILL,
-                ..
-            }
-        ) || !matches!(
-            crate::vault::live_entity_row_in_txn(&vault.store, &*txn, &responsible)?,
-            crate::vault::LiveEntityRow::Live {
-                entity_type: crate::registry::ENTITY_TYPE_PERSON,
-                ..
-            }
-        ) || vault.entity_lifecycle_state_in_txn(&*txn, &responsible)?
-            != crate::identity_topology::EntityLifecycleState::Active
-        {
-            return Err(invalid());
-        }
-        if let Some(existing) = ASKS.get(&vault.store, &*txn, &id)? {
-            if existing.id != id
-                || existing.skill != skill
-                || existing.responsible != responsible
-                || existing.reason != reason
-                || existing.campaign != campaign
-                || existing.evidence != evidence
-                || existing.option_a != option_a
-                || existing.option_b != option_b
-            {
-                return Err(Error::CorruptedIndex("judge ask identity"));
-            }
-            return Ok(existing);
-        }
-        ASKS.put(&vault.store, txn, &id, &question)?;
-        Ok(question)
     })
+}
+
+/// [`propose`]'s checks and write, in the caller's transaction.
+fn propose_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    question: JudgeAsk,
+) -> Result<JudgeAsk> {
+    let JudgeAsk {
+        id,
+        skill,
+        responsible,
+        reason,
+        ..
+    } = question;
+    let (campaign, evidence) = (question.campaign.as_str(), question.evidence.as_str());
+    let (option_a, option_b) = (question.option_a.as_str(), question.option_b.as_str());
+    let policy = super::policy::resolved_in_txn(vault, &*txn)?;
+    if [campaign, evidence, option_a, option_b]
+        .iter()
+        .any(|text| !valid_text(text, policy.max_context_bytes))
+    {
+        return Err(invalid());
+    }
+    if !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, &*txn, &skill)?,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_SKILL,
+            ..
+        }
+    ) || !matches!(
+        crate::vault::live_entity_row_in_txn(&vault.store, &*txn, &responsible)?,
+        crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            ..
+        }
+    ) || vault.entity_lifecycle_state_in_txn(&*txn, &responsible)?
+        != crate::identity_topology::EntityLifecycleState::Active
+    {
+        return Err(invalid());
+    }
+    if let Some(existing) = ASKS.get(&vault.store, &*txn, &id)? {
+        if existing.id != id
+            || existing.skill != skill
+            || existing.responsible != responsible
+            || existing.reason != reason
+            || existing.campaign != campaign
+            || existing.evidence != evidence
+            || existing.option_a != option_a
+            || existing.option_b != option_b
+        {
+            return Err(Error::CorruptedIndex("judge ask identity"));
+        }
+        return Ok(existing);
+    }
+    ASKS.put(&vault.store, txn, &id, &question)?;
+    Ok(question)
 }
 
 /// Set the remaining minutes of new judge questions for this human. Each ask
@@ -258,31 +286,84 @@ pub fn record_judge_pick(
     vault.with_write_txn_grouped(|txn| {
         let actor =
             crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &*txn, owner)?;
-        let ask = ASKS
-            .get(&vault.store, &*txn, &ask_id)?
-            .ok_or(Error::EntityNotFound)?;
-        if ask.id != ask_id || ask.responsible != actor || ask.delivered_at.is_none() {
+        pick_in_txn(vault, txn, owner, actor, ask_id, choose_b, at)
+    })
+}
+
+/// [`record_judge_pick`] for an `actor` the caller already validated.
+fn pick_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    actor: EntityId,
+    ask_id: [u8; 32],
+    choose_b: bool,
+    at: u64,
+) -> Result<JudgeLabel> {
+    let ask = ASKS
+        .get(&vault.store, &*txn, &ask_id)?
+        .ok_or(Error::EntityNotFound)?;
+    if ask.id != ask_id || ask.responsible != actor || ask.delivered_at.is_none() {
+        return Err(invalid());
+    }
+    let chosen = if choose_b {
+        ask.option_b.clone()
+    } else {
+        ask.option_a.clone()
+    };
+    if let Some(previous) = LABELS.get(&vault.store, &*txn, &ask_id)? {
+        if previous.ask != ask || previous.chosen != chosen {
             return Err(invalid());
         }
-        let chosen = if choose_b {
-            ask.option_b.clone()
-        } else {
-            ask.option_a.clone()
-        };
-        if let Some(previous) = LABELS.get(&vault.store, &*txn, &ask_id)? {
-            if previous.ask != ask || previous.chosen != chosen {
-                return Err(invalid());
-            }
-            return Ok(previous);
+        return Ok(previous);
+    }
+    let label = JudgeLabel {
+        ask,
+        chosen,
+        picked_at: at,
+        principal_ref: owner.person_principal_ref_in_txn(vault, &*txn)?.into(),
+    };
+    LABELS.put(&vault.store, txn, &ask_id, &label)?;
+    Ok(label)
+}
+
+/// An owner's hand-test pick on a judge swap's disagreement, as a label in
+/// the skill's anchor: the ask (the two judges' answers on one kept case) is
+/// proposed for the picker, delivered by the swap's notice at
+/// `delivered_at`, and answered, in one transaction. Like every label it is
+/// final: the same pick again returns it, and another one fails.
+#[expect(clippy::too_many_arguments, reason = "one ask, delivered and answered")]
+pub(crate) fn record_judge_swap_label(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    skill: EntityId,
+    campaign: &str,
+    evidence: &str,
+    [option_a, option_b]: [&str; 2],
+    choose_b: bool,
+    delivered_at: u64,
+    at: u64,
+) -> Result<JudgeLabel> {
+    vault.with_write_txn_grouped(|txn| {
+        let actor =
+            crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &*txn, owner)?;
+        let mut ask = propose_in_txn(
+            vault,
+            txn,
+            ask_identity(
+                skill,
+                actor,
+                campaign,
+                evidence,
+                JudgeAskReason::RevisionDisagreement,
+                [option_a, option_b],
+            )?,
+        )?;
+        if ask.delivered_at.is_none() {
+            ask.delivered_at = Some(delivered_at);
+            ASKS.put(&vault.store, txn, &ask.id, &ask)?;
         }
-        let label = JudgeLabel {
-            ask,
-            chosen,
-            picked_at: at,
-            principal_ref: owner.person_principal_ref_in_txn(vault, &*txn)?.into(),
-        };
-        LABELS.put(&vault.store, txn, &ask_id, &label)?;
-        Ok(label)
+        pick_in_txn(vault, txn, owner, actor, ask.id, choose_b, at)
     })
 }
 
