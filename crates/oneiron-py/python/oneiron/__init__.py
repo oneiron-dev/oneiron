@@ -360,7 +360,7 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs":
             return Oneiron._VaultClaimsVerbs(self._client)
-        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> dict[str, Any]:
+        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None) -> dict[str, Any]:
             """Recalls a memory pack.
 
             ``effort="high"`` needs a lease this package never mints: an embedded
@@ -371,8 +371,11 @@ class Oneiron:
             call-mode deadline), answering with the best results ready, marked
             ``partial``. ``format`` takes the engine's exact tokens:
             ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
+            ``media`` (``{"space", "mime", "bytes_b64", "kinds"}``) is embedded
+            by the server into its declared space; an embedded client raises
+            ``MODEL_UNAVAILABLE``.
             """
-            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms)))
+            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None)))
         def export(self, format: str | None = None) -> dict[str, Any]:
             """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
@@ -415,6 +418,9 @@ class Oneiron:
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
+        @property
+        def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
+            return Oneiron._VaultWidenProposalsVerbs(self._client)
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
@@ -812,6 +818,18 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultWidenProposalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
+            return json.loads(_translate(lambda: self._client.vault_widen_proposals(json.dumps(spec))))
+        def approve(self, spec):
+            """The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued."""
+            return json.loads(_translate(lambda: self._client.vault_widen_proposals_approve(json.dumps(spec))))
+        def decline(self, spec):
+            """The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."""
+            return json.loads(_translate(lambda: self._client.vault_widen_proposals_decline(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

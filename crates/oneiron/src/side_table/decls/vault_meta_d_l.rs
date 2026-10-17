@@ -80,6 +80,12 @@ side_tables! {
     DREAMER_CONSOLIDATION_KEY_RULES: VaultMeta b"dreamer:consolidation:keys:v1" LegacyJson;
     /// Operator-set consolidation candidate-selection config (strength weights, caps). Key: ().
     DREAMER_CONSOLIDATION_SELECTION: VaultMeta b"dreamer:consolidation:selection:v1" LegacyJson;
+    /// Parent-verified promotion evidence observations. Key: id16(claim).
+    DREAMER_CONSOLIDATION_STRENGTH: VaultMeta b"dreamer:consolidation:strength:v1:" Named;
+    /// Pre-archive claim revision and strength policy. Key: id16(claim) + u64be(at_ms).
+    DREAMER_CONSOLIDATION_STRENGTH_ARCHIVE: VaultMeta b"dreamer:consolidation:strength_archive:v1:" Named;
+    /// Operator-set archive-only strength lifecycle. Key: ().
+    DREAMER_CONSOLIDATION_STRENGTH_POLICY: VaultMeta b"dreamer:consolidation:strength_policy:v1" Named;
     /// Private run-tree-scoped critique artifact for one branch attempt, keyed by attempt id and
     /// artifact id; written independently by both the generic critic reviewer and the Dreamer
     /// tournament with the identical prefix and key layout (see WHERE) - worth a second look for
