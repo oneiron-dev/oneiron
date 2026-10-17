@@ -124,6 +124,35 @@ pub(super) fn speaker_entry_covers_in(
     )
 }
 
+/// Whether `person`, among the initial members of a room `creator` creates
+/// with `body`, enters it for the first time (OF-365 P5) as a PERSON the
+/// membership door joins does: anyone but the creator, the vault owner or
+/// one of the vault's own agents. A project room keeps its own rule, and a
+/// project-leader chat opens without an ask. The fact is the entry; the
+/// create's join keeps its own time and history.
+pub(super) fn initial_member_enters_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &crate::authority::AuthorityFold,
+    body: &ConversationBody,
+    creator: EntityId,
+    person: EntityId,
+) -> Result<bool> {
+    if person == creator
+        || body.extra.contains_key("project_id")
+        || body.extra.contains_key("memberIds")
+        || body
+            .extra
+            .contains_key(crate::workspace_roster::LEADER_CHAT_FIELD)
+    {
+        return Ok(false);
+    }
+    Ok(!matches!(
+        crate::disclosure::room_party_in(vault, txn, fold, person)?,
+        RoomParty::VaultOwner | RoomParty::VaultAgent
+    ))
+}
+
 impl Memory<'_> {
     /// Records one attendee's entry into a container, and raises what P5
     /// asks of it, once.
@@ -196,6 +225,42 @@ impl Memory<'_> {
             until: fact.until,
         })
         .map(Some)
+    }
+
+    /// Records the entry of each speaker `roster` could not place into
+    /// `container`, the committed room its voice session is heard in, through
+    /// [`Self::container_attendee_entered`]: a
+    /// [`ContainerAttendee::Speaker`] by the session's ref and the capture's
+    /// speaker key, under the roster's revision, the keys the interlocutor
+    /// read asks the identity at. A voice host that binds its session to a
+    /// room calls it once the matcher has written the roster; `trigger_turn`,
+    /// `candidates` (live contacts, in its order) and `until` are its own.
+    /// A speaker already entered replays its stored entry. Answers each
+    /// "who is this?" ask raised.
+    pub fn voice_speakers_entered(
+        &self,
+        container: EntityId,
+        roster: &crate::voice_identity::VoiceSessionRosterV1,
+        trigger_turn: Option<EntityId>,
+        candidates: &[EntityId],
+        until: u64,
+    ) -> MemoryResult<Vec<TaskAskReceipt>> {
+        let mut asks = Vec::new();
+        for speaker_key in roster.unplaced_speakers() {
+            asks.extend(self.container_attendee_entered(&ContainerAttendeeEvent {
+                container,
+                attendee: ContainerAttendee::Speaker {
+                    session_key: roster.voice_session_ref.clone(),
+                    speaker_key: speaker_key.to_owned(),
+                },
+                roster_revision: roster.roster_revision,
+                trigger_turn,
+                candidates: candidates.to_vec(),
+                until,
+                history: HistoryChoice::Inherit,
+            })?);
+        }
+        Ok(asks)
     }
 }
 
