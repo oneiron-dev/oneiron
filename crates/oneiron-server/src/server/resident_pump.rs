@@ -298,7 +298,7 @@ fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Clai
         RunOf::Resident(agent) => Ok(dispatcher
             .claim_resident_run(id, LEASE_OWNER, unix_now())?
             .map(|(status, resident)| Claimed {
-                task: resident_task(&status, &resident),
+                task: resident_task(&dispatcher, &status, &resident),
                 agent,
                 qa_thread_ref: resident.home_message_ref,
                 status,
@@ -451,9 +451,14 @@ impl AgentVerbDoor for TaskDoor {
 }
 
 /// A resident run's task: its frozen definition's instructions, then what
-/// woke it. It reads only the attempt and its binding, so each entry of the
-/// run binds the same text to the run's record.
-fn resident_task(status: &AgentDispatchStatus, resident: &ResidentAgentSpec) -> String {
+/// woke it, then the briefing its wake carries: an inbox wake's message as
+/// its sender wrote it (OF-519). It reads only the attempt and its binding,
+/// so each entry of the run binds the same text to the run's record.
+fn resident_task(
+    dispatcher: &AgentDispatcher<'_>,
+    status: &AgentDispatchStatus,
+    resident: &ResidentAgentSpec,
+) -> String {
     let cause = match &status.attempt.task_ref {
         Some(task) => task_cause(task),
         None => format!(
@@ -462,26 +467,33 @@ fn resident_task(status: &AgentDispatchStatus, resident: &ResidentAgentSpec) -> 
             resident.home_conversation_ref.to_hex()
         ),
     };
-    task_text(status, [cause].into_iter())
+    task_text(
+        status,
+        std::iter::once(cause).chain(briefing(dispatcher, status)),
+    )
 }
 
 /// Another agent's run task: its frozen definition's instructions, then the
-/// briefing its spawn gave it and the TASK it realizes. A briefing the run's
-/// context cannot resolve is left out, and the run reads its own context.
+/// briefing its spawn gave it and the TASK it realizes.
 fn agent_task(dispatcher: &AgentDispatcher<'_>, status: &AgentDispatchStatus) -> String {
-    let briefing = match dispatcher.resolve_attempt_context(status.attempt.id) {
+    task_text(
+        status,
+        briefing(dispatcher, status)
+            .into_iter()
+            .chain(status.attempt.task_ref.as_deref().map(task_cause)),
+    )
+}
+
+/// The briefing the run's dispatch gave it. A briefing the run's context
+/// cannot resolve is left out, and the run reads its own context.
+fn briefing(dispatcher: &AgentDispatcher<'_>, status: &AgentDispatchStatus) -> Option<String> {
+    match dispatcher.resolve_attempt_context(status.attempt.id) {
         Ok(context) => context.briefing.filter(|text| !text.trim().is_empty()),
         Err(error) => {
             tracing::warn!(%error, attempt = ?status.attempt.id, "an agent run's briefing does not resolve");
             None
         }
-    };
-    task_text(
-        status,
-        briefing
-            .into_iter()
-            .chain(status.attempt.task_ref.as_deref().map(task_cause)),
-    )
+    }
 }
 
 fn task_cause(task: &str) -> String {
