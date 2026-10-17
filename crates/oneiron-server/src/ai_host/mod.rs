@@ -101,7 +101,8 @@ pub struct AiHandle {
     /// The running Dreamer has a summary instruction to write bodies with.
     summaries: bool,
     /// The server's decision host, set once the server staffs it: the
-    /// Dreamer's passes ask their typed questions through it.
+    /// Dreamer's passes ask their typed questions through it, and the
+    /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
 }
 
@@ -431,11 +432,12 @@ impl AiHost {
         let server = server
             .with_ai(host.handle.clone())
             .with_decision_config(models);
-        // The Dreamer started before the server staffed its ladder; its next
-        // pass asks through it.
+        // The Dreamer and the workflow pump started before the server
+        // staffed its ladder; the Dreamer's next pass and the pump's next
+        // wave cut ask through it.
         let _ = host.handle.decisions.set(server.decision_host().clone());
-        // So did the workflow pump: from its next leaf on, a leaf that ran is
-        // judged on its execution context through the same ladder (OF-540).
+        // From the pump's next leaf on, a leaf that ran is judged on its
+        // execution context through the same ladder (OF-540).
         if let Some(pump) = &host.workflows {
             pump.with_attribution_ladder(server.decision_host().ladder().clone());
         }
@@ -531,7 +533,13 @@ impl AiHost {
             }
             Err(reason) => status.update(|status| status.dreamer = WorkStatus::idle(reason)),
         }
-        match start_workflows(&vault, &runtime, models, &status) {
+        match start_workflows(
+            &vault,
+            &runtime,
+            models,
+            &status,
+            Arc::clone(&handle.decisions),
+        ) {
             Ok(pump) => host.workflows = Some(pump),
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
@@ -858,6 +866,7 @@ fn start_workflows(
     runtime: &Arc<ModelRuntime>,
     models: &ModelsConfig,
     status: &Arc<StatusCell>,
+    decisions: Arc<OnceLock<DecisionHost>>,
 ) -> Result<WorkflowPump, IdleReason> {
     if !models.workflows.enabled {
         return Err(IdleReason::Disabled);
@@ -874,6 +883,7 @@ fn start_workflows(
             spent: Default::default(),
         },
         Arc::clone(status),
+        decisions,
     )
     .map_err(|error| {
         tracing::error!(%error, "workflow pump failed to start");

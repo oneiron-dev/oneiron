@@ -146,6 +146,7 @@ pub enum AgentVerb {
     VaultArtifactsWaits,
     VaultArtifactsReleaseWait,
     VaultArtifactsReviewSlides,
+    VaultCriticReview,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -459,6 +460,7 @@ impl AgentVerb {
         Self::VaultArtifactsWaits,
         Self::VaultArtifactsReleaseWait,
         Self::VaultArtifactsReviewSlides,
+        Self::VaultCriticReview,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -779,6 +781,7 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
+            Self::VaultCriticReview => "vault.critic.review",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -1091,6 +1094,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -1411,6 +1415,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -1756,6 +1761,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -2006,6 +2012,7 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -2276,6 +2283,7 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
+            Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -2590,6 +2598,7 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
+            Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -3160,6 +3169,9 @@ impl AgentVerb {
             }
             Self::VaultArtifactsReviewSlides => {
                 "Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard."
+            }
+            Self::VaultCriticReview => {
+                "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
             }
             Self::VaultArtifactsProposeDeck => {
                 "Runs one native deck transaction over an artifact's head and holds the proposal for Keep."

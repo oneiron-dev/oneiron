@@ -3230,6 +3230,26 @@ async fn vault_artifacts_review_slides(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_critic_review(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "vault.critic.review")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.critic.review", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.critic.review", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_critic_review(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_artifacts_propose_deck(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6313,6 +6333,7 @@ pub(crate) async fn call_verb(
         "vault.artifacts.waits" => vault_artifacts_waits(server, call, input).await,
         "vault.artifacts.release_wait" => vault_artifacts_release_wait(server, call, input).await,
         "vault.artifacts.review_slides" => vault_artifacts_review_slides(server, call, input).await,
+        "vault.critic.review" => vault_critic_review(server, call, input).await,
         "vault.artifacts.propose_deck" => vault_artifacts_propose_deck(server, call, input).await,
         "vault.artifacts.propose_output" => {
             vault_artifacts_propose_output(server, call, input).await

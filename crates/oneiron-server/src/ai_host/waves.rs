@@ -8,6 +8,7 @@ use oneiron::attempt_queue::{
     FailAttempt, SetAttemptResult,
 };
 use oneiron::compaction::output::{OutputRef, restore_output, store_output};
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::wave_orchestration::{
     PlannedTask, VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND, WAVE_PLAN_SCHEMA_VERSION,
     WaveApplyOutcome, WaveOrchestrator, WavePlan, WavePlanRequest, WavePlanner,
@@ -21,6 +22,7 @@ use serde_json::{Value, json};
 
 use super::status::{StatusCell, WorkState};
 use super::step::{ModelStep, StepRunner};
+use crate::decision_host::{DecisionHost, WAVE_FANOUT_BUDGET};
 
 const LEASE_OWNER: &str = "oneiron-server-waves";
 
@@ -197,11 +199,14 @@ impl WavePlanner for ModelWavePlanner<'_> {
 }
 
 /// Consume one queued PLAN task. The ordinary TASK router runs its children.
+/// Under the vault's `auto` fan-out mode the cut's launch is ruled on through
+/// `decisions`, the host's ladder, once the host installed it.
 pub(super) fn run_once(
     runtime: &tokio::runtime::Runtime,
     vault: &Vault,
     runner: &StepRunner,
     status: &StatusCell,
+    decisions: Option<&DecisionHost>,
 ) -> oneiron::Result<bool> {
     let queue = AttemptQueue::new(vault);
     let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
@@ -240,9 +245,20 @@ pub(super) fn run_once(
             constraints: job.constraints.input.clone(),
             now: super::unix_now(),
         })?;
-        // Under the vault's fan-out approval mode (FIX 939). No host ladder
-        // rules here yet, so `auto` decides on its learned history alone.
-        vault.apply_wave_plan_attempt_gated(actor, class, &attempt, plan, None, super::unix_now())
+        // Under the vault's fan-out approval mode (FIX 939): `auto` asks the
+        // host's ladder for the requesting actor, on a clock that starts
+        // here. Before the host installs its ladder, an ask no standing row
+        // answers holds the cut for the owner.
+        let deadline = RetrievalDeadline::after(WAVE_FANOUT_BUDGET);
+        let fanout = decisions.map(|host| host.wave_fanout_decisions(actor, &deadline));
+        vault.apply_wave_plan_attempt_gated(
+            actor,
+            class,
+            &attempt,
+            plan,
+            fanout.as_ref(),
+            super::unix_now(),
+        )
     })();
     runner.forget(attempt.id);
     status.update(|status| {
