@@ -272,9 +272,30 @@ side_tables! {
     /// Queued tombstone re-assertion for an entity whose local hard-delete residue reappeared in a
     /// window doc. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REASSERT_MARKER: SyncState b"ra:w:" Raw;
+    /// One generation of the vault's sealed cloud bundle the home keeps (FIX 922): u64be bundle
+    /// length ‖ bundle digest (32) ‖ u64be pad object length ‖ pad object digest (32). Key: hex48
+    /// (the generation).
+    SYNC_RESIDENCE_BUNDLE_GENERATION: SyncState b"rb:g:" Raw;
+    /// One stored part of a kept generation's bundle ("b") or pad object ("k"). Key: hex48 (the
+    /// generation) ":" b|k ":" hex16 (offset).
+    SYNC_RESIDENCE_BUNDLE_PART: SyncState b"rb:p:" Raw;
+    /// An upload of a bundle ("b") or pad object ("k") the home stages from parts until its
+    /// commit: u64be vault second of its latest part ‖ generation (24) ‖ u64be total ‖ digest
+    /// (32) ‖ u64be bytes staged. Key: hex32 (the uploading machine) ":" b|k.
+    SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw;
+    /// One part of a staged upload. Key: hex32 (the uploading machine) ":" b|k ":" hex16
+    /// (offset).
+    SYNC_RESIDENCE_BUNDLE_STAGE_PART: SyncState b"rb:u:" Raw;
+    /// A world erased here whose pads this machine stripped from every pad object the home
+    /// keeps (FIX 922): empty, or the u64be slot a pad object that did not open here held it
+    /// back in. Key: hex32 (the world).
+    SYNC_RESIDENCE_BUNDLE_SWEPT: SyncState b"rbe:" Raw;
+    /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
+    /// generation (24) it last took in, when it took one. Key: ().
+    SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw;
     /// A room's host pin or platform handle this device changed while no open window carried the
-    /// room (FIX 1794), mirrored as the room's window opens. Key: string (the cell's `room_facts`
-    /// map key).
+    /// room, or a join or offer card it changed that its window does not hold yet (FIX 1794),
+    /// mirrored as that window opens. Key: string (the row's `room_facts` map key).
     SYNC_ROOM_FACT_DIRTY: SyncState b"rfd:" Raw;
     /// A thin-residence item's opened entity blob. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw;

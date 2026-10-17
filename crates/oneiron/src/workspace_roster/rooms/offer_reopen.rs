@@ -48,7 +48,7 @@ impl Memory<'_> {
         }
         let vault = self.vault();
         let caller = WriteActor::new(self.actor(), self.actor_class());
-        vault.try_with_write_txn_grouped(|txn| {
+        let card = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut stored = OFFERS
@@ -65,7 +65,7 @@ impl Memory<'_> {
                 OfferState::AgedOut => {}
                 OfferState::Open { .. } if expired => {}
                 // Still open: an earlier click already reopened it.
-                OfferState::Open { .. } => return Ok(stored.card),
+                OfferState::Open { .. } => return Ok(stored.into_card()),
                 OfferState::Joined { .. }
                 | OfferState::NotNow { .. }
                 | OfferState::Superseded { .. } => {
@@ -78,7 +78,7 @@ impl Memory<'_> {
                 if expired {
                     stored.card.state = OfferState::AgedOut;
                 }
-                return Ok(stored.card);
+                return Ok(stored.into_card());
             }
             if stored.answer.is_some() || request.until.is_some_and(|until| until <= now) {
                 return Err(MemoryError::bad_request(
@@ -99,8 +99,13 @@ impl Memory<'_> {
             stored.card.until = request.until;
             stored.card.last_engaged_at = now;
             stored.votes.clear();
+            stored.reopen_epoch = stored.reopen_epoch.saturating_add(1);
             OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
-            Ok(stored.card)
-        })
+            Ok(stored.into_card())
+        })?;
+        // FIX 1794: the reopened card reaches its room's live window.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_rows_in_live_windows(&[], &[request.offer_id.as_str()]);
+        Ok(card)
     }
 }

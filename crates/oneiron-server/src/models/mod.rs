@@ -78,6 +78,7 @@ pub use declared::DeclaredRun;
 pub use hosted_speech::HostedCloner;
 pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
+pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
 pub(crate) use raw::{InjectedRuns, RawInference};

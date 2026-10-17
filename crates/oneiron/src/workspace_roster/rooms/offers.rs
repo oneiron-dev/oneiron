@@ -104,6 +104,17 @@ pub enum OfferState {
     AgedOut,
 }
 
+/// The advisory ballots on a room-wide card, as counts (FIX 2091): how
+/// many voters said join and how many not now, never who. They keep the
+/// card open and decide nothing; only the host's answer admits. A thread's
+/// card counts none, since it takes no votes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfferVoteTally {
+    pub join: u64,
+    pub not_now: u64,
+}
+
 /// One offer card, as the room's audience sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,13 +145,17 @@ pub struct OfferCard {
     /// Unix seconds: the card's publication or reopening, or the last reply,
     /// vote, mention or answer that engaged it since.
     pub last_engaged_at: u64,
+    /// The advisory ballots as counts, read from the stored card's votes
+    /// each time a card is shown ([`StoredOffer::into_card`]); no voter is
+    /// named.
+    pub vote_tally: OfferVoteTally,
 }
 
 /// A card as stored: the card, what it was minted from and by whom, and the
 /// host's answer that settled it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StoredOffer {
+pub(crate) struct StoredOffer {
     pub(super) card: OfferCard,
     /// The digest of the draft the card was minted from: the same intent asked
     /// with another draft refuses.
@@ -151,6 +166,27 @@ pub(super) struct StoredOffer {
     /// The room's advisory ballots on a room-wide card, one per voter: they
     /// keep it open and decide nothing; only the host's answer admits.
     pub(super) votes: BTreeMap<EntityId, super::offer_settle::OfferAnswer>,
+    /// How many times the host reopened the card. Another machine's copy
+    /// merges by it: the later reopening wins, and older ballots drop (FIX
+    /// 1794).
+    pub(super) reopen_epoch: u32,
+}
+
+impl StoredOffer {
+    /// The card as a reader is shown it: its tally counted from `votes` now,
+    /// whatever count the stored card holds. The tally is a projection, never
+    /// a second ballot: nothing reads it back to decide.
+    pub(super) fn into_card(mut self) -> OfferCard {
+        let mut tally = OfferVoteTally::default();
+        for vote in self.votes.values() {
+            match vote {
+                super::offer_settle::OfferAnswer::Join => tally.join += 1,
+                super::offer_settle::OfferAnswer::NotNow => tally.not_now += 1,
+            }
+        }
+        self.card.vote_tally = tally;
+        self.card
+    }
 }
 
 /// A page of the current cards in a room, or in one of its threads.
@@ -444,6 +480,7 @@ fn mint_in_txn(
         created_at: now,
         until: draft.until,
         last_engaged_at: now,
+        vote_tally: OfferVoteTally::default(),
     };
     OFFERS.put(
         &vault.store,
@@ -455,6 +492,7 @@ fn mint_in_txn(
             minted_by: caller.entity_ref(),
             answer: None,
             votes: BTreeMap::new(),
+            reopen_epoch: 0,
         },
     )?;
     if matches!(join.decision.state, JoinDecision::Ready) {
@@ -513,7 +551,17 @@ impl Memory<'_> {
         self.require_offer_audience(draft.room, draft.branch)?;
         let caller = WriteActor::new(self.actor(), self.actor_class());
         let vault = self.vault();
-        Ok(run_settlement(vault, |txn, now| {
+        // FIX 1794: the card a new one replaces rides with it.
+        #[cfg(feature = "sync")]
+        let prior = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            OFFER_CURRENT.get(
+                &vault.store,
+                &txn,
+                &current_key(draft.room, draft.branch, draft.agent),
+            )?
+        };
+        let card = run_settlement(vault, |txn, now| {
             mint_in_txn(
                 vault,
                 txn,
@@ -524,7 +572,17 @@ impl Memory<'_> {
                 now,
             )
         })?
-        .card)
+        .card;
+        // FIX 1794: the card, its join and the card it replaced reach the
+        // live window of its room or thread.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_rows_in_live_windows(
+            &[],
+            &std::iter::once(card.offer_id.as_str())
+                .chain(prior.as_deref().filter(|prior| *prior != card.offer_id))
+                .collect::<Vec<_>>(),
+        );
+        Ok(card)
     }
 
     /// The current offer cards in a room, or in one of its threads, a page at
@@ -555,7 +613,7 @@ impl Memory<'_> {
             let stored = OFFERS
                 .get(&vault.store, &txn, &offer)?
                 .ok_or(Error::CorruptedIndex("current offer has no card"))?;
-            current.push((key, stored.card));
+            current.push((key, stored.into_card()));
         }
         drop(txn);
         let mut rows = Vec::new();
@@ -612,7 +670,7 @@ impl Memory<'_> {
             let card = OFFERS
                 .get(&vault.store, &txn, &offer)?
                 .ok_or(Error::CorruptedIndex("current offer has no card"))?
-                .card;
+                .into_card();
             if matches!(card.state, OfferState::Open { .. })
                 && !super::offer_activity::room_offer_expired(&card, now)
             {

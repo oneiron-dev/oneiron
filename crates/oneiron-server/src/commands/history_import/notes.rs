@@ -26,14 +26,24 @@
 //! and no links out, though a note's link can name it. Its title is its file
 //! name and its kind `--kind`. A PDF with no text layer (a scan) reads as
 //! blank; one that is encrypted or does not parse is passed over and counted.
+//!
+//! A file of any size is read (rule 5). Text past the note bound lands in
+//! parts: the file's own note holds the first, and each next part is a note of
+//! its own at `<path>#part<n>`, titled `<title> (part <n>)`, of the same kind,
+//! with a link to the first. The frontmatter stays in the first part; each
+//! part's links are those in its own text. A folder past one of its
+//! `[limits]` rows (its notes' text, or how many there are) is read and
+//! imported whole, and the row asks whether everything is okay (OF-520).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Read, Write};
+use std::ops::Range;
 use std::path::{Component, Path};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
-use oneiron::ingest::{MAX_PDF_BYTES, PdfTextError, pdf_text};
+use oneiron::ingest::{PdfText, pdf_text};
+use oneiron::limit_ask::EngineLimit;
 use oneiron::note::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteLink, ImportedNoteStanding,
     NOTES_IMPORT_SOURCE,
@@ -48,39 +58,22 @@ pub(in crate::commands) mod folder;
 mod markdown;
 use markdown::{Front, Link};
 
-/// The largest note the vault holds; a larger file is passed over and counted.
-const MAX_NOTE_BYTES: u64 = 1024 * 1024;
+/// The largest note the vault holds; a file's text past it lands in parts.
+const MAX_NOTE_BYTES: usize = 1024 * 1024;
 
-/// The most notes one import reads.
-const MAX_NOTES: usize = 100_000;
+/// What joins a file's path to a continuation part's number in the part's
+/// path: `<path>#part<n>`. No file the walk reads ends that way.
+const PART_MARK: &str = "#part";
 
 /// The longest title a note keeps.
 const MAX_TITLE_BYTES: usize = 256;
 
-/// The most text one import reads, every note together: they are all held
-/// while their links resolve.
-const MAX_FOLDER_BYTES: u64 = 256 * 1024 * 1024;
-
-/// Why a folder is refused whole; nothing of it is imported.
-#[derive(Debug, thiserror::Error)]
-enum FolderRefused {
-    #[error(
-        "{folder} holds more than {MAX_NOTES} notes; nothing was imported. Import one folder \
-         under it at a time"
-    )]
-    TooManyNotes { folder: String },
-    #[error(
-        "{folder} holds more than {budget} bytes of notes; nothing was imported. Import one \
-         folder under it at a time"
-    )]
-    TooManyBytes { folder: String, budget: u64 },
-}
-
-/// One file, read and parsed.
+/// One file, or one part of a file past the note bound, read and parsed.
 struct Note {
-    /// Under the folder, `/`-separated.
+    /// Under the folder, `/`-separated; a continuation part's is
+    /// `<path>#part<n>`.
     path: String,
-    /// The file as written; a PDF's text.
+    /// The file as written; a PDF's text. A part's share of either.
     markdown: String,
     /// The hash of a PDF's bytes: its revision, which its text alone does
     /// not show.
@@ -93,12 +86,26 @@ struct Note {
     /// The frontmatter as it decodes, for the secret scan.
     decoded: String,
     links: Vec<Link>,
+    /// For a continuation part, its file's path: the first part's note.
+    part_of: Option<String>,
+}
+
+impl Note {
+    /// The file this note was read from, under the folder.
+    fn file(&self) -> &str {
+        self.part_of.as_deref().unwrap_or(&self.path)
+    }
 }
 
 #[derive(Serialize, Default)]
 struct NoteCounts {
-    /// Notes read from the folder.
+    /// Notes read from the folder, continuation parts included.
     found: usize,
+    /// Continuation parts of files whose text is past the note bound.
+    parts: usize,
+    /// Bytes of text the notes hold, decoded frontmatter included: what
+    /// `limits.import_folder_text_bytes` measures.
+    text_bytes: u64,
     new: usize,
     unchanged: usize,
     changed: usize,
@@ -106,8 +113,7 @@ struct NoteCounts {
     /// New, but the vault's secret scan would refuse their text; `oneiron
     /// secret-scan off` lets them in.
     refused: usize,
-    /// Files passed over: larger than a note may be, or blank.
-    too_large: usize,
+    /// Files passed over: blank.
     blank: usize,
     /// Files passed over because they have another name (a hard link),
     /// which may be outside the folder.
@@ -119,6 +125,9 @@ struct NoteCounts {
     unreadable_frontmatter: usize,
     /// PDFs passed over: encrypted, or not a PDF the reader parses.
     unreadable_pdf: usize,
+    /// PDFs read in part: a page past the codec's bound, or a font the reader
+    /// cannot map. The rest of their text lands.
+    partly_read_pdf: usize,
 }
 
 /// Where the new notes' titles came from.
@@ -145,6 +154,8 @@ struct LinkCounts {
     /// Resolve to a note that is neither in the vault nor in this batch: it
     /// was erased or archived, or the secret scan refuses it.
     to_left_out: usize,
+    /// From a continuation part to its file's first part.
+    parts: usize,
     /// Edges this batch adds.
     new: usize,
 }
@@ -208,7 +219,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     anyhow::ensure!(folder.is_dir(), "{} is not a folder", path.display());
     let mut counts = NoteCounts::default();
-    let mut notes = read_folder(&folder, &mut counts, MAX_FOLDER_BYTES)?;
+    let mut notes = read_folder(&folder, &mut counts)?;
     super::progress(&format!("read {} note(s)", notes.len()));
     let folder = folder
         .to_str()
@@ -322,12 +333,12 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             links: link_count,
         })
     };
-    let warnings = (counts.hard_linked > 0)
-        .then_some(super::ImportWarning::HardLinked {
+    let mut warnings = crossed_rows(&vault, &counts);
+    if counts.hard_linked > 0 {
+        warnings.push(super::ImportWarning::HardLinked {
             files: counts.hard_linked,
-        })
-        .into_iter()
-        .collect();
+        });
+    }
     let outcome = Outcome {
         source: NOTES_IMPORT_SOURCE,
         folder,
@@ -357,7 +368,8 @@ fn earlier_titles(
         .iter()
         .zip(standings)
         .map(|(note, standing)| {
-            if *standing != ImportedNoteStanding::Changed {
+            // A part's title is not in its text.
+            if *standing != ImportedNoteStanding::Changed || note.part_of.is_some() {
                 return Ok(None);
             }
             let id = oneiron::Vault::imported_note_id(folder, &note.path)?;
@@ -371,11 +383,33 @@ fn earlier_titles(
         .collect()
 }
 
-/// Every note under `folder`, in path order. Refused whole past `budget`
-/// bytes of text held.
-fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::Result<Vec<Note>> {
+/// Measures what a folder's read held against its `[limits]` rows (OF-520):
+/// past one, the vault's port asks whether everything is okay, and the folder
+/// is imported whole all the same. Each crossing is a warning for stdout.
+fn crossed_rows(vault: &oneiron::Vault, counts: &NoteCounts) -> Vec<super::ImportWarning> {
+    [
+        (EngineLimit::ImportFolderTextBytes, counts.text_bytes),
+        (
+            EngineLimit::ImportFolderNotes,
+            u64::try_from(counts.found).unwrap_or(u64::MAX),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(row, observed)| {
+        let limit = vault.measure_limit(row, observed)?;
+        Some(super::ImportWarning::LimitCrossed {
+            row: row.key(),
+            limit,
+            observed,
+        })
+    })
+    .collect()
+}
+
+/// Every note under `folder`, in path order, a file past the note bound as
+/// its parts.
+fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Note>> {
     let mut notes = Vec::new();
-    let mut held = 0_u64;
     super::walk_notes(folder, &mut |shown, file| {
         let Some(path) = relative(folder, shown) else {
             counts.unreadable_name += 1;
@@ -391,23 +425,19 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
         let pdf = Path::new(&path)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
-        if metadata.len() > if pdf { MAX_PDF_BYTES } else { MAX_NOTE_BYTES } {
-            counts.too_large += 1;
-            return Ok(());
-        }
+        let bytes = read_all(file, shown)?;
         let (text, raw_hash) = if pdf {
             // Bytes, never the lossy text read: a PDF is binary.
-            let Some(bytes) = read_bytes_within(file, shown, MAX_PDF_BYTES)? else {
-                counts.too_large += 1;
-                return Ok(());
-            };
             match pdf_text(&bytes) {
-                Ok(text) if u64::try_from(text.len()).unwrap_or(u64::MAX) <= MAX_NOTE_BYTES => {
+                Ok(PdfText { text, unread }) => {
+                    if unread > 0 {
+                        if text.trim().is_empty() {
+                            counts.unreadable_pdf += 1;
+                            return Ok(());
+                        }
+                        counts.partly_read_pdf += 1;
+                    }
                     (text, Some(blake3::hash(&bytes).to_hex().to_string()))
-                }
-                Ok(_) | Err(PdfTextError::TooLarge) => {
-                    counts.too_large += 1;
-                    return Ok(());
                 }
                 Err(_) => {
                     counts.unreadable_pdf += 1;
@@ -415,17 +445,13 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
                 }
             }
         } else {
-            (super::read_limited(file, shown, MAX_NOTE_BYTES)?, None)
+            let text = String::from_utf8(bytes)
+                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
+            (text, None)
         };
         if text.trim().is_empty() {
             counts.blank += 1;
             return Ok(());
-        }
-        if notes.len() >= MAX_NOTES {
-            return Err(FolderRefused::TooManyNotes {
-                folder: folder.display().to_string(),
-            }
-            .into());
         }
         // A file whose time cannot be read was written by now at the latest.
         let written_at = metadata
@@ -438,10 +464,12 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
         } else {
             markdown::split_frontmatter(&text)
         };
+        // The body is the text's tail.
+        let body_at = text.len() - body.len();
         let Front {
             title,
             label,
-            decoded,
+            mut decoded,
         } = match front.map(markdown::frontmatter) {
             Some(Some(found)) => found,
             unread => {
@@ -453,48 +481,113 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
                 }
             }
         };
-        held += u64::try_from(text.len() + decoded.len()).unwrap_or(u64::MAX);
-        if held > budget {
-            return Err(FolderRefused::TooManyBytes {
-                folder: folder.display().to_string(),
-                budget,
-            }
-            .into());
-        }
-        let links = if pdf {
-            Vec::new()
+        counts.text_bytes = counts
+            .text_bytes
+            .saturating_add(u64::try_from(text.len() + decoded.len()).unwrap_or(u64::MAX));
+        let ranges = parts(&text, MAX_NOTE_BYTES);
+        let links = ranges
+            .iter()
+            .map(|range| {
+                if pdf {
+                    Vec::new()
+                } else {
+                    markdown::wikilinks(&text[range.start.max(body_at)..range.end.max(body_at)])
+                }
+            })
+            .collect::<Vec<_>>();
+        let stem = without_extension(&path);
+        let named = title
+            .clone()
+            .unwrap_or_else(|| stem.rsplit('/').next().unwrap_or(stem).to_owned());
+        let texts = if ranges.len() == 1 && ranges[0].len() == text.len() {
+            vec![text]
         } else {
-            markdown::wikilinks(body)
+            ranges
+                .iter()
+                .map(|range| text[range.clone()].to_owned())
+                .collect()
         };
-        counts.found += 1;
-        notes.push(Note {
-            path,
-            raw_hash,
-            written_at,
-            title,
-            label,
-            decoded,
-            links,
-            markdown: text,
-        });
+        for (at, (markdown, links)) in texts.into_iter().zip(links).enumerate() {
+            counts.found += 1;
+            notes.push(if at == 0 {
+                Note {
+                    path: path.clone(),
+                    raw_hash: raw_hash.clone(),
+                    written_at,
+                    title: title.clone(),
+                    label: label.clone(),
+                    decoded: std::mem::take(&mut decoded),
+                    links,
+                    markdown,
+                    part_of: None,
+                }
+            } else {
+                counts.parts += 1;
+                let number = at + 1;
+                Note {
+                    path: format!("{path}{PART_MARK}{number}"),
+                    raw_hash: raw_hash.clone(),
+                    written_at,
+                    title: Some(format!("{named} (part {number})")),
+                    label: label.clone(),
+                    decoded: String::new(),
+                    links,
+                    markdown,
+                    part_of: Some(path.clone()),
+                }
+            });
+        }
         Ok(())
     })?;
     Ok(notes)
 }
 
-/// Reads at most `limit` bytes of `reader`, as they are; `None` when there
-/// are more.
-fn read_bytes_within(
-    reader: impl Read,
-    path: &Path,
-    limit: u64,
-) -> anyhow::Result<Option<Vec<u8>>> {
+/// `text` in parts of at most `bound` bytes, in order. Each is cut on a
+/// character boundary, at the last line break in its second half when it
+/// has one, so a line stays whole where it can. A blank part holds nothing
+/// and is left out. Text within the bound is one part.
+fn parts(text: &str, bound: usize) -> Vec<Range<usize>> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while text.len() - start > bound {
+        let mut end = start + bound;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        if let Some(line) = text.as_bytes()[start..end]
+            .iter()
+            .rposition(|&byte| byte == b'\n')
+            .filter(|&line| line >= bound / 2)
+        {
+            end = start + line + 1;
+        }
+        parts.push(start..end);
+        start = end;
+    }
+    parts.push(start..text.len());
+    parts.retain(|part| !text[part.clone()].trim().is_empty());
+    parts
+}
+
+/// The file a ledger path names: a continuation part's
+/// (`<file>#part<n>`) file, else the path itself.
+fn file_of(path: &str) -> &str {
+    path.rsplit_once(PART_MARK)
+        .filter(|(file, number)| {
+            !number.is_empty()
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+                && without_extension(file).len() < file.len()
+        })
+        .map_or(path, |(file, _)| file)
+}
+
+/// Reads all of `reader`, as it is.
+fn read_all(mut reader: impl Read, path: &Path) -> anyhow::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     reader
-        .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    Ok((u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= limit).then_some(bytes))
+    Ok(bytes)
 }
 
 /// A frontmatter `type` as stdout shows it: a short name as it is, anything
@@ -604,7 +697,8 @@ fn without_extension(path: &str) -> &str {
 /// note: a link an earlier import resolved keeps its note. What resolved
 /// before is judged from the notes the folder still holds, a changed one by
 /// the title it landed with, so a note whose file left the folder no longer
-/// holds its name. A changed note's links wait with its text.
+/// holds its name. A changed note's links wait with its text. A continuation
+/// part links to its file's first part, which it continues.
 fn resolve_links(
     notes: &[Note],
     standings: &[ImportedNoteStanding],
@@ -624,10 +718,39 @@ fn resolve_links(
             _ => notes[at].title.as_deref(),
         },
     );
+    let first_parts = notes
+        .iter()
+        .enumerate()
+        .filter(|(_, note)| note.part_of.is_none())
+        .map(|(at, note)| (note.path.as_str(), at))
+        .collect::<HashMap<_, _>>();
     let mut counts = LinkCounts::default();
     let mut batch = Vec::new();
     let mut seen = HashSet::new();
     for (from, note) in notes.iter().enumerate() {
+        if let Some(&to) = note
+            .part_of
+            .as_deref()
+            .and_then(|file| first_parts.get(file))
+        {
+            counts.parts += 1;
+            let lands = !matches!(
+                standings[to],
+                ImportedNoteStanding::Removed | ImportedNoteStanding::Refused
+            ) && match standings[from] {
+                ImportedNoteStanding::New => true,
+                ImportedNoteStanding::Unchanged => standings[to] == ImportedNoteStanding::New,
+                ImportedNoteStanding::Changed
+                | ImportedNoteStanding::Removed
+                | ImportedNoteStanding::Refused => false,
+            };
+            if lands && seen.insert((from, to)) {
+                batch.push(ImportedNoteLink {
+                    from: note.path.clone(),
+                    to: notes[to].path.clone(),
+                });
+            }
+        }
         for link in &note.links {
             counts.found += 1;
             if link.target.is_empty() {
