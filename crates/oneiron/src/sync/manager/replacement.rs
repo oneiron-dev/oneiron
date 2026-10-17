@@ -27,8 +27,33 @@ impl WindowManager {
         snapshot: &[u8],
         evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
     ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
+        self.replace_window_admitted(key, snapshot, evidence, || true)
+    }
+
+    /// [`Self::replace_window`] once `admitted` holds. It is judged after any sweep holding the
+    /// window closed is done (a residence demotion among them) and under the registry lock, so
+    /// no sweep starts between the check and the replacement. Refused with
+    /// [`SyncProtocolValidation::ReplacementRejected`] when it does not hold.
+    pub fn replace_window_admitted(
+        self: &Arc<Self>,
+        key: &WindowKey,
+        snapshot: &[u8],
+        evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+        admitted: impl FnOnce() -> bool,
+    ) -> Result<(Arc<LoadedWindow>, Vec<ReplacementConflict>)> {
         self.attach_to_vault();
         let mut registry = self.lock_registry();
+        // A window a sweep holds closed is replaced once the sweep is done.
+        while self.sweep_fence.holds(key) {
+            drop(registry);
+            self.sweep_fence.wait_until_open(key);
+            registry = self.lock_registry();
+        }
+        if !admitted() {
+            return Err(Error::Sync(SyncError::SyncProtocolError {
+                context: SyncProtocolValidation::ReplacementRejected,
+            }));
+        }
         let current = registry.get(key).map(Arc::clone);
         if current
             .as_ref()

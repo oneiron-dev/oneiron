@@ -1,7 +1,6 @@
 use crate::ports::EntityStoreRead;
 use serde_json::{Map as JsonMap, Value};
 
-use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::campaign::CRM_PACK_ID;
 use crate::campaign::claims::{CampaignMemberValue, encode_campaign_member_value};
@@ -9,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideKey, SideTable};
 use crate::temporal::TimeRange;
+use crate::{EdgeActorClass, Vault};
 
 use super::definition::{
     QueryScope, SAVED_QUERY_SHORT_ID_PREFIX, SavedQueryDefinition, SavedQueryRecord,
@@ -320,6 +320,10 @@ pub(super) fn definition_to_json(definition: &SavedQueryDefinition) -> Result<Va
         "owner_actor".to_owned(),
         Value::String(definition.owner_actor.to_hex()),
     );
+    root.insert(
+        "owner_actor_class".to_owned(),
+        Value::String(definition.owner_actor_class.gate_actor_class().to_owned()),
+    );
     root.insert("scope".to_owned(), scope_to_json(&definition.scope));
     root.insert(
         "definition_version".to_owned(),
@@ -347,6 +351,7 @@ pub(super) fn definition_from_json(value: &Value) -> Result<SavedQueryDefinition
         schema_version: u32::try_from(required_u64(value, "schema_version", CONTEXT)?)
             .map_err(|_| Error::CorruptedIndex(CONTEXT))?,
         owner_actor: required_entity_ref(value, "owner_actor", CONTEXT)?,
+        owner_actor_class: required_actor_class(value, "owner_actor_class", CONTEXT)?,
         scope: scope_from_json(scope)?,
         definition_version: required_u64(value, "definition_version", CONTEXT)?,
         filter: parse_filter_ast(value.get("filter").ok_or(Error::CorruptedIndex(CONTEXT))?)
@@ -664,6 +669,15 @@ fn required_string(value: &Value, key: &str, context: &'static str) -> Result<St
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or(Error::CorruptedIndex(context))
+}
+
+fn required_actor_class(value: &Value, key: &str, context: &'static str) -> Result<EdgeActorClass> {
+    match required_string(value, key, context)?.as_str() {
+        "human" => Ok(EdgeActorClass::Human),
+        "agent" => Ok(EdgeActorClass::Agent),
+        "system" => Ok(EdgeActorClass::System),
+        _ => Err(Error::CorruptedIndex(context)),
+    }
 }
 
 fn required_u64(value: &Value, key: &str, context: &'static str) -> Result<u64> {

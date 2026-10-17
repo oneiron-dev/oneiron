@@ -372,41 +372,17 @@ impl Store {
         // fails closed before the HNSW compat check below can compare it.
         validate_fast_dims(config)?;
 
-        let should_persist_hnsw_config = preflight_hnsw_config(
-            &store.env,
-            &store.hnsw_meta,
-            &store.vectors,
-            &store.hnsw_neighbors,
-            config,
-        )?;
-        let should_persist_model_id = preflight_embedding_model(
-            &store.env,
-            &store.hnsw_meta,
-            &store.vectors,
-            &store.hnsw_neighbors,
-            config.embedding_model.as_deref(),
-        )?;
+        let should_persist_hnsw_config = preflight_hnsw_config(&store, config)?;
+        let should_persist_model_id =
+            preflight_embedding_model(&store, config.embedding_model.as_deref())?;
         // After the model: a transform is only compared under the model the
         // vault already holds, or is stamping now.
-        let should_persist_transform = preflight_embedding_transform(
-            &store.env,
-            &store.hnsw_meta,
-            config.embedding_transform.as_deref(),
-        )?;
-        migrate_temporal_long_intervals_if_needed(
-            &store.env,
-            &store.hnsw_meta,
-            &store.temporal_long_intervals,
-        )?;
+        let should_persist_transform =
+            preflight_embedding_transform(&store, config.embedding_transform.as_deref())?;
+        migrate_temporal_long_intervals_if_needed(&store)?;
 
         if should_persist_hnsw_config {
-            persist_hnsw_config_if_missing(
-                &store.env,
-                &store.hnsw_meta,
-                &store.vectors,
-                &store.hnsw_neighbors,
-                config,
-            )?;
+            persist_hnsw_config_if_missing(&store, config)?;
         }
 
         if should_persist_model_id {
@@ -414,17 +390,11 @@ impl Store {
                 .embedding_model
                 .as_deref()
                 .ok_or_else(|| Error::InvalidConfig("missing embedding model".to_owned()))?;
-            persist_model_id_if_missing(
-                &store.env,
-                &store.hnsw_meta,
-                &store.vectors,
-                &store.hnsw_neighbors,
-                requested,
-            )?;
+            persist_model_id_if_missing(&store, requested)?;
         }
 
         if should_persist_transform && let Some(requested) = config.embedding_transform.as_deref() {
-            persist_embedding_transform_if_missing(&store.env, &store.hnsw_meta, requested)?;
+            persist_embedding_transform_if_missing(&store, requested)?;
         }
 
         store.ensure_receipt_family_indexes_on_open()?;

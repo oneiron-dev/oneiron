@@ -598,11 +598,14 @@ fn hide_vector_of_another_body(
         if !vectors.hides(id.as_bytes()) && !vectors.stages_row(id.as_bytes()) {
             return Ok(());
         }
-        let Some(raw) = base.vectors.get(wtxn, id.as_bytes())? else {
+        let Some(raw) =
+            crate::ports::RetrievalIndexInventory::port_vector_with_raw(base, wtxn, id, |raw| {
+                Ok(raw.to_vec())
+            })?
+        else {
             vectors.delete(wtxn, id.as_bytes())?;
             return crate::embed::record_embedding_device_in_txn(view, wtxn, id, None);
         };
-        let raw = raw.into_owned();
         vectors.put(wtxn, id.as_bytes(), &raw)?;
         return crate::embed::copy_embedding_device_in_txn(base, view, wtxn, id);
     }

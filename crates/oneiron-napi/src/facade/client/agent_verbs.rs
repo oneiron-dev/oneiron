@@ -175,6 +175,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_fanout_launch(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.fanout.launch", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_fanout_resume(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.fanout.resume", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_fanout_ack(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.fanout.ack", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn tasks_update(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("tasks.update", input)
@@ -920,6 +938,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.settings.learning.clear", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_lift_history(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.lift_history", input)
             .map_err(facade_error)
     }
     #[napi]

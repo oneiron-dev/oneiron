@@ -29,6 +29,9 @@ pub enum AgentVerb {
     Describe,
     TasksCreate,
     TasksWave,
+    VaultFanoutLaunch,
+    VaultFanoutResume,
+    VaultFanoutAck,
     TasksUpdate,
     VaultWitness,
     VaultClaimsUpsert,
@@ -103,6 +106,7 @@ pub enum AgentVerb {
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
+    VaultSecretsLiftHistory,
     VaultWidenProposals,
     VaultWidenProposalsApprove,
     VaultWidenProposalsDecline,
@@ -327,6 +331,9 @@ impl AgentVerb {
         Self::Describe,
         Self::TasksCreate,
         Self::TasksWave,
+        Self::VaultFanoutLaunch,
+        Self::VaultFanoutResume,
+        Self::VaultFanoutAck,
         Self::TasksUpdate,
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
@@ -401,6 +408,7 @@ impl AgentVerb {
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
+        Self::VaultSecretsLiftHistory,
         Self::VaultWidenProposals,
         Self::VaultWidenProposalsApprove,
         Self::VaultWidenProposalsDecline,
@@ -628,6 +636,9 @@ impl AgentVerb {
             Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
             Self::TasksWave => "tasks.wave",
+            Self::VaultFanoutLaunch => "vault.fanout.launch",
+            Self::VaultFanoutResume => "vault.fanout.resume",
+            Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
@@ -704,6 +715,7 @@ impl AgentVerb {
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
+            Self::VaultSecretsLiftHistory => "vault.secrets.lift_history",
             Self::VaultWidenProposals => "vault.widen_proposals",
             Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
             Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
@@ -929,6 +941,9 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1003,6 +1018,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -1234,6 +1250,9 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1308,6 +1327,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -1565,6 +1585,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -1638,6 +1661,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -1845,6 +1869,8 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1892,6 +1918,7 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesDelete
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
@@ -2051,7 +2078,10 @@ impl AgentVerb {
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
             Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksWave => &["spec"],
-            Self::TasksUpdate => &["task_ref"],
+            Self::VaultFanoutLaunch => &["spec"],
+            Self::VaultFanoutResume => &["spec"],
+            Self::VaultFanoutAck => &["spec"],
+            Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2125,6 +2155,7 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultSecretsLiftHistory => &["spec"],
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
@@ -2350,7 +2381,10 @@ impl AgentVerb {
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
-            Self::TasksUpdate => &["task_ref"],
+            Self::VaultFanoutLaunch => &["spec"],
+            Self::VaultFanoutResume => &["spec"],
+            Self::VaultFanoutAck => &["spec"],
+            Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2424,6 +2458,7 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultSecretsLiftHistory => &["spec"],
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
@@ -2694,8 +2729,17 @@ impl AgentVerb {
             Self::TasksWave => {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
             }
+            Self::VaultFanoutLaunch => {
+                "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."
+            }
+            Self::VaultFanoutResume => {
+                "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
+            }
+            Self::VaultFanoutAck => {
+                "The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."
+            }
             Self::TasksUpdate => {
-                "Records the owner's acknowledgement of a failed TASK; any other task stays as it was."
+                "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."
             }
             Self::VaultWitness => {
                 "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."
@@ -2898,6 +2942,9 @@ impl AgentVerb {
             Self::VaultSettingsLearningClear => {
                 "The owner clears one learned-setting row of a key, mode and scope."
             }
+            Self::VaultSecretsLiftHistory => {
+                "The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."
+            }
             Self::VaultWidenProposals => {
                 "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."
             }
@@ -2929,7 +2976,7 @@ impl AgentVerb {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
             Self::VaultLensesDefault => {
-                "Composes the default vault lens from the named sources, read under the caller's own scope."
+                "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."
             }
             Self::VaultDisclosureOffer => {
                 "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."
@@ -3346,7 +3393,7 @@ impl AgentVerb {
                 "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses."
             }
             Self::VaultArtifactsBodyDeckExport => {
-                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands."
+                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep."
             }
             Self::VaultArtifactsBodyDeckGate => {
                 "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector."
