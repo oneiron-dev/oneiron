@@ -2,9 +2,10 @@
 //! wrote, or what a receipt, an op log or a snapshot's hash binds: a code
 //! file's frontiers and ingress, a deck's fork log, a typed body's history,
 //! a codebase or repo snapshot, an LFS object, a run's output, and the
-//! stored history of each document. A carrier with a door of its own is read
-//! and marked through it (`retained`); a hit in any other files a proposal,
-//! and the row keeps its bytes.
+//! stored history of each document. A carrier with a door of its own goes
+//! through it: a retained one is marked (`retained`), an authored one masked
+//! (`authored`). A hit in any other files a proposal, and the row keeps its
+//! bytes.
 
 use std::borrow::Cow;
 
