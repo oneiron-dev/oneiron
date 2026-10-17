@@ -56,7 +56,8 @@ pub struct PersonRow {
     pub handle: String,
     pub name: String,
     pub kind: PersonKind,
-    /// `member` or `contact` for a human; `preset` or `custom` for an agent.
+    /// `owner`, `member` or `contact` for a human; `preset` or `custom` for
+    /// an agent.
     pub role: String,
     /// One line for the reader's sensitivity band, when the about job has
     /// written one.
@@ -114,6 +115,25 @@ impl People {
             .map(|binding| binding.actor_ref)
             .collect();
         let rtxn = vault.store.env.read_txn()?;
+        // The vault owner's row reads `owner`: the embedded owner, or a human
+        // whose owner binding verifies. An unverifiable binding stays `member`.
+        let mut owners = BTreeSet::new();
+        for actor in members
+            .iter()
+            .copied()
+            .chain([crate::vault::embedded_owner_actor_id()?])
+        {
+            if crate::memory::actor_is_vault_owner_in_txn(
+                vault,
+                &rtxn,
+                actor,
+                EdgeActorClass::Human,
+            )
+            .unwrap_or(false)
+            {
+                owners.insert(actor);
+            }
+        }
         let mut agent_of: BTreeMap<EntityId, (EntityId, crate::agent_def::AgentDefinition)> =
             BTreeMap::new();
         let mut hidden = BTreeSet::new();
@@ -199,6 +219,8 @@ impl People {
                         },
                         role: if model {
                             "custom"
+                        } else if owners.contains(&person) {
+                            "owner"
                         } else if members.contains(&person) {
                             "member"
                         } else {
