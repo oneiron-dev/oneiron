@@ -155,7 +155,7 @@ pub struct OfferCard {
 /// host's answer that settled it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StoredOffer {
+pub(crate) struct StoredOffer {
     pub(super) card: OfferCard,
     /// The digest of the draft the card was minted from: the same intent asked
     /// with another draft refuses.
@@ -166,6 +166,10 @@ pub(super) struct StoredOffer {
     /// The room's advisory ballots on a room-wide card, one per voter: they
     /// keep it open and decide nothing; only the host's answer admits.
     pub(super) votes: BTreeMap<EntityId, super::offer_settle::OfferAnswer>,
+    /// How many times the host reopened the card. Another machine's copy
+    /// merges by it: the later reopening wins, and older ballots drop (FIX
+    /// 1794).
+    pub(super) reopen_epoch: u32,
 }
 
 impl StoredOffer {
@@ -488,6 +492,7 @@ fn mint_in_txn(
             minted_by: caller.entity_ref(),
             answer: None,
             votes: BTreeMap::new(),
+            reopen_epoch: 0,
         },
     )?;
     if matches!(join.decision.state, JoinDecision::Ready) {
@@ -546,7 +551,17 @@ impl Memory<'_> {
         self.require_offer_audience(draft.room, draft.branch)?;
         let caller = WriteActor::new(self.actor(), self.actor_class());
         let vault = self.vault();
-        Ok(run_settlement(vault, |txn, now| {
+        // FIX 1794: the card a new one replaces rides with it.
+        #[cfg(feature = "sync")]
+        let prior = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            OFFER_CURRENT.get(
+                &vault.store,
+                &txn,
+                &current_key(draft.room, draft.branch, draft.agent),
+            )?
+        };
+        let card = run_settlement(vault, |txn, now| {
             mint_in_txn(
                 vault,
                 txn,
@@ -557,7 +572,17 @@ impl Memory<'_> {
                 now,
             )
         })?
-        .card)
+        .card;
+        // FIX 1794: the card, its join and the card it replaced reach the
+        // live window of its room or thread.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_rows_in_live_windows(
+            &[],
+            &std::iter::once(card.offer_id.as_str())
+                .chain(prior.as_deref().filter(|prior| *prior != card.offer_id))
+                .collect::<Vec<_>>(),
+        );
+        Ok(card)
     }
 
     /// The current offer cards in a room, or in one of its threads, a page at
