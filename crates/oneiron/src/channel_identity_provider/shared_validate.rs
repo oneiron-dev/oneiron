@@ -1,7 +1,7 @@
 //! Cross-channel provision guards, email/LINE normalizers, and blank/bytes primitives.
 
 use super::inbound_types::{
-    ChannelIdentityProviderInbound, EmailProviderInbound, LineOfficialAccountInbound,
+    ChannelIdentityProviderInbound, EmailProviderInbound, LineChatKind, LineOfficialAccountInbound,
 };
 use crate::channel_identity::{
     ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
@@ -358,23 +358,63 @@ pub(super) fn line_shared_presence_address(destination: &str, source_user_id: &s
     format!("line:oa:{destination}:user:{source_user_id}")
 }
 
+/// A group or room's own route key on the OA: one identity for the whole
+/// chat, whoever in it writes.
+pub(super) fn line_chat_address(destination: &str, kind: LineChatKind, chat_id: &str) -> String {
+    format!("line:oa:{destination}:{}:{chat_id}", kind.as_str())
+}
+
+/// A LINE group (`C…`) or room (`R…`) id, shaped as a user id is.
+pub(super) fn normalize_line_chat_id(value: &str, kind: LineChatKind) -> Result<String> {
+    let value = value.trim();
+    validate_non_blank(value, "LINE chat id must be non-empty")?;
+    validate_line_component_max_bytes(value, MAX_LINE_COMPONENT_BYTES, "LINE chat id")?;
+    let bytes = value.as_bytes();
+    if bytes.len() != LINE_USER_ID_BYTES
+        || bytes.first() != Some(&kind.id_lead())
+        || !bytes[1..]
+            .iter()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(Error::InvalidConfig(format!(
+            "LINE {} id must match LINE id shape {}[0-9a-f]{{32}}",
+            kind.as_str(),
+            char::from(kind.id_lead())
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+/// Accepts a per-user (`line:oa:<dest>:user:<U…>`) or a per-chat
+/// (`…:group:<C…>`, `…:room:<R…>`) route key on this adapter's OA.
 pub(super) fn validate_line_shared_presence_address(
     address: &str,
     expected_destination: &str,
 ) -> Result<()> {
     validate_non_blank(address, "LINE shared_presence address must be non-empty")?;
-    let prefix = format!("line:oa:{expected_destination}:user:");
-    let Some(source_user_id) = address.strip_prefix(&prefix) else {
-        return Err(Error::InvalidConfig(
+    let prefix = format!("line:oa:{expected_destination}:");
+    let mismatch = || {
+        Error::InvalidConfig(
             "LINE shared_presence address does not match adapter destination".to_owned(),
-        ));
+        )
     };
-    let source_user_id = normalize_line_user_like_id(
-        source_user_id,
-        "LINE source user id",
-        MAX_LINE_COMPONENT_BYTES,
-    )?;
-    if address != line_shared_presence_address(expected_destination, &source_user_id) {
+    let (kind, id) = address
+        .strip_prefix(&prefix)
+        .and_then(|rest| rest.split_once(':'))
+        .ok_or_else(mismatch)?;
+    let normalized = match (kind, LineChatKind::parse(kind)) {
+        ("user", _) => line_shared_presence_address(
+            expected_destination,
+            &normalize_line_user_like_id(id, "LINE source user id", MAX_LINE_COMPONENT_BYTES)?,
+        ),
+        (_, Some(kind)) => line_chat_address(
+            expected_destination,
+            kind,
+            &normalize_line_chat_id(id, kind)?,
+        ),
+        (_, None) => return Err(mismatch()),
+    };
+    if address != normalized {
         return Err(Error::InvalidConfig(
             "LINE shared_presence address is not normalized".to_owned(),
         ));
