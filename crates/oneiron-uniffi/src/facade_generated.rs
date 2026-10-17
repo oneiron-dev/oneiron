@@ -123,6 +123,21 @@ export_facade! {
     let output = client.tasks_wave(&input)?;
     crate::codec::lift_record("tasks.wave", &output)
 };
+"vault.fanout.launch" => fn vault_fanout_launch(&self, input: FanoutLaunchRequest) -> Option<FanoutLaunchView> = |client| {
+    let input: oneiron::task_verb::sdk::FanoutLaunchRequest = crate::codec::lower_record("vault.fanout.launch", input)?;
+    let output = client.vault_fanout_launch(&input)?;
+    crate::codec::lift_record("vault.fanout.launch", &output)
+};
+"vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
+    let output = client.vault_fanout_resume(&input)?;
+    crate::codec::lift_record("vault.fanout.resume", &output)
+};
+"vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutAckRequest = crate::codec::lower_record("vault.fanout.ack", input)?;
+    let output = client.vault_fanout_ack(&input)?;
+    crate::codec::lift_record("vault.fanout.ack", &output)
+};
 "tasks.update" => fn tasks_update(&self, input: TaskUpdateRequest) -> TaskUpdateReceipt = |client| {
     let input: oneiron::task_verb::sdk::TaskUpdateRequest = crate::codec::lower_record("tasks.update", input)?;
     let output = client.tasks_update(&input)?;
@@ -569,6 +584,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::RevealDescribeRequest = crate::codec::lower_record("reveal.describe", input)?;
     let output = client.reveal_describe(&input)?;
     crate::codec::lift_record("reveal.describe", &output)
+};
+"self.use" => fn self_use(&self, input: SecretUseRequest) -> SecretUseAnswer = |client| {
+    let input: oneiron::task_verb::sdk::SecretUseRequest = crate::codec::lower_record("self.use", input)?;
+    let output = client.self_use(&input)?;
+    crate::codec::lift_record("self.use", &output)
 };
 "vault.shares.create" => fn vault_shares_create(&self, input: ShareCreateRequest) -> ShareCreated = |client| {
     let input: oneiron::task_verb::sdk::ShareCreateRequest = crate::codec::lower_record("vault.shares.create", input)?;

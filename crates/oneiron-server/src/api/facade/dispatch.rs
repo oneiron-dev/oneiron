@@ -566,6 +566,72 @@ async fn tasks_wave(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_fanout_launch(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.fanout.launch",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_fanout_resume(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.fanout.resume",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_fanout_ack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.fanout.ack",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn tasks_update(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -2604,6 +2670,20 @@ async fn reveal_describe(
         value,
         &producers,
     )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_use(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(server, call, actor, class, "self.use", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn vault_shares_create(
@@ -5780,6 +5860,9 @@ pub(crate) async fn call_verb(
         "describe" => describe(server, call, input).await,
         "tasks.create" => tasks_create(server, call, input).await,
         "tasks.wave" => tasks_wave(server, call, input).await,
+        "vault.fanout.launch" => vault_fanout_launch(server, call, input).await,
+        "vault.fanout.resume" => vault_fanout_resume(server, call, input).await,
+        "vault.fanout.ack" => vault_fanout_ack(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
         "vault.witness" => vault_witness(server, call, input).await,
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
@@ -5905,6 +5988,7 @@ pub(crate) async fn call_verb(
         "reveal" => reveal(server, call, input).await,
         "reveal.wait" => reveal_wait(server, call, input).await,
         "reveal.describe" => reveal_describe(server, call, input).await,
+        "self.use" => self_use(server, call, input).await,
         "vault.shares.create" => vault_shares_create(server, call, input).await,
         "vault.shares.revoke" => vault_shares_revoke(server, call, input).await,
         "vault.shares.view" => vault_shares_view(server, call, input).await,
