@@ -31526,6 +31526,7 @@
       "OfficeBodyFork",
       "OfficeBodyHead",
       "OfficeBodyKind",
+      "OfficeRecalcZone",
       "XlsxPreview"
      ],
      "path": "src/office_body/mod.rs",
@@ -31533,9 +31534,9 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 17,
+      "fn": 18,
       "re-export": 8,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -31621,6 +31622,7 @@
       "OfficeBodyForkRequest",
       "OfficeBodyImportRequest",
       "OfficeBodyOps",
+      "OfficeBodyPreviewRequest",
       "OfficeBodyProposalRequest",
       "OfficeBodyProposalSettleRequest",
       "OfficeBodyReadRequest",
@@ -31635,7 +31637,7 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 14,
-      "struct": 20
+      "struct": 21
      }
     },
     {
@@ -72780,6 +72782,7 @@
       "OfficeBodyImportRequest",
       "OfficeBodyKind",
       "OfficeBodyOps",
+      "OfficeBodyPreviewRequest",
       "OfficeBodyProposal",
       "OfficeBodyProposalRequest",
       "OfficeBodyProposalSettleRequest",
@@ -73195,7 +73198,7 @@
      "purpose": "—",
      "surface": {
       "enum": 244,
-      "struct": 606
+      "struct": 607
      }
     },
     {
