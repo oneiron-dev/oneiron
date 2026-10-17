@@ -318,6 +318,15 @@ pub(super) fn board_parts(
         named.push(project);
         lead.push(row);
     }
+    // The fan-out launches that wait on the owner (OF-393): the reader's
+    // own, or every one for the owner. They are actor-wide, so a narrowed
+    // credential reads none, as it reads no TASKS row without an id.
+    if let Some(memory) = memory.as_ref().filter(|_| auth.verified_slip().is_none()) {
+        let launches = memory
+            .pending_task_fanout_launches()
+            .map_err(|error| board_memory_error("board fan-outs failed", "tasks", error))?;
+        lead.extend(oneiron::context_board::fanout_action_rows(&launches));
+    }
     let tasks_section =
         oneiron::context_board::assemble_tasks_section(&tasks, lead).map_err(board_frame_error)?;
 
