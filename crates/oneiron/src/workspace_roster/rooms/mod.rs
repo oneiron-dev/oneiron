@@ -205,7 +205,10 @@ pub enum RoomClaimOutcome {
 
 /// Project rooms use the PROJECT roster instead of the ordinary membership
 /// ledger. Return None for other conversations so their historical membership
-/// windows remain authoritative at the ordinary audience door.
+/// windows remain authoritative at the ordinary audience door. Each audience
+/// actor stands as [`participation::reads_room_in_txn`] reads the room: its
+/// seat, or a live Ready receipt for the room (OF-417). A thread's receipt
+/// opens no room-wide read.
 pub(crate) fn project_room_audience_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -229,13 +232,35 @@ pub(crate) fn project_room_audience_in(
     {
         return Ok(None);
     }
-    let room = room_in(vault, txn, room)?;
-    let members: BTreeSet<&str> = room.member_ids.iter().map(String::as_str).collect();
-    Ok(Some(
-        audience
-            .iter()
-            .all(|actor| members.contains(actor.to_hex().as_str())),
-    ))
+    let record = room_in(vault, txn, room)?;
+    let at = vault.store.clock.now_recorded_at();
+    for actor in audience {
+        let subject = participation::participant_in_txn(vault, txn, *actor, at)?;
+        if !participation::reads_room_in_txn(vault, txn, room, &record, *actor, subject)? {
+            return Ok(Some(false));
+        }
+    }
+    Ok(Some(true))
+}
+
+/// Whether `actor` stands in the ordinary room `room`'s audience on a live
+/// Ready receipt for the room (OF-417): a home-room join, or a companion's
+/// filed through its principal. The receipt is current read standing, re-proved
+/// live, and grants no claim; a thread's receipt never satisfies it. Seats and
+/// membership windows are the caller's own, so their history keeps its meaning.
+pub(crate) fn room_join_audience_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    let at = vault.store.clock.now_recorded_at();
+    let Some(subject) = participation::participant_in_txn(vault, txn, actor, at)? else {
+        return Ok(false);
+    };
+    let receipt =
+        participation::require_join_covering_in_txn(vault, txn, room, None, &subject, None);
+    Ok(participation::joined(receipt)?.is_some())
 }
 
 /// The validated project room `room` is, or `None` for an ordinary

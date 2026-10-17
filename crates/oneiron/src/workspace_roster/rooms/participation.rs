@@ -775,9 +775,25 @@ pub(super) fn reads_room_in_txn(
     .is_some())
 }
 
+/// Whether `actor` hosts `room`, read live: its owner, or a member the room
+/// policy lets delegate, the one standing that answers the room's admissions
+/// and offers (OF-530). A host reads the room from that standing, off the
+/// roster and with no receipt; it takes no seat and is no participant, and
+/// its own grants still bound each read.
+fn hosts_room_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    let host = WriteActor::new(actor, EdgeActorClass::Human);
+    Ok(crate::conversation::room_host_in_txn(vault, txn, room, host)?.is_some())
+}
+
 /// The room read entry (OF-529): for a person its seat or a Ready receipt
 /// for the room (OF-417), and for an agent its seat or a Ready receipt for
-/// the room. Returns the room as its project vouches for it.
+/// the room. The room's host reads it too ([`hosts_room_in_txn`]). Returns
+/// the room as its project vouches for it.
 pub(in crate::workspace_roster) fn require_reader(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -786,7 +802,9 @@ pub(in crate::workspace_roster) fn require_reader(
 ) -> Result<ProjectRoom> {
     let record = room_in(vault, txn, room)?;
     let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
-    if !reads_room_in_txn(vault, txn, room, &record, actor, subject)? {
+    if !reads_room_in_txn(vault, txn, room, &record, actor, subject)?
+        && !hosts_room_in_txn(vault, txn, room, actor)?
+    {
         return Err(invalid());
     }
     Ok(record)
@@ -795,8 +813,9 @@ pub(in crate::workspace_roster) fn require_reader(
 /// The read entry for one thread `thread` of `room` (OF-529): a person reads
 /// it as [`require_reader`] reads the room, and an agent from its seat or a
 /// Ready receipt for that thread or for the room. A thread's receipt opens
-/// that thread's read alone, never the room's or another thread's. Returns
-/// the room as its project vouches for it.
+/// that thread's read alone, never the room's or another thread's. The
+/// room's host reads each of its threads, as it reads the room. Returns the
+/// room as its project vouches for it.
 pub(super) fn require_thread_reader(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -812,7 +831,7 @@ pub(super) fn require_thread_reader(
         }
         subject => reads_room_in_txn(vault, txn, room, &record, actor, subject)?,
     };
-    if !reads {
+    if !reads && !hosts_room_in_txn(vault, txn, room, actor)? {
         return Err(invalid());
     }
     Ok(record)
