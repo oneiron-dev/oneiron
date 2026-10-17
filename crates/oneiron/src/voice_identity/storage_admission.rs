@@ -14,7 +14,7 @@ use crate::store::Store;
 use super::codec_records::decode_print_record;
 use super::math_keys::{
     corrupt_voice_row, cosine_similarity, digest16, invalid_voice, l2_normalize, require_non_empty,
-    voice_cosine_in_space,
+    require_session_key, voice_cosine_in_space,
 };
 use super::types::{
     VOICE_CALIBRATION_MIN_LANGUAGES, VOICE_MAX_MATCH_SEGMENTS, VoiceConsentEventV1,
@@ -411,7 +411,7 @@ pub(super) struct VoiceMatchCandidate {
 pub(super) fn admit_match_segments(
     request: &VoiceMatchRequest,
 ) -> Result<Vec<VoiceSegmentEmbeddingInput>> {
-    require_non_empty(&request.voice_session_ref, "voice session ref")?;
+    require_session_key(&request.voice_session_ref, "voice session ref")?;
     require_non_empty(&request.recording_id, "voice recording id")?;
     require_non_empty(&request.space_id, "voice embedding space id")?;
     request.policy.validate()?;
@@ -426,6 +426,8 @@ pub(super) fn admit_match_segments(
     let mut segments = Vec::with_capacity(request.segments.len());
     for segment in &request.segments {
         require_non_empty(&segment.segment_id, "voice segment id")?;
+        // Many segments share one speaker key; segment ids stay distinct.
+        require_session_key(&segment.speaker_key, "voice speaker key")?;
         if !seen.insert(segment.segment_id.as_str()) {
             return Err(invalid_voice("voice segment ids must be distinct"));
         }

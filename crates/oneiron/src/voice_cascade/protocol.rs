@@ -164,6 +164,10 @@ pub struct BrainRequest {
     pub session_ref: String,
     pub tools_enabled: bool,
     pub interlocutors: InterlocutorSet,
+    /// The session's audience revision these interlocutors were read at. An
+    /// audience change moves it; context assembled for an older revision is
+    /// rebuilt, never reused.
+    pub audience_revision: u64,
     pub tool_events: Vec<ToolEvent>,
     pub externally_tainted: bool,
 }

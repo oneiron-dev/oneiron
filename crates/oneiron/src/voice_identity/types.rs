@@ -445,6 +445,10 @@ pub struct VoicePrintRecordV1 {
 pub struct VoiceSegmentEmbeddingInput {
     pub segment_id: String,
     pub diarization_label: String,
+    /// The capture's session-local key for this physical speaker: the same
+    /// for every segment of that speaker in the session, never minted per
+    /// segment, from a contact pick or from a voice print.
+    pub speaker_key: String,
     pub start_ms: u64,
     pub end_ms: u64,
     pub space_id: String,
@@ -517,6 +521,8 @@ pub struct VoiceResolvedSegment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub speaker_label: String,
+    /// The capture's session-local speaker key, kept from the input.
+    pub speaker_key: String,
     pub subject_ref: Option<EntityId>,
     pub contact_ref: Option<EntityId>,
     pub evidence: VoiceAttributionEvidence,
@@ -531,4 +537,36 @@ pub struct VoiceSessionRosterV1 {
     pub known_threshold: f32,
     pub segments: Vec<VoiceResolvedSegment>,
     pub created_at: u64,
+    /// Starts at 1 and moves only when a speaker joins or is placed
+    /// differently; more words, new spans or score jitter keep it. An
+    /// owner's answer about a speaker holds for one revision.
+    pub roster_revision: u64,
+}
+
+impl VoiceSessionRosterV1 {
+    /// The speakers the roster could not place, by speaker key in the order
+    /// first heard: every segment of each fell to residual clustering. These
+    /// are the speakers an owner may be asked about, at this revision.
+    #[must_use]
+    pub fn unplaced_speakers(&self) -> Vec<&str> {
+        let placed: Vec<&str> = self
+            .segments
+            .iter()
+            .filter(|segment| {
+                !matches!(
+                    segment.evidence,
+                    VoiceAttributionEvidence::ResidualCluster { .. }
+                )
+            })
+            .map(|segment| segment.speaker_key.as_str())
+            .collect();
+        let mut unplaced: Vec<&str> = Vec::new();
+        for segment in &self.segments {
+            let key = segment.speaker_key.as_str();
+            if !placed.contains(&key) && !unplaced.contains(&key) {
+                unplaced.push(key);
+            }
+        }
+        unplaced
+    }
 }

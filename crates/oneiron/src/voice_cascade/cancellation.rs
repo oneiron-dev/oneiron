@@ -9,6 +9,10 @@ use super::{Brain, CascadeControl, ControlEvent, GenerationEpoch, TtsCommand, Tt
 pub enum StopReason {
     UserBargeIn,
     Safeguard,
+    /// The session's audience changed mid-output: what was being said was
+    /// assembled for the old one. Stop, fence and hand off; nothing re-runs
+    /// on its own (OF-365 P5).
+    RosterChanged,
     /// Normal end is never presented as a user interruption.
     SessionEnd,
 }
