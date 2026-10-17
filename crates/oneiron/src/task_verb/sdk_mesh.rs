@@ -12,7 +12,9 @@ use crate::sync::mesh_path::{MESH_PATH_RECEIPTS_READ_MAX, MeshPathReceipt};
 pub const MESH_PATH_RECEIPTS_DEFAULT: usize = 100;
 
 /// `vault.mesh.path_receipts`'s input: how many of the newest receipts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct MeshPathReceiptsRequest {
     /// The most receipts to answer: [`MESH_PATH_RECEIPTS_DEFAULT`] when
