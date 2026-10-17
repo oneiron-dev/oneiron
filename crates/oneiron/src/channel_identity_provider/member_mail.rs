@@ -15,23 +15,41 @@
 //! draft→approve"; ARCH-0046 "depends on the grant").
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::channel_identity::{ChannelIdentity, decode_channel_identity_body};
+use crate::channel_identity::{
+    ChannelIdentity, ChannelIdentityFacts, channel_identity_facts_in_txn,
+    decode_channel_identity_body,
+};
 use crate::gate::ExternalEffectGateInput;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
 
-/// The stored row at `identity_ref`, when it is a delegated `email` row.
+/// A delegated `email` identity: its facts from its `channel_identity.*`
+/// heads, its custody from the local row (OF-272).
+pub(crate) struct MemberMailIdentity {
+    pub(crate) facts: ChannelIdentityFacts,
+    pub(crate) custody: ChannelIdentity,
+}
+
+/// The identity at `identity_ref`, when it is a delegated `email` one.
 ///
-/// Structural only: a released row still answers, so terminal replay can
-/// recognize its own sender. Every effect path asks [`ChannelIdentity::may_send`]
-/// on top.
+/// The channel is the identity's `channel_identity.channel` head; whether it
+/// is DELEGATED is custody — the grant lives only on the local row, as does
+/// every send capability. Structural only: a released row still answers, so
+/// terminal replay can recognize its own sender. Every effect path asks
+/// [`ChannelIdentity::may_send`] on top.
 pub(crate) fn member_mail_identity_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity_ref: EntityId,
-) -> Result<Option<ChannelIdentity>> {
+) -> Result<Option<MemberMailIdentity>> {
+    let Some(facts) = channel_identity_facts_in_txn(store, txn, &identity_ref)? else {
+        return Ok(None);
+    };
+    if facts.channel != "email" {
+        return Ok(None);
+    }
     let Some(raw) = store
         .port_entity_record(txn, &identity_ref)?
         .map(|row| row.encode())
@@ -43,11 +61,11 @@ pub(crate) fn member_mail_identity_in_txn(
     if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
         return Ok(None);
     }
-    let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    if identity.channel() != "email" || identity.grant().is_none() {
+    let custody = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    if custody.grant().is_none() {
         return Ok(None);
     }
-    Ok(Some(identity))
+    Ok(Some(MemberMailIdentity { facts, custody }))
 }
 
 /// Whether `identity_ref` names a delegated `email` row at all.
@@ -66,19 +84,23 @@ pub(crate) fn is_member_mail_sender_in_txn(
     identity_ref: EntityId,
 ) -> Result<bool> {
     Ok(member_mail_identity_in_txn(store, txn, identity_ref)?
-        .is_some_and(|identity| identity.may_send()))
+        .is_some_and(|identity| identity.custody.may_send()))
 }
 
 /// The Gate requires the live send-capable row to belong to its
-/// authenticated actor, not just a mailbox named in the sender slot.
+/// authenticated actor, not just a mailbox named in the sender slot. Whose it
+/// is comes from the binding head; whether it may send, from custody.
 pub(crate) fn member_mail_actor_may_send_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity_ref: EntityId,
     actor: Option<EntityId>,
 ) -> Result<bool> {
-    Ok(member_mail_identity_in_txn(store, txn, identity_ref)?
-        .is_some_and(|identity| identity.may_send() && identity.binding().actor_ref() == actor))
+    Ok(
+        member_mail_identity_in_txn(store, txn, identity_ref)?.is_some_and(|identity| {
+            identity.custody.may_send() && identity.facts.binding.actor_ref() == actor
+        }),
+    )
 }
 
 /// Whether this effect is one canonical member-mailbox send: `email/send` to

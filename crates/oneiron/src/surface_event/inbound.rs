@@ -584,7 +584,21 @@ pub(crate) fn route_inbound_surface_event_admitting_in_txn(
             Ok::<_, Error>((admit(&identity_ref)?, identity_ref, identity))
         })
         .transpose()?;
-    let Some((true, identity_ref, identity)) = found else {
+    // Who the event is for is the identity's binding head (OF-272), read on
+    // this same snapshot; an identity with no heads states no binding at all.
+    // How it routes stays custody's `inbound()` projection below.
+    let found = match found {
+        Some((true, identity_ref, identity)) => {
+            crate::channel_identity::channel_identity_facts_in_txn(
+                &vault.store,
+                txn,
+                &identity_ref,
+            )?
+            .map(|facts| (identity_ref, identity, facts.binding))
+        }
+        _ => None,
+    };
+    let Some((identity_ref, identity, binding)) = found else {
         return Ok(rejected_receipt(
             input,
             None,
@@ -600,7 +614,7 @@ pub(crate) fn route_inbound_surface_event_admitting_in_txn(
     // wire string `non_agent_bound_identity`: adapters branch on it and the
     // `/v1/core` schema enumerates it, so it is receipt-stable and is NOT
     // renamed to follow the actor vocabulary.
-    let (actor_ref, facet_ref) = match identity.binding() {
+    let (actor_ref, facet_ref) = match binding {
         ChannelIdentityBinding::Actor {
             actor_ref,
             facet_ref,

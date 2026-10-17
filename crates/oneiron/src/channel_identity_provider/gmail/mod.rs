@@ -631,16 +631,27 @@ impl GmailDelegatedAdapter {
         vault: &Vault,
         identity_id: &EntityId,
     ) -> Result<()> {
+        // Channel, mailbox and state are the identity's facts, read from its
+        // `channel_identity.*` heads (OF-272); the grant, its custody record
+        // and its scopes are custody, held on the local row alone.
+        let txn = vault.store.env.read_txn()?;
         let identity = vault
-            .get_channel_identity(identity_id)?
+            .get_channel_identity_in_txn(&txn, identity_id)?
             .ok_or(Error::EntityNotFound)?;
+        let facts = crate::channel_identity::channel_identity_facts_in_txn(
+            &vault.store,
+            &txn,
+            identity_id,
+        )?
+        .ok_or(Error::EntityNotFound)?;
+        drop(txn);
         let Some(grant) = identity.grant() else {
             return Err(Error::InvalidConfig(
                 "gmail inbox poll requires a delegated_grant identity row".to_owned(),
             ));
         };
         let mailbox = AssignmentAddress::normalize(EMAIL_CHANNEL, &self.config.mailbox_address);
-        if identity.channel() != EMAIL_CHANNEL || identity.address_or_handle() != mailbox.as_str() {
+        if facts.channel != EMAIL_CHANNEL || facts.address_or_handle != mailbox.as_str() {
             return Err(Error::InvalidConfig(
                 "gmail inbox poll identity row is assigned to another channel or mailbox"
                     .to_owned(),
@@ -660,10 +671,10 @@ impl GmailDelegatedAdapter {
                 "gmail inbox poll identity row grants another scope set".to_owned(),
             ));
         }
-        if identity.state() != ChannelIdentityState::Active {
+        if facts.state != ChannelIdentityState::Active {
             return Err(Error::InvalidConfig(format!(
                 "gmail delegated reads require an active identity row, not {}",
-                identity.state().as_str()
+                facts.state.as_str()
             )));
         }
         Ok(())

@@ -69,7 +69,7 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
         // manifest ships, and if the owner raises that row the capability check
         // behind `may_send_under` still refuses, because a read-only grant
         // carries no outbound scope.
-        if !outbound_send_permitted(store, txn, &identity)? {
+        if !outbound_send_permitted(store, txn, &identity, facts.binding.actor_ref())? {
             continue;
         }
         if resolved.is_some() {
@@ -104,13 +104,14 @@ pub(crate) fn enrich_dispatch_channel_identity(
                 // verdict independent of a stale cross-channel enrichment.
                 // Provider email rails map to the email class here too. The
                 // class is the identity's channel head (OF-272).
-                let same_class =
-                    super::channel_identity_facts_in_txn(store, txn, &id)?.is_none_or(|facts| {
-                        normalize_channel_class(&facts.channel)
-                            == normalize_channel_class(connector_key)
-                    });
+                let facts = super::channel_identity_facts_in_txn(store, txn, &id)?;
+                let same_class = facts.as_ref().is_none_or(|facts| {
+                    normalize_channel_class(&facts.channel)
+                        == normalize_channel_class(connector_key)
+                });
+                let holder = facts.and_then(|facts| facts.binding.actor_ref());
                 let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-                if same_class && !outbound_send_permitted(store, txn, &identity)? {
+                if same_class && !outbound_send_permitted(store, txn, &identity, holder)? {
                     return Err(refuse_outbound_send(&identity));
                 }
             }
@@ -143,10 +144,14 @@ pub(crate) fn enrich_dispatch_channel_identity(
 /// only the substrate question is asked here: refusing on the missing row
 /// would make the sender identity, not the gate, the source of that verdict.
 /// A loaded manifest that is merely silent about this act still denies.
+///
+/// `holder` is the identity's binding head (OF-272): the policy row is asked
+/// about the actor the facts name, and only the capability is the row's.
 fn outbound_send_permitted(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity: &ChannelIdentity,
+    holder: Option<EntityId>,
 ) -> crate::Result<bool> {
     let policy = crate::gate::resolve_policy_manifest(store, txn)?;
     let diagnostics = policy.diagnostics();
@@ -157,7 +162,7 @@ fn outbound_send_permitted(
         .resolved_act_posture(
             ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND,
             identity.outbound_subject_class(),
-            identity.binding().actor_ref(),
+            holder,
         )
         .unwrap_or_default();
     Ok(identity.may_send_under(posture))
