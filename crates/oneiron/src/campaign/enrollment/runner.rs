@@ -7,7 +7,9 @@ use super::detection::{CampaignEnrollmentEvent, campaign_enrollment_event};
 use super::home_node::{
     CampaignHomeNodeAdmission, CampaignHomeNodeDesignation, require_campaign_home_node,
 };
-use super::program::{CampaignProgramStep, campaign_program, campaign_program_step};
+use super::program::{
+    CampaignProgramStep, campaign_program, campaign_program_step, require_program_step_enrolls,
+};
 use super::storage::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, from_row,
     id_from_hex, invalid, pin_schema, to_row,
@@ -364,6 +366,9 @@ pub(super) fn resolve_program_step(
             "campaign program does not belong to the event's campaign",
         ));
     }
+    // Archive stops queued work: an archived program or campaign, or a step
+    // an update dropped, fails closed here, before either leg acts.
+    require_program_step_enrolls(vault, &program, payload.program_step_ref)?;
     campaign_program_step(vault, program.program_ref, payload.program_step_ref)?
         .ok_or(Error::EntityNotFound)
 }
