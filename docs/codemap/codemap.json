@@ -35943,13 +35943,15 @@
      "kind": "src",
      "notable": [
       "HookBodyRun",
-      "HookBodyRuntime"
+      "HookBodyRuntime",
+      "HookVerdict"
      ],
      "path": "src/runtime_hooks/body.rs",
      "purpose": "The seam between the runner and the hook sandbox (ARCH-0080 §6)",
      "surface": {
       "struct": 1,
-      "trait": 1
+      "trait": 2,
+      "type": 1
      }
     },
     {
@@ -36112,7 +36114,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 5,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -36211,6 +36213,16 @@
      "notable": [],
      "path": "src/runtime_hooks/verb/redact.rs",
      "purpose": "A post-hook's Redact (ARCH-0080 §3): fields removed or masked in this caller's view of the result",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/served.rs",
+     "purpose": "Served rows (ARCH-0080 §11 p15, the automation link): the rows a call served its caller, read off the…",
      "surface": {
       "crate-vis": 3
      }
@@ -38870,6 +38882,7 @@
       "HookActorClass",
       "HookOutcomeKind",
       "HookPhase",
+      "HookRenderClass",
       "HookSelector",
       "PackHook",
       "PackHookBinding"
@@ -38878,7 +38891,7 @@
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
       "crate-vis": 8,
-      "enum": 3,
+      "enum": 4,
       "fn": 4,
       "struct": 3
      }
@@ -49620,7 +49633,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50014,7 +50027,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3020,
+   "source_files": 3021,
    "test_files": 903
   },
   "oneiron-android": {
@@ -64351,6 +64364,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/hook_verdict.rs",
+     "purpose": "`ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67217,6 +67240,13 @@
      "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
     },
+    "hook_verdict": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through…"
+    },
     "http_listener": {
      "files": 2,
      "impl_vault": false,
@@ -67395,7 +67425,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 480,
+   "source_files": 481,
    "test_files": 182
   },
   "oneiron-spawn": {
