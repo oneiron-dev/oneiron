@@ -5,7 +5,9 @@ use crate::entity_id::EntityId;
 use super::*;
 
 /// Federation confirm action recorded in the authority log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum AuthorityConfirmKind {
     /// Connection accept.
     Accept,
@@ -41,7 +43,7 @@ impl AuthorityConfirmKind {
 }
 
 /// Fold-verified federation confirm payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuthorityConfirmAction {
     /// Confirm kind.
     pub kind: AuthorityConfirmKind,
@@ -58,7 +60,9 @@ pub struct AuthorityConfirmAction {
 pub const CRITICAL_WRITE_CONFIRM_DOMAIN: &[u8] = b"oneiron/authority/critical-write-confirm/v1";
 pub const CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION: u64 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum CriticalWriteConfirmDisposition {
     Clear,
     Decline,
@@ -78,7 +82,9 @@ impl CriticalWriteConfirmDisposition {
         }
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum CriticalWriteConfirmMethod {
     TokenReauth,
     PassphraseReentry,
@@ -98,7 +104,7 @@ impl CriticalWriteConfirmMethod {
         }
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CriticalWriteConfirmAction {
     pub schema_version: u64,
     pub confirm_id: [u8; 32],
@@ -111,7 +117,7 @@ pub struct CriticalWriteConfirmAction {
     pub disposition: CriticalWriteConfirmDisposition,
     pub method: CriticalWriteConfirmMethod,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CriticalWriteConfirmState {
     pub action: CriticalWriteConfirmAction,
     pub signer: AuthorityKey,

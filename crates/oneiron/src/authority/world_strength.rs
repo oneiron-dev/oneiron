@@ -21,7 +21,7 @@ use super::world_privacy::{PrivacyMeet, edit_standing};
 use super::*;
 
 /// One accepted edit of a world.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FrontierEdit {
     settings: WorldPrivacy,
     pub(super) machine: EntityId,
@@ -47,7 +47,7 @@ pub(super) struct FrontierEdit {
     disputed: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct WorldFrontier {
     /// The edits no later edit of the world has seen.
     pub(super) live: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,

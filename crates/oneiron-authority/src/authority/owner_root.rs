@@ -27,7 +27,9 @@ const OWNER_ROOT_KEYS: [&str; 6] = [
 /// A root's public id, and the fingerprint the owner carries between machines
 /// when pairing. A root that copies the recovery key under another anchor has
 /// another id.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct RecoveryRootId(pub [u8; 32]);
 
 impl RecoveryRootId {

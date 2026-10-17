@@ -27,7 +27,9 @@ use super::machine_standing::Revision;
 use super::*;
 
 /// Who admitted a chain of a machine's revisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum MachineAdmitter {
     /// The vault's roster, under the owner-held rule for an owned mark.
     Roster,
@@ -36,7 +38,9 @@ pub enum MachineAdmitter {
 }
 
 /// Whose authority signed a revision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum SignerClass {
     /// A key the owner holds.
     OwnerHeld,
@@ -47,14 +51,14 @@ pub enum SignerClass {
 
 /// The root this install pins: only its anchor's chain is trusted here, and
 /// only while the fold holds the root as valid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PinnedRoot {
     pub id: RecoveryRootId,
     pub anchor_key: [u8; 32],
 }
 
 /// The winning revision of one admitter's chain for one machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MachineRevision {
     pub profile: MachineProfile,
     /// Divergent profiles at one revision, a machine key claimed by two
@@ -89,7 +93,7 @@ pub struct MachineRevision {
 }
 
 /// One machine's folded standing: a chain per admitter.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldedMachine {
     /// The roster's chain: every revision a roster key signed.
     pub roster: Option<MachineRevision>,
@@ -115,7 +119,7 @@ pub struct TrustedMachine<'a> {
 }
 
 /// One admitter's revisions of one machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct MachineChain {
     pub(super) head: MachineRevision,
     /// The roster's chain only: the highest revision an owner-held key
@@ -132,7 +136,7 @@ pub(super) struct MachineChain {
 }
 
 /// One install key a revision named, and under whose authority.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(super) struct KeyClaim {
     pub(super) machine: EntityId,
     pub(super) admitter: MachineAdmitter,

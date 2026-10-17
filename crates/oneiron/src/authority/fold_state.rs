@@ -13,7 +13,7 @@ use crate::entity_id::EntityId;
 use super::*;
 
 /// Fold issue retained for diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AuthorityFoldIssue {
     /// Entry failed shape or signature verification.
     InvalidEntry(AuthorityEntryHash),
@@ -73,7 +73,7 @@ pub enum AuthorityFoldIssue {
 }
 
 /// Why the fold refused an actor-binding op.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ActorBindingRejection {
     /// `BindActor` on a key that already holds a live binding (use rebind).
     BindingExists,
@@ -88,7 +88,7 @@ pub enum ActorBindingRejection {
 }
 
 /// Deterministic authority fold output.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuthorityFold {
     /// The heads a new main-log entry names: every main-log head but the rows
     /// of anchors this install does not pin.
@@ -174,7 +174,7 @@ pub struct AuthorityFold {
 }
 
 /// What bounds this install's view beside the roster rule (Astra #1430).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct InstallBound {
     /// The machine revisions and world edits this install holds back: each
     /// revision that landed restriction only, and each edit that never counts
@@ -187,7 +187,7 @@ pub(super) struct InstallBound {
 }
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldedActorBinding {
     /// Store actor entity the key speaks for.
     pub actor_ref: EntityId,
@@ -204,7 +204,7 @@ pub struct FoldedActorBinding {
 /// `Revoked` deliberately covers watermark-dead, merge-conflicted, AND
 /// roster-dead bindings: one dead state, no taxonomy inflation. Callers only
 /// ever need "does this bind authorize".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ActorBindingStatus {
     /// Binding authorizes: live epoch, unconflicted, live roster key.
     Active,
@@ -276,7 +276,7 @@ impl AuthorityFold {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FoldState {
     pub(super) slips: SlipAuthorityState,
     pub(super) vault_id: AuthorityVaultId,
@@ -339,7 +339,7 @@ pub(super) struct FoldState {
 }
 
 /// Fold-internal binding content for one authority key.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ActorBindingState {
     /// Valid revoke entries in this bind's ancestry. This is fold-only state.
     pub observed_revocations: BTreeSet<AuthorityEntryHash>,

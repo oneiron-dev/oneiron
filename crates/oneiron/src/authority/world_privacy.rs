@@ -112,7 +112,7 @@ pub enum Destination {
 }
 
 /// One world's folded settings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldedWorld {
     /// Each live edit and the machine that signed it.
     pub live: BTreeMap<AuthorityEntryHash, EntityId>,

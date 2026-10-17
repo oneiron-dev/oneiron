@@ -47,7 +47,7 @@ pub use super::selector_kind::{SelectorRange, selector_range_of};
 ///
 /// Every axis is a [`ScopeAxis`]: ⊤ and ⊥ are distinct wire values and the
 /// meet of disjoint sets is ⊥, never an accidental widen (ARCH-0022).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FederationDirectionScope {
     /// World filter for shared claims. Base reality is the base world id and
     /// is never implicit; named worlds are local-range only, so foreign-range
@@ -122,7 +122,7 @@ impl Ceiling {
 }
 
 /// Dual-signed federation pact scope pair.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FederationPactScope {
     /// Direction: vault_lo shares → vault_hi.
     pub lo_to_hi: FederationDirectionScope,

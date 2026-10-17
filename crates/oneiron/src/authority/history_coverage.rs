@@ -20,8 +20,9 @@ use crate::{Vault, error::Result};
 pub struct AuthorityHistoryRequest {
     /// The vault the history belongs to, as its held rows name it.
     pub vault_id: Option<AuthorityVaultId>,
-    /// The local checkpoint head the request was computed against.
-    pub checkpoint: Option<AuthorityEntryHash>,
+    /// The id of the local checkpoint v2 head the request was computed
+    /// against: its image's covered rows count as named history.
+    pub checkpoint: Option<[u8; 32]>,
     /// Hashes a held row names as a parent, or the checkpoint covers, that no
     /// held row has. Fetching them may name further ancestors: ask again after
     /// each import.

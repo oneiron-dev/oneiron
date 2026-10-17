@@ -58,7 +58,7 @@ thiserror = "2"
 rmp-serde = "1"
 rmpv = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32"] }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 # ONE-1961: RFC 8785 (JCS) canonical JSON for the perf bench run certificate.
 # The candidate's hashes have to be reproducible by a Python verifier using

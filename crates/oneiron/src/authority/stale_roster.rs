@@ -107,6 +107,26 @@ fn expired_stale_roster_approvals<E: Borrow<AuthorityLogEntry>>(
         .collect()
 }
 
+/// The valid approvals the stale-roster window could expire: each rests on a
+/// key revoked since. Whether one has expired turns on an install's own
+/// first-seen clock, so a portable checkpoint image declares them unresolved
+/// rather than deciding them (OF-469, checkpoint v2).
+pub(super) fn stale_roster_subject_approvals<E: Borrow<AuthorityLogEntry>>(
+    entries: &[E],
+    fold: &AuthorityFold,
+) -> BTreeSet<AuthorityEntryHash> {
+    let seen: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| {
+            let entry: &AuthorityLogEntry = entry.borrow();
+            Some((authority_entry_hash(entry).ok()?, 0))
+        })
+        .collect();
+    stale_roster_approval_deadlines(entries, fold, &seen, 0)
+        .into_keys()
+        .collect()
+}
+
 /// First still-future stale-roster change after an exact fold. Called only on
 /// a cache miss, so hot checks do not rescan the authority log.
 pub(super) fn next_stale_roster_deadline<E: Borrow<AuthorityLogEntry>>(
