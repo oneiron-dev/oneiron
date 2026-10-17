@@ -328,7 +328,7 @@ impl MediaBridge {
     }
 
     /// Hands spoken audio, or a generation's end, to the owner's playout.
-    pub(super) async fn play(&self, playout: VoicePlayout) -> io::Result<()> {
+    pub(super) async fn play(&mut self, playout: VoicePlayout) -> io::Result<()> {
         self.playout
             .send(playout)
             .await
