@@ -307,7 +307,8 @@ export class Oneiron {
       report: (input: Facade.WeaveReportRequest): Facade.WeaveReportView => this.#call(() => this.#client.vaultWeaveReport(input) as Facade.WeaveReportView),
       /** One of the bound actor's saved weave digests, or the newest, under the current read policy. */
       digest: (input: Facade.WeaveDigestRequest): Facade.WeaveDigestView | null => this.#call(() => this.#client.vaultWeaveDigest(input) as Facade.WeaveDigestView | null),
-      lens: (input: Facade.WeaveReportRequest): Facade.GeneratedLens => this.#call(() => this.#client.vaultWeaveLens(input) as Facade.GeneratedLens),
+      /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
+      lens: (input: Facade.WeaveReportRequest): Facade.LensFrameCard => this.#call(() => this.#client.vaultWeaveLens(input) as Facade.LensFrameCard),
       link: {
         /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
         wrong: (input: Facade.WeaveWrongLinkRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveLinkWrong(input) as Facade.WeaveLinkCorrectionView),
@@ -571,6 +572,8 @@ export class Oneiron {
           gate: (request: Facade.DeckGateRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckGate(keyedJson(request))) as Facade.DeckGateView; return result }),
           /** Records the deck oracle's receipt for its export profile. */
           oracle: (request: Facade.DeckOracleRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckOracle(keyedJson(request))) as Facade.DeckGateView; return result }),
+          /** The asked slides of a deck's head, drawn by the host's review renderer (provisional). */
+          preview: (request: Facade.DeckPreviewRequest): Facade.DeckPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckPreview(keyedJson(request))) as Facade.DeckPreview; return result }),
         },
       },
       /** Appends one version of bytes to a blob artifact's append-only chain. */

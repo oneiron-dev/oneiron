@@ -27,6 +27,7 @@ mod library;
 mod mcp;
 #[cfg(feature = "driver")]
 mod outline;
+mod receipt_evidence;
 #[cfg(feature = "driver")]
 mod session;
 
@@ -40,6 +41,7 @@ pub use library::{
 };
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
+pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserSession};
 
@@ -84,7 +86,8 @@ pub struct Observation {
 }
 
 /// One effect's receipt: what acted, on which page, under which press, and
-/// the screenshot taken as its evidence when one could be captured.
+/// the screenshot taken as its evidence when one could be captured, with
+/// where the host kept it when the session has a receipt sink.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EffectReceipt {
     pub seq: u64,
@@ -101,6 +104,8 @@ pub struct EffectReceipt {
     pub press: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screenshot_evidence: Option<ReceiptEvidence>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
