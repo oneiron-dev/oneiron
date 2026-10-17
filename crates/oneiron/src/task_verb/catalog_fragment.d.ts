@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 269 code-mode rows (252 host rows, 17 run rows), 805 declarations.
-// Replies: 200 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Census: 270 code-mode rows (253 host rows, 17 run rows), 806 declarations.
+// Replies: 201 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
 // Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
@@ -278,7 +278,7 @@ declare namespace Sdk {
   type SharedTransferRequest = { vault_id: number; to: string; from_keeps?: FederationGrantRole | null };
   type SharedRemoveOwnerRequest = { vault_id: number; target: string; successor?: string | null; target_keeps?: FederationGrantRole | null; export_first: boolean };
   type SharedActRequest = { act_id: string };
-  type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } };
+  type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
   type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] };
   type SharedActExecutionReceipt = { id: string; vault_id: number; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; completed_at: number };
@@ -290,6 +290,7 @@ declare namespace Sdk {
   type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null; holder_key?: string | null };
   type InvitationSlip = { slip_id: string; slip: string; expires_at: number };
   type SharedMemberInvited = { receipt: SharedActExecutionReceipt; credential?: InvitationSlip | null };
+  type InvitationSlipRequest = { vault_id: number; member: string; invitation: string; holder_key: string };
   type SharedMemberRoleRequest = { vault_id: number; member: string; role: FederationGrantRole };
   type SharedMemberRequest = { vault_id: number; member: string };
   type SharedInvitationState = "pending" | { accepted: { at: number } } | { declined: { at: number } } | { withdrawn: { by: string; at: number } };
@@ -1236,6 +1237,8 @@ declare const vault: {
     change(input: Sdk.SharedMemberRoleRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
     /** The invitee declines their own invitation; nothing is granted. */
     decline(input: Sdk.SharedInvitationRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
+    invitation_slip(input: Sdk.InvitationSlipRequest): Promise<Sdk.Reply<Sdk.InvitationSlip>>;
     /** The caller's own pending invitations into a shared vault. */
     invitations(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.SharedInvitation[]>>;
     /** A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead. */

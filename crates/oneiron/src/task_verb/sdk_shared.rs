@@ -99,6 +99,16 @@ pub struct SharedMemberInvited {
     pub credential: Option<InvitationSlip>,
 }
 
+impl InvitationSlip {
+    pub(super) fn from_slip(slip: crate::authority::CapabilitySlip) -> MemoryResult<Self> {
+        Ok(Self {
+            slip_id: crate::entity_id::bytes_to_hex_lower(&slip.claims.slip_id),
+            slip: slip.to_token()?,
+            expires_at: slip.claims.expires_at,
+        })
+    }
+}
+
 /// An invitee's own slip (FIX 1925): it lists, accepts or declines its one
 /// invitation while that is pending, and nothing else. The invitee proves
 /// each request with their own key.
@@ -280,14 +290,7 @@ pub fn add_shared_member_as(
         .transpose()?;
     let (receipt, slip) =
         vault.invite_shared_member(admin, input.vault_id, member, input.role, slips.zip(key))?;
-    let credential = match slip {
-        Some(slip) => Some(InvitationSlip {
-            slip_id: crate::entity_id::bytes_to_hex_lower(&slip.claims.slip_id),
-            slip: slip.to_token()?,
-            expires_at: slip.claims.expires_at,
-        }),
-        None => None,
-    };
+    let credential = slip.map(InvitationSlip::from_slip).transpose()?;
     Ok(SharedMemberInvited {
         receipt,
         credential,

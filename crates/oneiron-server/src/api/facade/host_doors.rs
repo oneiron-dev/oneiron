@@ -491,6 +491,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.members.accept"
         | "vault.members.decline"
         | "vault.members.withdraw_invitation"
+        | "vault.members.invitation_slip"
         | "vault.shared.object"
         | "vault.shared.withdraw_objection"
         | "vault.shared.started"

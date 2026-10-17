@@ -16,9 +16,9 @@ use oneiron::federation::{
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, GuestSlipMintRequest, GuestSlipMinted, SharedActRequest, SharedEraseAskCloseRequest,
-    SharedEraseAskRequest, SharedInvitationRequest, SharedInvitationWithdrawRequest,
-    SharedVaultRequest,
+    self, GuestSlipMintRequest, GuestSlipMinted, InvitationSlip, InvitationSlipRequest,
+    SharedActRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest, SharedInvitationRequest,
+    SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
 use super::host_doors::internal;
@@ -87,6 +87,30 @@ pub(crate) async fn vault_members_accept(
     require_slip_invitation(auth, VERB, &input.invitation)?;
     off_runtime(server, VERB, move |server| {
         sdk::accept_shared_invitation_as(server.vault(), &invitee, input)
+    })
+    .await
+}
+
+/// `vault.members.invitation_slip`: an `add_member` holder's mint of a
+/// pending invitation's slip (a founding invitation's, or a lost one), under
+/// the host's slip issuer.
+pub(crate) async fn vault_members_invitation_slip(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InvitationSlipRequest,
+) -> MemoryResult<InvitationSlip> {
+    const VERB: &str = "vault.members.invitation_slip";
+    let admin = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        crate::api::pairing::with_issuer(server, |issuer| {
+            Ok(sdk::mint_invitation_slip_as(
+                server.vault(),
+                &admin,
+                issuer,
+                input,
+            ))
+        })
+        .map_err(|_| internal(VERB))?
     })
     .await
 }
