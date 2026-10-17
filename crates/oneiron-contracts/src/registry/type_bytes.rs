@@ -152,6 +152,13 @@ pub const ENTITY_TYPE_CONNECTOR_KEY: u8 = 80;
 /// derived profile mirror snapshots keyed by source revision ids.
 pub const ENTITY_TYPE_PSYCH_PROFILE: u8 = 94;
 
+/// This vault's embedding setup (OF-370): one row per declared embedding
+/// space, and one per kind slot binding. Engine-authored maintenance kind,
+/// written beside the side-table rows it mirrors so the vault's own devices
+/// recompute media vectors from the same declarations; public puts are
+/// rejected with `MaintenanceKindNotWritable`. It never leaves the vault.
+pub const ENTITY_TYPE_EMBEDDING_SETUP: u8 = 95;
+
 /// EIRI-004 AccessGrant entity. Engine-authored maintenance kind for scoped
 /// companion control-plane access records.
 pub const ENTITY_TYPE_ACCESS_GRANT: u8 = 67;

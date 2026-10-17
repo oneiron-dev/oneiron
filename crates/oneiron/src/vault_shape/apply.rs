@@ -317,7 +317,11 @@ impl Vault {
         now: u64,
     ) -> Result<String> {
         let current = live.get(&item.target);
-        let already = |row: &ShapeRow| item.after.as_ref().is_some_and(|after| after.satisfied_by(row));
+        let already = |row: &ShapeRow| {
+            item.after
+                .as_ref()
+                .is_some_and(|after| after.satisfied_by(row))
+        };
         let stale = || invalid("the structure changed since the plan read it");
         let entity = match (item.change, current) {
             (ShapeChange::Create, None) => None,
@@ -411,9 +415,9 @@ impl Vault {
                     .ok_or_else(|| invalid("no staged source of that pack and version"))?;
                 match self.put_pack(owner, source.files().to_vec())? {
                     PackInstallDisposition::Installed(receipt) => Ok(receipt.content_hash),
-                    PackInstallDisposition::Candidate(_) => Err(invalid(
-                        "the pack is held a candidate until it qualifies",
-                    )),
+                    PackInstallDisposition::Candidate(_) => {
+                        Err(invalid("the pack is held a candidate until it qualifies"))
+                    }
                     PackInstallDisposition::Blocked { reason } => Err(invalid(reason)),
                 }
             }
@@ -445,7 +449,12 @@ impl Vault {
     ///
     /// A blank or taken name, an owner proof that no longer holds, or a
     /// store failure.
-    pub fn create_world(&self, owner: &AuthenticatedOwner, name: &str, now: u64) -> Result<EntityId> {
+    pub fn create_world(
+        &self,
+        owner: &AuthenticatedOwner,
+        name: &str,
+        now: u64,
+    ) -> Result<EntityId> {
         #[derive(Serialize)]
         struct WorldBody<'a> {
             name: &'a str,
