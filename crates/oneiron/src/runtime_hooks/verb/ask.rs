@@ -102,7 +102,10 @@ pub(super) fn retry(vault: &Vault, call: &VerbCall) -> Result<Retry> {
         return skipped(USED);
     }
     let status = vault
-        .memory(row.author, super::super::filter::edge_class(row.author_class))
+        .memory(
+            row.author,
+            super::super::filter::edge_class(row.author_class),
+        )
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
         Ok(TaskAskStatus::Pending { .. } | TaskAskStatus::Changed { .. }) => {

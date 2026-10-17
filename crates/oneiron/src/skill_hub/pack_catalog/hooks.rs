@@ -519,7 +519,8 @@ impl PackHookBinding {
         enabled: bool,
     ) -> Result<(EntityId, Self)> {
         let material: [&[u8]; 3] = [pack.as_bytes(), hook.name.as_bytes(), &hook.body_hash];
-        let code = crate::codebase::entity_id_from_hash_material(b"oneiron.pack-hook.v1", &material)?;
+        let code =
+            crate::codebase::entity_id_from_hash_material(b"oneiron.pack-hook.v1", &material)?;
         let id = crate::codebase::entity_id_from_hash_material(
             b"oneiron.pack-hook-binding.v1",
             &material,

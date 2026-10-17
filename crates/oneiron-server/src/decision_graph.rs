@@ -252,10 +252,7 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
 /// A Box or Point call through the host's ladder, seated as [`ladder_decide`]
 /// seats it: the host's presence question first, then the coordinates
 /// ([`oneiron::llm::decision::DecisionLadder::run_located`]).
-pub(crate) fn ladder_located(
-    server: &SyncServer,
-    call: LadderCall<'_>,
-) -> Result<LocatedDecision> {
+pub(crate) fn ladder_located(server: &SyncServer, call: LadderCall<'_>) -> Result<LocatedDecision> {
     let host = server.decision_host();
     let mut dial = call.dial;
     let sees = !call.images.is_empty()

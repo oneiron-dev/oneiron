@@ -297,7 +297,9 @@ impl Vault {
                 .iter()
                 .any(|held| held.actor == actor && held.kind == kind);
             if !holds {
-                return Err(invalid("the answerer does not hold the decision ask's role"));
+                return Err(invalid(
+                    "the answerer does not hold the decision ask's role",
+                ));
             }
             Ok((actor, role.role.clone(), kind))
         })
