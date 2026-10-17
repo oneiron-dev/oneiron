@@ -1291,7 +1291,7 @@ export type QuestionAudience = "asker"
 /** `oneiron::config::HostingPrivacyPosture` */
 export type HostingPrivacyPosture = "managed" | "relay" | "self-host"
 /** `oneiron::llm::decision::questions::records::QuestionMedia` */
-export type QuestionMedia = { images: boolean }
+export type QuestionMedia = { images?: boolean; audio?: boolean }
 /** `oneiron::llm::decision::questions::records::QuestionDefinition` */
 export type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null }
 /** `oneiron::receipt::questions::QuestionCreateRequest` */

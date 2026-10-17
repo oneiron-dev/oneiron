@@ -79,6 +79,7 @@ impl InputKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddingSpace {
     /// `model@revision@where`: the whole document function this space's vectors come from.
+    /// `where` is the place of the model's offer, the `[models]` provider key that binds it.
     pub id: String,
     pub dimensions: usize,
     /// The inputs the space's model embeds as documents.

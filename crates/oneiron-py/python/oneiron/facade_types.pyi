@@ -3233,7 +3233,8 @@ class QuestionCriteria(TypedDict):
 QuestionAudience = Literal["asker"]
 HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
 class QuestionMedia(TypedDict):
-    images: bool
+    images: NotRequired[bool]
+    audio: NotRequired[bool]
 class QuestionDefinition(TypedDict):
     question: DecisionQuestion
     adapter: str
