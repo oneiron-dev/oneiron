@@ -124,6 +124,32 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SCOPE_POLICY_SWEEP_DONE,
 ];
 
+/// The gate-decision ledger and every family beside it: partitions, custody,
+/// retention, claim and grant indexes. Kept whole while
+/// [`keeps_gate_ledger`] holds.
+static GATE_LEDGER_FAMILIES: &[&SideTableDecl] = &[
+    &side_table::GATE_DECISION_LEDGER,
+    &side_table::GATE_DECISION_CLAIM_CONTEXT,
+    &side_table::GATE_DECISION_CUSTODY_ROOT,
+    &side_table::GATE_DECISION_GRANT_REF_INDEX,
+    &side_table::GATE_DECISION_PARTITION_ERASE_PENDING,
+    &side_table::GATE_DECISION_PARTITION_RETAIN_UNTIL,
+    &side_table::GATE_DECISION_PARTITION_RETIRE_PENDING,
+    &side_table::GATE_DECISION_RETENTION_CONTEXT,
+    &side_table::GATE_DECISION_CLAIM_INDEX,
+    &side_table::GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE,
+    &side_table::GATE_DECISION_CLAIM_REF_INDEX,
+    &side_table::GATE_DECISION_CLAIM_REFS,
+    &side_table::GATE_DECISION_UNAPPLIED_PREFLIGHT,
+];
+
+/// Whether the gate-decision families stay whole: while any legal hold
+/// stands here. A hold may name a decision partition, and a ledger row's key
+/// carries its decision id, not the claim the partition is.
+fn keeps_gate_ledger(store: &Store, txn: &RoTxn<'_>) -> Result<bool> {
+    crate::store::legal_hold::any_standing_in_txn(store, txn)
+}
+
 /// Most kept entities one result names; [`LeftEnvPurge::kept_total`] counts
 /// them all.
 #[allow(dead_code, reason = "L03's OF-158 leave calls this")]
@@ -152,6 +178,10 @@ pub(crate) struct LeftEnvPurge {
     /// Side rows under no declared prefix, left in place. Counted over the
     /// rows this call walked: exact once `complete`.
     pub(crate) unknown_rows: usize,
+    /// Gate-decision rows kept whole because a legal hold stands
+    /// ([`GATE_LEDGER_FAMILIES`]), beyond the families always kept. Counted
+    /// over the rows this call walked: exact once `complete`.
+    pub(crate) held_ledger_rows: usize,
     /// `false` while the row budget ran out: call again.
     pub(crate) complete: bool,
 }
@@ -177,7 +207,8 @@ impl LeftEnvPurge {
 /// open refuses without it). A row of the type, time, short-id or side
 /// databases stays when its key names a kept entity, an edge when both its
 /// ends are kept, and a side row when its family is in
-/// [`LEAVE_KEPT_FAMILIES`] or under no declared prefix. Text, phonetic,
+/// [`LEAVE_KEPT_FAMILIES`] or under no declared prefix; while any legal hold
+/// stands, every gate-decision family stays whole. Text, phonetic,
 /// vector, PPR, job and queue databases are cleared whole, and the HNSW graph
 /// shape goes while its compatibility pins stay.
 ///
@@ -424,16 +455,18 @@ fn sweep_side_tables(
     budget: &mut Budget,
     report: &mut LeftEnvPurge,
 ) -> Result<()> {
-    let mut unknown = 0;
-    let families = Families::of(SideDb::VaultMeta);
+    let ledger = keeps_gate_ledger(store, txn)?;
+    let mut counts = SideCounts::default();
+    let families = Families::of(SideDb::VaultMeta, ledger);
     report.side_rows = sweep(&store.vault_meta, txn, budget, |key, _| {
-        families.doomed(key, kept, &mut unknown)
+        families.doomed(key, kept, &mut counts)
     })?;
-    let families = Families::of(SideDb::SyncState);
+    let families = Families::of(SideDb::SyncState, ledger);
     report.sync_rows = sweep_sync_state(store, txn, budget, |key| {
-        families.doomed(key.as_bytes(), kept, &mut unknown)
+        families.doomed(key.as_bytes(), kept, &mut counts)
     })?;
-    report.unknown_rows = unknown;
+    report.unknown_rows = counts.unknown;
+    report.held_ledger_rows = counts.held_ledger;
     Ok(())
 }
 
@@ -502,40 +535,77 @@ fn kept_family(decl: &SideTableDecl) -> bool {
         .any(|kept| std::ptr::eq(*kept, decl))
 }
 
-/// One side database's declared families in prefix order, each with whether
-/// a leave keeps it.
-struct Families(Vec<(&'static SideTableDecl, bool)>);
+/// What a leave does with one declared family's rows.
+#[derive(Clone, Copy)]
+enum Fate {
+    /// Every row goes but those whose key names a kept entity.
+    Swept,
+    /// In [`LEAVE_KEPT_FAMILIES`].
+    Kept,
+    /// A gate-decision family a standing legal hold keeps.
+    HeldLedger,
+}
+
+/// The side rows a walk left in place without a family that always stays.
+#[derive(Default)]
+struct SideCounts {
+    unknown: usize,
+    held_ledger: usize,
+}
+
+/// One side database's declared families in prefix order, each with its
+/// fate.
+struct Families(Vec<(&'static SideTableDecl, Fate)>);
 
 impl Families {
-    fn of(db: SideDb) -> Self {
+    /// `ledger`: whether the gate-decision families stay whole.
+    fn of(db: SideDb, ledger: bool) -> Self {
+        let fate = |decl: &SideTableDecl| {
+            if kept_family(decl) {
+                Fate::Kept
+            } else if ledger
+                && GATE_LEDGER_FAMILIES
+                    .iter()
+                    .any(|held| std::ptr::eq(*held, decl))
+            {
+                Fate::HeldLedger
+            } else {
+                Fate::Swept
+            }
+        };
         let mut families: Vec<_> = side_table::declared()
             .filter(|decl| decl.db == db)
-            .map(|decl| (decl, kept_family(decl)))
+            .map(|decl| (decl, fate(decl)))
             .collect();
         families.sort_unstable_by_key(|(decl, _)| decl.prefix);
         Self(families)
     }
 
-    /// Whether a side row goes: its family is declared and not kept, and its
-    /// key names no kept entity. A row under no declared prefix stays and is
-    /// counted in `unknown`.
-    fn doomed(&self, key: &[u8], kept: &Kept, unknown: &mut usize) -> bool {
-        match self.kept(key) {
-            Some(family) => !family && !kept.named_in(key),
+    /// Whether a side row goes: its family is swept and its key names no kept
+    /// entity. A row under no declared prefix, or in a gate-decision family a
+    /// hold keeps, stays and is counted.
+    fn doomed(&self, key: &[u8], kept: &Kept, counts: &mut SideCounts) -> bool {
+        match self.fate(key) {
+            Some(Fate::Swept) => !kept.named_in(key),
+            Some(Fate::Kept) => false,
+            Some(Fate::HeldLedger) => {
+                counts.held_ledger += 1;
+                false
+            }
             None => {
-                *unknown += 1;
+                counts.unknown += 1;
                 false
             }
         }
     }
 
-    /// Whether the family `key` falls under is kept; `None` under no declared
+    /// The fate of the family `key` falls under; `None` under no declared
     /// prefix. Declared prefixes are disjoint within one database (the
     /// declaration list's `assert_disjoint`), so the one that holds a key is
     /// its longest match, and the greatest prefix not above the key.
-    fn kept(&self, key: &[u8]) -> Option<bool> {
+    fn fate(&self, key: &[u8]) -> Option<Fate> {
         let at = self.0.partition_point(|(decl, _)| decl.prefix <= key);
-        let (decl, kept) = self.0.get(at.checked_sub(1)?)?;
-        key.starts_with(decl.prefix).then_some(*kept)
+        let (decl, fate) = self.0.get(at.checked_sub(1)?)?;
+        key.starts_with(decl.prefix).then_some(*fate)
     }
 }
