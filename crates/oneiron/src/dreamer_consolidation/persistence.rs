@@ -124,6 +124,7 @@ pub(super) fn open_marker(
             end: now,
         },
         learned_at: now,
+        decisions: Vec::new(),
     })
 }
 
@@ -212,6 +213,7 @@ pub(crate) fn conflict_close_candidate(
             end: run.now_ms,
         },
         learned_at: run.now_ms,
+        decisions: Vec::new(),
     })
 }
 

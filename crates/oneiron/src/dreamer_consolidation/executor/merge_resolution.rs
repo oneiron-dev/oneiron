@@ -3,6 +3,7 @@
 
 use super::decisions::{conflict_state, id_options, named_id};
 use super::*;
+use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::catalogue::CONFLICT_RESOLUTION;
 use crate::llm::decision::{AnswerContract, DecisionAnswer};
@@ -20,19 +21,29 @@ pub(super) enum MergeResolution {
     Escalate,
 }
 
-/// What a conflict's pack decided: its resolution, when one was read, and the listed
-/// candidate whose identity a merge keeps.
+/// What a conflict's pack decided: its resolution, when one was read, the listed
+/// candidate whose identity a merge keeps, and every decision as the write keeps it.
 pub(super) struct ConflictAnswers {
     pub(super) resolution: Option<String>,
     pub(super) identity: Option<EntityId>,
+    pub(super) decisions: Vec<KeptDecision>,
+}
+
+impl ConflictAnswers {
+    /// Whether a question went up the role chain and waits on its answer: the
+    /// conflict waits with it, neither resolved nor left standing.
+    pub(super) fn waiting(&self) -> bool {
+        self.decisions.iter().any(KeptDecision::waiting)
+    }
 }
 
 impl ConsolidationExecutor<'_> {
     /// The conflict's typed pack: how it resolves, and which listed candidate's identity a
-    /// merge keeps (a merge across predicates must name one). None when the step trapped.
+    /// merge keeps (a merge across predicates must name one). An ask goes to the route of
+    /// the conflict's project. None when the step trapped.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the step, its pass clock and scope join the conflict and the charge tally"
+        reason = "the step, its pass clock and branch join the conflict and the charge tally"
     )]
     pub(super) async fn decide_conflict(
         &self,
@@ -41,7 +52,7 @@ impl ConsolidationExecutor<'_> {
         conflict: &ConflictSet,
         members: &[&PromotionCandidate],
         prior_heads: &[super::super::PriorHead],
-        scope: &crate::llm::Scope,
+        resources: &BranchResources<'_>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<ConflictAnswers>> {
         let mut questions = vec![
@@ -69,22 +80,36 @@ impl ConsolidationExecutor<'_> {
                 AnswerContract::Choice { options },
             )?);
         }
-        let evidence: Vec<EntityId> = prior_heads.iter().map(|prior| prior.claim_id).collect();
+        // The pack reads the prior heads and candidates drawn from these turns. The
+        // turns also keep one conflict's ask apart from another's on the same heads.
+        let mut evidence: Vec<EntityId> = prior_heads.iter().map(|prior| prior.claim_id).collect();
+        let mut turns: Vec<EntityId> = members
+            .iter()
+            .flat_map(|member| member.evidence_turn_refs.iter().copied())
+            .filter(|turn| !evidence.contains(turn))
+            .collect();
+        turns.sort_unstable();
+        turns.dedup();
+        evidence.extend(turns);
         let state = conflict_state(&conflict.identity, members, prior_heads)?;
+        let to = self.ask_route(step_ctx.vault, Some(conflict.identity.project))?;
         let Some(decided) = self
             .decide(
-                step_ctx, pass, scope, &questions, &evidence, &state, charges,
+                step_ctx, pass, resources, &to, &questions, &evidence, &state, charges,
             )
             .await?
         else {
             return Ok(None);
         };
+        let resolution = match decided[0].answer() {
+            Some(DecisionAnswer::Choice(label)) => Some(label.clone()),
+            _ => None,
+        };
+        let identity = named_id(decided[1..].iter().collect());
         Ok(Some(ConflictAnswers {
-            resolution: match &decided[0].answer {
-                DecisionAnswer::Choice(label) => Some(label.clone()),
-                _ => None,
-            },
-            identity: named_id(decided[1..].iter().collect()),
+            resolution,
+            identity,
+            decisions: decided,
         }))
     }
 

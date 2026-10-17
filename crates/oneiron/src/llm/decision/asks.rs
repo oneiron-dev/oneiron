@@ -249,6 +249,31 @@ impl Vault {
         Ok(None)
     }
 
+    /// The newest ask for this question version and principal over exactly `evidence`, put
+    /// to `to`, open or answered: how a caller that binds its own route finds the one ask its
+    /// decision went up as, where one question serves many units.
+    pub fn decision_ask_for(
+        &self,
+        question: &DecisionQuestion,
+        principal: EntityId,
+        evidence: &[EntityId],
+        to: &AskTo,
+    ) -> Result<Option<DecisionAsk>> {
+        let txn = self.store.env.read_txn()?;
+        for row in ASKS.iter_rev_from(&self.store, &txn, &[])? {
+            let (_, ask) = row?;
+            if ask.question.id == question.id
+                && ask.question.version == question.version
+                && ask.principal == principal
+                && ask.evidence == evidence
+                && ask.to == *to
+            {
+                return Ok(Some(ask));
+            }
+        }
+        Ok(None)
+    }
+
     /// The vault owner's answer to one ask whose chain reaches the owners, as the owner role.
     /// Otherwise as [`Self::answer_decision_ask_as`].
     pub fn answer_decision_ask(

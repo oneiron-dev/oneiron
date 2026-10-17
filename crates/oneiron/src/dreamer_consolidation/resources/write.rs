@@ -413,6 +413,8 @@ impl ConsolidationFence {
                     entity_type: revision.entity_type,
                     learned_at: revision.learned_at,
                     project: Some(body.scope_project),
+                    body_hash: *blake3::hash(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                        .as_bytes(),
                     trust_class: body.source,
                 },
             );

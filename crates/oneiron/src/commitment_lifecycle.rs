@@ -517,6 +517,7 @@ pub fn propose_commitment_fulfilled(
                 end: proposed_at,
             },
             learned_at: proposed_at,
+            decisions: Vec::new(),
         }],
     )
 }

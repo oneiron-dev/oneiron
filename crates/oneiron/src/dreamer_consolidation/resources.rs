@@ -46,6 +46,9 @@ struct SourcePin {
     learned_at: u64,
     /// The source's PROJECT; `None` for a stamp that does not decode.
     project: Option<EntityId>,
+    /// The plain BLAKE3 of the stored body the branch read: the version a
+    /// decision receipt names for it.
+    body_hash: [u8; 32],
     #[cfg(test)]
     trust_class: Option<crate::claim::ClaimSource>,
 }
@@ -232,6 +235,7 @@ impl<'a> BranchResources<'a> {
                     entity_type,
                     learned_at,
                     project,
+                    body_hash: *blake3::hash(&body).as_bytes(),
                     #[cfg(test)]
                     trust_class,
                 },
@@ -331,6 +335,24 @@ impl<'a> BranchResources<'a> {
         Ok(Some(
             project.unwrap_or_else(crate::claim::default_project_id),
         ))
+    }
+
+    /// The version a decision receipt names for each of `ids` the branch
+    /// pinned: the plain BLAKE3 of the body it read. An unpinned id has none.
+    pub(super) fn evidence_versions(
+        &self,
+        ids: &[EntityId],
+    ) -> Vec<crate::llm::decision::EvidenceVersion> {
+        ids.iter()
+            .filter_map(|id| {
+                self.sources
+                    .get(id)
+                    .map(|pin| crate::llm::decision::EvidenceVersion {
+                        id: *id,
+                        body_hash: pin.body_hash,
+                    })
+            })
+            .collect()
     }
 
     pub(super) fn source_version(&self, id: &EntityId) -> Result<ScopeResource> {

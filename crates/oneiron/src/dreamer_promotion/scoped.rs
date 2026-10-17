@@ -137,7 +137,12 @@ fn attach_evidence(
     let envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
-        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain, None))?,
+        WriteProvenance::new(promotion_provenance(
+            run,
+            &candidate.provenance_chain,
+            None,
+            &candidate.decisions,
+        )?)?,
         ClaimApprovalStatus::Auto,
         SourceLineage::of(ClaimSource::Generated).with(source),
     );
