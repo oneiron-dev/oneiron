@@ -751,6 +751,9 @@ side_tables! {
     /// Per-workspace roster preset (org, venture name, house actor/identity, house display name).
     /// Key: string (workspace_ref).
     WORKSPACE_ROSTER_PRESET: VaultMeta b"workspace_roster:preset:v1:" Raw;
+    /// When a world was soft-deleted here (u64 vault seconds): a pin change still rewraps its keys
+    /// for 90 days after, while old bundles restore it. Key: id16 hex (world).
+    WORLD_KEY_DELETED: VaultMeta b"world_keys:deleted:v1:" Raw;
     /// Permanent fact that a world's keys were destroyed with the world, with its ids-only
     /// receipt. Refuses a late pad, a remint and an open for that world. Key: id16 hex (world).
     WORLD_KEY_DESTROYED: VaultMeta b"world_keys:destroyed:v1:" Named;

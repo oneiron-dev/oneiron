@@ -10,9 +10,12 @@
 //!
 //! With the `engine` feature, `EmbeddedEngine` runs the full server inside
 //! the app's process instead (`oneiron_server::embedded`): it opens the vault
-//! the way `oneiron serve` does, and its `client` attaches `Oneiron` handles
-//! to that same open vault. Its `request` reaches the server's HTTP surface;
-//! the handles' verbs still answer through the client's embedded dispatcher.
+//! the way `oneiron serve` does. Its `client(key)` binds `Oneiron` handles
+//! the server serves in process, whose verbs cross the server's Router under
+//! the caller's credential; its `local_client` attaches handles to the same
+//! open vault, whose verbs answer through the client's embedded dispatcher.
+//! Its `request` reaches the server's HTTP surface, and its
+//! `open_connection` holds a connection of the app's own (`/ws`).
 //!
 //! The verb methods are generated from `scripts/sdk/agent-verbs.json` into
 //! `facade_generated.rs`: one exported method per facade row, which calls that
@@ -46,19 +49,20 @@ mod facade_types_generated;
 
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
-    ClaimListFilter, ClaimView, ClaimViews, CommitReceipt, ConsolidationJobInput, DeleteReceipt,
-    DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
-    FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
-    MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
-    OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite, QueryAffect,
-    QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallScope, RerankReport, RerankSkip,
-    RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
-    StructuralEdgeSpec, StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn,
+    ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
+    DeleteReceipt, DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView,
+    EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits,
+    MemoryItem, MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits,
+    NeighborOpts, OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite,
+    QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallScope, RecordRefusal,
+    RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
+    SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TemporalHint,
+    TextIndexField, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 #[cfg(feature = "engine")]
 pub use embedded_engine::{
-    AppHostCallbacks, EmbeddedEngine, EngineHeader, EngineLimits, EngineReply, EngineRequest,
+    AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply,
+    EngineRequest,
 };
 pub use error::OneironError;
 pub use facade_types_generated::*;
@@ -80,8 +84,8 @@ pub const HEAD_MEMORY_PACK_SCHEMA_VERSION: u32 = oneiron::MEMORY_PACK_VERSION;
 /// Both constructors return this same type, and a narrower actor scope is
 /// still this same type. It holds the shared client and nothing else: no
 /// second storage handle, transport, budget or callback. A handle from
-/// `EmbeddedEngine::client` (with `engine`) also holds that engine, so the
-/// server outlives every handle on its vault.
+/// `EmbeddedEngine::client` or `local_client` (with `engine`) also holds that
+/// engine, so the server outlives every handle on its vault.
 #[derive(uniffi::Object)]
 pub struct Oneiron {
     inner: oneiron_remote::OneironClient,
@@ -151,6 +155,18 @@ impl Oneiron {
     /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
     pub fn in_room_turn(&self, room_ref: String) -> Result<Arc<Self>, OneironError> {
         let inner = self.inner.in_room_turn(&room_ref)?;
+        Ok(Arc::new(Self {
+            inner,
+            #[cfg(feature = "engine")]
+            engine: self.engine.clone(),
+        }))
+    }
+
+    /// Returns a NEW handle whose every verb runs inside the off-record
+    /// session `session_ref` names, bound to this handle's principal: the
+    /// app host's actor when embedded (OF-063). It grants nothing.
+    pub fn in_off_record_session(&self, session_ref: String) -> Result<Arc<Self>, OneironError> {
+        let inner = self.inner.in_off_record_session(&session_ref)?;
         Ok(Arc::new(Self {
             inner,
             #[cfg(feature = "engine")]

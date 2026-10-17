@@ -154,6 +154,17 @@ export class Oneiron {
   }
 
   /**
+   * Returns a NEW handle whose every verb runs inside the off-record session
+   * `sessionRef` names, bound to this handle's principal: the app host's actor
+   * when embedded, the credential's when connected (OF-063). It grants
+   * nothing: inside an anonymous session that principal is verified in, a
+   * refusal writes no receipt; anywhere else verbs record as before.
+   */
+  inOffRecordSession(sessionRef: string): Oneiron {
+    return new Oneiron(this.#call(() => this.#client.inOffRecordSession(sessionRef)))
+  }
+
+  /**
    * The lasting call receipt the last verb's reply stated, as `call:<32hex>`,
    * whether it answered or refused; `vault.receipts.get` resolves it for the
    * same actor or the vault's owner.
@@ -314,8 +325,8 @@ export class Oneiron {
       history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
-      /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
-      seed: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitReceipt[]),
+      /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
+      seed: (input: Facade.CommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitOutcome[]),
     },
     /**
    * Recalls a memory pack.
@@ -427,7 +438,7 @@ export class Oneiron {
       },
     },
     authority: {
-      /** One page of the dated authority log audit: grants, revokes and confirms, for the owner. */
+      /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
       audit: (input: Facade.AuthorityAuditQuery): Facade.AuthorityAuditPage => this.#call(() => this.#client.vaultAuthorityAudit(input) as Facade.AuthorityAuditPage),
       /** Every saved authority handoff fork alarm, for the owner. */
       handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}): Facade.AuthorityHandoffAlarm[] => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as Facade.AuthorityHandoffAlarm[]), {
@@ -497,6 +508,16 @@ export class Oneiron {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
+    },
+    residence: {
+      /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
+      mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeChanged => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeChanged),
+      /** Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home. */
+      open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpened => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpened),
+      /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
+      index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndex => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndex),
+      /** Drops the opened-item caches one of the owner's machines last touched before a time. */
+      prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruned => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruned),
     },
     records: {
       /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
@@ -872,8 +893,8 @@ export class Oneiron {
         climb: (input: Facade.DecisionAskClimbRequest): Facade.ResolvedRole | null => this.#call(() => this.#client.vaultDecisionsAsksClimb(input) as Facade.ResolvedRole | null),
       },
     },
-    /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
-    commit: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitReceipt[]),
+    /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
+    commit: (input: Facade.CommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitOutcome[]),
     /** Commits one claim through the gate, the same as vault.claims.upsert. */
     remember: (input: Facade.ClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultRemember(input) as Facade.CommitReceipt),
     /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
@@ -994,6 +1015,8 @@ export class Oneiron {
     call: (input: Facade.ConnectorCallRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorCall(input) as Facade.ConnectorCallReply),
     /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
     schema: (input: Facade.ConnectorSchemaRequest): Facade.ConnectorSchemaReply => this.#call(() => this.#client.connectorSchema(input) as Facade.ConnectorSchemaReply),
+    /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */
+    call_status: (input: Facade.ConnectorCallStatusRequest): Facade.ConnectorCallStatus => this.#call(() => this.#client.connectorCallStatus(input) as Facade.ConnectorCallStatus),
     outbound: {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),

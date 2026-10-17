@@ -2,13 +2,15 @@
 //! shared formula's member reads, its anchor's text written from the member's
 //! cell; retargeting its sheet prefixes when sheets are renamed or deleted;
 //! and moving its references into one sheet when rows or columns are inserted
-//! or deleted there. One tokenizer, the same reading as [`crate::xlfn`]:
+//! or deleted there; and rewriting its structured references when a table
+//! loses columns. One tokenizer, the same reading as [`crate::xlfn`]:
 //! string literals, quoted sheet names and structured references are never
 //! references, a name before `(` is a call, and a name before `!` is a sheet.
 //! `$` anchors stay.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 const MAX_COLUMN: i64 = 16_384;
 const MAX_ROW: i64 = 1_048_576;
@@ -127,10 +129,16 @@ pub enum SheetFate {
 
 /// `formula` with each sheet prefix (`Data!`, `'My data'!`, `Jan:Mar!`)
 /// retargeted by `fate`, asked of each sheet name as written. `None` when no
-/// prefix changed. A reference into another workbook (`[1]Data!A1`) stays;
-/// a 3D prefix with a deleted end reads `#REF!`.
+/// prefix changed. A reference into another workbook (`[1]Data!A1`) stays.
+/// A 3D prefix that loses an end narrows to the first and last sheets it
+/// keeps in `order`, the workbook's sheets before the change, as Excel's
+/// does; it reads `#REF!` only when it keeps none.
 #[must_use]
-pub fn retarget_sheets(formula: &str, fate: &dyn Fn(&str) -> SheetFate) -> Option<String> {
+pub fn retarget_sheets(
+    formula: &str,
+    order: &[String],
+    fate: &dyn Fn(&str) -> SheetFate,
+) -> Option<String> {
     let bytes = formula.as_bytes();
     let mut out = String::with_capacity(formula.len());
     let mut changed = false;
@@ -217,22 +225,280 @@ pub fn retarget_sheets(formula: &str, fate: &dyn Fn(&str) -> SheetFate) -> Optio
             continue;
         }
         changed = true;
-        if fates.contains(&SheetFate::Delete) {
-            out.push_str("#REF!");
-            continue;
+        let names = match ends.as_slice() {
+            [first, last] if fates.contains(&SheetFate::Delete) => {
+                span_kept(first, last, order, fate)
+            }
+            _ if fates.contains(&SheetFate::Delete) => None,
+            _ => Some(
+                ends.iter()
+                    .zip(&fates)
+                    .map(|(name, fate)| match fate {
+                        SheetFate::Rename(to) => to.clone(),
+                        _ => (*name).to_owned(),
+                    })
+                    .collect(),
+            ),
+        };
+        match names {
+            Some(names) => {
+                out.push_str(&sheet_prefix(&names.join(":")));
+                out.push('!');
+            }
+            None => out.push_str("#REF!"),
         }
-        let names: Vec<&str> = ends
-            .iter()
-            .zip(&fates)
-            .map(|(name, fate)| match fate {
-                SheetFate::Rename(to) => to.as_str(),
-                _ => name,
-            })
-            .collect();
-        out.push_str(&sheet_prefix(&names.join(":")));
-        out.push('!');
     }
     changed.then_some(out)
+}
+
+/// The ends a 3D span `first:last` names once some of its sheets go: the
+/// first and last sheets it keeps in workbook `order`, by the names `fate`
+/// gives them, one name when it keeps one sheet. `None` when it keeps none
+/// or an end is not in `order`.
+fn span_kept(
+    first: &str,
+    last: &str,
+    order: &[String],
+    fate: &dyn Fn(&str) -> SheetFate,
+) -> Option<Vec<String>> {
+    let at = |name: &str| {
+        order
+            .iter()
+            .position(|held| held.to_lowercase() == name.to_lowercase())
+    };
+    let (a, b) = (at(first)?, at(last)?);
+    let kept: Vec<String> = order[a.min(b)..=a.max(b)]
+        .iter()
+        .filter_map(|name| match fate(name) {
+            SheetFate::Keep => Some(name.clone()),
+            SheetFate::Rename(to) => Some(to),
+            SheetFate::Delete => None,
+        })
+        .collect();
+    let (low, high) = (kept.first()?, kept.last()?);
+    let (left, right) = if a <= b { (low, high) } else { (high, low) };
+    Some(if left == right {
+        vec![left.clone()]
+    } else {
+        vec![left.clone(), right.clone()]
+    })
+}
+
+/// `formula` with each structured reference to table `table` that names one
+/// of its `deleted` columns rewritten as Excel does when the columns go: a
+/// reference naming a deleted column reads `#REF!`, and a column span
+/// (`Sales[[Jan]:[Mar]]`) that keeps some of its columns shrinks to them.
+/// `columns` is the table's columns before the edit, left to right. Names
+/// compare without case. An unqualified reference (`[@Price]`) and one into
+/// another workbook stay. `None` when nothing changed.
+#[must_use]
+pub(crate) fn drop_table_columns(
+    formula: &str,
+    table: &str,
+    columns: &[String],
+    deleted: &[String],
+) -> Option<String> {
+    let table = table.to_lowercase();
+    let gone: HashSet<String> = deleted.iter().map(|name| name.to_lowercase()).collect();
+    let bytes = formula.as_bytes();
+    let mut out = String::with_capacity(formula.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'"' || b == b'\'' {
+            let end = quoted_end(bytes, i);
+            out.push_str(&formula[i..end]);
+            i = end;
+            continue;
+        }
+        if b == b'[' {
+            let end = bracket_end(bytes, i);
+            out.push_str(&formula[i..end]);
+            i = end;
+            continue;
+        }
+        let ch = formula[i..].chars().next()?;
+        if !(ch.is_alphanumeric() || matches!(ch, '_' | '\\')) {
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
+        }
+        let end = token_end(formula, i);
+        let name = &formula[i..end];
+        // `[1]!Sales[Price]` is another workbook's table.
+        let external = i > 0 && bytes[i - 1] == b'!';
+        if bytes.get(end) != Some(&b'[') || external || name.to_lowercase() != table {
+            out.push_str(name);
+            i = end;
+            continue;
+        }
+        let close = bracket_end(bytes, end);
+        match drop_columns(&formula[end..close], columns, &gone) {
+            Some(Some(rewritten)) => {
+                out.push_str(name);
+                out.push_str(&rewritten);
+            }
+            Some(None) => out.push_str("#REF!"),
+            None => out.push_str(&formula[i..close]),
+        }
+        i = close;
+    }
+    (out != formula).then_some(out)
+}
+
+/// One structured reference's brackets after columns `gone` (lower case)
+/// leave a table whose columns were `columns`: `None` when it keeps them
+/// all, `Some(None)` when it reads `#REF!`.
+fn drop_columns(text: &str, columns: &[String], gone: &HashSet<String>) -> Option<Option<String>> {
+    if text.len() < 2 || !text.ends_with(']') {
+        return None;
+    }
+    let inner = &text[1..text.len() - 1];
+    let bytes = inner.as_bytes();
+    // `[Price]` or `[@Price]`: one column, or a specifier such as `[#All]`.
+    if bracket_at(bytes).is_none() {
+        let raw = inner.strip_prefix('@').unwrap_or(inner);
+        if raw.is_empty() || raw.starts_with('#') {
+            return None;
+        }
+        return gone.contains(&unescape(raw).to_lowercase()).then_some(None);
+    }
+    // Each `[...]` item's range in `inner`, and whether `:` joins it to the
+    // item before it as a column span.
+    let mut items: Vec<(std::ops::Range<usize>, bool)> = Vec::new();
+    let mut joined = false;
+    let mut j = 0;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'[' => {
+                let end = bracket_end(bytes, j);
+                items.push((j..end, joined));
+                joined = false;
+                j = end;
+            }
+            b':' => {
+                joined = true;
+                j += 1;
+            }
+            b',' => {
+                joined = false;
+                j += 1;
+            }
+            _ => j += 1,
+        }
+    }
+    let raw = |range: &std::ops::Range<usize>| {
+        inner
+            .get(range.start + 1..range.end.saturating_sub(1))
+            .unwrap_or_default()
+    };
+    let position = |name: &str| {
+        columns
+            .iter()
+            .position(|column| column.to_lowercase() == name.to_lowercase())
+    };
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut k = 0;
+    while k < items.len() {
+        let first = &items[k].0;
+        let name = unescape(raw(first));
+        if let Some((second, true)) = items.get(k + 1) {
+            let other = unescape(raw(second));
+            if let (Some(a), Some(b)) = (position(&name), position(&other)) {
+                let kept: Vec<&String> = columns[a.min(b)..=a.max(b)]
+                    .iter()
+                    .filter(|column| !gone.contains(&column.to_lowercase()))
+                    .collect();
+                let (Some(low), Some(high)) = (kept.first(), kept.last()) else {
+                    return Some(None);
+                };
+                let (left, right) = if a <= b { (low, high) } else { (high, low) };
+                if left.to_lowercase() != name.to_lowercase() {
+                    edits.push((first.clone(), format!("[{}]", escape(left))));
+                }
+                if right.to_lowercase() != other.to_lowercase() {
+                    edits.push((second.clone(), format!("[{}]", escape(right))));
+                }
+            }
+            k += 2;
+            continue;
+        }
+        if !raw(first).starts_with('#') && gone.contains(&name.to_lowercase()) {
+            return Some(None);
+        }
+        k += 1;
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    let mut out = inner.to_owned();
+    for (range, name) in edits.into_iter().rev() {
+        out.replace_range(range, &name);
+    }
+    Some(Some(format!("[{out}]")))
+}
+
+/// Past the `]` closing the bracket that opens at `start`; a `'` escapes a
+/// bracket, `#` or `'` after it.
+fn bracket_end(bytes: &[u8], start: usize) -> usize {
+    let mut depth = 0;
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' if matches!(bytes.get(i + 1), Some(b'[' | b']' | b'#' | b'\'')) => i += 1,
+            b'[' => depth += 1,
+            b']' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+        if depth == 0 {
+            break;
+        }
+    }
+    i
+}
+
+/// Where the first unescaped `[` in `bytes` is.
+fn bracket_at(bytes: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' if matches!(bytes.get(i + 1), Some(b'[' | b']' | b'#' | b'\'')) => i += 2,
+            b'[' => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// A column name as a structured reference reads it, `'` escapes removed.
+fn unescape(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\''
+            && let Some(&next) = chars.peek()
+            && matches!(next, '[' | ']' | '#' | '\'')
+        {
+            out.push(next);
+            chars.next();
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// A column name as a structured reference writes it.
+fn escape(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if matches!(ch, '[' | ']' | '#' | '\'') {
+            out.push('\'');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// Which way a row or column edit runs.

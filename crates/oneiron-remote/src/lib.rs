@@ -5,7 +5,9 @@
 //!
 //! One [`OneironClient`] with two backends and ONE semantic switch between
 //! them. `open` binds an embedded vault; `connect` binds a remote
-//! `oneiron-server`. Every public verb below enters through the same
+//! `oneiron-server`, and `connect_in_process` binds one this process runs
+//! through an [`InProcessTransport`], the remote backend with no socket
+//! (OF-237). Every public verb below enters through the same
 //! dispatcher, so the N-API and PyO3 layers convert language values into
 //! engine DTOs, call this client, and convert the result back. Neither of them
 //! branches on backend, holds a route table, or contains an HTTP client.
@@ -37,6 +39,8 @@ mod agent_verbs;
 mod caps;
 mod embedded;
 mod error;
+// OF-237: a served client over a server this process runs.
+mod in_process;
 mod invocation;
 mod lens_frames;
 pub mod llm;
@@ -57,6 +61,7 @@ pub use crate::caps::{
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
+pub use crate::in_process::{InProcessReply, InProcessRequest, InProcessTransport};
 pub use crate::invocation::pending_invocation;
 pub use crate::lens_frames::{CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest};
 use crate::remote::RemoteClient;
@@ -254,18 +259,46 @@ impl OneironClient {
         })
     }
 
+    /// A new handle whose every verb runs inside the off-record session
+    /// `session_ref` names (OF-063, FIX 1668). It binds this handle's
+    /// principal: an embedded handle's actor, the app host's, and a
+    /// connected handle's credential, which the server checks. It grants
+    /// nothing: inside an anonymous session that principal is verified in,
+    /// a refusal writes no receipt; anywhere else the verbs record as
+    /// before.
+    pub fn in_off_record_session(&self, session_ref: &str) -> Result<Self, MemoryError> {
+        let session_ref = session_ref.trim();
+        if session_ref.is_empty() {
+            return Err(crate::error::bad_request(
+                "invalid off-record session reference",
+                &["Name the session by the ref it was entered under."],
+            ));
+        }
+        Ok(Self {
+            backend: match &self.backend {
+                Backend::Embedded(embedded) => {
+                    Backend::Embedded(embedded.in_off_record_session(session_ref)?)
+                }
+                Backend::Remote(remote) => {
+                    Backend::Remote(remote.in_off_record_session(session_ref)?)
+                }
+            },
+        })
+    }
+
     /// Whether this handle talks to a remote server.
     #[must_use]
     pub fn is_remote(&self) -> bool {
         matches!(self.backend, Backend::Remote(_))
     }
 
-    /// The origin a connected handle talks to; `None` when embedded.
+    /// The origin a connected handle talks to; `None` when embedded, and
+    /// for a handle served in process, which dials no origin.
     #[must_use]
     pub fn base_url(&self) -> Option<&str> {
         match &self.backend {
             Backend::Embedded(_) => None,
-            Backend::Remote(remote) => Some(remote.base_url()),
+            Backend::Remote(remote) => remote.base_url(),
         }
     }
 

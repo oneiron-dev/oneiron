@@ -76,6 +76,12 @@ pub enum CodeError {
         scheme: String,
         host: String,
     },
+    /// A code step was cancelled while it ran: its owner stopped the
+    /// callable skill it runs, or the step that started it. The step
+    /// failed; nothing it returned counts and nothing it proposed is
+    /// admitted. Not retryable.
+    #[error("code_step_cancelled")]
+    CodeStepCancelled,
     #[error("code emission is missing dreamer run id")]
     CodeEmissionMissingDreamerRunId,
     #[error("code review context is required")]
@@ -242,6 +248,7 @@ impl CodeError {
             Self::MicroVmCredentialDestinationDenied { .. } => {
                 ErrorKind::MicroVmCredentialDestinationDenied
             }
+            Self::CodeStepCancelled => ErrorKind::CodeStepCancelled,
             Self::CodeEmissionMissingDreamerRunId => ErrorKind::CodeEmissionMissingDreamerRunId,
             Self::CodeReviewContextRequired => ErrorKind::CodeReviewContextRequired,
             Self::CodeReviewUnsupportedOperation => ErrorKind::CodeReviewUnsupportedOperation,

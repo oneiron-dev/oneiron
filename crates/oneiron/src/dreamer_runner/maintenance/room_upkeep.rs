@@ -1,16 +1,19 @@
 //! Room upkeep (ARCH-0067 §8, ARCH-0079, OF-417): "The engine performs every
-//! room's mechanical upkeep, and a host does the speaking part." The Coach's
-//! nightly pass reads each room through its own scoped read, so a room no
-//! grant names it is never read, and takes refs and times only, never a
-//! turn's words ([`crate::workspace_roster::room_upkeep_input`]). It decides
+//! room's mechanical upkeep, and a host does the speaking part." The Coach is
+//! born with a read of room refs and turn times only (the Engine's OF-417
+//! ruling): its [`RoomReach`] reads each room as the Dreamer reads it and
+//! keeps refs and times alone ([`crate::workspace_roster::room_upkeep_input`]),
+//! never a turn's words or a member's text. No grant names it, and the
+//! Coach's own scoped read still reads only what a grant names. It decides
 //! with no model call:
 //!
-//! - **Summary.** A room whose readable turns moved since the Coach last
-//!   declared its summary is declared again on the existing scope-summary
-//!   path, and the Dreamer writes the words. The declaration lands on no turn
-//!   and posts nothing. It is made only when the room's whole conversation is
-//!   what the Coach read, so it never selects a turn the Coach could not
-//!   read. An edit inside the same turns is the summary's own re-derivation.
+//! - **Summary.** A room whose turns moved since the Coach last declared its
+//!   summary is declared again on the existing scope-summary path, and the
+//!   Dreamer writes the words under its own read. The declaration lands on no
+//!   turn and posts nothing. It is made only when the room's whole
+//!   conversation is what the Dreamer reads, so a summary never stands for
+//!   turns its writer could not read. An edit inside the same turns is the
+//!   summary's own re-derivation.
 //! - **Nudge.** A thread with open TASKs, quiet for [`ROOM_NUDGE_IDLE_SECS`],
 //!   gets one Proposed finding addressed to the room's host, citing the
 //!   thread and its TASKs. A room with no host gets none. The Coach never
@@ -19,6 +22,7 @@ use std::collections::BTreeSet;
 
 use super::coach::{COACH_ROOM_NUDGE_PREDICATE, COACH_ROOM_UPKEEP_FACET};
 use super::proposals;
+use crate::claim::{ScopedRead, ScopedReadActorKey};
 use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
@@ -39,25 +43,46 @@ const STATE_DOMAIN: &[u8] = b"oneiron:coach-room-upkeep-summary:v1";
 const DECLARED: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::COACH_ROOM_UPKEEP_DECLARED);
 
-/// One pass over every room the Coach reads. A room whose read or write
+/// The Coach's room reach: the refs and turn times of the rooms and turns
+/// the Dreamer reads, under the Dreamer's relationship gate, so the Coach
+/// sees no turn the Dreamer's summary could not read. The Dreamer's read
+/// stays inside; only [`room_upkeep_input`]'s refs and times come out, and
+/// only a leased `coach.room_upkeep` attempt opens it.
+struct RoomReach<'v>(ScopedRead<'v>);
+
+impl<'v> RoomReach<'v> {
+    fn for_attempt(vault: &'v Vault, attempt: &DreamerAdmittedAttempt) -> Result<Self> {
+        vault.require_coach_attempt(attempt, COACH_ROOM_UPKEEP_FACET)?;
+        let dreamer = vault.dreamer_authority()?;
+        let key = ScopedReadActorKey::with_actor_class(
+            dreamer.entity_ref().to_hex(),
+            dreamer.actor_class().gate_actor_class(),
+        )
+        .ok_or_else(|| Error::InvalidConfig("invalid Dreamer read key".into()))?
+        .require_relationship_grants(Some(dreamer.entity_ref()));
+        Ok(Self(vault.scoped_read(key)))
+    }
+
+    /// `room`'s refs and times. A room the Dreamer does not read is a
+    /// missing room.
+    fn input(&self, room: EntityId) -> Result<RoomUpkeepInput> {
+        room_upkeep_input(&self.0, room)
+    }
+}
+
+/// One pass over every room in the Coach's reach. A room whose read or write
 /// fails is left for the next night; the others still run.
 pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
-    vault.require_coach_attempt(attempt, COACH_ROOM_UPKEEP_FACET)?;
+    let reach = RoomReach::for_attempt(vault, attempt)?;
     let envelope =
         proposals::run_tray_envelope(vault, COACH_ROOM_UPKEEP_FACET, attempt.status.attempt.id)?;
     let coach = vault.coach_authority()?;
-    // The Coach's own read: it reads a room only where a grant names it.
-    let key = vault
-        .memory(coach.entity_ref(), coach.actor_class())
-        .read_key()
-        .map_err(|error| Error::InvalidConfig(error.message))?;
-    let read = vault.scoped_read(key);
     let rooms = upkeep_rooms(vault)?;
     let mut declared = false;
     for room in &rooms {
-        let input = match room_upkeep_input(&read, *room) {
+        let input = match reach.input(*room) {
             Ok(input) => input,
-            // A room the Coach does not read.
+            // A room outside the Coach's reach.
             Err(Error::EntityNotFound) => continue,
             Err(error) => {
                 tracing::warn!(kind = ?error.kind(), "room upkeep did not read a room");
@@ -95,11 +120,12 @@ fn upkeep(
         .iter()
         .filter(|thread| {
             !thread.open_tasks.is_empty()
+                && !thread.waiting_for_person(now)
                 && now.saturating_sub(thread.last_message_at) >= ROOM_NUDGE_IDLE_SECS
         })
         .collect();
     // Resolved before the write: the host's presence read opens its own
-    // snapshot. Presence is the session of the newest turn the Coach read.
+    // snapshot. Presence is the session of the newest turn in the reach.
     let host = if quiet.is_empty() {
         None
     } else {
@@ -117,9 +143,10 @@ fn upkeep(
     })
 }
 
-/// Declares the room's summary when the turns the Coach reads there moved
-/// since its last declaration, and only when the room's whole conversation is
-/// those turns. Returns whether it declared.
+/// Declares the room's summary when the turns in the Coach's reach there
+/// moved since its last declaration, and only when the room's whole
+/// conversation is those turns: every one the Dreamer reads. Returns whether
+/// it declared.
 fn declare_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -198,7 +225,7 @@ fn nudge_in_txn(
     )
 }
 
-/// The room and the turns the Coach read there, as one hash.
+/// The room and the turns in the Coach's reach there, as one hash.
 fn source_state(input: &RoomUpkeepInput) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     hash.update(STATE_DOMAIN);

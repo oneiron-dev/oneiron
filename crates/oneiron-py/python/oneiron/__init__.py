@@ -198,6 +198,16 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
+    def in_off_record_session(self, session_ref: str) -> "Oneiron":
+        """Returns a NEW handle whose every verb runs inside an off-record session.
+
+        It binds this handle's principal: the app host's actor when embedded,
+        the credential's when connected (OF-063). It grants nothing: inside an
+        anonymous session that principal is verified in, a refusal writes no
+        receipt; anywhere else verbs record as before.
+        """
+        return Oneiron(_translate(lambda: self._client.in_off_record_session(session_ref)))
+
     def last_receipt_ref(self) -> str | None:
         """The lasting call receipt the last verb's reply stated, as ``call:<32hex>``.
 
@@ -515,6 +525,9 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
+        def residence(self) -> "Oneiron._VaultResidenceVerbs":
+            return Oneiron._VaultResidenceVerbs(self._client)
+        @property
         def records(self) -> "Oneiron._VaultRecordsVerbs":
             return Oneiron._VaultRecordsVerbs(self._client)
         @property
@@ -590,7 +603,7 @@ class Oneiron:
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs":
             return Oneiron._VaultDecisionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
-            """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
+            """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
         def remember(self, input: dict[str, Any]) -> Any:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
@@ -689,7 +702,7 @@ class Oneiron:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
             return json.loads(_translate(lambda: self._client.vault_claims_admit(json.dumps(input, allow_nan=False))))
         def seed(self, input: dict[str, Any]) -> Any:
-            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
+            """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -857,7 +870,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def audit(self, spec):
-            """One page of the dated authority log audit: grants, revokes and confirms, for the owner."""
+            """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
             return json.loads(_translate(lambda: self._client.vault_authority_audit(json.dumps(spec))))
         @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs":
@@ -966,6 +979,21 @@ class Oneiron:
         def mint_slip(self, spec):
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
             return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
+    class _VaultResidenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mode(self, spec):
+            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
+            return json.loads(_translate(lambda: self._client.vault_residence_mode(json.dumps(spec))))
+        def open(self, spec):
+            """Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."""
+            return json.loads(_translate(lambda: self._client.vault_residence_open(json.dumps(spec))))
+        def index(self, spec):
+            """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
+            return json.loads(_translate(lambda: self._client.vault_residence_index(json.dumps(spec))))
+        def prune(self, spec):
+            """Drops the opened-item caches one of the owner's machines last touched before a time."""
+            return json.loads(_translate(lambda: self._client.vault_residence_prune(json.dumps(spec))))
     class _VaultRecordsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1738,6 +1766,9 @@ class Oneiron:
         def schema(self, spec):
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
             return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
+        def call_status(self, spec):
+            """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
+            return json.loads(_translate(lambda: self._client.connector_call_status(json.dumps(spec))))
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
             return Oneiron._ConnectorOutboundVerbs(self._client)

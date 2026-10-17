@@ -99,6 +99,10 @@ pub enum AgentVerb {
     VaultSharedCloseEraseAsk,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
+    VaultResidenceMode,
+    VaultResidenceOpen,
+    VaultResidenceIndex,
+    VaultResidencePrune,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
     VaultResearchBind,
@@ -253,6 +257,7 @@ pub enum AgentVerb {
     ConnectorStatus,
     ConnectorCall,
     ConnectorSchema,
+    ConnectorCallStatus,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -446,6 +451,10 @@ impl AgentVerb {
         Self::VaultSharedCloseEraseAsk,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
+        Self::VaultResidenceMode,
+        Self::VaultResidenceOpen,
+        Self::VaultResidenceIndex,
+        Self::VaultResidencePrune,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
         Self::VaultResearchBind,
@@ -600,6 +609,7 @@ impl AgentVerb {
         Self::ConnectorStatus,
         Self::ConnectorCall,
         Self::ConnectorSchema,
+        Self::ConnectorCallStatus,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -796,6 +806,10 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
+            Self::VaultResidenceMode => "vault.residence.mode",
+            Self::VaultResidenceOpen => "vault.residence.open",
+            Self::VaultResidenceIndex => "vault.residence.index",
+            Self::VaultResidencePrune => "vault.residence.prune",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultResearchBind => "vault.research.bind",
@@ -954,6 +968,7 @@ impl AgentVerb {
             Self::ConnectorStatus => "connector.status",
             Self::ConnectorCall => "connector.call",
             Self::ConnectorSchema => "connector.schema",
+            Self::ConnectorCallStatus => "connector.call_status",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -1146,6 +1161,10 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultResidenceMode
+                | Self::VaultResidenceOpen
+                | Self::VaultResidenceIndex
+                | Self::VaultResidencePrune
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -1300,6 +1319,7 @@ impl AgentVerb {
                 | Self::ConnectorStatus
                 | Self::ConnectorCall
                 | Self::ConnectorSchema
+                | Self::ConnectorCallStatus
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1500,6 +1520,10 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultResidenceMode
+                | Self::VaultResidenceOpen
+                | Self::VaultResidenceIndex
+                | Self::VaultResidencePrune
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -1654,6 +1678,7 @@ impl AgentVerb {
                 | Self::ConnectorStatus
                 | Self::ConnectorCall
                 | Self::ConnectorSchema
+                | Self::ConnectorCallStatus
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1882,6 +1907,10 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultResidenceMode
+                | Self::VaultResidenceOpen
+                | Self::VaultResidenceIndex
+                | Self::VaultResidencePrune
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -2036,6 +2065,7 @@ impl AgentVerb {
                 | Self::ConnectorStatus
                 | Self::ConnectorCall
                 | Self::ConnectorSchema
+                | Self::ConnectorCallStatus
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -2185,6 +2215,9 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultResidenceMode
+                | Self::VaultResidenceOpen
+                | Self::VaultResidencePrune
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -2465,6 +2498,10 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultResidenceMode => &["spec"],
+            Self::VaultResidenceOpen => &["spec"],
+            Self::VaultResidenceIndex => &["spec"],
+            Self::VaultResidencePrune => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -2619,6 +2656,7 @@ impl AgentVerb {
             Self::ConnectorStatus => &["spec"],
             Self::ConnectorCall => &["spec"],
             Self::ConnectorSchema => &["spec"],
+            Self::ConnectorCallStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -2813,6 +2851,10 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultResidenceMode => &["spec"],
+            Self::VaultResidenceOpen => &["spec"],
+            Self::VaultResidenceIndex => &["spec"],
+            Self::VaultResidencePrune => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -2967,6 +3009,7 @@ impl AgentVerb {
             Self::ConnectorStatus => &["spec"],
             Self::ConnectorCall => &["spec"],
             Self::ConnectorSchema => &["spec"],
+            Self::ConnectorCallStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -3261,7 +3304,7 @@ impl AgentVerb {
                 "Checks one pack connection with the engine's fixed read-only provider call for its declared check."
             }
             Self::VaultAuthorityAudit => {
-                "One page of the dated authority log audit: grants, revokes and confirms, for the owner."
+                "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
@@ -3335,6 +3378,18 @@ impl AgentVerb {
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
+            Self::VaultResidenceMode => {
+                "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."
+            }
+            Self::VaultResidenceOpen => {
+                "Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."
+            }
+            Self::VaultResidenceIndex => {
+                "The thin index one of the owner's machines holds, window by window: what exists, never a body."
+            }
+            Self::VaultResidencePrune => {
+                "Drops the opened-item caches one of the owner's machines last touched before a time."
             }
             Self::VaultRecordsErasePreview => {
                 "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
@@ -3740,6 +3795,9 @@ impl AgentVerb {
             Self::ConnectorSchema => {
                 "One catalogued connector tool's approved input schema, as the caller's own grant resolves it."
             }
+            Self::ConnectorCallStatus => {
+                "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."
+            }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the run's own browser session and observes the page."
             }
@@ -3821,7 +3879,7 @@ impl AgentVerb {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
             }
             Self::VaultCommit => {
-                "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."
+                "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
             }
             Self::VaultRemember => {
                 "Commits one claim through the gate, the same as vault.claims.upsert."
@@ -3956,7 +4014,7 @@ impl AgentVerb {
                 "Reads the status of one consolidation attempt by its durable job reference."
             }
             Self::VaultClaimsSeed => {
-                "Seeds claims through their individual gates, forced proposed, returning one receipt per claim."
+                "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
             }
             Self::ConnectorOutboundSchedule => {
                 "Schedules one send through a granted outbound connector, gated and held for delivery."

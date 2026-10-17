@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::super::{BudgetExhaustionPolicy, BudgetGuard, DispatchBinding, ModelId, ModelLocality};
 use super::declaration::LeaseUnit;
+use crate::EntityId;
+use crate::agent_dispatch::SpendScopeId;
 
 /// Who pays the provider for a call an offer serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -22,6 +24,45 @@ pub enum Payer {
     CustomerSeat,
     /// The vault's own node or a paired device; nobody per call.
     Local,
+}
+
+/// Who funds a call that a room's root spend scope pays for (OF-531): the
+/// PERSON whose consent the root carries, that root, and the billing account
+/// the call bills. The host binds it before the run starts, from the scope's
+/// root and its own account map; a caller never names it. Which provider
+/// credential sends the call stays [`Payer`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PayerPerson {
+    pub person: EntityId,
+    /// The root spend scope whose payer consent names `person`, for audit.
+    pub root_scope: SpendScopeId,
+    pub account: PayerAccount,
+}
+
+/// The billing account a room-paid call bills.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "billed", rename_all = "snake_case")]
+pub enum PayerAccount {
+    /// The PERSON's own billing account, as the host resolved it.
+    Person { account: String },
+    /// The vault's own account, the one owner spend bills: the PERSON is one
+    /// of the vault's live Owners, so it is that PERSON's own account.
+    VaultOwner,
+    /// The vault owner's, which the owners approved on payer-needed ask
+    /// `ask` because the PERSON's own account could not be resolved.
+    VaultApproved { ask: u64 },
+}
+
+impl PayerAccount {
+    /// Which account the call bills, as a code.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Person { .. } => "person",
+            Self::VaultOwner => "vault_owner",
+            Self::VaultApproved { .. } => "vault_approved",
+        }
+    }
 }
 
 /// Where the credential behind an offer sits while the call runs.
@@ -197,6 +238,12 @@ pub struct OfferBinding {
     pub custody: KeyCustody,
     /// Token prices in the units of the lines this offer's calls land on.
     pub rates: Vec<UnitRate>,
+    /// Who funds the call when a room's root spend scope pays for it. The
+    /// host binds none; a funded run binds its own payer into each offer it
+    /// admits and gates, so the offer's identity carries it. `None` for a
+    /// call no room pays for, which the vault owner funds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payer_person: Option<PayerPerson>,
 }
 
 impl OfferBinding {

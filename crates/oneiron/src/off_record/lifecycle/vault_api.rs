@@ -81,14 +81,31 @@ impl Vault {
     /// Enters an immutable anonymous session. Only explicit session-bound
     /// reads are available. Operations requiring stored content or audit
     /// evidence refuse without writing; close leaves no transcript to delete.
-    /// It names no entering actor, so its no-record exception keeps the
-    /// unchecked rule (see [`Self::off_record_session_is_anonymous_for`]).
+    /// It names no entering actor and mints none, so no call can bind it: a
+    /// call naming it keeps its receipts as anywhere else (FIX 2137, see
+    /// [`Self::off_record_session_is_anonymous_for`]). A door that
+    /// authenticated a principal enters through
+    /// [`Self::enter_anonymous_session_for`].
     pub fn enter_anonymous_session(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
     ) -> Result<OffRecordSessionRecord> {
         let entry = self.enter_anonymous_session_entry(session_ref, backend, None)?;
+        Ok(session_entry_state(&entry)?.record.clone())
+    }
+
+    /// [`Self::enter_anonymous_session`] mapped to `principal`, the person or
+    /// actor the entering door authenticated (OF-063, FIX 2137): the stretch
+    /// keeps it as the one caller its no-record exception serves. An
+    /// embedded host passes its app host's principal.
+    pub fn enter_anonymous_session_for(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        principal: crate::EntityId,
+    ) -> Result<OffRecordSessionRecord> {
+        let entry = self.enter_anonymous_session_entry(session_ref, backend, Some(principal))?;
         Ok(session_entry_state(&entry)?.record.clone())
     }
 
@@ -132,23 +149,24 @@ impl Vault {
     /// OF-063's reference-refusal receipts both read, judged afresh each
     /// time either decides to write nothing. `principal` is the person or
     /// actor the request's credential names (its holder), whatever class
-    /// acts under it; `None` for a credential that names none.
+    /// acts under it, or the actor a host bound the surface to; `None` for
+    /// a credential that names none.
     ///
     /// The live registry must hold the session in [`OffRecordMode::Anonymous`],
     /// and the principal must be in it (OF-063; a call, canon silent): on its
     /// room's roster now, by the room bind (`bind_for`, which checks the
     /// roster before the name), or, for a stretch entered alone, the actor
-    /// its entering door recorded (`entered_by`). Only a caller whose
-    /// principal provably differs, one naming another's anonymous session,
-    /// has its call and refusal receipts written as anywhere else.
+    /// its entering door recorded (`entered_by`). Every other caller has its
+    /// call and refusal receipts written as anywhere else.
     ///
-    /// What cannot be proven keeps the unchecked rule, so a call that might
-    /// be a legitimate anonymous one records nothing: a credential that
-    /// names no principal (the host root, an OAuth relay, the legacy shared
-    /// secret), a stretch entered alone through a door that named no actor
-    /// ([`Self::enter_anonymous_session`],
-    /// `OffRecordSessionVault::enter_anonymous`, the embedded anonymous
-    /// chat), and a session the registry cannot be asked about.
+    /// What cannot be proven binds nothing (Engine ruling 2137/2271, 10-18:
+    /// map to the session's authenticated principal when there is one,
+    /// otherwise refuse session binding, never mint a placeholder
+    /// participant): a credential that names no principal (the host root, an
+    /// OAuth relay, the legacy shared secret), a stretch entered alone through
+    /// a door that named no actor ([`Self::enter_anonymous_session`],
+    /// `OffRecordSessionVault::enter_anonymous`, [`Self::open_anonymous_chat`]),
+    /// and a session the registry cannot be asked about.
     #[must_use]
     pub fn off_record_session_is_anonymous_for(
         &self,
@@ -156,16 +174,14 @@ impl Vault {
         principal: Option<crate::EntityId>,
     ) -> bool {
         let session_ref = session_ref.trim();
-        let record = match self.off_record_session(session_ref) {
-            Ok(Some(record)) => record,
-            Ok(None) => return false,
-            Err(_) => return true,
+        let Ok(Some(record)) = self.off_record_session(session_ref) else {
+            return false;
         };
         if record.mode != OffRecordMode::Anonymous {
             return false;
         }
         let Some(principal) = principal else {
-            return true;
+            return false;
         };
         if record.room.is_some() {
             return self
@@ -175,7 +191,7 @@ impl Vault {
         }
         record
             .entered_by
-            .is_none_or(|entered_by| entered_by == *principal.as_bytes())
+            .is_some_and(|entered_by| entered_by == *principal.as_bytes())
     }
 
     /// Whether any off-record stretch is open. A host that would write this

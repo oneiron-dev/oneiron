@@ -26,6 +26,7 @@ use oneiron::{
 };
 
 use super::CHAT_ROLE;
+use super::payer_funding::{PayerFault, scope_funding};
 use crate::models::ModelRuntime;
 
 /// The purpose a workflow step's calls are metered and routed under.
@@ -67,12 +68,16 @@ pub(super) struct StepOutput {
     pub(super) confession: Option<Vec<ObjectiveConfession>>,
 }
 
-/// The objectives a step is asked to confess against: the one its task names,
+/// The objectives a step is asked to confess against: the caller's, verbatim,
+/// when the dispatch carries them; else the one its task names,
 /// whitespace folded, when it fits a seal objective. The spawn's planned need
 /// comes first, then the step's briefing, then the definition's `desc` when
 /// that is what the step was asked. A task too long for one objective asks
 /// no confession: an objective is never cut or made up.
 fn step_objectives(step: &AgentDispatchStatus, request: Option<&str>) -> Vec<String> {
+    if let Some(objectives) = &step.input.objectives {
+        return objectives.clone();
+    }
     step.input
         .plan
         .as_ref()
@@ -220,7 +225,7 @@ impl StepRunner {
         if !objectives.is_empty() {
             messages.push(message(LlmMessageRole::User, confession_ask(&objectives)));
         }
-        let bytes = self.generate(
+        let bytes = self.generate_in(
             runtime,
             vault,
             ModelStep {
@@ -231,6 +236,7 @@ impl StepRunner {
                 messages,
                 response_format: ResponseFormat::Text,
             },
+            step.input.room.is_some(),
         )?;
         let confession = if objectives.is_empty() {
             None
@@ -245,6 +251,18 @@ impl StepRunner {
         runtime: &tokio::runtime::Runtime,
         vault: &Vault,
         input: ModelStep<'_>,
+    ) -> Result<Vec<u8>, StepFault> {
+        self.generate_in(runtime, vault, input, false)
+    }
+
+    /// [`Self::generate`] for a step that knows whether it works in a room
+    /// (`room`): a room-bound step's root scope must name its payer (OF-531).
+    fn generate_in(
+        &self,
+        runtime: &tokio::runtime::Runtime,
+        vault: &Vault,
+        input: ModelStep<'_>,
+        room: bool,
     ) -> Result<Vec<u8>, StepFault> {
         let ModelStep {
             definition,
@@ -327,6 +345,29 @@ impl StepRunner {
         // on top of that bound, not inside it.
         let dispatcher = AgentDispatcher::new(vault);
         let lease = dispatcher.spend_scope_for_attempt(attempt.id)?;
+        // OF-531: a room-paid step bills its root payer's own account, bound
+        // before anything is reserved, never the vault owner's by default.
+        // A payer this host cannot bill holds the step on the owners'
+        // payer-needed ask: it is retried, and a try after their yes bills
+        // the vault. Nothing went out, so the retry replays only what the
+        // earlier tries spent.
+        let payer = match scope_funding(vault, lease.as_ref(), room) {
+            Ok(payer) => payer,
+            Err(fault) => {
+                let retryable = matches!(fault, PayerFault::Needed { .. });
+                if retryable {
+                    self.spent
+                        .lock()
+                        .expect("step spend mutex poisoned")
+                        .insert(attempt.id, charged.saturating_mul(reserve));
+                }
+                return Err(StepFault {
+                    retryable,
+                    exhausted: false,
+                    error: Error::InvalidConfig(format!("workflow step {fault}")),
+                });
+            }
+        };
         let budget_units = match &lease {
             Some(scope) => self.budget_units.min(
                 charged
@@ -356,7 +397,7 @@ impl StepRunner {
         // admitted on its own permit, sent through the run's gate and
         // settled. An answer pays its tokens, or the reservation when it
         // reports none; a rung that went out and failed pays its reservation.
-        let run = self.models.undeclared_run(run_id, guard);
+        let run = self.models.funded_run(run_id, guard, payer);
         let generated = runtime.block_on(call.ladder.generate_served(&run, request, None));
         // What this try spent goes on the lease whatever the call answered;
         // the replayed tries recorded their own.

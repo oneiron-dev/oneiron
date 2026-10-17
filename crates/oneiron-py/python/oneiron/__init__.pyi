@@ -295,6 +295,7 @@ class Oneiron:
     def pair(cls, link: str) -> tuple["Oneiron", str]: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
+    def in_off_record_session(self, session_ref: str) -> "Oneiron": ...
     def last_receipt_ref(self) -> str | None: ...
     def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
         """Resends a PENDING_ASK call under its invocation; the reply is the verb's shared wire JSON."""
@@ -439,6 +440,8 @@ class Oneiron:
         @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
+        def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
+        @property
         def records(self) -> "Oneiron._VaultRecordsVerbs": ...
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
@@ -488,8 +491,8 @@ class Oneiron:
         def questions(self) -> "Oneiron._VaultQuestionsVerbs": ...
         @property
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs": ...
-        def commit(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
-            """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
+        def commit(self, input: Facade.CommitRequest) -> list[Facade.CommitOutcome]:
+            """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
         def remember(self, input: Facade.ClaimInput) -> Facade.CommitReceipt:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
         def forget(self, input: Facade.ForgetRequest) -> list[Facade.CommitReceipt]:
@@ -549,8 +552,8 @@ class Oneiron:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
-        def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
-            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
+        def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitOutcome]:
+            """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
     class _VaultReceiptsVerbs:
         def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
@@ -638,7 +641,7 @@ class Oneiron:
             """The owner stops one connector event subscription; the agent's key for the channel stays."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
-            """One page of the dated authority log audit: grants, revokes and confirms, for the owner."""
+            """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
         @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs": ...
     class _VaultAuthorityHandoffAlarmsVerbs:
@@ -704,6 +707,15 @@ class Oneiron:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+    class _VaultResidenceVerbs:
+        def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeChanged:
+            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
+        def open(self, spec: Facade.ResidenceOpenRequest) -> Facade.ResidenceOpened:
+            """Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."""
+        def index(self, spec: Facade.ResidenceMachineRequest) -> Facade.ResidenceIndex:
+            """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
+        def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruned:
+            """Drops the opened-item caches one of the owner's machines last touched before a time."""
     class _VaultRecordsVerbs:
         def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
@@ -1121,6 +1133,8 @@ class Oneiron:
             """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+        def call_status(self, spec: Facade.ConnectorCallStatusRequest) -> Facade.ConnectorCallStatus:
+            """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs": ...
     class _ConnectorOutboundVerbs:

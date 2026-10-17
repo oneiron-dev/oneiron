@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 303 facade rows, 1172 declarations.
-Inputs: 260 of 303 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 261 of 303 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 308 facade rows, 1192 declarations.
+Inputs: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -468,6 +468,10 @@ ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStatePr
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState
+class ShapeApplyRun(TypedDict):
+    run_id: str
+    root: str
+    items: list[str]
 class ShapeApplyReceipt(TypedDict):
     frontier: str
     seed_id: str
@@ -475,6 +479,7 @@ class ShapeApplyReceipt(TypedDict):
     started_at: int
     items: list[ShapeApplyItem]
     done: bool
+    run: ShapeApplyRun
 class ShapeRead(TypedDict):
     seed: NotRequired[StoredShapeSeed | None]
     live: ShapeSeed
@@ -1198,6 +1203,9 @@ class WitnessMessage(TypedDict):
     metadata: NotRequired[Any | None]
     is_visible: bool
     order: int
+class WitnessAssertions(TypedDict):
+    cited: list[RecordRef]
+    created: list[RecordRef]
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
@@ -1205,6 +1213,7 @@ class WitnessTurn(TypedDict):
     thread_audience: NotRequired[list[EntityId] | None]
     messages: list[WitnessMessage]
     occurred_at: int
+    assertions: NotRequired[WitnessAssertions]
 class ClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str
@@ -2187,11 +2196,20 @@ class AuthorityAuditRow(TypedDict):
     fold_valid: bool
     issue_codes: NotRequired[list[str]]
 AuthorityAuditOrder = Literal["entry_ref_ascending"]
+class ColdAuthorityAuditRow(TypedDict):
+    entry_ref: EntityId
+    entry_hash: str
+    checkpoint: str
+    signer_key: str
+    seq: int
+    parents: list[str]
+    fold_valid: bool
 class AuthorityAuditPage(TypedDict):
     rows: list[AuthorityAuditRow]
     next_after: NotRequired[EntityId | None]
     order: AuthorityAuditOrder
     scanned: int
+    cold_attested: NotRequired[list[ColdAuthorityAuditRow]]
 class MeshPathReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 MeshPathDirection = Literal["inbound", "outbound"]
@@ -2492,6 +2510,40 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+ResidenceModeName = Literal["opened", "all"]
+class ResidenceModeRequest(TypedDict):
+    machine: EntityId
+    mode: ResidenceModeName
+class ResidenceModeChanged(TypedDict):
+    mode: ResidenceModeName
+    retained: list[str]
+    unsynced: list[str]
+    pruned_items: int
+class ResidenceOpenRequest(TypedDict):
+    machine: EntityId
+    window: str
+    item: EntityId
+class ResidenceOpened(TypedDict):
+    item: EntityId
+    window: str
+    residence: str
+    bytes: int
+class ResidenceMachineRequest(TypedDict):
+    machine: EntityId
+class ResidenceIndexEntry(TypedDict):
+    entity_id: str
+    title: NotRequired[str | None]
+    learned_at: int
+class ResidenceIndexWindowView(TypedDict):
+    window: str
+    items: list[ResidenceIndexEntry]
+class ResidenceIndex(TypedDict):
+    windows: list[ResidenceIndexWindowView]
+class ResidencePruneRequest(TypedDict):
+    machine: EntityId
+    before: int
+class ResidencePruned(TypedDict):
+    dropped: int
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):
@@ -5167,8 +5219,38 @@ class ConnectorSchemaReply(TypedDict):
     input_schema: NotRequired[Any | None]
     destructive: NotRequired[bool | None]
     reasons: NotRequired[list[str]]
+class ConnectorCallStatusRequest(TypedDict):
+    call_ref: str
+class ConnectorCallStatusPending(TypedDict):
+    state: Literal["pending"]
+    call_ref: str
+    name: str
+    tool: str
+    held_at_ms: int
+    reasons: NotRequired[list[str]]
+class ConnectorCallStatusSettled(TypedDict):
+    state: Literal["settled"]
+    call_ref: str
+    name: str
+    tool: str
+    reply: ConnectorCallReply
+ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
+RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
+class RecordRefusal(TypedDict):
+    reason: RefusalReason
+    code: str
+    message: str
+    suggestions: list[str]
+    field: str
+class CommitOutcomeLanded(CommitReceipt):
+    outcome: Literal["landed"]
+class CommitOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    refusal: RecordRefusal
+    receipt_ref: NotRequired[str | None]
+CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):
@@ -5426,10 +5508,19 @@ class XlsxArea(TypedDict):
     first: tuple[int, int]
     last: tuple[int, int]
     lock: XlsxLock
+class XlsxTable(TypedDict):
+    name: str
+    first: tuple[int, int]
+    last: tuple[int, int]
+    header_rows: int
+    totals_rows: int
+    columns: list[str]
+    worksheet: bool
 class XlsxSheetView(TypedDict):
     name: str
     cells: list[BodyCell]
     locked: list[XlsxArea]
+    tables: list[XlsxTable]
 class BodyName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
@@ -5934,6 +6025,7 @@ class XlsxSheet(TypedDict):
     name: str
     cells: list[XlsxCell]
     locked: list[XlsxArea]
+    tables: list[XlsxTable]
 class XlsxName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
