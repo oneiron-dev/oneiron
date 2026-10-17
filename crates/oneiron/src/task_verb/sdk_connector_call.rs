@@ -24,7 +24,8 @@ use serde_json::Value;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::memory::{
-    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
+    MemoryResult,
 };
 use crate::outbound_consent::{
     ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, ConnectorToolSchema,
@@ -283,4 +284,114 @@ pub fn connector_schema_read(
             reasons,
         },
     })
+}
+
+/// `connector.call_status`'s input: the call ref a `held` or
+/// `pending_delivery` reply named (FIX 2279).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorCallStatusRequest {
+    /// The `call_ref` a `held` or `pending_delivery` `connector.call` reply
+    /// named, 32 hex.
+    pub call_ref: String,
+}
+
+/// `connector.call_status`'s answer: where one held call stands, for its
+/// caller or the vault's owner. Its reply is `connector.call`'s own, so a
+/// delivered tool's reply stays foreign data under `result`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ConnectorCallStatus {
+    /// Held for consent or governance, or its send still retrying: nothing
+    /// answered it yet. The settler resumes it on its own; read again later.
+    Pending {
+        call_ref: String,
+        name: String,
+        tool: String,
+        /// When it was first held (unix ms); its expiry counts from here.
+        held_at_ms: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reasons: Vec<String>,
+    },
+    /// Settled: the reply its wait settled with, as `connector.call` would
+    /// have answered.
+    Settled {
+        call_ref: String,
+        name: String,
+        tool: String,
+        reply: ConnectorCallReply,
+    },
+}
+
+/// `connector.call_status` (ONE-2510, FIX 2279): a held connector call's
+/// status by its ref, readable by the actor that called it and by the
+/// vault's owner. Any other caller, and a ref this vault never held, read
+/// the same not-found, so a ref discloses nothing to anyone else. It reads
+/// the held row and the settled wait only: it sends nothing, resumes
+/// nothing and claims no invocation.
+///
+/// # Errors
+///
+/// A malformed ref; not found; storage errors.
+pub fn connector_call_status_read(
+    memory: &Memory<'_>,
+    input: ConnectorCallStatusRequest,
+) -> MemoryResult<ConnectorCallStatus> {
+    let not_found = || {
+        MemoryError::new(
+            MEMORY_CODE_NOT_FOUND,
+            "no connector call with this ref is yours to read",
+            &[
+                "Pass the call_ref a held or pending_delivery connector.call reply named, as the caller that made the call or as the vault's owner.",
+            ],
+        )
+    };
+    let call_ref = EntityId::from_hex(&input.call_ref)
+        .map_err(|_| MemoryError::bad_request("call_ref must be 32 hex"))?;
+    let vault = memory.vault();
+    let state = vault
+        .connector_call_state(&call_ref)
+        .map_err(connector_call_error)?
+        .ok_or_else(not_found)?;
+    if state.principal_ref != memory.actor().to_hex() && !memory.is_vault_owner()? {
+        return Err(not_found());
+    }
+    let settled = crate::code_run::WaitDeliveries::canonical(vault).settled(call_ref)?;
+    let call_ref = input.call_ref;
+    let (name, tool) = (state.name, state.tool);
+    if let Some(settled) = settled {
+        let reply = serde_json::from_str::<ConnectorCallReply>(&settled.reply).map_err(|_| {
+            MemoryError::new(
+                MEMORY_CODE_INTERNAL,
+                "a connector call's settled reply does not decode",
+                &["Report this connector call failure."],
+            )
+        })?;
+        return Ok(ConnectorCallStatus::Settled {
+            call_ref,
+            name,
+            tool,
+            reply,
+        });
+    }
+    match (state.settled, state.held_at_ms) {
+        (Some(outcome), _) => Ok(ConnectorCallStatus::Settled {
+            reply: ConnectorCallReply::project(&name, &tool, outcome),
+            call_ref,
+            name,
+            tool,
+        }),
+        (None, Some(held_at_ms)) => Ok(ConnectorCallStatus::Pending {
+            call_ref,
+            name,
+            tool,
+            held_at_ms,
+            reasons: state.reasons,
+        }),
+        (None, None) => Err(MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            "an acknowledged connector call's settled reply is gone",
+            &["Report this connector call failure."],
+        )),
+    }
 }

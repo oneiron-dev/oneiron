@@ -23,36 +23,30 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{self, ConnectorCallReply};
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, credential_listing};
 use crate::auth::CoreAuth;
 use crate::connector_call_host::ServedConnectorCallHost;
 use crate::server::SyncServer;
 
 /// `connector.call`: `caller`'s call of one connector tool, under its own
 /// grant, on the credential it presented, with its call's invocation as the
-/// ledger identity.
+/// ledger identity. Beside it, the rows its reads listed.
 pub(crate) async fn connector_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     caller: (EntityId, EdgeActorClass),
     invocation: Option<InvocationId>,
     input: ConnectorCallRequest,
-) -> MemoryResult<ConnectorCallReply> {
+) -> Listed<ConnectorCallReply> {
     const VERB: &str = "connector.call";
-    let (actor, class) = caller;
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
-        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
-            .at(auth.locality());
+    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
         let memory = match invocation {
             Some(invocation) => memory.with_invocation(invocation),
             None => memory,
         };
-        connector_call_as(&server, &memory, input)
+        connector_call_as(server, &memory, input)
     })
     .await
-    .map_err(|_| internal(VERB))?
 }
 
 /// One connector call for the caller `memory` is bound to, with the

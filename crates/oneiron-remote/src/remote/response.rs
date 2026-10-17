@@ -86,12 +86,9 @@ pub(super) enum ReadFailure {
 /// distinguishes "exactly at the limit" from "over it" without ever buffering
 /// the excess, so the refusal happens BEFORE any JSON or base64 decode
 /// allocates against an attacker-chosen length.
-pub(super) fn read_capped(
-    response: reqwest::blocking::Response,
-    limit: usize,
-) -> Result<Vec<u8>, ReadFailure> {
+pub(super) fn read_capped<B: Read>(body: B, limit: usize) -> Result<Vec<u8>, ReadFailure> {
     let mut buffer = Vec::new();
-    let mut reader = response.take(limit as u64 + 1);
+    let mut reader = body.take(limit as u64 + 1);
     reader
         .read_to_end(&mut buffer)
         .map_err(|error| ReadFailure::Io(error.to_string()))?;
@@ -108,8 +105,9 @@ pub(super) fn read_capped(
 /// still finite: a `Content-Length` over `limit` is refused before the body
 /// is read, and the body goes through `take(limit + 1)`, so a peer that keeps
 /// sending is cut off one byte past the limit whatever its header said.
-pub(super) fn read_export<R: DeserializeOwned>(
-    response: reqwest::blocking::Response,
+pub(super) fn read_export<R: DeserializeOwned, B: Read>(
+    body: B,
+    content_length: Option<u64>,
     status: reqwest::StatusCode,
     limit: usize,
 ) -> Result<R, MemoryError> {
@@ -118,13 +116,10 @@ pub(super) fn read_export<R: DeserializeOwned>(
             "the server's export exceeded the {limit}-byte read ceiling"
         ))
     };
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
+    if content_length.is_some_and(|length| length > limit as u64) {
         return Err(too_large());
     }
-    let mut reader = response.take(limit as u64 + 1);
+    let mut reader = body.take(limit as u64 + 1);
     let decoded = serde_json::from_reader(&mut reader);
     if reader.limit() == 0 {
         return Err(too_large());
@@ -142,11 +137,8 @@ pub(super) fn read_export<R: DeserializeOwned>(
 /// message names the status and nothing else. The foreign bytes are dropped on
 /// purpose: an HTML error page rendered into a `message` or a `suggestion`
 /// becomes text a caller displays, logs, or — in the worst case — executes.
-pub(super) fn read_error_envelope(
-    response: reqwest::blocking::Response,
-    status: reqwest::StatusCode,
-) -> MemoryError {
-    let Ok(bytes) = read_capped(response, MAX_ERROR_BODY_BYTES) else {
+pub(super) fn read_error_envelope<B: Read>(body: B, status: reqwest::StatusCode) -> MemoryError {
+    let Ok(bytes) = read_capped(body, MAX_ERROR_BODY_BYTES) else {
         return transport_error(format!(
             "the server answered {status} with an unreadable or oversized error body"
         ));
