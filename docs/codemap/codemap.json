@@ -44509,7 +44509,7 @@
      "path": "src/sync/residence/sealed.rs",
      "purpose": "Home custody of private-world windows the home may not read (OF-534 G7, DEC-0005 world privacy fix 8)",
      "surface": {
-      "const": 4,
+      "const": 3,
       "fn": 8,
       "struct": 1
      }
