@@ -260,6 +260,7 @@ impl<'a> AttemptQueue<'a> {
             events: Vec::new(),
             manifest: Vec::new(),
             executor_model: None,
+            executor_seat: None,
             cancel_state: AttemptCancelState::default(),
             signals: Vec::new(),
             asks: Vec::new(),

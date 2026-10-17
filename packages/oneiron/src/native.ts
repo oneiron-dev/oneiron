@@ -74,6 +74,7 @@ vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultWeaveLens(input: unknown): unknown
 vaultWeaveLinkWrong(input: unknown): unknown
+vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown
@@ -279,6 +280,7 @@ vaultArtifactsBodyDeckMerge(requestJson: string): string
 vaultArtifactsBodyDeckExport(requestJson: string): string
 vaultArtifactsBodyDeckGate(requestJson: string): string
 vaultArtifactsBodyDeckOracle(requestJson: string): string
+vaultArtifactsBodyDeckPreview(requestJson: string): string
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown

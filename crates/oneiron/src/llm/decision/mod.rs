@@ -23,7 +23,7 @@ pub use local::{
 };
 pub mod questions;
 mod read;
-pub use read::DecisionReadProvider;
+pub use read::{DecisionReadGate, DecisionReadProvider, GatedRead};
 mod routine;
 pub use routine::*;
 mod seat;

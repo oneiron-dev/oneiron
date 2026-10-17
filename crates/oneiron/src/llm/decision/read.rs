@@ -13,31 +13,63 @@ use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
 use crate::Result;
 use crate::llm::{
-    BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage,
-    joint_marginals,
+    BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout,
+    LabelSet, LlmResult, LlmUsage, joint_marginals,
 };
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
 const DISTRIBUTION_TOLERANCE: f64 = 1e-6;
-/// Fills the escalation slot. It reads only the call's state, admits and settles one lease per
-/// read, and returns no authority, receipt or provenance.
+
+/// How one decision read ended, for its gate to settle.
+pub enum GatedRead {
+    /// Admission waited past the work time, so the read never started.
+    NotStarted,
+    Read(LlmResult<LabelReadResponse>),
+}
+
+/// Admits one decision read, lends `read` its lease and settles what it returns: nothing
+/// spent when it never started, its reply's usage, or a failed read's reservation. A bare
+/// meter is one; a host that admits model calls as runs brings its own.
+pub trait DecisionReadGate: Send + Sync {
+    fn read(&self, read: &mut dyn FnMut(&BudgetLease) -> GatedRead) -> Result<GatedRead>;
+}
+
+impl DecisionReadGate for BudgetGuard {
+    fn read(&self, read: &mut dyn FnMut(&BudgetLease) -> GatedRead) -> Result<GatedRead> {
+        let lease = self
+            .admit()
+            .map_err(|_| invalid("decision read refused by the budget"))?
+            .lease;
+        let gated = read(&lease);
+        match &gated {
+            GatedRead::NotStarted => self.settle_per_call(&lease, &LlmUsage::zero()),
+            GatedRead::Read(Ok(read)) => self.settle_per_call(&lease, &read.usage),
+            GatedRead::Read(Err(_)) => self.settle_reserved(&lease),
+        }
+        .map_err(|_| invalid("decision read settlement refused"))?;
+        Ok(gated)
+    }
+}
+
+/// Fills the escalation slot. It reads only the call's state, admits and settles each read
+/// through its gate, and returns no authority, receipt or provenance.
 pub struct DecisionReadProvider<'a> {
     pin: ProviderPin,
     reader: &'a dyn LabelReadModel,
-    guard: &'a BudgetGuard,
+    gate: &'a dyn DecisionReadGate,
     paired: &'a DecisionQuestion,
     person: Option<&'a DecisionQuestion>,
 }
 
 impl<'a> DecisionReadProvider<'a> {
     /// `pin` names the model the route bound, and the reader must serve exactly that model
-    /// and revision. `paired` is the host's versioned yes/no question, and `person` the
-    /// ladder's person question when the host binds one.
+    /// and revision. `gate` admits and settles each read. `paired` is the host's versioned
+    /// yes/no question, and `person` the ladder's person question when the host binds one.
     pub fn new(
         pin: ProviderPin,
         reader: &'a dyn LabelReadModel,
-        guard: &'a BudgetGuard,
+        gate: &'a dyn DecisionReadGate,
         paired: &'a DecisionQuestion,
         person: Option<&'a DecisionQuestion>,
     ) -> Result<Self> {
@@ -58,7 +90,7 @@ impl<'a> DecisionReadProvider<'a> {
         Ok(Self {
             pin,
             reader,
-            guard,
+            gate,
             paired,
             person,
         })
@@ -124,35 +156,25 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 paired: (!person).then_some(self.paired.text.as_str()),
             });
         }
-        let lease = self
-            .guard
-            .admit()
-            .map_err(|_| invalid("decision read refused by the budget"))?
-            .lease;
-        // Admission may wait; a read admitted after the work time is spent never starts.
-        if !deadline.decision_may_start() {
-            self.guard
-                .settle_per_call(&lease, &LlmUsage::zero())
-                .map_err(|_| invalid("decision read settlement refused"))?;
-            return Err(invalid("decision read admitted after the work time"));
-        }
-        let request = LabelReadRequest {
-            state,
-            questions: &questions,
-            // An instant, not a duration, so the reader's own preparation spends it too.
-            work_until: Some(Instant::now() + deadline.decision_time_left()),
-        };
-        let read = match self.reader.read(&request, &lease) {
-            Ok(read) => {
-                self.guard
-                    .settle_per_call(&lease, &read.usage)
-                    .map_err(|_| invalid("decision read settlement refused"))?;
-                read
+        let gated = self.gate.read(&mut |lease| {
+            // Admission may wait; a read admitted after the work time is spent never starts.
+            if !deadline.decision_may_start() {
+                return GatedRead::NotStarted;
             }
-            Err(error) => {
-                self.guard
-                    .settle_reserved(&lease)
-                    .map_err(|_| invalid("decision read settlement refused"))?;
+            let request = LabelReadRequest {
+                state,
+                questions: &questions,
+                // An instant, not a duration, so the reader's own preparation spends it too.
+                work_until: Some(Instant::now() + deadline.decision_time_left()),
+            };
+            GatedRead::Read(self.reader.read(&request, lease))
+        })?;
+        let read = match gated {
+            GatedRead::NotStarted => {
+                return Err(invalid("decision read admitted after the work time"));
+            }
+            GatedRead::Read(Ok(read)) => read,
+            GatedRead::Read(Err(error)) => {
                 return Err(invalid(&format!("decision read failed: {error}")));
             }
         };

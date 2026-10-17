@@ -100,6 +100,17 @@ pub fn encode_codec_frame(frame: &[u8], peer: WireCodecs) -> Option<Vec<u8>> {
     (wrapped.len() < frame.len()).then_some(wrapped)
 }
 
+/// The HTTP twin of [`encode_codec_frame`] (ARCH-0081 §8): a request body to our own
+/// server goes zstd at [`CODEC_MIN_FRAME_BYTES`] or more, and only when that is smaller.
+/// `None` means send it plain, with no `Content-Encoding`.
+pub fn encode_http_body(body: &[u8]) -> Option<Vec<u8>> {
+    if body.len() < CODEC_MIN_FRAME_BYTES {
+        return None;
+    }
+    let encoded = zstd::stream::encode_all(body, CODEC_ZSTD_LEVEL).ok()?;
+    (encoded.len() < body.len()).then_some(encoded)
+}
+
 /// Unwraps a codec frame (the FULL frame, tag included), refusing an inner frame larger
 /// than `max_inner` before it is held, an unknown codec, and a nested codec frame.
 pub fn decode_codec_frame(frame: &[u8], max_inner: usize) -> Result<Vec<u8>, TransportError> {
@@ -185,7 +196,8 @@ impl LinkBytes {
             let slot = bytes.slot(tag);
             slot.in_frames.fetch_add(1, Ordering::Relaxed);
             slot.in_raw.fetch_add(raw as u64, Ordering::Relaxed);
-            slot.in_received.fetch_add(received as u64, Ordering::Relaxed);
+            slot.in_received
+                .fetch_add(received as u64, Ordering::Relaxed);
         }
     }
 

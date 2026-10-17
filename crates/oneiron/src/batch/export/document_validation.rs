@@ -10,7 +10,9 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE
 use crate::serialize::{ExportBody, ExportValue};
 
 impl WholeVaultDocument {
-    pub(super) fn validate(&self, vault: &Vault) -> Result<()> {
+    /// `files` are the archive's attached files, each already checked against
+    /// its name: an ASSET's file body is validated against them (OF-222).
+    pub(super) fn validate(&self, vault: &Vault, files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
         self.manifest.validate()?;
         let mut ids = BTreeSet::new();
         for row in self.entities() {
@@ -31,7 +33,7 @@ impl WholeVaultDocument {
             if row.occurred_start > row.occurred_end {
                 return Err(invalid("invalid entity time range"));
             }
-            row.body.validate(row.entity_type)?;
+            row.body.validate_in(row.entity_type, files)?;
         }
         if self
             .claims

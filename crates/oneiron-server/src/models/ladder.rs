@@ -25,6 +25,7 @@ use oneiron::{
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
     RetryableLlmError,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
@@ -124,7 +125,9 @@ struct ReceiptPrefix {
 }
 
 /// The served receipt of one rung's answer, waiting for that answer's usage.
-/// A job's receipt waits until the job ends.
+/// A job's receipt waits until the job ends, kept on its row so a restart
+/// keeps it too.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct PendingReceipt {
     provider: String,
     requested: String,
@@ -836,6 +839,20 @@ impl OfferLadder {
         self.generate_from(run, request, selector, may_send, wait_budget, true)
             .await
             .map(|(response, _)| response)
+    }
+
+    /// [`Self::generate_exact_within`] waiting as [`Self::generate_while`]
+    /// does, for the vault's longest wait: a call a durable seat bound,
+    /// which its one model answers or nothing does.
+    pub async fn generate_exact(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+    ) -> LlmResult<LlmResponse> {
+        let budget = Duration::from_secs(self.rests.max_wait_secs());
+        self.generate_exact_within(run, request, selector, &|| true, budget)
+            .await
     }
 
     /// [`Self::generate_within`] for a caller that must know the model it
