@@ -22,6 +22,9 @@ mod vision;
 mod voices;
 mod waves;
 
+// The facade's `ai.speech` door binds its voice as this wire does (OF-410).
+pub(crate) use media::{VoiceRefusal, bind_voice};
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/status", get(status))

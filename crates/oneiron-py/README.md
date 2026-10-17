@@ -97,10 +97,12 @@ created for the actor you want to act as instead.
 | `handle.in_room_turn(room_ref)` | a new handle whose every verb runs as a turn in that room |
 | `handle.last_receipt_ref()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `None` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
+| `handle.lens_frame_event(card_id, request)` | sends one `{"event", "idempotencyKey"}` on a lens card the connected server rendered; answers `{"$state"}` or `{"outcome", "readReceipt"}` |
+| `handle.close_lens_frame(card_id)` | closes that card and frees its frame; answers `{"closed"}` |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, ...)` | `MemoryPack` |
-| `handle.vault.receipts(limit=100)` | `list[FacadeReceipt]` |
+| `handle.vault.receipts(limit=100, kinds=None)` | `list[FacadeReceipt]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 | `handle.vault.export(format=None)` | the whole vault as one re-importable archive: a ZIP (JSONL per record kind, files by BLAKE3, manifest), base64 in `archive` |
 | `handle.cancel(task_ref)` | `TaskCancelReceipt` |
 | `handle.describe(task_ref=None)` | `TaskDescription`: one task card, or the whole TASKS section |
@@ -110,6 +112,12 @@ created for the actor you want to act as instead.
 | `handle.vault.kv.get` / `put` / `delete` / `search` / `namespaces(request)` | exact, actor-owned keyed memory |
 | `handle.tasks.*` | `create`, `update`, `answer`, `outcomes` |
 | `handle.vault.rooms.*` | `list`, `messages`, `render`, `find`, `get`, `trunk`, `claim`, `speak` |
+
+`lens_frame_event` and `close_lens_frame` are the two lens-card routes outside
+the facade (OF-181), not verbs. A card's frame lives only on the server that
+rendered it (`vault.lenses.default`), so they need a connected handle: an
+embedded one raises `BAD_REQUEST`. Their dicts keep the wire's camelCase keys
+(`idempotencyKey`, `occurredAt`, `readReceipt`, `$state`).
 
 Every other verb in the SDK verb table sits at its SDK path on the handle and
 takes its whole input as one dict. The stubs type that dict and the result as
