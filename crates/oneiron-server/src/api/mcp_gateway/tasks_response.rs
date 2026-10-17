@@ -709,6 +709,7 @@ fn mcp_agent_verb_input(
         "vault.weave.digest" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.lens" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.link.wrong" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.owner.link.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.put" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.setup.prepare" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.setup.get" => a.spec.clone().ok_or_else(invalid),
@@ -1221,6 +1222,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.link.wrong" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.owner.link.wrong" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.packs.put" => {
@@ -2609,6 +2613,19 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 crate::api::facade::host_doors::vault_weave_link_wrong(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.owner.link.wrong" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.owner.link.wrong", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveWrongLinkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_weave_owner_link_wrong(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);

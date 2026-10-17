@@ -226,6 +226,11 @@ export_facade! {
     let output = client.vault_weave_link_wrong(&input)?;
     crate::codec::lift_record("vault.weave.link.wrong", &output)
 };
+"vault.weave.owner.link.wrong" => fn vault_weave_owner_link_wrong(&self, input: WeaveWrongLinkRequest) -> WeaveLinkCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.owner.link.wrong", input)?;
+    let output = client.vault_weave_owner_link_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.owner.link.wrong", &output)
+};
 "vault.packs.put" => fn vault_packs_put(&self, input: PackPutRequest) -> PackPutReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackPutRequest = crate::codec::lower_record("vault.packs.put", input)?;
     let output = client.vault_packs_put(&input)?;

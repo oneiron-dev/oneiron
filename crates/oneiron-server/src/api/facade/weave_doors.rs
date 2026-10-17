@@ -46,6 +46,37 @@ pub(crate) async fn vault_weave_link_wrong(
     .map_err(|_| internal(VERB))?
 }
 
+/// `vault.weave.owner.link.wrong`: the owner labels a link it sees in the
+/// owner lens as wrong, under its live owner proof, as
+/// `POST /v1/owner/weave/link/wrong` does. The owner lens card's wrong
+/// controls call it; a person's call `vault.weave.link.wrong`.
+pub(crate) async fn vault_weave_owner_link_wrong(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WeaveWrongLinkRequest,
+) -> MemoryResult<WeaveLinkCorrectionView> {
+    const VERB: &str = "vault.weave.owner.link.wrong";
+    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{VERB} labels a link in the owner lens"),
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })?;
+    let server = Arc::clone(server);
+    let locality = auth.locality();
+    tokio::task::spawn_blocking(move || {
+        let vault = server.vault();
+        let actor = owner.revalidate(vault)?;
+        vault
+            .memory(actor, oneiron::EdgeActorClass::Human)
+            .at(locality)
+            .weave_owner_wrong_link(&owner, &input)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
 /// `vault.weave.lens`: the credential's own live weave report, rendered
 /// through the weave-report skill into its lens on this server's Dreamer
 /// narrative route, as a card whose frame this server holds for the

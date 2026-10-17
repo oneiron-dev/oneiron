@@ -412,7 +412,7 @@ impl Memory<'_> {
             model: model.to_owned(),
             rendered_at: self.vault().store.clock.now_recorded_at(),
         };
-        let lens = super::weave_lens::compose_weave_lens_framed(&read, &report, &render)?;
+        let lens = super::weave_lens::compose_weave_lens_framed(&read, reader, &report, &render)?;
         // The render is kept, and the one before it settles on the skill's
         // corrections axis; neither gates the lens.
         if let Err(error) = self.vault().keep_live_weave_lens(reader, &report, &render) {
@@ -473,7 +473,7 @@ impl Memory<'_> {
             None => read.read_latest_weave_digest(reader)?,
         };
         stored
-            .map(|stored| self.weave_digest_view(&read, stored))
+            .map(|stored| self.weave_digest_view(&read, reader, stored))
             .transpose()
     }
 
@@ -493,16 +493,27 @@ impl Memory<'_> {
         Ok(WeaveLinkCorrectionView::from_correction(&filed))
     }
 
+    /// `vault.weave.owner.link.wrong`: the owner lens card's wrong control,
+    /// filed under the owner reader with `owner` as its proof.
+    pub fn weave_owner_wrong_link(
+        &self,
+        owner: &AuthenticatedOwner,
+        request: &WeaveWrongLinkRequest,
+    ) -> MemoryResult<WeaveLinkCorrectionView> {
+        self.weave_wrong_link(Some(owner), owner, request)
+    }
+
     /// A saved period's view. Its render composes under `read`, the
     /// opener's own read; a render that no longer composes is left out and
     /// the period's data still serves.
     fn weave_digest_view(
         &self,
         read: &ScopedRead<'_>,
+        reader: WeaveReader<'_>,
         stored: StoredWeaveDigest,
     ) -> MemoryResult<WeaveDigestFramed> {
         let lens = stored.lens.as_ref().and_then(|render| {
-            super::weave_lens::compose_weave_lens_framed(read, &stored.report.value, render)
+            super::weave_lens::compose_weave_lens_framed(read, reader, &stored.report.value, render)
                 .inspect_err(|error| tracing::warn!(?error, "weave lens did not compose"))
                 .ok()
         });
