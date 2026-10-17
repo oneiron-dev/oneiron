@@ -100,6 +100,8 @@ fn validate_window_update(
         candidate
     };
     let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    // OF-013: the withdrawn cutoffs the update carries, staged once it is admitted.
+    let mut cutoffs = Vec::new();
     let carrier_refusal = |blob: &[u8]| -> Option<Error> {
         let header = EntityMetadataHeader::parse(blob)?;
         let refused = match header.entity_type {
@@ -207,6 +209,10 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
         )?;
+        // OF-013: every withdrawn cutoff the snapshot holds names its artifact.
+        cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
+            &candidate.get_map(crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP),
+        )?);
         // A snapshot can also carry the state at a root, where a carrier
         // deleted after the root survives outside the retained ops, and
         // later exports reuse that root as encoded. Two Loro readers decode
@@ -255,6 +261,9 @@ fn validate_window_update(
                 key,
                 &root.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
             )?;
+            cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
+                &root.get_map(crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP),
+            )?);
         }
         if misplaced {
             return Err(Error::InvalidConfig(
@@ -334,6 +343,10 @@ fn validate_window_update(
         ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
     let room_facts =
         ContainerID::new_root(crate::sync::room_facts::ROOM_FACTS_MAP, ContainerType::Map);
+    let withdrawn_cutoffs = ContainerID::new_root(
+        crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
+        ContainerType::Map,
+    );
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -351,6 +364,10 @@ fn validate_window_update(
             crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
         } else if op.container == room_facts {
             crate::sync::room_facts::admit_room_fact_carrier(key, &map_key, &value)?;
+        } else if op.container == withdrawn_cutoffs {
+            cutoffs.push(
+                crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_carrier(&map_key, &value)?,
+            );
         } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)
@@ -416,6 +433,12 @@ fn validate_window_update(
                 check_tombstone_residence(vault, &map_key, key)?;
             }
         }
+    }
+    // OF-013: a cutoff another machine of this vault carries is staged before
+    // the update reaches the live window, so its entity doors refuse the
+    // withdrawn body from the first import on.
+    if let Some(vault) = vault {
+        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &cutoffs)?;
     }
     Ok(())
 }
