@@ -511,6 +511,20 @@ impl Vault {
                         .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
                         .apply(txn)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;
+                    // The house mind joins here too, as on the carded path.
+                    let caller = crate::WriteActor::new(
+                        owner.revalidate_in_txn(self, txn)?,
+                        crate::EdgeActorClass::Human,
+                    );
+                    let filed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                    crate::workspace_roster::workplace_join::file_house_joins_in_txn(
+                        self,
+                        txn,
+                        EntityId::from_hex(&project.home_room)?,
+                        &project.roster,
+                        caller,
+                        filed_at,
+                    )?;
                     None
                 }
             };
