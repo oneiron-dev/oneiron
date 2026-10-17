@@ -178,6 +178,7 @@ impl Vault {
     /// The manifest is derived from the bytes, not a caller's declaration.
     pub fn export_entity_bundle_json(&self, ids: &[EntityId]) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
+        let exported: std::collections::BTreeSet<EntityId> = ids.iter().copied().collect();
         let mut records = Vec::new();
         let mut nulled = false;
         for id in ids {
@@ -203,6 +204,21 @@ impl Vault {
                 continue;
             }
             let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
+            // An epoch summary leaves only beside every record it was written
+            // from, nested summaries included; otherwise it stays home.
+            if crate::compaction::epoch_sources_admitted_in(
+                &self.store,
+                &txn,
+                id,
+                bytes,
+                |source, _| {
+                    Ok(exported.contains(source)
+                        && !whole_vault_export_excludes_entity(self, source)?)
+                },
+            )? == Some(false)
+            {
+                continue;
+            }
             let mut cursor = std::io::Cursor::new(bytes);
             let mut body = if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
                 nulled = true;
