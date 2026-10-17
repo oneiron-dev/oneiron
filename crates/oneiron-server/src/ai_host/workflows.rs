@@ -30,7 +30,7 @@ use oneiron::failure_ladder::FailureLadderOutcome;
 use tokio::sync::{broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
-use super::step::StepRunner;
+use super::step::{StepRunner, deliver_hold_notice};
 use super::step_failure::{FailedStep, held_leases, settle};
 
 const LEASE_OWNER: &str = "oneiron-server-workflows";
@@ -166,6 +166,8 @@ fn pump_once(
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
+        // A notice a crash or a refusal left owed goes out first.
+        deliver_hold_notice(&dispatcher, *root, now_secs());
         loop {
             if *stopped.borrow() {
                 return Ok(true);
@@ -222,10 +224,35 @@ fn pump_once(
                             )));
                         }
                     }
-                    runner.run(runtime, vault, step, context).map_err(|fault| {
-                        retryable = fault.retryable;
-                        fault.error
-                    })
+                    match runner.run(runtime, vault, step, context) {
+                        Ok(output) => Ok(output),
+                        // The meter ran out inside the model call: held as
+                        // at the boundary, from the checkpoint before the
+                        // call it could not pay for.
+                        Err(fault) if fault.exhausted => {
+                            let now = now_secs();
+                            held = Some(dispatcher.hold_for_budget(
+                                *root,
+                                BudgetHoldLease {
+                                    attempt: step.attempt.id,
+                                    lease_owner: LEASE_OWNER.to_owned(),
+                                    attempt_count: step.attempt.attempt_count,
+                                    resume_point: AttemptResumePoint::new(
+                                        "workflow-step:before-model-call",
+                                        now,
+                                    ),
+                                },
+                                None,
+                                "workflow step budget ran out during its model call",
+                                now,
+                            )?);
+                            Err(fault.error)
+                        }
+                        Err(fault) => {
+                            retryable = fault.retryable;
+                            Err(fault.error)
+                        }
+                    }
                 },
             );
             status.update(|status| {
@@ -241,10 +268,11 @@ fn pump_once(
                 }
             });
             // The held leaf waits paused; its workflow waits with it until
-            // the owner resumes the hold. The notice rides the hold.
-            if let Some(hold) = held {
-                let notice = hold.notice.as_ref().map(|notice| notice.text.as_str());
-                tracing::info!(?root, notice, "a workflow is held at its spend cap");
+            // the owner resumes the hold. The notice rides the hold, and
+            // goes to the owners now.
+            if held.is_some() {
+                tracing::info!(?root, "a workflow is held at its spend cap");
+                deliver_hold_notice(&dispatcher, *root, now_secs());
                 break;
             }
             match progress {

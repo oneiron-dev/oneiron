@@ -417,3 +417,55 @@ impl AgentDispatcher<'_> {
         Ok(self.available_units(&scope)? > 0)
     }
 }
+
+/// The producer of a held run's owner notice.
+const BUDGET_HOLD_NOTIFICATION_PRODUCER: &str = "agent_dispatch.budget_hold";
+
+impl AgentDispatcher<'_> {
+    /// Delivers a held run's owed notice: one Ask NOTIFICATION in every
+    /// owner's inbox, keyed by run, hold time and owner, whose result names
+    /// the run's root, the thing to resume. A replay finds the rows it wrote,
+    /// so the host delivers again after a crash and then acknowledges with
+    /// [`Self::acknowledge_budget_notice`]. `None` when nothing is owed.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn deliver_budget_notice(&self, root: AttemptId) -> Result<Option<PartialResultHold>> {
+        let Some(hold) = self.plan_hold(root)? else {
+            return Ok(None);
+        };
+        if !hold
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.delivered_at.is_none())
+        {
+            return Ok(None);
+        }
+        let run = crate::entity_id::bytes_to_hex_lower(root.as_bytes());
+        let held_at = hold.held_at.unwrap_or_default();
+        self.vault.with_write_txn_grouped(|txn| {
+            for owner in crate::policy_model::owners_in_txn(self.vault, &*txn)? {
+                self.vault.record_notification_in_txn(
+                    txn,
+                    &crate::inbox::NotificationEvent {
+                        kind: crate::inbox::NotificationKind::Ask,
+                        source: crate::inbox::NotificationSource {
+                            producer: BUDGET_HOLD_NOTIFICATION_PRODUCER.to_owned(),
+                            event: format!("{run}:{held_at}:{}", owner.to_hex()),
+                            attempt: Some(run.clone()),
+                            result: Some(run.clone()),
+                            ..crate::inbox::NotificationSource::default()
+                        },
+                        subject_refs: Vec::new(),
+                        recipient: Some(owner),
+                        created_at: held_at,
+                        origin_conversation: None,
+                    },
+                )?;
+            }
+            Ok(())
+        })?;
+        Ok(Some(hold))
+    }
+}

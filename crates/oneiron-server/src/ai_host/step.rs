@@ -55,6 +55,10 @@ pub(super) struct ModelStep<'a> {
 /// retryable error).
 pub(super) struct StepFault {
     pub(super) retryable: bool,
+    /// The step's meter ran out (`BudgetDenied::Exhausted`) before the call
+    /// was answered: its run holds at the cap, paused with its checkpoint,
+    /// and is neither failed nor retried (OF-541).
+    pub(super) exhausted: bool,
     pub(super) error: Error,
 }
 
@@ -62,7 +66,29 @@ impl From<Error> for StepFault {
     fn from(error: Error) -> Self {
         Self {
             retryable: false,
+            exhausted: false,
             error,
+        }
+    }
+}
+
+/// Hands a held run's owed notice to its owners, then records it delivered
+/// (OF-541). A refusal leaves it owed, and the next pump delivers it.
+pub(super) fn deliver_hold_notice(dispatcher: &AgentDispatcher<'_>, root: AttemptId, now: u64) {
+    let delivered = dispatcher
+        .deliver_budget_notice(root)
+        .and_then(|owed| match owed {
+            Some(_) => dispatcher.acknowledge_budget_notice(root, now).map(Some),
+            None => Ok(None),
+        });
+    match delivered {
+        Ok(Some(hold)) => {
+            let notice = hold.notice.as_ref().map(|notice| notice.text.as_str());
+            tracing::info!(?root, notice, "a held run's notice reached its owners");
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::error!(kind = ?error.kind(), ?root, "a held run's notice was not delivered");
         }
     }
 }
@@ -230,8 +256,10 @@ impl StepRunner {
             BudgetExhaustionPolicy::Suspend,
             actor,
         )?;
-        let budget = |denied: oneiron::llm::BudgetDenied| {
-            Error::InvalidConfig(format!("workflow step budget: {denied:?}"))
+        let budget = |denied: oneiron::llm::BudgetDenied| StepFault {
+            retryable: false,
+            exhausted: matches!(denied, oneiron::llm::BudgetDenied::Exhausted),
+            error: Error::InvalidConfig(format!("workflow step budget: {denied:?}")),
         };
         for _ in 0..charged {
             let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
@@ -251,7 +279,7 @@ impl StepRunner {
         }
         let response = match generated {
             Ok(response) => response,
-            Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied).into()),
+            Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
             Err(error) => {
                 let retryable = matches!(error, oneiron::llm::LlmError::Retryable(_));
                 if retryable {
@@ -263,6 +291,7 @@ impl StepRunner {
                 }
                 return Err(StepFault {
                     retryable,
+                    exhausted: false,
                     error: Error::InvalidConfig(format!(
                         "workflow step model call failed: {error}"
                     )),
