@@ -71012,7 +71012,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 20,
       "fn": 16,
       "struct": 3
      }
@@ -71037,7 +71037,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 19,
       "re-export": 14,
       "struct": 2
