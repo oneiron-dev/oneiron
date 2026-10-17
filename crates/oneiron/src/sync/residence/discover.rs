@@ -23,10 +23,7 @@ pub fn discover_local_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
         .port_entity_timeline(&txn, TimelineQuery::default())?
     {
         let row = row?;
-        let raw = vault
-            .store
-            .entities
-            .get(&txn, row.id.as_bytes())?
+        let raw = EntityStoreRead::port_entity_raw_wiped(&vault.store, &txn, &row.id)?
             .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity metadata"))?;

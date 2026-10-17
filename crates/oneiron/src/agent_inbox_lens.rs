@@ -149,6 +149,7 @@ impl Vault {
         items.extend(
             crate::dreamer_runner::maintenance::agent_health::agent_health_inbox_items(self)?,
         );
+        items.extend(self.diary_read_inbox_items()?);
         // Filter after folding, so a filtered conversation still names every
         // identity on its thread.
         let mut items = fold_threads(items);

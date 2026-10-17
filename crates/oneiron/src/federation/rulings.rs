@@ -75,13 +75,13 @@ impl Vault {
         let at = now.max(self.store.clock.now_recorded_at());
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let mut grant_ref = None;
-        for row in self
-            .store
-            .type_index
-            .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_FEDERATION_GRANT])?
-        {
-            let (index, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&index)?;
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            &txn,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
                 .ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&raw).is_none_or(|header| {

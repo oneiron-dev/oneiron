@@ -9,8 +9,8 @@ use crate::EntityId;
 use crate::edit_roundtrip::CellValue;
 use crate::llm::decision::{
     DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionLadder,
-    DecisionProvider, DecisionQuestion, EvidenceVersion, MAX_DECISION_STATE_BYTES, Reversibility,
-    TypedDecision,
+    DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion, MAX_DECISION_STATE_BYTES,
+    Reversibility, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result};
@@ -38,6 +38,19 @@ pub trait UnitDecider {
     /// Whether a rung this decider climbs reads images. A unit's images are
     /// sent only when it does; otherwise the unit is read as text.
     fn reads_images(&self) -> bool;
+    /// The rung a call of `question` over `images` starts at under `dial`:
+    /// the first from the dial's first to its ceiling, short of the person,
+    /// that takes them; none when no rung there does, and the images are then
+    /// listed as not served ([`crate::llm::decision::MediaCall::of`]). The
+    /// default starts at the dial's first when this decider reads images.
+    fn first_taking(
+        &self,
+        _question: &DecisionQuestion,
+        dial: DecisionDial,
+        _images: &[DecisionImage],
+    ) -> Option<DecisionRung> {
+        self.reads_images().then_some(dial.first)
+    }
     /// The full decision for one call, with the ladder's receipt.
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision>;
 }
@@ -54,6 +67,15 @@ impl UnitDecider for DecisionLadder<'_> {
         .into_iter()
         .flatten()
         .any(|provider| provider.reads_images())
+    }
+
+    fn first_taking(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+    ) -> Option<DecisionRung> {
+        DecisionLadder::first_taking(self, question, dial, images)
     }
 
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {
