@@ -114,7 +114,6 @@ fn cheap_tier() -> TierPrecedence {
         vault_policy: Some(ModelTierRef("host-cheap-tier".to_owned())),
         purpose_default: None,
         global_default: ModelTierRef("host-global-tier".to_owned()),
-        seat: None,
     }
 }
 
