@@ -25,11 +25,15 @@ pub(crate) use self::codec::{
 };
 #[cfg(test)]
 pub(crate) use self::lifecycle::rematerialize_contact_cache_in_txn;
-pub use self::lifecycle::{drop_contact_cache_row, rematerialize_contact_cache};
 pub(crate) use self::lifecycle::{
-    drop_contact_index_rows_in_txn, rematerialize_party_contact_cache_in_txn,
-    supersede_family_owned_claim_in_txn,
+    ClaimHeadWriter, drop_contact_index_rows_in_txn, rematerialize_party_contact_cache_in_txn,
+    retire_family_claims_for_batch_delete_in_txn, supersede_family_owned_claim_in_txn,
 };
+pub use self::lifecycle::{drop_contact_cache_row, rematerialize_contact_cache};
+// The facade erase paths' hook (`deletion/erase/active_store.rs`, a seam that
+// lane wires). Until it does, only the batch hook reaches it.
+#[allow(unused_imports)]
+pub(crate) use self::lifecycle::close_family_claims_for_delete_in_txn;
 pub use self::storage::{counterparty_contact_party_channel_index_key, normalize_channel_class};
 pub(crate) use self::storage::{
     counterparty_contacts_for_send_in_claims_in_txn, counterparty_contacts_in_claims_in_txn,

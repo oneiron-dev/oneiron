@@ -131,8 +131,9 @@ pub(crate) use event_body_codec::{
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use event_body_codec::decode_replicated_identity_topology_event_body;
 pub(crate) use lifecycle_state::{
-    identity_topology_shell_peers_for_store_in_txn, note_zero_head_split_in_txn,
-    shell_edge_sources_for_store_in_txn, zero_head_split_shells_for_store_in_txn,
+    entity_lifecycle_state_for_store_in_txn, identity_topology_shell_peers_for_store_in_txn,
+    note_zero_head_split_in_txn, shell_edge_sources_for_store_in_txn,
+    zero_head_split_shells_for_store_in_txn,
 };
 pub(crate) use op_vocabulary::is_identity_topology_op_kind;
 pub(crate) use reassignment_map::forget_claim_reassignments_in_txn;

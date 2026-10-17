@@ -137,11 +137,10 @@ pub const ENTITY_TYPE_DIAGNOSTIC: u8 = 73;
 /// OF-537 actor-bound problem/proposal record, in the audit family.
 pub const ENTITY_TYPE_ISSUE: u8 = 76;
 
-// Byte 75 SUSPICIOUS_WAKE and byte 91 CLAIM_CLASS_DESCRIPTOR
-// are canon-reserved system bytes with no engine substrate yet. They
-// stay deliberately unregistered — present in the canon conformance census as
-// reserves, rejected with `InvalidEntityType` on every write path — rather
-// than disappearing from the record.
+// Byte 75 SUSPICIOUS_WAKE is a canon-reserved system byte with no engine
+// substrate yet. It stays deliberately unregistered — present in the canon
+// conformance census as a reserve, rejected with `InvalidEntityType` on every
+// write path — rather than disappearing from the record.
 /// OF-277 connector-key registry record (GOV-01, ONE-1416). Engine-authored
 /// maintenance kind carrying effector budgets (sends / spend / rate) and the
 /// charter slots for one outbound connector key; public puts are rejected
@@ -193,7 +192,9 @@ pub const ENTITY_TYPE_SKILL_CONTENT_ANCHOR: u8 = 93;
 /// Canon reserve; no substrate exists and writes remain rejected.
 pub const ENTITY_TYPE_SUSPICIOUS_WAKE: u8 = 75;
 
-/// Canon reserve; no substrate exists and writes remain rejected.
+/// ARCH-0057 claim-class descriptor (OF-272): one engine-authored maintenance
+/// entity per claim class, at an id derived from its predicate, CRDT-synced
+/// with the vault. Public puts remain rejected with `MaintenanceKindNotWritable`.
 pub const ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR: u8 = 91;
 
 /// Configured, owner-authored skill source (ARCH-0053). System byte 92.

@@ -135,6 +135,33 @@ pub(crate) fn identity_topology_shell_peers_for_store_in_txn(
     Ok(peers)
 }
 
+/// [`Vault::entity_lifecycle_state_in_txn`] for a reader that holds a `Store`
+/// and no `Vault` (the external-effect gate's party resolution): the same
+/// redirect-edge reading, and the same marker-gated zero-head-split witness
+/// for an id with no shell edge.
+pub(crate) fn entity_lifecycle_state_for_store_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<EntityLifecycleState> {
+    let merged =
+        identity_topology_shell_peers_for_store_in_txn(store, rtxn, id, EdgeKind::MergedInto)?;
+    let split =
+        identity_topology_shell_peers_for_store_in_txn(store, rtxn, id, EdgeKind::SplitInto)?;
+    match (merged.len(), split.is_empty()) {
+        (0, true) => {
+            if zero_head_split_shells_if_any_for_store_in_txn(store, rtxn)?.contains(id) {
+                Ok(EntityLifecycleState::Split)
+            } else {
+                Ok(EntityLifecycleState::Active)
+            }
+        }
+        (1, true) => Ok(EntityLifecycleState::Merged),
+        (0, false) => Ok(EntityLifecycleState::Split),
+        _ => Err(Error::CorruptedIndex("identity topology shell")),
+    }
+}
+
 /// Every entity the SURVIVING type-76 apply family names as a shell-edge
 /// source. This is the reconciler's touched set: the ids whose
 /// `merged_into` / `split_into` rows the current ledger can still speak for.
