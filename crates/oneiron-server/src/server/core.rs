@@ -121,6 +121,8 @@ pub struct SyncServer {
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
+    /// The run desktops bound now, for the owner's takeover (CUA-001).
+    pub(crate) desktop_seats: Arc<super::DesktopSeats>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
@@ -410,6 +412,7 @@ impl SyncServer {
             live_runs: Arc::default(),
             browser_guest: None,
             desktop_guest: None,
+            desktop_seats: Arc::default(),
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
