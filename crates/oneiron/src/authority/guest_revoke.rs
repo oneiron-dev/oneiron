@@ -5,7 +5,9 @@
 //! under (`grant_ref`). The withdrawal's one writer deletes the grant,
 //! disconnects every live pact the grant still governs, tombstones every
 //! slip minted under it, and keeps a withdrawal row, so a repeat revoke
-//! reports the first one with `changed: false`. A host answers with
+//! reports the first one with `changed: false`. Every slip door also checks a
+//! grant-bound slip's grant when it reads the slip, so a slip minted on another
+//! replica and merged after the withdrawal stands no longer than its grant. A host answers with
 //! [`crate::receipt::project_guest_revoke`] over the outcome.
 
 use std::collections::BTreeSet;
@@ -92,10 +94,61 @@ impl Vault {
             actor_class: None,
             org_ref: None,
             grant_ref: Some(grant_ref.to_hex()),
+            invitation_ref: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
         Ok(slip)
+    }
+
+    /// A grant-bound slip (OF-232) stands only while its grant does: the
+    /// FEDERATION_GRANT its claims name is live, not withdrawn, still an ask
+    /// guest's grant for the slip's holder, and confers at `now`. A slip that
+    /// names no grant passes. Every slip door reads this beside the fold's
+    /// revocation check.
+    pub(super) fn require_live_slip_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+    ) -> Result<()> {
+        let Some(grant_ref) = &claims.grant_ref else {
+            return Ok(());
+        };
+        let grant_ref = EntityId::from_hex(grant_ref).map_err(|_| invalid_authority())?;
+        self.require_live_guest_grant_in_txn(txn, grant_ref, &claims.holder_ref, now)
+    }
+
+    /// An ask guest's FEDERATION_GRANT `grant_ref` still stands for `member`
+    /// (PERSON hex): live, not withdrawn, an ask guest's grant whose member it
+    /// is, and conferring at `now`. A grant-bound slip and a guest's task-verb
+    /// proof (OF-220) both read it.
+    pub(super) fn require_live_guest_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: EntityId,
+        member: &str,
+        now: u64,
+    ) -> Result<()> {
+        if WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some() {
+            return Err(invalid_authority());
+        }
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
+        else {
+            return Err(invalid_authority());
+        };
+        let grant = decode_federation_grant_body(&body)?;
+        if !grant.role.is_guest()
+            || !matches!(grant.scope, FederationGrantScope::Ask { .. })
+            || grant.member_ref.to_hex() != member
+            || !grant.confers_at(now)
+        {
+            return Err(invalid_authority());
+        }
+        Ok(())
     }
 
     /// Tombstones, in the caller's writer, every slip minted under

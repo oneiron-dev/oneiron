@@ -11,18 +11,23 @@
 //! an agent's credential: `ai.verdict`, `vault.graph.ask` and the standing
 //! questions on the host's ladder, `vault.recall` and `report` with the
 //! host's embedder, a slide review through the host's decider, and
-//! `ai.options` from its model runtime. An `ai.*` media call and a hook
-//! replay are the owner's, and refused. A browser or desktop row drives the
+//! `ai.options` from its model runtime. Its `tasks.wave` is its own wave,
+//! queued under its lease, where a credential's is the owner's root one. An
+//! `ai.*` media call and a hook replay are the owner's, and refused. A browser or desktop row drives the
 //! run's own guest under the browser pack, its checked connection and the
-//! vault's standing grants. Each row's verb hooks fire once around it.
+//! vault's standing grants. The board rows, `self.focus.*` and a keyed
+//! `describe`, run the engine's board dispatcher over the agent's own board
+//! on the run's own STREAM connection, which goes when the door does. Each
+//! row's verb hooks fire once around it.
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::time::Duration;
 
+use oneiron::board_verb::BoardVerbCall;
 use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
 };
+use oneiron::context_board::StreamConnectionId;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
     answer_records, create_question, edit_question, pause_question, read_question,
@@ -34,18 +39,20 @@ use oneiron::memory::{
     MemoryResult, ProducerRows,
 };
 use oneiron::receipt::{
-    GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest,
+    GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionCreateRequest,
+    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
-use oneiron::task_verb::sdk::{self, AgentVerb, AiOptions, AiOptionsRequest, AiVerdictRequest};
+use oneiron::task_verb::sdk::{
+    self, AgentVerb, AiOptions, AiOptionsRequest, AiVerdictRequest, BoardRefreshRequest,
+    BoardSubscriptionRequest, DescribeRequest, TaskWaveRequest,
+};
 use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{EntityId, WriteActor};
 use serde_json::Value;
 
-use super::SyncServer;
-use crate::api::{RunGuests, VerdictAsker};
+use super::{SyncServer, wave_plan, wave_receipt};
+use crate::api::{RunGuests, VerdictAsker, drop_run_board, execute_run_board_verb};
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
 use crate::decision_verdict::{HELD_IMAGE, HeldImage, run_verdict};
@@ -67,6 +74,8 @@ pub(super) struct RunHostDoor {
     runtime: tokio::runtime::Handle,
     /// The run's browser and desktop, removed when the door drops.
     guests: RunGuests,
+    /// The run's own board STREAM connection, dropped with the door.
+    board: StreamConnectionId,
 }
 
 impl RunHostDoor {
@@ -78,6 +87,7 @@ impl RunHostDoor {
     ) -> Self {
         Self {
             guests: RunGuests::new(server, run_id),
+            board: StreamConnectionId(format!("run:{}", run_id.to_hex())),
             server: Arc::clone(server),
             actor,
             runtime,
@@ -108,6 +118,7 @@ impl AgentVerbDoor for RunHostDoor {
         let held = matches!(call.verb, AgentVerb::AiVerdict)
             .then(|| self.guests.held_image(&call.input))
             .flatten();
+        let board = is_board_row(call.verb, &call.input).then(|| self.board.clone());
         // The run's thread drives its own reactor; the row runs on the
         // server's runtime, which its model rungs block on, and the run's
         // thread waits for it.
@@ -118,9 +129,12 @@ impl AgentVerbDoor for RunHostDoor {
         let verb = call.verb;
         let input = call.input.clone();
         self.runtime.spawn_blocking(move || {
-            let _ = sender.send(answer_as_agent(
-                &server, actor, &origin, invocation, verb, input, held,
-            ));
+            let _ = sender.send(match board {
+                Some(board) => {
+                    board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
+                }
+                None => answer_as_agent(&server, actor, &origin, invocation, verb, input, held),
+            });
         });
         let Ok(answered) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
@@ -147,6 +161,76 @@ impl AgentVerbDoor for RunHostDoor {
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         Ok(None)
     }
+}
+
+impl Drop for RunHostDoor {
+    fn drop(&mut self) {
+        let server = Arc::clone(&self.server);
+        let (actor, board) = (self.actor, self.board.clone());
+        self.runtime
+            .spawn(async move { drop_run_board(&server, actor, &board).await });
+    }
+}
+
+/// Whether a call is a board row: `self.focus.*`, or a `describe` of one
+/// board key. `describe(self)` is not: it reads a credential's self brief.
+fn is_board_row(verb: AgentVerb, input: &Value) -> bool {
+    match verb {
+        AgentVerb::SelfFocusRefresh
+        | AgentVerb::SelfFocusSubscribe
+        | AgentVerb::SelfFocusUnsubscribe => true,
+        AgentVerb::Describe => {
+            input.get("key").is_some_and(|key| !key.is_null())
+                && input.get("self").and_then(Value::as_bool) != Some(true)
+        }
+        _ => false,
+    }
+}
+
+/// Answers one board row for `actor` over the run's own board connection,
+/// with its verb hooks once around it; the rows it answers with are every
+/// row the board was derived from. Blocking: call it on a blocking thread of
+/// the server's runtime.
+fn board_as_agent(
+    server: &Arc<SyncServer>,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    board: &StreamConnectionId,
+    verb: AgentVerb,
+    input: Value,
+) -> MemoryResult<(Value, Vec<EntityId>)> {
+    let memory = agent_memory(server, actor, origin, invocation);
+    let name = verb.as_str();
+    let mut rows = Vec::new();
+    let output = verb_hook_boundary::row(&memory, name, input, |input| {
+        sdk::validate_input(name, &input)?;
+        let call = match verb {
+            AgentVerb::SelfFocusRefresh => BoardVerbCall::Refresh {
+                frame_epoch: decode::<BoardRefreshRequest>(input)?.frame_epoch,
+            },
+            AgentVerb::SelfFocusSubscribe => BoardVerbCall::Subscribe {
+                scopes: decode::<BoardSubscriptionRequest>(input)?.scopes,
+            },
+            AgentVerb::SelfFocusUnsubscribe => BoardVerbCall::Unsubscribe {
+                scopes: decode::<BoardSubscriptionRequest>(input)?.scopes,
+            },
+            _ => {
+                let request: DescribeRequest = decode(input)?;
+                BoardVerbCall::Expand {
+                    key: request
+                        .key
+                        .ok_or_else(|| MemoryError::bad_request("describe names its board key"))?,
+                    frame_epoch: request.frame_epoch,
+                }
+            }
+        };
+        let (output, served) = tokio::runtime::Handle::current()
+            .block_on(execute_run_board_verb(server, actor, board, call))?;
+        rows = served;
+        Ok(output)
+    })?;
+    Ok((output, rows))
 }
 
 /// Answers one host row for `actor`, with its verb hooks once around it, on
@@ -221,6 +305,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultQuestionsPause
             | AgentVerb::VaultQuestionsRead
             | AgentVerb::VaultQuestionsAnswers
+            | AgentVerb::TasksWave
     )
 }
 
@@ -280,11 +365,10 @@ fn host_row(
             let dial = server
                 .decision_host()
                 .dial(request.ceiling.unwrap_or(DecisionRung::Big));
-            let budget = Duration::from_millis(
-                request
-                    .unit_deadline_ms
-                    .unwrap_or(GRAPH_ASK_UNIT_DEADLINE_MS),
-            );
+            let budget = oneiron::llm::decision::questions::question_call_budget(
+                server.vault(),
+                request.unit_deadline_ms,
+            )?;
             let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget)?;
             encode(
                 match run_graph_ask_receipted(
@@ -351,6 +435,20 @@ fn host_row(
             )?)
         }
         AgentVerb::AiOptions => encode(ai_options(server, decode(input)?)?),
+        // The run's own wave: planned for its agent and queued on its own
+        // surface, whose bound lease is the wave's creator (OF-532).
+        AgentVerb::TasksWave => {
+            let request: TaskWaveRequest = decode(input)?;
+            let lane = agent_lane(server, actor)?;
+            let (epic, constraints) =
+                wave_plan(server, actor, |id| lane.is_entity_readable(id), &request)?;
+            encode(wave_receipt(memory.enqueue_wave_plan(
+                epic,
+                &request.objective,
+                constraints,
+                now,
+            )?)?)
+        }
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => Err(owners(verb, "ai.* media calls are the owner's")),
     }

@@ -4,9 +4,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::frame::MAX_BOARD_ROW_BYTES;
 use super::one_line_token;
 use super::people::PeopleView;
-use super::tasks::TaskIntentPresence;
+use super::tasks::{TaskIntentPresence, label_preview};
 use crate::agent_run_status::{AgentRunStatus, project_agent_run_status_with_park};
 use crate::attempt_queue::AttemptRecord;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -215,8 +216,15 @@ pub fn fork_states_for_actor(
     Ok(forks)
 }
 
+/// Bytes the `you:` line keeps back from one board row for its `; +N more`
+/// tail and a clipped fork's ellipsis.
+const YOU_LINE_TAIL_BYTES: usize = 64;
+
 /// The `you:` line: each fork with where it runs and what it does, or `None`
-/// when the agent has no fork. A fork's task is named by its board label.
+/// when the agent has no fork. A fork's task is named by its board label, in
+/// the bounded preview its TASKS row shows. The rider is never shed, so it
+/// holds itself to one row's bytes: whole forks in order while they fit, then
+/// `+N more` for the rest; a first fork too long alone is clipped.
 #[must_use]
 pub fn render_you_line(forks: &[ForkState], intents: &[TaskIntentPresence]) -> Option<String> {
     if forks.is_empty() {
@@ -227,7 +235,7 @@ pub fn render_you_line(forks: &[ForkState], intents: &[TaskIntentPresence]) -> O
             .iter()
             .find(|intent| intent.id == task)
             .and_then(|intent| intent.label.as_deref())
-            .map(one_line_token)
+            .map(label_preview)
     };
     let parts: Vec<String> = forks
         .iter()
@@ -256,7 +264,35 @@ pub fn render_you_line(forks: &[ForkState], intents: &[TaskIntentPresence]) -> O
             }
         })
         .collect();
-    Some(format!("you: {}", parts.join("; ")))
+    let budget = MAX_BOARD_ROW_BYTES.saturating_sub(YOU_LINE_TAIL_BYTES);
+    let mut line = String::from("you: ");
+    let mut shown = 0;
+    for part in &parts {
+        let separator = if shown == 0 { 0 } else { 2 };
+        if line.len() + separator + part.len() > budget {
+            break;
+        }
+        if shown > 0 {
+            line.push_str("; ");
+        }
+        line.push_str(part);
+        shown += 1;
+    }
+    if shown == 0 {
+        let first = &parts[0];
+        let mut end = budget.saturating_sub(line.len()).min(first.len());
+        while !first.is_char_boundary(end) {
+            end -= 1;
+        }
+        line.push_str(&first[..end]);
+        line.push('…');
+        shown = 1;
+    }
+    let held = parts.len() - shown;
+    if held > 0 {
+        line.push_str(&format!("; +{held} more"));
+    }
+    Some(line)
 }
 
 /// The AGENT_DEF actor an agent-dispatch attempt runs as; `None` for any

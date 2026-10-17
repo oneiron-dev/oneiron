@@ -37,6 +37,10 @@ pub enum ProviderKind {
     /// for image output) or a `[models.media.video]` rung (a Veo
     /// `predictLongRunning` job) only.
     Gemini,
+    /// Soniox's real-time speech-to-text WebSocket
+    /// (`wss://stt-rt.soniox.com/transcribe-websocket`, the key as a bearer
+    /// on the upgrade only): a live `[models.media.transcribe]` rung only.
+    Soniox,
 }
 
 impl ProviderKind {
@@ -56,7 +60,7 @@ impl ProviderKind {
     /// Whether this kind serves media seats and nothing else.
     #[must_use]
     pub fn media_only(self) -> bool {
-        self.speech_only() || matches!(self, Self::Gemini)
+        self.speech_only() || matches!(self, Self::Gemini | Self::Soniox)
     }
 
     /// Whether this kind is a hosted speech wire, which serves the speech
@@ -85,7 +89,8 @@ impl ProviderKind {
             | Self::AnthropicCompat
             | Self::Cartesia
             | Self::Elevenlabs
-            | Self::Gemini => ModelLocality::ThirdParty,
+            | Self::Gemini
+            | Self::Soniox => ModelLocality::ThirdParty,
             Self::LocalOpenaiCompat | Self::Oneironer | Self::Voxcpm2 => ModelLocality::OwnServer,
         }
     }
@@ -110,9 +115,12 @@ impl ProviderKind {
                 LlmCapability::ToolCalling,
                 LlmCapability::ToolResults,
             ],
-            Self::Oneironer | Self::Cartesia | Self::Elevenlabs | Self::Voxcpm2 | Self::Gemini => {
-                Vec::new()
-            }
+            Self::Oneironer
+            | Self::Cartesia
+            | Self::Elevenlabs
+            | Self::Voxcpm2
+            | Self::Gemini
+            | Self::Soniox => Vec::new(),
         }
     }
 }
@@ -180,6 +188,8 @@ pub(super) struct ProviderFile {
     output_limit_field: Option<OutputLimitField>,
     response_format: Option<ResponseFormatWire>,
     capabilities: Option<Vec<LlmCapability>>,
+    #[serde(default)]
+    model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
     locality: Option<ModelLocality>,
     revision: Option<String>,
     payer: Option<Payer>,
@@ -212,6 +222,9 @@ pub struct ProviderConfig {
     /// Whether an OpenAI-compatible endpoint is sent a JSON call's schema.
     pub response_format: ResponseFormatWire,
     pub capabilities: Vec<LlmCapability>,
+    /// One wire model's own capabilities, in place of `capabilities`, so two
+    /// models on one provider can differ (one hears audio, one does not).
+    pub model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
     /// Where calls to this provider run, for the engine's route checks.
     pub locality: ModelLocality,
     /// Revision stamped on every engine model id from this provider, so a
@@ -243,6 +256,11 @@ impl ProviderFile {
         }
         if let Some(key_secret) = &self.key_secret {
             validate_key_secret(name, kind, &base_url, key_secret, self.key_env.is_some())?;
+        }
+        // The live socket sends its key as the upgrade's bearer, read from the
+        // environment; there is no keyless Soniox.
+        if kind == ProviderKind::Soniox && self.key_env.is_none() {
+            anyhow::bail!("models.providers.{name}.key_env is required for a soniox provider");
         }
         for header in self.headers.keys() {
             if CREDENTIAL_HEADERS.contains(&header.to_ascii_lowercase().as_str()) {
@@ -290,6 +308,13 @@ impl ProviderFile {
                 "models.providers.{name}: the provider name and revision may use only A-Z, a-z, 0-9, '.', '-' and '_'"
             );
         }
+        if self
+            .model_capabilities
+            .keys()
+            .any(|model| model.trim().is_empty())
+        {
+            anyhow::bail!("models.providers.{name}.model_capabilities names a blank model");
+        }
         for rate in &self.rates {
             if rate.per == 0 || LeaseUnit::new(rate.unit.as_str()).is_err() {
                 anyhow::bail!(
@@ -318,6 +343,7 @@ impl ProviderFile {
             capabilities: self
                 .capabilities
                 .unwrap_or_else(|| kind.default_capabilities()),
+            model_capabilities: self.model_capabilities,
             locality: self.locality.unwrap_or_else(|| kind.default_locality()),
             revision,
             payer,
@@ -382,6 +408,16 @@ fn validate_base_url(name: &str, kind: ProviderKind, url: &str) -> anyhow::Resul
         anyhow::bail!(
             "models.providers.{name}.base_url: a voxcpm2 worker is reached at http://127.0.0.1:<port> only"
         );
+    }
+    // Soniox's live socket is a TLS WebSocket and nothing else; no other
+    // kind takes a ws(s) origin.
+    if kind == ProviderKind::Soniox {
+        if parsed.scheme() != "wss" {
+            anyhow::bail!(
+                "models.providers.{name}.base_url: a soniox provider is reached at a wss:// URL only"
+            );
+        }
+        return Ok(());
     }
     let near = host_is_near(&parsed);
     match (parsed.scheme(), kind) {

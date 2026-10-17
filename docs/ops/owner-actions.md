@@ -684,7 +684,20 @@ terms; a self-hosted server participates only once you set `failure_signal_expor
 endpoint = "https://…"     # ONEIRON_FAILURE_SIGNALS_ENDPOINT; HTTPS, or HTTP on loopback
 every_secs = 3600          # ONEIRON_FAILURE_SIGNALS_EVERY_SECS
 batch = 64                 # ONEIRON_FAILURE_SIGNALS_BATCH: code-fix records per send
+
+[failure_signals.candidates.tone-fix]    # a publisher candidate; file layers only
+instructions_file = "/etc/oneiron/candidates/tone-fix.txt"
+sha256 = "…"               # the file's SHA-256, lowercase hex
 ```
+
+A candidate is an instruction your publisher ships and you install and pin. The Coach replays
+each failure in the vault with the candidate added to the failing agent's instructions, and only
+the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
+fetches or installs it. A file that no longer matches its pin stops the server at start. At most
+8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
+`GET /v1/owner/coach/code-fixes?limit=<n>` lists the Coach's code-fix work, newest first: each
+failure case's heal route, its class, the invented example's verdict and each candidate's fixed
+or not-fixed result. It holds no text of the failure.
 
 The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
@@ -693,6 +706,12 @@ ordinary outbound effect on `failure_signals/send` with its recorded receipt. Wh
 participates, the vault keeps a standing grant on that channel for the sender, so no send asks
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
+
+The counts come from the Coach's detectors. Each diagnostic they raise counts once, ever: a missed
+recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
+`other` with its detector named. Your own refusal of a single consent ask is never counted. A
+diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
+Counts wait in the vault, across restarts, until the publisher takes them.
 
 ## Model-graded self-heal detectors
 
@@ -812,14 +831,16 @@ oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
 `issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
 `file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
 `security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
-recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`. Nothing
-is published yet: the kit is pending. Put each piece where its home says, then `confirm` with two
-of them, or with one and the passphrase. That re-entry is the proof you saved them. Confirm makes
-the kit's root live on this machine and marks every earlier kit replaced. When this machine's
-keystore opens the vault key, confirm also seals it to the root as the escrow wrap `world-kit`. A
-replaced kit's pieces still open their own old root;
-replacing a kit does not revoke it. `this-machine` is refused until a keystore slot can hold a
-piece.
+recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`.
+`file-on:<machine>` with this machine's own id counts as `file-here`, and `other-machine:<machine>`
+with it is refused. Nothing is published yet: the kit is pending. Put each piece where its home
+says, then `confirm` with two of them, or with one and the passphrase. That re-entry is the proof
+you saved them. Confirm makes the kit's root live on this machine and marks every earlier kit
+replaced. When the vault has a key, confirm also seals it to the root as the escrow wrap
+`world-kit`, replacing the earlier kit's. It opens the key with this machine's keystore, and a key
+that stays locked refuses the confirm before anything changes. A replaced kit's pieces still open
+their own old root; replacing a kit does not revoke it. `this-machine` is refused until a keystore
+slot can hold a piece.
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
@@ -829,6 +850,7 @@ run only from the CLI, so no piece crosses HTTP.
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own:
 pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
+A kit this vault still lists as pending is refused: `confirm` it instead.
 
 On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
 `status` prints:
@@ -928,6 +950,50 @@ Each answers with the key's catalog entry and rows. The host verbs `vault.settin
 `.put` and `.clear` take the same input over the facade and MCP. All of them are the owner's
 alone, and clearing an absent row succeeds.
 
+The app's policy actions have host verbs too. Each runs the same action as
+`POST /v1/core/actions/{verb}`:
+- `vault.settings.wake_policy.set` with `{"policy", "idempotency_key"}` runs
+  `dreamer.wake_policy.set`, which needs the owner's own credential.
+- `vault.settings.inference_defaults` with `{}` runs `inference.defaults.read`.
+- `vault.settings.inference_defaults.replace` with `{"defaults", "idempotency_key"}` runs
+  `inference.defaults.replace`.
+
+The two inference verbs need the caller's Auto ceiling. Each answers with the action's
+`outcome`. A retry with the same idempotency key gets the first call's answer.
+
+Two app writes are verbs as well, so a button and an agent make them the same way:
+- `vault.messages.react` with `{"message", "by", "glyph", "occurred_at"?, "remove"?}` puts or
+  removes your own reaction. `POST /v1/core/messages/{message}/reactions` runs it as an action
+  of your credential, and the request's `Idempotency-Key` becomes the action's key. A connector
+  host's `external` provider reaction needs an owner-grade credential.
+- `vault.artifacts.create` with `{"name", "media_type", "content_base64", "run_ref"?,
+  "made_by"?}` creates an artifact with its first version. `POST /v1/core/artifacts` runs the
+  same door.
+
+## Widen proposals
+
+When an agent asks to spawn a child with more context than its own slice holds, the gate does not
+grant it. The ask is parked as a **widen proposal** for the board above (the attempt that
+dispatched the asking agent). Its id is the digest of the stored request, so the proposal you
+answer is the one you listed. Approving it widens the parent's slice and enqueues the child,
+under a one-time consent. Declining it is final: the decline stays on record, a retry of the same
+ask is refused, and the Coach counts it as a widen denial in its agent health review.
+
+```sh
+oneiron widen-proposals list                      # newest first
+oneiron widen-proposals list --state pending
+oneiron widen-proposals approve HEX64
+oneiron widen-proposals decline HEX64
+```
+
+The commands open a stopped vault. A running server answers the same at
+`GET /v1/owner/widen-proposals[?state=pending|approved|declined]`,
+`POST /v1/owner/widen-proposals/approve` and `POST /v1/owner/widen-proposals/decline`, each with
+`{"proposal_id"}`. The host verbs `vault.widen_proposals`, `.approve` and `.decline` take the same
+input over the facade and MCP. Each answer shows the parent and board attempts, the target, the
+three context descriptors (never their content), when it was raised, and how it settled. Only the
+owner of the board's TASK may answer one.
+
 ## Legal holds
 
 A legal hold keeps records from being deleted. While a hold names a record, its delete fails for
@@ -1002,7 +1068,9 @@ where the bytes come from.
 
 Text, image and audio each search through a kind slot. An unbound text slot reads the vault's
 own text index. A bound slot reads a declared embedding space, whose id is an `ai.embed` rung id
-(as `GET /v1/ai/options` lists it), then `@where`.
+(as `GET /v1/ai/options` lists it), then `@where`: the `[models]` provider key that binds that
+rung, so one model at two clouds is two spaces. Where the space's model runs is that provider's
+locality. A space whose `@where` names no provider serving its rung embeds nothing.
 
 - `GET /v1/owner/embedding-spaces` lists the declared spaces, the text index, which space each
   slot reads, every move with its last check, and how many probes each kind holds.
@@ -1014,6 +1082,13 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   With the text slot bound, a text query embeds through that space's text tower in the context
   pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
   holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
+  A `media` query (`{"space", "mime", "bytes_b64", "kinds"}`) seeds a search on its own: the
+  server embeds the bytes into that space through the `ai.embed` rung its id names and searches
+  that space's list. The context pack and the Context Board over HTTP, `/v1/core/query`, the
+  native MCP context pack, and `vault.recall` on every SDK take it. Recall refuses it at light
+  effort and in call mode, and refuses `kinds`. A client with no server (an embedded handle)
+  answers `MODEL_UNAVAILABLE` (`EMBEDDER_UNAVAILABLE` on the native context pack) and never
+  searches without the media.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`

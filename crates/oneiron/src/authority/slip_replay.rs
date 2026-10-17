@@ -212,6 +212,12 @@ impl Vault {
         let Ok(verified) = slip.verify(&mint.signer, &fold, now, &challenge, signature) else {
             return Ok(None);
         };
+        if self
+            .require_live_slip_refs_in_txn(&txn, verified.claims(), now)
+            .is_err()
+        {
+            return Ok(None);
+        }
         if verified.claims().single_use {
             return Ok(None);
         }

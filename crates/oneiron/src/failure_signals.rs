@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 mod code_fix;
 mod delivery;
+mod live;
 pub(crate) mod policy;
 mod verbatim;
 mod witness;
@@ -36,6 +37,7 @@ use crate::config::failure_signals::FailureSignalConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{LlmRole, ModelId};
+use crate::side_table::{self, Raw, SideTable};
 use crate::vault::LiveEntityRow;
 use witness::{WitnessEntry, WitnessKind};
 
@@ -67,6 +69,9 @@ pub enum FailureClassV1 {
 pub enum AgentKind {
     System,
     Custom,
+    /// The observation names no affected agent (a detector's diagnostic).
+    /// Exported in clear as `unattributed`; it never carries an agent ref.
+    Unattributed,
 }
 
 /// The closed, content-free surface vocabulary. A new surface needs a reviewed
@@ -181,10 +186,15 @@ struct VerifiedIdentity {
 /// it doubles past what the previous collection kept.
 const WITNESS_COLLECTION_FLOOR: usize = 128;
 
-/// One open vault's in-memory counts. Neither the key nor raw input is exported.
+/// The counts not yet delivered, so a restart keeps them: the count, eight
+/// bytes big-endian, then the dimensions as JSON. Key: blake3 of that JSON.
+const COUNTS: SideTable<[u8; 32], Vec<u8>, Raw> =
+    SideTable::new(&side_table::FAILURE_SIGNALS_TIER1_COUNTS);
+
+/// One open vault's witnesses and token key. Neither the key nor raw input
+/// is exported; the counts themselves are durable, in [`COUNTS`].
 pub(crate) struct FailureSignalCounts {
     key: [u8; 32],
-    counts: Mutex<BTreeMap<FailureSignalDimensions, u64>>,
     witnesses: Mutex<BTreeMap<EntityId, WitnessEntry>>,
     collect_at: AtomicUsize,
 }
@@ -195,7 +205,6 @@ impl Default for FailureSignalCounts {
         rand_core::OsRng.fill_bytes(&mut key);
         Self {
             key,
-            counts: Mutex::default(),
             witnesses: Mutex::default(),
             collect_at: AtomicUsize::new(WITNESS_COLLECTION_FLOOR),
         }
@@ -252,7 +261,8 @@ impl FailureSignalCounts {
         hasher.finalize().to_hex().to_string()
     }
 
-    fn record(
+    /// The aggregate row one record adds to; `None` when nothing is counted.
+    fn dimensions(
         &self,
         config: FailureSignalConfig,
         input: FailureSignalInput,
@@ -260,9 +270,9 @@ impl FailureSignalCounts {
         policy: policy::Resolved,
         observed_at: i64,
         detector_id: &str,
-    ) -> Result<()> {
+    ) -> Result<Option<FailureSignalDimensions>> {
         if !config.exports() {
-            return Ok(());
+            return Ok(None);
         }
         let ts_bucket = bucket_start(observed_at, policy.bucket_seconds)?;
         if !bounded(&input.agent, policy.max_component_bytes) {
@@ -296,49 +306,32 @@ impl FailureSignalCounts {
             ts_bucket,
             bucket_seconds: policy.bucket_seconds,
         };
-        let mut counts = self
-            .counts
-            .lock()
-            .map_err(|_| Error::InvariantViolation("failure signal counters poisoned"))?;
-        let count = counts.entry(dimensions).or_default();
-        *count = count
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("failure signal count"))?;
-        Ok(())
+        Ok(Some(dimensions))
     }
+}
 
-    fn export(&self, config: FailureSignalConfig) -> Result<Vec<Tier1FailureCount>> {
-        if !config.exports() {
-            return Ok(Vec::new());
-        }
-        let counts = self
-            .counts
-            .lock()
-            .map_err(|_| Error::InvariantViolation("failure signal counters poisoned"))?;
-        Ok(counts
-            .iter()
-            .map(|(dimensions, count)| Tier1FailureCount {
-                dimensions: dimensions.clone(),
-                count: *count,
-            })
-            .collect())
-    }
+/// A count row's key and its dimensions' JSON.
+fn count_key(dimensions: &FailureSignalDimensions) -> Result<([u8; 32], Vec<u8>)> {
+    let json = serde_json::to_vec(dimensions)
+        .map_err(|_| Error::InvariantViolation("failure signal dimensions encode"))?;
+    Ok((*blake3::hash(&json).as_bytes(), json))
+}
 
-    fn ack(&self, delivered: &[Tier1FailureCount]) -> Result<()> {
-        let mut counts = self
-            .counts
-            .lock()
-            .map_err(|_| Error::InvariantViolation("failure signal counters poisoned"))?;
-        for row in delivered {
-            if let Some(count) = counts.get_mut(&row.dimensions) {
-                *count = count.saturating_sub(row.count);
-                if *count == 0 {
-                    counts.remove(&row.dimensions);
-                }
-            }
-        }
-        Ok(())
-    }
+fn count_value(count: u64, json: &[u8]) -> Vec<u8> {
+    let mut value = count.to_be_bytes().to_vec();
+    value.extend_from_slice(json);
+    value
+}
+
+fn decode_count(value: &[u8]) -> Result<Tier1FailureCount> {
+    let (count, json) = value
+        .split_first_chunk::<8>()
+        .ok_or(Error::CorruptedIndex("failure signal count row"))?;
+    Ok(Tier1FailureCount {
+        dimensions: serde_json::from_slice(json)
+            .map_err(|_| Error::CorruptedIndex("failure signal count row"))?,
+        count: u64::from_be_bytes(*count),
+    })
 }
 
 fn executed_model(
@@ -465,7 +458,17 @@ impl crate::Vault {
         // source check is complete; release its snapshot before resolving the
         // seeded AGENT_DEF through the ordinary vault reader.
         drop(rtxn);
-        let registered_agent = if input.agent_kind == AgentKind::System {
+        let registered_agent = if input.agent_kind == AgentKind::Unattributed {
+            if input.agent_ref.is_some() {
+                return Err(Error::InvalidConfig(
+                    "unattributed failure signal cannot name an agent".into(),
+                ));
+            }
+            Some(VersionedComponent {
+                name: live::UNATTRIBUTED.into(),
+                version: live::UNATTRIBUTED.into(),
+            })
+        } else if input.agent_kind == AgentKind::System {
             let id = input.agent_ref.ok_or(Error::InvalidConfig(
                 "system failure signal requires seeded agent id".into(),
             ))?;
@@ -517,7 +520,7 @@ impl crate::Vault {
             }
             policy::resolve(&manifest.failure_signal_policy, input.agent_ref)
         };
-        self.store.diagnostics.failure_signals.record(
+        let Some(dimensions) = self.store.diagnostics.failure_signals.dimensions(
             self.config.failure_signals,
             input,
             VerifiedIdentity {
@@ -527,22 +530,59 @@ impl crate::Vault {
             policy,
             observed_at,
             &detector_id,
-        )
+        )?
+        else {
+            return Ok(());
+        };
+        let (key, json) = count_key(&dimensions)?;
+        self.with_write_txn_grouped(|txn| {
+            let count = match COUNTS.get(&self.store, &*txn, &key)? {
+                Some(value) => decode_count(&value)?.count,
+                None => 0,
+            }
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("failure signal count"))?;
+            COUNTS.put(&self.store, txn, &key, &count_value(count, &json))
+        })
     }
 
-    /// Export this vault's current content-free tier-1 aggregate.
+    /// Export this vault's current content-free tier-1 aggregate: every
+    /// count not yet delivered, kept across restarts.
     pub fn export_tier1_failure_counts(&self) -> Result<Vec<Tier1FailureCount>> {
-        self.store
-            .diagnostics
-            .failure_signals
-            .export(self.config.failure_signals)
+        if !self.config.failure_signals.exports() {
+            return Ok(Vec::new());
+        }
+        let txn = self.store.env.read_txn()?;
+        let mut counts = COUNTS
+            .iter_from(&self.store, &txn, &[])?
+            .map(|row| decode_count(&row?.1))
+            .collect::<Result<Vec<_>>>()?;
+        counts.sort_by(|a, b| a.dimensions.cmp(&b.dimensions));
+        Ok(counts)
     }
 
     /// Takes counts the host delivered out of the aggregate, so the next
     /// export carries only what was counted since. A count recorded between
     /// the export and this ack stays for the next one.
     pub fn ack_tier1_failure_counts(&self, delivered: &[Tier1FailureCount]) -> Result<()> {
-        self.store.diagnostics.failure_signals.ack(delivered)
+        let keys = delivered
+            .iter()
+            .map(|row| -> Result<_> { Ok((count_key(&row.dimensions)?, row.count)) })
+            .collect::<Result<Vec<_>>>()?;
+        self.with_write_txn_grouped(|txn| {
+            for ((key, json), delivered) in &keys {
+                let Some(value) = COUNTS.get(&self.store, &*txn, key)? else {
+                    continue;
+                };
+                let left = decode_count(&value)?.count.saturating_sub(*delivered);
+                if left == 0 {
+                    COUNTS.delete(&self.store, txn, key)?;
+                } else {
+                    COUNTS.put(&self.store, txn, key, &count_value(left, json))?;
+                }
+            }
+            Ok(())
+        })
     }
 
     /// Registers a producer's witness. Once the map has doubled since the

@@ -3,6 +3,14 @@ use super::*;
 use oneiron::authority::{CapabilitySlip, VerifiedSlip};
 use serde::Deserialize;
 
+/// The facade doors an invitee's own slip (FIX 1925) reaches: its
+/// invitation's list, accept and decline. Anywhere else it holds no scope.
+pub(crate) const INVITEE_DOORS: [&str; 3] = [
+    "vault.members.invitations",
+    "vault.members.accept",
+    "vault.members.decline",
+];
+
 /// A short-lived proof bound to the whole slip and a caller-generated nonce.
 /// TLS protects the proof in transit. It is not a replacement bearer token.
 #[derive(Debug, Clone, Deserialize)]
@@ -65,6 +73,13 @@ impl CoreAuth {
         }
         let mut auth = Self::from_verified(verified, slip.caveats.is_empty())?;
         auth.instrument = Some(*blake3::hash(token.as_bytes()).as_bytes());
+        // The work this request queues carries the slip it was admitted on,
+        // judged again when that work runs. A registry that keeps none
+        // leaves the request nothing to queue slip-bound work with.
+        let challenge = oneiron::authority::holder_proof_challenge(proof.timestamp, &proof.nonce);
+        auth.invocation_slip = vault
+            .bind_invocation_slip(&slip, &challenge, &signature)
+            .ok();
         auth.facets_owner_exempt = auth
             .verified_slip
             .as_ref()
@@ -127,6 +142,11 @@ impl CoreAuth {
         let scopes: BTreeSet<_> = CoreScope::all()
             .into_iter()
             .filter(|scope| {
+                // An invitee's slip holds no scope of its own; only its
+                // invitation's doors grant one (`at_invitee_door`).
+                if claims.invitation_ref.is_some() {
+                    return false;
+                }
                 // A general root is not an organization credential. Organization
                 // powers exist only in the explicit org-bound closed vocabulary.
                 if matches!(scope, CoreScope::OrgAdmin(_)) && claims.org_ref.is_none() {
@@ -157,9 +177,28 @@ impl CoreAuth {
             // Local host proofs have no caveats. Their logged mint id is stable.
             instrument: Some(claims.slip_id),
             verified_slip: Some(verified),
+            invocation_slip: None,
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
         })
+    }
+    /// An invitee's slip (FIX 1925) on the facade route of one of
+    /// [`INVITEE_DOORS`] (`/v1/core/facade/<verb>`): the read and write
+    /// scopes those rows require. Its door then admits the invitee's own
+    /// invitation alone. Any other request keeps the slip's empty scope.
+    pub(super) fn at_invitee_door(mut self, path: &str) -> Self {
+        let invited = self
+            .verified_slip
+            .as_ref()
+            .is_some_and(|slip| slip.claims().invitation_ref.is_some());
+        let verb = path
+            .strip_prefix("/v1/core/facade")
+            .unwrap_or(path)
+            .trim_start_matches('/');
+        if invited && INVITEE_DOORS.contains(&verb) {
+            self.scopes = BTreeSet::from([CoreScope::Read, CoreScope::Write]);
+        }
+        self
     }
     /// An adapter without record-Scope enforcement cannot accept a narrowed
     /// record capability. Fail closed instead of dropping caveats at projection.

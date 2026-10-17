@@ -101,7 +101,10 @@ the `local_reasoner` model in decision-read mode (section 9).
 Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
 saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
 `dreamer_target`, `extraction_encoder` (a tagger, `kind = "oneironer"`), and the
-rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
+rest of the manifest list. `coach` is the Coach's own seat (agent-health asks,
+code-fix drafts, session-end distill); HIGH and MID leave it unset, and with no
+`[models.roles.coach]` the Coach rides `generative_reasoner`. The retrieval
+embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
@@ -114,7 +117,11 @@ default, or `none`; OpenAI-compatible providers only), `capabilities` (`streamin
 `reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
 WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
 the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
-`reasoning` unless the list is written out),
+`reasoning` unless the list is written out), `model_capabilities` (one wire
+model's own list in place of `capabilities`, keyed by the model's name, so
+two models on one provider can differ: `model_capabilities = { "gpt-audio" =
+["streaming", "audio_input"] }`; the Big rung hears a clip only on a model
+whose list has `audio_input`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
@@ -515,6 +522,30 @@ tsc-rs cannot finish, a busy one included. A step's report names the checker
 whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
+
+### Planned spawns (`[models.planner]`)
+
+An agent run the server leases can ask for help with
+`self.agents.spawn({need, ...})` and have the vault's planner pick the shape:
+the model, the pattern and the width. Its leader calls
+(`self.leader.advice`, `self.leader.pattern`) read the same planner. Each
+seat joins a model this host serves to the AGENT_DEF that runs on it:
+
+```toml
+[models.planner]
+top = 3                      # optional; shapes the leader's advice returns by default
+
+[[models.planner.seats]]
+model = "anthropic/claude-sonnet-5-5@1"  # an engine model ID, one seat per model
+agent = "sys.team_lead"                  # a seeded definition's logical ID, or an AGENT_DEF hex ID
+```
+
+The planned child runs the chosen seat's definition, its type placed on the
+need's text. The pick and the placement go through the host's decision
+ladder (section 13), each on its own 10-second clock. A seat whose
+definition this vault does not hold is skipped, with a log line. With no
+seat, the server lends no planner: a spawn that names an `agent` runs it
+directly, and a planned spawn or a leader call answers `planner_unbound`.
 
 ## 7. Raw calls
 
@@ -1013,6 +1044,50 @@ How a call runs:
 A full media queue makes heard audio wait for the next cut and a sentence
 wait for room. A queue that takes nothing for 30 seconds stops the reply.
 
+#### Live hearing on Soniox
+
+When the vault's `asr-live` row is bound to a soniox rung, the call hears the
+owner live instead of transcribing each cut:
+
+```toml
+[models.providers.soniox]
+kind = "soniox"
+base_url = "wss://stt-rt.soniox.com/transcribe-websocket"
+key_env = "SONIOX_API_KEY"
+
+[models.media.transcribe]
+rungs = ["soniox:stt-rt-v5"]
+tiers = { "asr-live" = "soniox:stt-rt-v5" }
+
+[models.media.transcribe.rung_options."soniox:stt-rt-v5"]
+language_hints = ["ja", "en"]   # the default; config replaces it
+```
+
+- A soniox provider takes a `wss://` URL only, and needs `key_env`. The key
+  is sent as `Authorization: Bearer` on the socket's upgrade and nowhere
+  else. A soniox rung serves the transcribe seat only, and a buffered
+  `ai.transcribe` call on it is refused.
+- The socket opens when the call starts, on a stream lease of its own on the
+  media meter. Microphone audio goes out as it arrives, and a keepalive goes
+  after 5 seconds with nothing sent.
+- Each hypothesis is a partial of one utterance, at the next revision, and
+  is enriched as a wire partial is. Soniox's own endpoint changes nothing:
+  the owner's `cut` finalizes what was said, and that one final starts the
+  reply.
+- At 10 minutes of audio the socket ends, and the next one opens on a fresh
+  lease. Words finalized before the switch stay in the utterance still open.
+- A socket that drops is reconnected once, on a fresh lease. A drop means
+  the socket fails or closes early, or Soniox reports error 408, 500, 502,
+  503 or 504. The words already final stay in the utterance still open, and
+  audio not yet sent goes to the new socket. A cut whose `<fin>` never came
+  is answered with the words already final. Words Soniox had heard but not
+  made final are lost. A second drop before the new socket answers fails
+  the hearing.
+- A live failure ends the call. A failure here means a drop that the
+  reconnect did not clear, any other Soniox error, a frame that does not
+  parse, or more than 4 MiB queued. Nothing falls back to batch
+  transcription.
+
 ### Lazy images and `ask_image`
 
 A read serves each generated image down a ladder. A reader whose request
@@ -1026,6 +1101,18 @@ call's context gets when its host names none). The agent verb
 `vault.images.view` (`{"handle", "region": {"x", "y", "width", "height"},
 "edge"}`) fetches the full pixels behind a handle: the whole image, a crop,
 or a zoom to `edge` pixels.
+
+A hydrate (`/v1/core/hydrate` or `/v1/core/batch/shortId/hydrate`) that
+takes images can also name its task (`"task": "Find the receipt's total"`).
+When `[models.decisions.image_pick]` words the pick (§13), the host then
+asks, for each image it would serve in full, whether the task needs it. The
+question reads the task and the image's description, and goes up the
+ladder's quick rungs only, to System One, each image on its own `budget_ms`
+clock. Only an answer of no inside the band steps the image
+down to its thumbnail or its description. An abstain, an answer outside the
+band or a failed call serves the image in full. The pick is read for the
+caller's principal, or the vault's owner for an owner-grade credential that
+names none.
 
 `POST /v1/ai/ask_image` (`{"handle", "question", "region"}`) asks a small
 vision model about the pixels instead, so they never enter the asker's
@@ -1287,6 +1374,11 @@ facet = "code-task"
 model = "Which model should run this task?"
 effort = "At which effort should it run?"
 budget_ms = 2000        # each pick's anytime budget
+
+[models.decisions.image_pick]
+# A hydrate that names its task asks, for each image it would serve in full:
+wording = "Does this task need this image in full?"
+budget_ms = 1000        # each image's anytime budget (the default)
 
 [models.decisions.system_one]
 endpoint = "https://systemone.example/v1/systemone"   # HTTPS, or HTTP on loopback

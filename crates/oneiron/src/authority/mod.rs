@@ -56,6 +56,8 @@ mod host_re_root;
 mod import_order;
 mod ingest_observation;
 mod install_fold;
+mod invitee_slip;
+mod invocation_slip;
 mod left_notices;
 mod log_budget;
 mod log_structure;
@@ -145,6 +147,7 @@ pub use history_coverage::{AuthorityHistoryCoverage, AuthorityHistoryRequest};
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
+pub use invocation_slip::InvocationSlipBinding;
 pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
@@ -170,7 +173,7 @@ pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::HostSlipIssuer;
-pub(crate) use task_actor::TaskActorVerb;
+pub(crate) use task_actor::{TaskActorProof, TaskActorVerb};
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.

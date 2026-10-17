@@ -499,7 +499,7 @@ fn refresh_due_as<A: GraphAnswerer>(
 /// Holds a failed question's work until [`FAILED_REFRESH_HOLD_SECS`] after
 /// `now`. A hold that cannot be written leaves the question due: the failure
 /// is already the caller's to report.
-fn hold_failed(vault: &Vault, question: EntityId, now: u64) {
+pub(super) fn hold_failed(vault: &Vault, question: EntityId, now: u64) {
     let held = vault.with_write_txn_grouped(|txn| {
         let Some(mut head) = QUESTION_HEAD.get(&vault.store, txn, &HeadKey(question))? else {
             return Ok(());
@@ -547,6 +547,10 @@ impl Vault {
                     },
                 )?
                 .ok_or(Error::CorruptedIndex("question version"))?;
+            // An artifact question's asks are polled by its own pump.
+            if record.definition.adapter == ARTIFACT_ADAPTER {
+                continue;
+            }
             if let Some(interval) = record.definition.refresh.every_seconds {
                 let due = head
                     .last_refresh
@@ -629,7 +633,7 @@ fn graph_proposal(
     } else {
         Vec::new()
     };
-    let audio = if answerer.reads_audio() {
+    let audio = if answerer.reads_audio() && record.definition.media.audio {
         graph_ask::unit_audio(&lane, &context)?
     } else {
         Vec::new()
@@ -708,6 +712,9 @@ fn due_work(vault: &Vault, now: u64) -> Result<Vec<(EntityId, EntityId, RefreshT
                     },
                 )?
                 .ok_or(Error::CorruptedIndex("question version"))?;
+            if record.definition.adapter == ARTIFACT_ADAPTER {
+                continue;
+            }
             if let Some(interval) = record.definition.refresh.every_seconds
                 && now
                     >= head
@@ -882,7 +889,7 @@ fn source(
     }))
 }
 
-fn source_actor_key(
+pub(super) fn source_actor_key(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,

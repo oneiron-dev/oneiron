@@ -28,7 +28,7 @@ pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use client_address::ClientAddress;
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality};
-pub(crate) use slips::{BindingProof, parse_signature, parse_slip_id};
+pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
 
@@ -77,6 +77,17 @@ pub(crate) trait RevokedTokenJtis {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         Err(())
     }
+    /// Keeps the instrument [`Self::verify_slip`] admitted, for work the
+    /// request queues. `Err` from a registry that keeps none: that request
+    /// then carries no slip into the work it queues.
+    fn bind_invocation_slip(
+        &self,
+        _slip: &oneiron::authority::CapabilitySlip,
+        _challenge: &[u8],
+        _signature: &[u8],
+    ) -> Result<oneiron::authority::InvocationSlipBinding, ()> {
+        Err(())
+    }
     /// The 401 for a request [`Self::verify_slip`] refused only because the
     /// vault's proof clock sits ahead of this host's clock, or `None` for any
     /// other refusal. It names what authentication would take on this host's
@@ -110,6 +121,15 @@ impl RevokedTokenJtis for oneiron::Vault {
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
         self.verify_logged_capability_slip_request(slip, timestamp, signature, nonce)
             .map_err(drop)
+    }
+
+    fn bind_invocation_slip(
+        &self,
+        slip: &oneiron::authority::CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<oneiron::authority::InvocationSlipBinding, ()> {
+        oneiron::Vault::bind_invocation_slip(self, slip, challenge, signature).map_err(drop)
     }
 
     fn proof_clock_refusal(
@@ -269,6 +289,10 @@ pub(crate) struct CoreAuth {
     actor_class: Option<String>,
     org_ref: Option<String>,
     verified_slip: Option<oneiron::authority::VerifiedSlip>,
+    /// The signed instrument this request's slip was admitted on, kept for
+    /// the work the request queues: a queued turn action carries it, and its
+    /// standing is judged again when that work runs.
+    invocation_slip: Option<oneiron::authority::InvocationSlipBinding>,
     /// Exact authenticated instrument, independent of the verifier's remaining TTL.
     instrument: Option<[u8; 32]>,
     /// Where the connection this caller reached the server on sits. Off this
@@ -313,6 +337,7 @@ impl CoreAuth {
             actor_class: None,
             org_ref: None,
             verified_slip: None,
+            invocation_slip: None,
             instrument: Some(verified.instrument),
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
@@ -385,6 +410,7 @@ impl CoreAuth {
             actor_class: None,
             org_ref: None,
             verified_slip: None,
+            invocation_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
@@ -402,6 +428,7 @@ impl CoreAuth {
             actor_class: None,
             org_ref: None,
             verified_slip: None,
+            invocation_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
@@ -432,6 +459,12 @@ impl CoreAuth {
 
     pub(crate) fn verified_slip(&self) -> Option<&oneiron::authority::VerifiedSlip> {
         self.verified_slip.as_ref()
+    }
+
+    /// The instrument this request's slip was admitted on, for the work it
+    /// queues.
+    pub(crate) fn invocation_slip(&self) -> Option<&oneiron::authority::InvocationSlipBinding> {
+        self.invocation_slip.as_ref()
     }
 
     /// Where this caller's connection sits; every read it makes reads there.
@@ -556,9 +589,16 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
+        let path = parts
+            .extensions
+            .get::<axum::extract::OriginalUri>()
+            .map_or_else(|| parts.uri.path(), |uri| uri.0.path());
         Self::for_server_async(&parts.headers, server)
             .await
-            .map(|auth| auth.at(caller_locality(&parts.headers, &parts.extensions)))
+            .map(|auth| {
+                auth.at(caller_locality(&parts.headers, &parts.extensions))
+                    .at_invitee_door(path)
+            })
             .map_err(Into::into)
     }
 }
@@ -693,6 +733,7 @@ fn core_auth_for_live_claims(
         actor_class: claims.actor_class,
         org_ref: claims.org_ref,
         verified_slip: None,
+        invocation_slip: None,
         instrument: None,
         locality: CallerLocality::OffDevice,
         facets_owner_exempt: false,
