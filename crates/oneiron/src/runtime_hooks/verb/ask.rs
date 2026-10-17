@@ -7,7 +7,9 @@
 //! asking hook, and the chain's own write uses the answer up; declined or
 //! expired, Skipped. Once settlement's drain ran the call, a retry gets what it
 //! returned. The answer is evidence, never effect authority
-//! (`NotEvaluatedByAsk`): the verb's own gate runs on the resumed call.
+//! (`NotEvaluatedByAsk`): the verb's own gate runs on the resumed call. A
+//! credential caller's call saves a reference to its exact instrument and
+//! door, and only a retry presenting the same one reads it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,7 +22,7 @@ use crate::task_verb::{
 };
 use crate::{EntityId, Error, MemoryError, Result, Vault};
 
-use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume};
+use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume, credential};
 
 /// Calls stopped on a hook's ask, by invocation.
 const ASKS: SideTable<[u8; 16], VerbAsk, Named> = SideTable::new(&side_table::HOOKS_VERB_ASK);
@@ -85,6 +87,9 @@ pub(super) enum SavedOutcome {
     Err {
         code: String,
         message: String,
+        /// The refusal receipt a credential call that ended refused left.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt: Option<String>,
     },
 }
 
@@ -141,6 +146,11 @@ pub(super) fn retry(vault: &Vault, call: &VerbCall, resume: Option<&VerbResume>)
         }))
     };
     if row.verb != call.verb || row.actor != call.actor || row.class != call.class {
+        return skipped("this invocation belongs to another call");
+    }
+    // A call saved with its credential's reference resumes only for that
+    // instrument through that door, open or used.
+    if matches!(row.resume, Some(VerbResume::Credential { .. })) && row.resume.as_ref() != resume {
         return skipped("this invocation belongs to another call");
     }
     if row.state == VerbAskState::Consumed {
@@ -206,6 +216,7 @@ pub(super) fn consume_in_txn(
     row.consumed_at = Some(vault.store.clock.now_recorded_at());
     row.ready = false;
     ASKS.put(&vault.store, txn, &token.key, &row)?;
+    credential::forget_in_txn(vault, txn, token.key)?;
     Ok(true)
 }
 
@@ -228,10 +239,15 @@ fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHoo
             result: serde_json::from_str(result)
                 .map_err(|_| Error::CorruptedIndex("verb hook ask outcome"))?,
         },
-        SavedOutcome::Err { code, message } => VerbHookStop::CompletedWithError {
+        SavedOutcome::Err {
+            code,
+            message,
+            receipt,
+        } => VerbHookStop::CompletedWithError {
             invocation: invocation.to_hex(),
             code: code.clone(),
             message: message.clone(),
+            receipt_ref: receipt.clone(),
         },
     })
 }
@@ -239,8 +255,9 @@ fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHoo
 /// Opens the hook's ask as its author and saves the stopped call, with the
 /// chain's own rows (`write`), in the ask's write. `write` runs first, so a
 /// resumed chain uses up its old answer before the new ask's row takes the
-/// key. `resume` is saved with the call. `Err(reason)` when the ask door
-/// refused: nothing was saved.
+/// key. `resume` is saved with the call; a credential call's witness, the
+/// one its pre chain carries on this thread, is pinned beside it. `Err(reason)`
+/// when the ask door refused: nothing was saved.
 #[expect(
     clippy::too_many_arguments,
     reason = "the call, the hook, its place, the args, the label, the resume target and the chain's write"
@@ -272,7 +289,7 @@ pub(super) fn open(
         call.invocation.to_hex(),
         binding_id.to_hex()
     );
-    let row = |ask: EntityId| -> Result<VerbAsk> {
+    let row = |ask: EntityId, resume: Option<VerbResume>| -> Result<VerbAsk> {
         Ok(VerbAsk {
             verb: call.verb.clone(),
             actor: call.actor,
@@ -290,7 +307,7 @@ pub(super) fn open(
             state: VerbAskState::Open,
             created_at: vault.store.clock.now_recorded_at(),
             consumed_at: None,
-            resume: resume.cloned(),
+            resume,
             settled_at: None,
             proceeds: false,
             ready: false,
@@ -299,16 +316,23 @@ pub(super) fn open(
         })
     };
     let key = call.invocation.0;
+    let witness = matches!(resume, Some(VerbResume::Credential { .. }))
+        .then(credential::witness_on_thread)
+        .flatten();
+    // The row, its credential's witness pinned beside it when the host keeps
+    // one.
+    let save = |txn: &mut heed::RwTxn<'_>, ask: EntityId| -> Result<()> {
+        let resume = credential::retain_in_txn(vault, txn, key, ask, resume, witness.as_ref())?;
+        ASKS.put(&vault.store, txn, &key, &row(ask, resume)?)
+    };
     let opened = vault
         .memory(
             binding.author_id(),
             super::super::filter::edge_class(binding.author_class()),
         )
         .tasks_ask_with_txn_effect(&spec, |txn, ask| {
-            let row = row(ask).map_err(MemoryError::from)?;
             write(txn).map_err(MemoryError::from)?;
-            ASKS.put(&vault.store, txn, &key, &row)
-                .map_err(MemoryError::from)
+            save(txn, ask).map_err(MemoryError::from)
         });
     let receipt = match opened {
         Ok(receipt) => receipt,
@@ -323,7 +347,7 @@ pub(super) fn open(
                 .get(&vault.store, txn, &key)?
                 .is_some_and(|row| row.state == VerbAskState::Open);
             if !open {
-                ASKS.put(&vault.store, txn, &key, &row(receipt.handle.group_ref)?)?;
+                save(txn, receipt.handle.group_ref)?;
             }
             Ok(())
         })?;
@@ -441,13 +465,15 @@ pub(super) fn idle(vault: &Vault, key: [u8; 16], group: EntityId) -> Result<()> 
 /// Saves what the drained call of ask `group` returned, uses the answer up
 /// and clears the running mark, unless a newer ask stands under the key or
 /// an outcome is saved. `transient` (a storage error) leaves a row the call
-/// did not use up ready for the next pass.
+/// did not use up ready for the next pass. A credential call's `receipt` is
+/// written in the same write, once, and its ref saved with the error.
 pub(super) fn finish(
     vault: &Vault,
     key: [u8; 16],
     group: EntityId,
-    outcome: SavedOutcome,
+    mut outcome: SavedOutcome,
     transient: bool,
+    receipt: Option<crate::receipt::CallReceiptInput>,
 ) -> Result<()> {
     let now = vault.store.clock.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
@@ -461,11 +487,15 @@ pub(super) fn finish(
         if transient && row.state == VerbAskState::Open {
             return ASKS.put(&vault.store, txn, &key, &row);
         }
+        if let (Some(receipt), SavedOutcome::Err { receipt: saved, .. }) = (receipt, &mut outcome) {
+            *saved = Some(vault.record_call_receipt_in_txn(txn, receipt)?);
+        }
         row.state = VerbAskState::Consumed;
         row.consumed_at.get_or_insert(now);
         row.ready = false;
         row.outcome = Some(outcome);
-        ASKS.put(&vault.store, txn, &key, &row)
+        ASKS.put(&vault.store, txn, &key, &row)?;
+        credential::forget_in_txn(vault, txn, key)
     })
 }
 
@@ -536,6 +566,7 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
                 .is_some_and(|row| outlived(&row, cutoff))
             {
                 ASKS.delete(&vault.store, txn, key)?;
+                credential::forget_in_txn(vault, txn, *key)?;
                 deleted += 1;
             }
         }

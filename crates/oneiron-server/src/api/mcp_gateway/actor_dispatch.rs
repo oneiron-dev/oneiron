@@ -78,6 +78,41 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         server.vault().as_ref(),
     )
     .map_err(|_| mcp_proof_error())?;
+    mcp_proof_admits(server, &actor, &auth)?;
+    actor.auth = Some(auth.at(locality));
+    // Where this request's writes land, judged once from the session it
+    // names (owner ruling FACET-READ).
+    let session = crate::api::write_facet::request_session(headers).map_err(|()| {
+        McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
+    })?;
+    let landing = crate::api::write_facet::landing_facet(
+        &server.vault,
+        session,
+        &actor.scope.facets,
+        actor.scope.facet_ref,
+    );
+    Ok(McpCallContext {
+        actor,
+        mode,
+        request_id: request_id.to_owned(),
+        landing,
+        invocation: None,
+        off_record_session: crate::api::call_receipt::request_session_ref(headers)
+            .map(str::to_owned),
+        drain: None,
+    })
+}
+
+/// Whether `auth`, the exact instrument a connector call verified, may act
+/// through the registration `actor` resolved: its holder and class, Read and
+/// no organization, and a registered world/facet Scope that narrows the
+/// proof's. A call settlement runs again meets it under its credential as it
+/// verified again then (ARCH-0080 §3 Ask).
+pub(super) fn mcp_proof_admits(
+    server: &Arc<SyncServer>,
+    actor: &McpResolvedActor,
+    auth: &crate::auth::CoreAuth,
+) -> Result<(), McpGatewayError> {
     let proof = auth.verified_slip().ok_or_else(mcp_proof_error)?;
     // Only the actual configured root may act through its host-registered
     // actor. Every client is bound to the paired holder and verified class.
@@ -122,27 +157,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     {
         return Err(mcp_proof_error());
     }
-    actor.auth = Some(auth.at(locality));
-    // Where this request's writes land, judged once from the session it
-    // names (owner ruling FACET-READ).
-    let session = crate::api::write_facet::request_session(headers).map_err(|()| {
-        McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
-    })?;
-    let landing = crate::api::write_facet::landing_facet(
-        &server.vault,
-        session,
-        &actor.scope.facets,
-        actor.scope.facet_ref,
-    );
-    Ok(McpCallContext {
-        actor,
-        mode,
-        request_id: request_id.to_owned(),
-        landing,
-        invocation: None,
-        off_record_session: crate::api::call_receipt::request_session_ref(headers)
-            .map(str::to_owned),
-    })
+    Ok(())
 }
 
 /// A write whose session names a facet the connector does not read, or a

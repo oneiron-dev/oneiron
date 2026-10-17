@@ -188,6 +188,10 @@ pub(crate) struct McpCallContext {
     /// surface: inside an anonymous one a reference refusal writes no
     /// receipt, as the call writes none (OF-063, OF-538).
     pub(crate) off_record_session: Option<String>,
+    /// The drain's permit, on a call settlement runs again (ARCH-0080 §3
+    /// Ask): its row's pre chain enters as the drain's run of it. Never a
+    /// request's.
+    pub(crate) drain: Option<oneiron::runtime_hooks::verb::VerbAskDrainPermit>,
 }
 
 impl std::ops::Deref for McpCallContext {

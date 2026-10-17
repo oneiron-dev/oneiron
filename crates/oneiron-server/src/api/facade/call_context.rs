@@ -9,6 +9,7 @@ use axum::http::{HeaderMap, StatusCode};
 use oneiron::EntityId;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, ProducerRows};
 use oneiron::runtime_hooks::InvocationId;
+use oneiron::runtime_hooks::verb::VerbAskDrainPermit;
 
 use super::{FacadeApiError, INVOCATION_HEADER, ROOM_TURN_HEADER};
 use crate::api::call_receipt;
@@ -81,6 +82,9 @@ pub(crate) struct FacadeCall<'a> {
     session: Carried<EntityId>,
     /// The same session as text, for the off-record surface (OF-063).
     session_ref: Option<&'a str>,
+    /// The drain's permit, on a call settlement runs again (ARCH-0080 §3
+    /// Ask): the row's pre chain enters as the drain's run of it.
+    drain: Option<VerbAskDrainPermit>,
 }
 
 impl<'a> FacadeCall<'a> {
@@ -99,6 +103,7 @@ impl<'a> FacadeCall<'a> {
                 Err(()) => Carried::Malformed,
             },
             session_ref: call_receipt::request_session_ref(headers),
+            drain: None,
         }
     }
 
@@ -115,6 +120,31 @@ impl<'a> FacadeCall<'a> {
             },
             session: Carried::Absent,
             session_ref: None,
+            drain: None,
+        }
+    }
+
+    /// A credential caller's call the drain runs again once its hook's ask
+    /// settled proceed (ARCH-0080 §3 Ask), under its credential as it
+    /// verified again now: the room turn and invocation the call named, and
+    /// no session, since a call that named one resumes only on its retry.
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    pub(crate) const fn resumed(
+        auth: &'a CoreAuth,
+        room: Option<EntityId>,
+        invocation: InvocationId,
+        drain: VerbAskDrainPermit,
+    ) -> Self {
+        Self {
+            auth,
+            room_turn: match room {
+                Some(room) => Carried::Named(room),
+                None => Carried::Absent,
+            },
+            invocation: Carried::Named(invocation),
+            session: Carried::Absent,
+            session_ref: None,
+            drain: Some(drain),
         }
     }
 
@@ -150,6 +180,11 @@ impl<'a> FacadeCall<'a> {
 
     pub(super) const fn session_ref(&self) -> Option<&'a str> {
         self.session_ref
+    }
+
+    /// The drain's permit, when settlement runs this call again.
+    pub(super) const fn drain(&self) -> Option<&VerbAskDrainPermit> {
+        self.drain.as_ref()
     }
 }
 

@@ -6,6 +6,7 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 use axum::http::HeaderMap;
 use oneiron::claim::CallerLocality;
+use oneiron::runtime_hooks::verb::{VerbAskCredentialSource, VerbAskInstrument};
 
 /// Gates the legacy `/api/*` routes on an owner-grade bearer.
 ///
@@ -42,7 +43,9 @@ pub(crate) fn credential_read_key(
 /// credential stays bounded by it. A caller with no slip keeps the handle's
 /// own lane.
 /// Every handle here is a transport caller's, slip or none, and carries the
-/// slip the request was admitted on into the work it queues.
+/// slip the request was admitted on into the work it queues, and that
+/// slip's exact instrument, which a door that can run the call again names
+/// in a verb hook's ask (ARCH-0080 §3 Ask).
 pub(crate) fn credential_memory<'a>(
     vault: &'a oneiron::Vault,
     auth: Option<&CoreAuth>,
@@ -53,6 +56,9 @@ pub(crate) fn credential_memory<'a>(
     if let Some(binding) = auth.and_then(CoreAuth::invocation_slip) {
         memory = memory.with_invocation_slip(binding);
     }
+    if let Some(instrument) = auth.and_then(verb_ask_instrument) {
+        memory = memory.with_credential_instrument(instrument);
+    }
     if auth.is_some() {
         // Only this host verifies the credential again, so a verb hook's
         // settlement never runs this caller's call without it.
@@ -62,6 +68,21 @@ pub(crate) fn credential_memory<'a>(
         Some(proof) => memory.with_read_proof(proof),
         None => memory,
     }
+}
+
+/// The exact instrument a verified slip's request was admitted on, as a
+/// verb hook's ask names it: only a slip whose request kept its instrument
+/// for queued work has one, so the host can verify it again.
+fn verb_ask_instrument(auth: &CoreAuth) -> Option<VerbAskInstrument> {
+    auth.invocation_slip()?;
+    let claims = auth.verified_slip()?.claims();
+    Some(VerbAskInstrument {
+        source: VerbAskCredentialSource::Slip,
+        vault: claims.vault_id,
+        slip: claims.slip_id,
+        fingerprint: auth.instrument()?,
+        ceiling: auth.authority_ceiling(),
+    })
 }
 
 /// The read `auth` makes, where its connection sits: a caller off this

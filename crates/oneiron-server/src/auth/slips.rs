@@ -86,6 +86,46 @@ impl CoreAuth {
             .is_some_and(|proof| vault.credential_facets_owner_exempt(proof));
         Ok(auth)
     }
+    /// The caller a request's kept instrument establishes once it verified
+    /// again (ARCH-0080 §3 Ask): `verified` is `binding`'s slip as the vault
+    /// verified it now, `instrument` the fingerprint of the token the request
+    /// presented, `door` the facade verb it called, for an invitee's door.
+    /// Like the request's own slip, a one-shot instrument is refused.
+    pub(crate) fn from_kept_slip(
+        verified: VerifiedSlip,
+        binding: oneiron::authority::InvocationSlipBinding,
+        instrument: [u8; 32],
+        door: Option<&str>,
+        vault: &dyn RevokedTokenJtis,
+    ) -> Result<Self, ApiError> {
+        if verified.claims().single_use {
+            return Err(ApiError::unauthorized());
+        }
+        // Only a slip no caveat narrowed is full owner grade, as the
+        // request's own count of its caveats said.
+        let unattenuated = verified.is_full_vault_owner_grade();
+        let mut auth = Self::from_verified(verified, unattenuated)?;
+        auth.instrument = Some(instrument);
+        auth.invocation_slip = Some(binding);
+        auth.facets_owner_exempt = auth
+            .verified_slip
+            .as_ref()
+            .is_some_and(|proof| vault.credential_facets_owner_exempt(proof));
+        Ok(match door {
+            Some(door) => auth.at_invitee_door(door),
+            None => auth,
+        })
+    }
+    /// The exact instrument this credential was authenticated on, if any.
+    pub(crate) const fn instrument(&self) -> Option<[u8; 32]> {
+        self.instrument
+    }
+    /// BLAKE3 of the authority this credential projects: its principal, its
+    /// scopes and its exact instrument. A verb hook's ask saves it as the
+    /// ceiling the call was admitted under (ARCH-0080 §3 Ask).
+    pub(crate) fn authority_ceiling(&self) -> [u8; 32] {
+        *blake3::hash(self.idempotency_principal().as_bytes()).as_bytes()
+    }
     /// Admit a fresh transport binding once. Repeated authorization checks
     /// inside the admitted request keep using the read-only verifier.
     pub(crate) fn bind_transport_once(

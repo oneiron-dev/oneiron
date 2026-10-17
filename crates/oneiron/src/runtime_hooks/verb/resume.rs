@@ -8,7 +8,9 @@
 //!
 //! Only a call the drain can make as its caller made it has a target: a
 //! memory row the generated dispatcher runs, for an on-device caller with no
-//! credential. Any other call resumes on its caller's retry.
+//! credential, or a credential caller's row its host can run again through
+//! the door it came in by, under the credential as it stands then
+//! ([`super::credential`]). Any other call resumes on its caller's retry.
 //!
 //! While the drain runs a call, the call's invocation is held for it, so a
 //! retry in this process waits Pending rather than running the verb too. Each
@@ -24,8 +26,9 @@ use crate::session_lifecycle::SessionKey;
 use crate::task_verb::TaskAskResult;
 use crate::{EntityId, Result, Vault};
 
+use super::credential::{RefusalReceipt, VerbAskCredentialRef, VerbAskResumed};
 use super::state::DrainScope;
-use super::{InvocationId, VerbHookStop, ask};
+use super::{InvocationId, VerbHookStop, ask, credential};
 
 /// How long a stopped call's row stays once its answer is used, or once its
 /// ask settled without a proceed: a retry within it still gets what the call
@@ -44,6 +47,9 @@ pub(crate) enum VerbResume {
         session: Option<SessionKey>,
         room: Option<EntityId>,
     },
+    /// A credential caller's row, run again through the door it came in by,
+    /// once the host's check verified the credential again.
+    Credential { reference: VerbAskCredentialRef },
 }
 
 /// The settlement hook: in the settling write, marks the call stopped on
@@ -78,7 +84,9 @@ impl Vault {
     /// Runs each call a settled proceed made ready, once, as its caller: the
     /// caller's actor and class, the invocation, its sitting and, for a room
     /// turn, the room, whose current terms admit the call again or refuse
-    /// it. Saves what each returned for the caller's retry. A call whose
+    /// it. A credential caller's call runs through its host's check, under
+    /// the credential as it stands then; a refusal ends it, with one
+    /// receipt. Saves what each returned for the caller's retry. A call whose
     /// retry is in flight is left to that retry. With hooks off or suppressed
     /// it runs nothing: the chain would pass through without using the
     /// answer up. Then deletes old rows. Returns how many calls ran.
@@ -141,20 +149,32 @@ impl Vault {
         if !ask::mark_running(self, key, group)? {
             return Ok(false);
         }
-        let VerbResume::Row { session, room } = resume;
-        let mut memory = self
-            .memory(actor, filter::edge_class(class))
-            .with_invocation(invocation);
-        if let Some(session) = session {
-            memory = memory.with_session(session);
-        }
-        let ran = {
-            let _draining = DrainScope::enter(invocation);
-            match room {
-                Some(room) => memory
-                    .for_room_turn(room)
-                    .and_then(|turn| turn.invoke(&verb, args)),
-                None => crate::task_verb::sdk::invoke(&memory, &verb, args),
+        let mut receipt = None;
+        let ran = match resume {
+            VerbResume::Row { session, room } => {
+                let mut memory = self
+                    .memory(actor, filter::edge_class(class))
+                    .with_invocation(invocation);
+                if let Some(session) = session {
+                    memory = memory.with_session(session);
+                }
+                let _draining = DrainScope::enter(invocation);
+                match room {
+                    Some(room) => memory
+                        .for_room_turn(room)
+                        .and_then(|turn| turn.invoke(&verb, args)),
+                    None => crate::task_verb::sdk::invoke(&memory, &verb, args),
+                }
+            }
+            VerbResume::Credential { reference } => {
+                let class = filter::edge_class(class);
+                receipt = Some(RefusalReceipt::new(&reference, &verb, actor, class, &args));
+                let resumed =
+                    credential::resume(self, key, group, verb, actor, class, args, reference)?;
+                match resumed {
+                    VerbAskResumed::Ran(ran) => ran,
+                    VerbAskResumed::Refused(refusal) => Err(refusal.error()),
+                }
             }
         };
         let (outcome, transient) = match ran {
@@ -184,13 +204,22 @@ impl Vault {
                         ask::SavedOutcome::Err {
                             code: error.code,
                             message: error.message,
+                            receipt: None,
                         },
                         transient,
                     )
                 }
             },
         };
-        ask::finish(self, key, group, outcome, transient)?;
+        // A credential call that ends refused or failed leaves one receipt,
+        // committed with its outcome.
+        let receipt = match (receipt, &outcome) {
+            (Some(receipt), ask::SavedOutcome::Err { code, message, .. }) if !transient => {
+                Some(receipt.refused(code, message))
+            }
+            _ => None,
+        };
+        ask::finish(self, key, group, outcome, transient, receipt)?;
         Ok(!transient)
     }
 }
