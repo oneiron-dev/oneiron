@@ -4136,6 +4136,7 @@
       "ExportLedger",
       "ExportPack",
       "ExportPackSource",
+      "ExportReaderFold",
       "ExportResultBody",
       "ExportRun",
       "ExportRunOutput",
@@ -4153,7 +4154,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -10795,8 +10796,18 @@
      "path": "src/code_run/dispatcher/reader_spawn.rs",
      "purpose": "Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/summarize.rs",
+     "purpose": "`summarize` at the dispatcher (code-mode-summary-sdk-v1): one summary of a run's results, memoised by its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -10836,9 +10847,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 4,
-      "re-export": 11
+      "re-export": 13
      }
     },
     {
@@ -10860,6 +10871,7 @@
       "ReaderActor",
       "ReaderFindingRef",
       "ReaderJob",
+      "ReaderJobKind",
       "ReaderJobRunner",
       "ReaderJobState",
       "ReaderJobWake",
@@ -10871,8 +10883,12 @@
       "RunDeadline",
       "SelfReaderReportCall",
       "SelfReaderSpawnCall",
+      "SelfSummarizeCall",
       "SpawnHostSeat",
       "SpawnParentBinding",
+      "SummarizeEffort",
+      "SummarizeRecipe",
+      "SummarizeReply",
       "TaskWaitFailure",
       "TaskWaitFinding",
       "TaskWaitPolicy",
@@ -10883,12 +10899,22 @@
      "path": "src/code_run/reader.rs",
      "purpose": "Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and…",
      "surface": {
-      "const": 1,
-      "crate-vis": 10,
-      "enum": 4,
-      "fn": 8,
-      "struct": 19,
+      "const": 6,
+      "crate-vis": 12,
+      "enum": 7,
+      "fn": 16,
+      "struct": 21,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/reader_fold.rs",
+     "purpose": "The model call behind `summarize` (code-mode-summary-sdk-v1): the one prompt a summary job sends, by its…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -10915,22 +10941,22 @@
       "const": 8,
       "crate-vis": 11,
       "enum": 1,
-      "fn": 22,
+      "fn": 23,
       "struct": 12
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/result_read/chunks.rs",
      "purpose": "`chunks`: a result cut into range refs, a page at a time",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ResultFacet"
@@ -10939,7 +10965,7 @@
      "purpose": "Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 4
      }
@@ -11019,6 +11045,8 @@
       "SpawnCare",
       "SpawnKnob",
       "SpawnPattern",
+      "SummarizeInput",
+      "SummarizeInputEffort",
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskRefuseOutput",
@@ -11028,9 +11056,9 @@
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "enum": 6,
+      "enum": 7,
       "fn": 1,
-      "struct": 19
+      "struct": 20
      }
     },
     {
@@ -11068,22 +11096,35 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/reader_folds.rs",
+     "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
      "bucket": "L",
      "kind": "src",
      "notable": [
-      "ReaderJobs"
+      "ReaderJobs",
+      "SummaryMember",
+      "SummaryRead"
      ],
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 23,
-      "fn": 9,
-      "struct": 1
+      "crate-vis": 26,
+      "enum": 1,
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -11096,19 +11137,19 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "fn": 11,
       "struct": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -20754,7 +20795,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/host.rs",
@@ -20899,7 +20940,9 @@
       "JsResultRef",
       "JsResultTarget",
       "ParkedWait",
-      "SelfDispatchResponse"
+      "SelfDispatchResponse",
+      "StoreReceiptInput",
+      "StoreReceiptTree"
      ],
      "path": "src/engine_executor/types.rs",
      "purpose": "Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types",
@@ -20908,7 +20951,7 @@
       "crate-vis": 3,
       "enum": 5,
       "fn": 8,
-      "struct": 10,
+      "struct": 12,
       "trait": 2,
       "type": 1
      }
@@ -50201,7 +50244,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 61,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50518,7 +50561,7 @@
     "engine_executor": {
      "files": 20,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Engine-native JS code-mode executor"
     },
@@ -51454,9 +51497,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 141,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3109,
+   "source_files": 3112,
    "test_files": 903
   },
   "oneiron-android": {
@@ -67401,7 +67444,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 1
      }
@@ -68700,7 +68743,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/server/reader_runner.rs",
@@ -69852,7 +69895,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 38,
+   "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 549,
    "test_files": 182
