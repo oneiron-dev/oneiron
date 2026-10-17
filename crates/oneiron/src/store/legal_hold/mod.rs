@@ -294,18 +294,6 @@ pub(crate) fn any_standing_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> R
     Ok(false)
 }
 
-/// [`held_in_txn`] as a refusal, for a door with no store handle.
-pub(crate) fn refuse_held_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    id: &[u8; 16],
-) -> Result<()> {
-    if held_in_txn(dbs, txn, id)? {
-        return Err(Error::InvalidConfig(LEGAL_HOLD_REFUSAL.to_owned()));
-    }
-    Ok(())
-}
-
 /// Writes `hold`, keeping its target index exact: a standing hold indexes
 /// every target it names, a lifted one none.
 pub(crate) fn put_hold_in_txn(

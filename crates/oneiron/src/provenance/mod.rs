@@ -207,12 +207,13 @@ use rmpv::Value;
 /// other descriptor holds. The erase paths call it beside the row's other
 /// carriers.
 pub(crate) fn erase_row_provenance_in_txn(
-    store: &impl crate::store::ManifestDbs,
+    store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     row: &EntityId,
 ) -> Result<()> {
-    // A held row keeps its bodies whichever door erases it (OF-470).
-    crate::store::legal_hold::refuse_held_in_txn(store, txn, row.as_bytes())?;
+    // A held row keeps its bodies whichever door erases it (OF-470); the
+    // refusal is queued for the hold log like every other door's.
+    store.reject_legal_hold_in_txn(txn, row.as_bytes())?;
     birth::erase_row_birth_in_txn(store, txn, row)?;
     body::release_owner_bodies_in_txn(store, txn, row)?;
     Ok(())
