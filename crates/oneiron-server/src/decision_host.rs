@@ -30,6 +30,7 @@ use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
     ModelId, ReasoningEffort,
 };
+use oneiron::policy_model::PolicyDecisions;
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::saved_query::MembershipDecisions;
 use oneiron::skill_hub::{ClaimReplayDecisions, UsefulUpstreamDecisions};
@@ -404,6 +405,27 @@ impl DecisionHost {
             wording,
             deadline,
         }
+    }
+
+    /// The policy safeguard's typed read through this ladder for `principal`,
+    /// worded `wording` at `revision`, up to the Big rung, each read on
+    /// `budget`: one per enabled plane, held by the plane's policy config.
+    pub fn policy_decisions(
+        &self,
+        principal: EntityId,
+        revision: String,
+        wording: String,
+        budget: std::time::Duration,
+    ) -> oneiron::Result<PolicyDecisions> {
+        PolicyDecisions::new(
+            Arc::new(self.ladder.clone()),
+            principal,
+            self.dial(DecisionRung::Big),
+            self.bands.clone(),
+            revision,
+            wording,
+            budget,
+        )
     }
 
     /// The code-mode seat pick through this ladder, for `principal`.
