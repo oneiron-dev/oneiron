@@ -110,8 +110,10 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
-`json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`;
-a `local-openai-compat` provider declares `streaming`, `json_response` and
+`json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
+`reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
+WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
+the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
 `reasoning` unless the list is written out),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
@@ -694,7 +696,7 @@ The decision read takes yes/no and choice questions over text. A Box question
 ("where is `mug` in `camera`?"), and any question over images, goes only to a
 rung that reads images: a host `DecisionModel` whose `reads_images` is true
 (the Local-vision seat at the Local rung, below), or the opt-in System One
-seat (`decide_at_remote_seat`). The ladder skips
+rung and seat (`decide_at_remote_seat`). The ladder skips
 every other rung (`DecisionLadder::run_images`, `run_pack_images`). A Box
 answer is `{top, bottom, left, right}` in 0–1 fractions of the image from its
 top-left corner, edges in order, with its confidence; it is `null` when the
@@ -705,6 +707,18 @@ and body version, never its pixels. The System One seat sends each image as an
 asset, downscaled to a 1,568-pixel long edge (a box in fractions reads the
 same on the smaller copy), with the `TypeSafe-Danger-Zone-Images: true`
 header that Jev 1.14 needs for images and boxes.
+
+A question can also hear audio clips (`DecisionLadder::run_media`,
+`run_pack_media`): at most 4 named WAV or MP3 clips, 10 MiB each and 20 MiB in
+all, named apart from the call's images. Each fills the state field of its
+name, and each receipt keeps every clip's evidence ref and body version,
+never its samples. Only a rung whose `reads_audio` is true takes a call with
+clips, and a call with images and clips only a rung that reads both; the
+ladder never drops one to fit. The Big rung hears audio when the vault
+manifest's binding of its role says `reads_audio = true` and every rung
+serving that model has `audio_input`. With no manifest, the seat's
+`audio_input` capability is the declaration. It sends each clip as a chat
+`input_audio` part after a line naming it. No other rung hears audio yet.
 
 ## 10. Media calls (`ai.image`, `ai.video`, `ai.speech`, `ai.transcribe`, `ai.embed`)
 
@@ -1116,16 +1130,21 @@ is held at Big, so the pump never queues an owner ask. Each unit has its own
   the Local rung, an image asset is also read as an image at the Local-vision
   rung. The pull is recorded as an `ask_image` served form. Without that seat,
   the asset is read as its text alone.
+- **Audio.** When a rung inside the dial hears audio (the Big rung above), a
+  WAV or MP3 audio asset is read as a clip and the call starts at that rung.
+  The clip goes to the model as audio, never as a transcript. A unit with
+  both an image and a clip starts at a rung that reads both, or abstains.
+  Otherwise the asset is read as its text alone.
 - **What lands.** Each answer lands as a proposed `judgment.answer` claim,
   readable only by the principal. It keeps the ladder's full receipt: the
   providers, band, paired and person readings, clock and any owner-ask reason,
-  plus the version of every source and image it read.
+  plus the version of every source, image and clip it read.
 - **Failures.** A question that fails is retried at its next due pass, and
   the server logs the error's kind only.
 
 The engine's one-off graph ask and saved graph recipes take the same
 answerer and keep the same receipts. There, a unit's outgoing neighbours join
-its state, and an image asset among them is read as an image. No door serves
+its state, and an image or audio asset among them is read as such. No door serves
 a one-off ask yet.
 
 ### Typed questions over files

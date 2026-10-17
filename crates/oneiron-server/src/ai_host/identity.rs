@@ -59,9 +59,9 @@ fn round(server: &SyncServer, resurface: bool) -> oneiron::Result<()> {
     let now = vault.now_recorded_at();
     let due = vault.identity_asks_due(now, ROUND)?;
     if !due.is_empty() {
-        let principal = vault
-            .ensure_embedded_owner_actor()
-            .map_err(|error| oneiron::Error::InvalidConfig(format!("no owner principal: {error}")))?;
+        let principal = vault.ensure_embedded_owner_actor().map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("no owner principal: {error}"))
+        })?;
         let host = server.decision_host();
         for ask in due {
             let deadline = RetrievalDeadline::hard(Instant::now(), DECIDE_BUDGET);

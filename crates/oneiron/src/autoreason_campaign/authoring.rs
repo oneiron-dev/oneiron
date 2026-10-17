@@ -22,6 +22,7 @@ use super::research::{
     CandidateRef, ResearchBindRequest, ResearchTarget, bind_research, research_nodes,
 };
 use super::{CampaignComparisonReport, CampaignConfig};
+use crate::agent_dispatch::TeamRunStamp;
 use crate::dreamer_runner::{DreamerClaimAuthoringAdmission, DreamerTournamentClaim};
 use crate::dreamer_tournament::{
     DreamerTournamentEvidenceStore, DreamerTournamentRunResult, DreamerTournamentStopReason,
@@ -261,6 +262,16 @@ pub fn claim_authoring_admission(
     }
 }
 
+/// The team-run stamp of tournament `run_id` (OF-540 (c)). The host passes
+/// it as `AgentSpawnContext.team` on the run's author dispatches, so their
+/// attempts join the Market team receipt [`finalize_claim_tournament`]
+/// records under the same reference.
+/// # Errors
+/// A run id the team reference bound refuses.
+pub fn tournament_team_stamp(run_id: &str) -> Result<TeamRunStamp> {
+    TeamRunStamp::new(format!("autoreason:{run_id}"), TeamPattern::Market)
+}
+
 /// Finalize one tournament run after the unchanged gated writer landed its
 /// winner: check the run's branch evidence and the winner claim, record the
 /// run's team receipt (a Market team decided by its pre-signed ranking rule)
@@ -311,7 +322,17 @@ pub fn finalize_claim_tournament(
     let width = u32::try_from(branches.len()).map_err(|_| invalid("too many branches"))?;
     let mut roles = team.roles;
     roles.insert("author".to_owned(), width);
-    let team_ref = format!("autoreason:{run_id}");
+    let stamp = tournament_team_stamp(run_id)?;
+    // A stamped run attempt worked in this tournament's team, or its terminal
+    // receipt would join another run's.
+    if let Some(record) = crate::attempt_queue::AttemptQueue::new(vault).get(attempt)?
+        && crate::agent_dispatch::attempt_team_stamp(&record)?.is_some_and(|frozen| frozen != stamp)
+    {
+        return Err(invalid(
+            "the run attempt was dispatched into another team run",
+        ));
+    }
+    let team_ref = stamp.team_ref;
     record_team_receipt(
         vault,
         &TeamReceipt {

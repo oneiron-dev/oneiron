@@ -205,6 +205,44 @@ impl Memory<'_> {
         room_ceiling_in(vault, &txn, room, self.actor())?.ok_or_else(unknown_room)
     }
 
+    /// The ceiling thread `thread` of `room` puts on this caller's reads now
+    /// ([`thread_ceiling_in`]), met into the turn this handle is bound to,
+    /// as [`Self::room_turn_now`] meets the room's. A turn bound to another
+    /// room refuses.
+    pub(crate) fn thread_ceiling(
+        &self,
+        room: EntityId,
+        thread: EntityId,
+    ) -> MemoryResult<RoomTurnCeiling> {
+        self.refuse_other_room(room)?;
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let now =
+            thread_ceiling_in(vault, &txn, room, thread, self.actor())?.ok_or_else(unknown_room)?;
+        drop(txn);
+        Ok(match self.room_turn() {
+            Some(turn) => {
+                turn.terms.meet(&now.terms.get());
+                RoomTurnCeiling {
+                    terms: turn.terms.clone(),
+                    ..now
+                }
+            }
+            None => now,
+        })
+    }
+
+    /// The world ceiling of [`Self::thread_ceiling`], as
+    /// [`Self::room_read_worlds`] gives the room's: every row the thread
+    /// reads lies in it.
+    pub(crate) fn thread_read_worlds(
+        &self,
+        room: EntityId,
+        thread: EntityId,
+    ) -> MemoryResult<Scope> {
+        Ok(self.thread_ceiling(room, thread)?.terms.get().worlds)
+    }
+
     /// The ceiling a bound handle reads under now: the room's current terms
     /// met into the turn's, and the current roster as the audience, the same
     /// membership the room's own history reads check. A change mid-turn can
@@ -552,8 +590,7 @@ pub(crate) fn room_reader_in(
     if members.contains(&caller) {
         return Ok(true);
     }
-    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
-    {
+    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
         return Ok(false);
     }
     let agent = crate::workspace_roster::JoinSubject::Agent(caller);
@@ -585,6 +622,88 @@ pub(crate) fn room_ceiling_in(
         return Ok(None);
     };
     if !room_reader_in(vault, txn, room, &members, caller)? {
+        return Ok(None);
+    }
+    let worlds = reading_defaults_in(vault, txn, &members)?;
+    let clearances = clearances_in(vault, txn, &members)?;
+    let roster: Vec<_> = members
+        .iter()
+        .zip(worlds.into_iter().zip(clearances))
+        .map(|(member, (active_worlds, clearance))| RoomPresence {
+            actor: *member,
+            actor_class: None,
+            label: String::new(),
+            present: true,
+            active_worlds,
+            clearance,
+        })
+        .collect();
+    let terms = RoomTerms {
+        worlds: room_worlds(&roster)?,
+        facets: room_facets_axis_in(vault, txn, room)?,
+        clearance: room_clearance(&roster),
+        p7: true,
+    };
+    Ok(Some(RoomTurnCeiling {
+        room,
+        caller,
+        terms: crate::claim::TurnTerms::new(terms),
+        peers: peer_read_keys_in(vault, txn, caller, &members)?,
+        roster: members,
+    }))
+}
+
+/// Whether `caller` reads thread `thread` of `room` as `txn` reads it
+/// (OF-529): a reader of the room ([`room_reader_in`]), or an AGENT_DEF
+/// standing on an OF-531 Ready join for that thread itself. A thread's join
+/// opens that thread's reads alone, never the room's or another thread's,
+/// and takes no seat.
+pub(crate) fn thread_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    members: &[EntityId],
+    caller: EntityId,
+) -> crate::Result<bool> {
+    if room_reader_in(vault, txn, room, members, caller)? {
+        return Ok(true);
+    }
+    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
+        return Ok(false);
+    }
+    let agent = crate::workspace_roster::JoinSubject::Agent(caller);
+    match crate::workspace_roster::require_join_for_branch_in_txn(
+        vault,
+        txn,
+        room,
+        Some(thread),
+        &agent,
+        None,
+    ) {
+        Ok(_) => Ok(true),
+        Err(crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. })) => {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// [`room_ceiling_in`] for a reader of thread `thread` of `room`
+/// ([`thread_reader_in`]): the same terms, audience and peer reads over the
+/// room's roster in this snapshot, which a thread's reader never joins.
+/// `None` when `caller` does not read the thread here.
+pub(crate) fn thread_ceiling_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    caller: EntityId,
+) -> crate::Result<Option<RoomTurnCeiling>> {
+    let Some(members) = room_roster_in(vault, txn, room)? else {
+        return Ok(None);
+    };
+    if !thread_reader_in(vault, txn, room, thread, &members, caller)? {
         return Ok(None);
     }
     let worlds = reading_defaults_in(vault, txn, &members)?;

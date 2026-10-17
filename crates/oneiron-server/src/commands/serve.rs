@@ -218,6 +218,8 @@ pub(super) async fn serve_with_config(
     workers.push(crate::decision_graph::spawn(&sync_server));
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(&sync_server));
+    // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
+    workers.push(crate::ai_host::coach_heal::spawn(&sync_server));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
     workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
@@ -344,9 +346,13 @@ async fn spawn_fact_hooks(
             let runtime: Arc<dyn oneiron::runtime_hooks::HookBodyRuntime> = Arc::new(sandbox);
             // `vault.hooks.replay` replays on the runner's own sandbox.
             let _ = server.hook_runtime.set(Arc::clone(&runtime));
+            // Generative fact hooks ask `ai.verdict` on serve's own ladder.
+            let verdict: Arc<dyn oneiron::runtime_hooks::HookVerdict> =
+                Arc::new(crate::hook_verdict::ServerHookVerdict::new(server));
             Some(FactHookRunner::spawn(
                 Arc::clone(server.vault()),
                 runtime,
+                Some(verdict),
                 stop,
             ))
         }
