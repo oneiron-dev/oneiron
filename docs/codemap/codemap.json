@@ -1216,6 +1216,7 @@
      "kind": "src",
      "notable": [
       "AgentInboxConcern",
+      "AgentInboxDiaryReview",
       "AgentInboxItemKind",
       "AgentInboxLensItem",
       "AgentInboxLensQuery",
@@ -1229,7 +1230,7 @@
       "enum": 1,
       "fn": 4,
       "re-export": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
