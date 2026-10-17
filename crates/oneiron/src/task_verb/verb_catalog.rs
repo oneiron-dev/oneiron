@@ -3296,7 +3296,7 @@ impl AgentVerb {
             }
             Self::AiVideo => "Starts a video render as a provider job and answers with its ticket.",
             Self::AiVideoPoll => {
-                "Where a video job stands; a finished one answers with its clip, once."
+                "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."
             }
             Self::AiVideoCancel => "Stops a video job at its provider.",
             Self::AiVerdict => {
@@ -3474,7 +3474,7 @@ impl AgentVerb {
                 "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history."
             }
             Self::VaultArtifactsBodyCommits => {
-                "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by."
+                "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone."
             }
             Self::VaultArtifactsBodyEdit => {
                 "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."

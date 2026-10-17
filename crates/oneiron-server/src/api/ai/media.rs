@@ -23,6 +23,7 @@ use oneiron::llm::media::{
     AiOperation, MediaJobState, MediaPart, MediaRequest, MediaResponse, MediaUsage, MediaVoice,
     Modality,
 };
+use oneiron::task_verb::sdk::AiVoice;
 use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, FatalLlmError, LlmError, ModelId, ModelTierRef,
@@ -178,21 +179,95 @@ pub(super) struct AiCallBody {
     params: BTreeMap<String, JsonValue>,
     /// A speech call's voice; the provider's default when absent.
     #[serde(default)]
-    voice: Option<VoiceChoice>,
+    voice: Option<AiVoice>,
 }
 
-/// The voice a speech call names.
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum VoiceChoice {
-    /// A provider's own voice, by its name.
-    Stock { name: String },
-    /// A banked identity, rendered as its clone on the call's target.
-    Bank {
-        voice_id: String,
-        #[serde(default)]
-        include_generated: bool,
-    },
+/// Why a call's voice was refused, on this wire and the facade's alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VoiceRefusal {
+    /// A call other than speech named a voice.
+    NotSpeech,
+    /// A stock voice named no name.
+    Unnamed,
+    /// No rung the call may reach holds a current clone or reference of the
+    /// banked voice.
+    NotProvisioned,
+}
+
+impl VoiceRefusal {
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::NotSpeech => "voice_not_speech",
+            Self::Unnamed => "invalid_voice",
+            Self::NotProvisioned => "voice_not_provisioned",
+        }
+    }
+
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::NotSpeech => "only a speech call names a voice",
+            Self::Unnamed => "a stock voice has a name",
+            Self::NotProvisioned => {
+                "no rung this call may reach holds a current clone or reference of the voice"
+            }
+        }
+    }
+
+    /// A voice no rung holds is the bank's state, not the request's shape.
+    pub(crate) const fn is_conflict(self) -> bool {
+        matches!(self, Self::NotProvisioned)
+    }
+}
+
+/// The voice `voice` names for a call of `operation` on `model`: a stock
+/// voice as is, or a banked identity bound on the first rung of the call's
+/// ladder whose target holds its current clone, and on that rung alone, so
+/// no fallback carries its id to another provider. A rung that renders from
+/// the bank's refs binds the identity's fenced source clip instead. A banked
+/// voice moves `model` to the rung it binds on.
+pub(crate) fn bind_voice(
+    server: &SyncServer,
+    operation: AiOperation,
+    model: &mut ModelId,
+    voice: Option<AiVoice>,
+) -> Result<(Option<MediaVoice>, Option<BankVoiceBinding>), VoiceRefusal> {
+    match voice {
+        None => Ok((None, None)),
+        Some(_) if operation != AiOperation::Speech => Err(VoiceRefusal::NotSpeech),
+        Some(AiVoice::Stock { name }) if name.trim().is_empty() => Err(VoiceRefusal::Unnamed),
+        Some(AiVoice::Stock { name }) => Ok((Some(MediaVoice::Stock { name }), None)),
+        Some(AiVoice::Bank {
+            voice_id,
+            include_generated,
+        }) => {
+            let media = server.ai.model_runtime().media();
+            let bound = media.rung_targets(operation, model).into_iter().find_map(
+                |(rung, target, locality)| {
+                    let binding = if media.renders_from_refs(&target) {
+                        BankVoiceBinding::bind_reference(
+                            &server.vault,
+                            &voice_id,
+                            &target,
+                            None,
+                            locality,
+                        )
+                    } else {
+                        BankVoiceBinding::bind(
+                            &server.vault,
+                            &voice_id,
+                            &target,
+                            include_generated,
+                            locality,
+                        )
+                    };
+                    binding.ok().map(|binding| (rung, binding))
+                },
+            );
+            let (rung, binding) = bound.ok_or(VoiceRefusal::NotProvisioned)?;
+            *model = rung;
+            Ok((Some(binding.voice()), Some(binding)))
+        }
+    }
 }
 
 /// One call's answer on this wire.
@@ -249,64 +324,15 @@ fn admit(
             format!("{model} serves no {} call here", operation.as_str()),
         ));
     }
-    let (voice, binding) = match body.voice {
-        None => (None, None),
-        Some(_) if operation != AiOperation::Speech => {
-            return Err(refusal(
-                StatusCode::BAD_REQUEST,
-                "voice_not_speech",
-                "only a speech call names a voice",
-            ));
-        }
-        Some(VoiceChoice::Stock { name }) if name.trim().is_empty() => {
-            return Err(refusal(
-                StatusCode::BAD_REQUEST,
-                "invalid_voice",
-                "a stock voice has a name",
-            ));
-        }
-        Some(VoiceChoice::Stock { name }) => (Some(MediaVoice::Stock { name }), None),
-        Some(VoiceChoice::Bank {
-            voice_id,
-            include_generated,
-        }) => {
-            // The clone is the target's: the call takes the first rung
-            // holding a current one, alone, so no fallback carries its id
-            // to another provider. A rung that renders from the bank's
-            // refs binds the identity's fenced source clip instead.
-            let bound = media.rung_targets(operation, &model).into_iter().find_map(
-                |(rung, target, locality)| {
-                    let binding = if media.renders_from_refs(&target) {
-                        BankVoiceBinding::bind_reference(
-                            &server.vault,
-                            &voice_id,
-                            &target,
-                            None,
-                            locality,
-                        )
-                    } else {
-                        BankVoiceBinding::bind(
-                            &server.vault,
-                            &voice_id,
-                            &target,
-                            include_generated,
-                            locality,
-                        )
-                    };
-                    binding.ok().map(|binding| (rung, binding))
-                },
-            );
-            let Some((rung, binding)) = bound else {
-                return Err(refusal(
-                    StatusCode::CONFLICT,
-                    "voice_not_provisioned",
-                    "no rung this call may reach holds a current clone or reference of the voice",
-                ));
+    let (voice, binding) =
+        bind_voice(server, operation, &mut model, body.voice).map_err(|refused| {
+            let status = if refused.is_conflict() {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_REQUEST
             };
-            model = rung;
-            (Some(binding.voice()), Some(binding))
-        }
-    };
+            refusal(status, refused.code(), refused.message())
+        })?;
     let Some(locality) = media.locality(operation, &model) else {
         return Err(refusal(
             StatusCode::BAD_REQUEST,
