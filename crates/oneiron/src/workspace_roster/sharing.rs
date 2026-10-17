@@ -97,17 +97,11 @@ fn sharing_view_in(
     txn: &heed::RoTxn<'_>,
     target: &CompanionSharingTarget,
 ) -> Result<CompanionSharingView> {
-    let crate::vault::LiveEntityRow::Live {
-        entity_type: crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT,
-        body,
-    } = crate::vault::live_entity_row_in_txn(&vault.store, txn, &target.contact)?
-    else {
-        return Err(Error::EntityNotFound);
-    };
-    let active =
-        crate::counterparty_contact::decode_counterparty_contact_body(&body).is_ok_and(|record| {
-            record.status == crate::counterparty_contact::CounterpartyContactStatus::Active
-        });
+    // The contact's standing comes from its claims, not the cached row.
+    let record = vault
+        .get_counterparty_contact_in_txn(txn, &target.contact)?
+        .ok_or(Error::EntityNotFound)?;
+    let active = record.status == crate::counterparty_contact::CounterpartyContactStatus::Active;
     let stored = crate::disclosure::contact_clearance_in_txn(&vault.store, txn, &target.contact)?;
     let effective = match &stored {
         Some(clearance)

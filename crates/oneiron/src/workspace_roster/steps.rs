@@ -474,6 +474,14 @@ pub(super) fn read_onboarding_mailbox_in_txn(
     }
     let existing =
         crate::channel_identity::decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    // Channel, address and binding are facts on the identity's claims; the
+    // delegated grant stays on the row.
+    let facts = crate::channel_identity::channel_identity_facts_in_txn(
+        &vault.store,
+        txn,
+        &mailbox.identity_ref,
+    )?
+    .ok_or_else(|| invalid("identity_ref is already bound to a different mailbox"))?;
     let stamp = existing.state_changed_at();
     let valid_time = match existing.state() {
         ChannelIdentityState::Requested => stamp == intent.occurred_at,
@@ -483,8 +491,9 @@ pub(super) fn read_onboarding_mailbox_in_txn(
         _ => false,
     };
     if !existing.is_delegated()
-        || existing.assignment_key() != AssignmentKey::of(&mailbox.channel, &mailbox.address)
-        || existing.binding() != ChannelIdentityBinding::agent(intent.actor_ref)
+        || AssignmentKey::of(&facts.channel, &facts.address_or_handle)
+            != AssignmentKey::of(&mailbox.channel, &mailbox.address)
+        || facts.binding != ChannelIdentityBinding::agent(intent.actor_ref)
         || existing.grant()
             != Some(&DelegatedGrant::new(
                 &mailbox.custody_name,
