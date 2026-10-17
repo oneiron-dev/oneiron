@@ -140,6 +140,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.fanout.launch",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutLaunchRequest,
+                >(),
+            ),
+            (
+                "vault.fanout.resume",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutResumeRequest,
+                >(),
+            ),
+            (
+                "vault.fanout.ack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutAckRequest,
+                >(),
+            ),
+            (
                 "tasks.update",
                 crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
@@ -1750,6 +1768,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.wave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.launch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.ack" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3455,6 +3494,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.wave" => {
             let _input: crate::task_verb::sdk::TaskWaveRequest = decode(value.clone())?;
         }
+        "vault.fanout.launch" => {
+            let _input: crate::task_verb::sdk::FanoutLaunchRequest = decode(value.clone())?;
+        }
+        "vault.fanout.resume" => {
+            let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
+        }
+        "vault.fanout.ack" => {
+            let _input: crate::task_verb::sdk::FanoutAckRequest = decode(value.clone())?;
+        }
         "tasks.update" => {
             let _input: TaskUpdateRequest = decode(value.clone())?;
         }
@@ -4360,6 +4408,9 @@ pub fn invoke(
         "describe" => encode(describe(memory, decode(value)?)?),
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
+        "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
+        "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
+        "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
@@ -5112,6 +5163,24 @@ pub fn tasks_wave(
     input: crate::task_verb::sdk::TaskWaveRequest,
 ) -> MemoryResult<crate::task_verb::sdk::TaskWaveReceipt> {
     crate::task_verb::sdk::host_only(memory, "tasks.wave", &input)
+}
+pub fn vault_fanout_launch(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutLaunchRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::FanoutLaunchView>> {
+    crate::task_verb::sdk::read_fanout_launch(memory, input)
+}
+pub fn vault_fanout_resume(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutResumeRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)
+}
+pub fn vault_fanout_ack(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutAckRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
