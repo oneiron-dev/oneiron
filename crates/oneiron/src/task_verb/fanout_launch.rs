@@ -19,11 +19,15 @@
 
 use std::collections::BTreeMap;
 
+use super::ask_effect::AskEffect;
 use super::consult_fanout_admission::CachedAuto;
 use super::consult_fanout_store::{append_human_ruling, encode, policy_in};
 use super::create_origin::TaskCreateOrigin;
 use super::create_validation::consult_refusal;
-use super::{ConsultFanOutChoice, ConsultFanOutMode, ConsultFanOutPause, ConsultFanOutScope};
+use super::{
+    ConsultFanOutChoice, ConsultFanOutMode, ConsultFanOutPause, ConsultFanOutScope, TaskAskClass,
+    TaskAskHandle, TaskAskHoldReason, TaskAskLaunchHold, TaskAskReceipt, TaskAskSpec,
+};
 use crate::Vault;
 use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::attempt_queue::{
@@ -36,7 +40,7 @@ use crate::edit_distance::escalation::{
     EscalationReceipt, EscalationRuling, EscalationTrigger, StandingPolicy,
     record_explicit_ruling_in_txn, standing_policy_for,
 };
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::fanout_auto::{
     FanoutAskContext, FanoutAskTrigger, FanoutDecisions, LearningFanoutAutoDecider,
@@ -117,6 +121,20 @@ pub(super) enum LaunchPayload {
         cut: WavePlan,
         creator_origin: Option<TaskCreateOrigin>,
     },
+    /// An ask the approval mode held (ASK-3): what it asked, the census
+    /// it froze, and the effect its door composes, kept until the owner
+    /// releases it. No member TASK, guest grant or group exists meanwhile.
+    Ask {
+        group_ref: EntityId,
+        requested: TaskAskSpec,
+        effective: TaskAskSpec,
+        holders: Vec<EntityId>,
+        context_class: Option<TaskAskClass>,
+        question_digest: [u8; 32],
+        request_digest: String,
+        created_at: u64,
+        effect: Option<AskEffect>,
+    },
     /// An ask admitted at once; its record holds only the width check.
     AdmittedAsk {
         group_ref: EntityId,
@@ -142,7 +160,7 @@ impl LaunchPayload {
     const fn kind(&self) -> &'static str {
         match self {
             Self::Wave { .. } => "wave",
-            Self::AdmittedAsk { .. } => "ask",
+            Self::Ask { .. } | Self::AdmittedAsk { .. } => "ask",
         }
     }
 
@@ -171,6 +189,16 @@ impl LaunchPayload {
                         )
                     })
                     .collect(),
+            ),
+            Self::Ask {
+                group_ref,
+                effective,
+                holders,
+                ..
+            } => (
+                group_ref.to_hex(),
+                effective.what.reference.short_ref(),
+                holders.iter().map(EntityId::to_hex).collect(),
             ),
             Self::AdmittedAsk {
                 group_ref,
@@ -328,10 +356,10 @@ pub(super) fn ask_check_keys(
     )
 }
 
-/// The consult-graph history a wave launch is judged against: none. A wave
-/// cut is a planned TASK graph, not a consult chain, so neither a consult
-/// cycle nor a per-peer consult rate spike pauses it; the approval mode
-/// alone does.
+/// The consult-graph history a wave launch, and a held ask, is judged
+/// against: none. A wave cut is a planned TASK graph, not a consult chain,
+/// so neither a consult cycle nor a per-peer consult rate spike pauses it;
+/// the approval mode alone does.
 const fn wave_launch_history() -> FanoutHistory<'static> {
     FanoutHistory {
         edges: &[],
@@ -594,27 +622,245 @@ pub(super) fn admit_wave_launch_in(
             ..
         } => {
             launch.estimate = estimate;
-            let mut row = launch
-                .pause
-                .clone()
-                .filter(|row| row.row_ref == surface_ref)
-                .ok_or(Error::InvariantViolation("fan-out launch surface identity"))?;
-            // A held launch asks its width check on its own pause row.
-            let threshold = u64::from(policy.approval_threshold);
-            if launch.statement.crosses(threshold) {
-                launch.statement.raise_width_check(
-                    threshold,
-                    WidthCheckClass::Asked {
-                        row_ref: row.row_ref.clone(),
-                    },
-                );
-            }
-            row.statement = Some(launch.statement.clone());
-            launch.pause = Some(row);
-            save_launch(vault, txn, &launch)?;
+            record_hold_in(
+                vault,
+                txn,
+                &mut launch,
+                &surface_ref,
+                policy.approval_threshold,
+            )?;
             Ok(WaveLaunchAdmission::Held(Box::new(launch)))
         }
     }
+}
+
+/// Records a launch the controller paused: the pause row the sink
+/// persisted, carrying the statement and, above the threshold, the width
+/// check a held launch asks on its own pause row.
+fn record_hold_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    launch: &mut StoredLaunch,
+    surface_ref: &str,
+    threshold: u32,
+) -> MemoryResult<()> {
+    let mut row = launch
+        .pause
+        .clone()
+        .filter(|row| row.row_ref == surface_ref)
+        .ok_or(Error::InvariantViolation("fan-out launch surface identity"))?;
+    let threshold = u64::from(threshold);
+    if launch.statement.crosses(threshold) {
+        launch.statement.raise_width_check(
+            threshold,
+            WidthCheckClass::Asked {
+                row_ref: row.row_ref.clone(),
+            },
+        );
+    }
+    row.statement = Some(launch.statement.clone());
+    launch.pause = Some(row);
+    save_launch(vault, txn, launch)?;
+    Ok(())
+}
+
+/// ASK-3: whether an ask waits for the owner's launch approval. Only the
+/// `manual` approval mode holds an ask, and an ask whose every recipient is
+/// a principal who would answer that approval, a live vault owner, goes
+/// straight out: holding it would ask the approver to approve asking them.
+pub(super) fn ask_launch_needs_approval(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    recipients: &[EntityId],
+) -> MemoryResult<bool> {
+    if policy_in(vault, txn, &ConsultFanOutScope::default())?
+        .policy
+        .mode
+        != ConsultFanOutMode::Manual
+    {
+        return Ok(false);
+    }
+    for recipient in recipients {
+        let approver = vault.get_entity_type_in_txn(txn, recipient)?
+            == Some(crate::registry::ENTITY_TYPE_PERSON)
+            && actor_is_vault_owner_in_txn(vault, txn, *recipient, EdgeActorClass::Human)?;
+        if !approver {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// One ask the approval mode holds, as its admission froze it.
+pub(super) struct AskHold<'a> {
+    pub(super) group_ref: EntityId,
+    pub(super) actor: EntityId,
+    pub(super) actor_class: EdgeActorClass,
+    pub(super) requested: &'a TaskAskSpec,
+    pub(super) effective: TaskAskSpec,
+    pub(super) holders: Vec<EntityId>,
+    pub(super) context_class: Option<TaskAskClass>,
+    pub(super) question_digest: [u8; 32],
+    pub(super) request_digest: &'a str,
+    pub(super) statement: FanoutStatement,
+    pub(super) scope: String,
+    pub(super) effect: Option<AskEffect>,
+    pub(super) now: u64,
+}
+
+/// Holds an ask for the owner's launch approval, in its admission
+/// transaction: the whole request, census and composed effect are frozen
+/// on a launch keyed by the ask's group, and the controller's pause row is
+/// recorded. Nothing is minted. The receipt names the hold.
+pub(super) fn hold_ask_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    hold: AskHold<'_>,
+) -> MemoryResult<TaskAskReceipt> {
+    let governed = policy_in(vault, txn, &ConsultFanOutScope::default())?;
+    let policy = &governed.policy;
+    let payload = LaunchPayload::Ask {
+        group_ref: hold.group_ref,
+        requested: hold.requested.clone(),
+        effective: hold.effective,
+        holders: hold.holders,
+        context_class: hold.context_class,
+        question_digest: hold.question_digest,
+        request_digest: hold.request_digest.to_owned(),
+        created_at: hold.now,
+        effect: hold.effect,
+    };
+    let plan = payload.plan(hold.group_ref, hold.actor, policy.mode)?;
+    let mut launch = StoredLaunch {
+        launch_ref: hold.group_ref,
+        actor: hold.actor,
+        actor_class: hold.actor_class as u8,
+        payload,
+        estimate: fanout_estimate(&plan)?,
+        plan: plan.clone(),
+        statement: hold.statement,
+        policy_scope: ConsultFanOutScope::default(),
+        scope: hold.scope,
+        pause: None,
+        check_row: None,
+        held_attempts: Vec::new(),
+        dispatched_at: None,
+        task_refs: Vec::new(),
+        denied: false,
+        choice_receipt_ref: None,
+        shipped_policy_rows: governed.shipped_rows.clone(),
+    };
+    let admission = admit_fanout_with_history(
+        &plan,
+        Some(policy.approval_threshold),
+        wave_launch_history(),
+        &CachedAuto(FanoutAutoDisposition::SurfaceHuman),
+        &mut LaunchSurface {
+            vault,
+            txn,
+            launch: &mut launch,
+            clearance: None,
+        },
+        hold.now.saturating_mul(1000),
+    )?;
+    let FanoutAdmission::Paused {
+        estimate,
+        surface_ref,
+        ..
+    } = admission
+    else {
+        return Err(Error::InvariantViolation("a held ask's approval mode did not hold it").into());
+    };
+    launch.estimate = estimate;
+    record_hold_in(
+        vault,
+        txn,
+        &mut launch,
+        &surface_ref,
+        policy.approval_threshold,
+    )?;
+    held_ask_receipt(&launch, false)
+}
+
+/// The receipt of an ask still held for its launch approval.
+fn held_ask_receipt(launch: &StoredLaunch, replay: bool) -> MemoryResult<TaskAskReceipt> {
+    let pause = launch
+        .pause
+        .as_ref()
+        .ok_or(Error::InvariantViolation("a held ask has no pause row"))?;
+    Ok(TaskAskReceipt::new(
+        TaskAskHandle {
+            group_ref: launch.launch_ref,
+        },
+        Vec::new(),
+        Some(TaskAskHoldReason::ApprovalRequired),
+        replay,
+        Some(launch.statement.clone()),
+    )
+    .with_launch(TaskAskLaunchHold {
+        launch_ref: launch.launch_ref,
+        plan_digest: bytes_to_hex_lower(&launch.estimate.plan_digest),
+        surface_ref: pause.row_ref.clone(),
+        denied: launch.denied,
+    }))
+}
+
+/// The ask still held under `group_ref`, if one is.
+fn held_ask_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_ref: EntityId,
+) -> MemoryResult<Option<StoredLaunch>> {
+    Ok(load_launch(vault, txn, group_ref)?.filter(|launch| {
+        launch.dispatched_at.is_none() && matches!(launch.payload, LaunchPayload::Ask { .. })
+    }))
+}
+
+/// A replay of a held ask: the same receipt, never a second hold. The same
+/// intent key with other arguments, or from another actor, is refused.
+pub(super) fn held_ask_receipt_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_ref: EntityId,
+    actor: EntityId,
+    request_digest: &str,
+) -> MemoryResult<Option<TaskAskReceipt>> {
+    let Some(launch) = held_ask_in(vault, txn, group_ref)? else {
+        return Ok(None);
+    };
+    let LaunchPayload::Ask {
+        request_digest: frozen,
+        ..
+    } = &launch.payload
+    else {
+        return Ok(None);
+    };
+    if launch.actor != actor || frozen != request_digest {
+        return Err(MemoryError::bad_request(
+            "ask intent key was used for different arguments",
+        ));
+    }
+    held_ask_receipt(&launch, true).map(Some)
+}
+
+/// The asker of the ask still held under `group_ref`, if one is: status and
+/// wait read a held ask before they fail an unknown group.
+pub(super) fn held_ask_owner_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_ref: EntityId,
+) -> MemoryResult<Option<EntityId>> {
+    Ok(held_ask_in(vault, txn, group_ref)?.map(|launch| launch.actor))
+}
+
+/// A held ask as its approval releases it.
+pub(super) struct ReleasedAsk<'a> {
+    pub(super) requested: &'a TaskAskSpec,
+    pub(super) holders: &'a [EntityId],
+    pub(super) context_class: &'a Option<TaskAskClass>,
+    pub(super) question_digest: [u8; 32],
+    pub(super) request_digest: &'a str,
+    pub(super) statement: &'a FanoutStatement,
 }
 
 /// Parks the planning attempt a held launch waits on, in the writer that
@@ -1145,27 +1391,62 @@ impl Memory<'_> {
         owner_actor: EntityId,
         now: u64,
     ) -> MemoryResult<()> {
-        let LaunchPayload::Wave {
-            cut,
-            creator_origin,
-        } = &launch.payload
-        else {
-            return Err(Error::InvariantViolation("only a wave launch is held").into());
+        let class = launch.class()?;
+        let task_refs: Vec<EntityId> = match &launch.payload {
+            LaunchPayload::Wave {
+                cut,
+                creator_origin,
+            } => super::wave_port::land_approved_cut_in(
+                self.vault(),
+                txn,
+                super::wave_port::ApprovedCut {
+                    actor: launch.actor,
+                    actor_class: class,
+                    origin: creator_origin.clone(),
+                    cut: cut.clone(),
+                    statement: &launch.statement,
+                    now,
+                },
+            )?
+            .iter()
+            .map(|write| write.task_ref)
+            .collect(),
+            // The ask goes out as its asker, then its door's effect runs,
+            // revalidated in this same transaction.
+            LaunchPayload::Ask {
+                group_ref,
+                requested,
+                holders,
+                context_class,
+                question_digest,
+                request_digest,
+                effect,
+                ..
+            } => {
+                let asker = self.vault().memory(launch.actor, class);
+                let task_refs = asker.release_held_ask_in(
+                    txn,
+                    *group_ref,
+                    ReleasedAsk {
+                        requested,
+                        holders,
+                        context_class,
+                        question_digest: *question_digest,
+                        request_digest,
+                        statement: &launch.statement,
+                    },
+                )?;
+                if let Some(effect) = effect {
+                    asker.apply_ask_effect_in(txn, *group_ref, effect)?;
+                }
+                task_refs
+            }
+            LaunchPayload::AdmittedAsk { .. } => {
+                return Err(Error::InvariantViolation("an admitted ask is never held").into());
+            }
         };
-        let writes = super::wave_port::land_approved_cut_in(
-            self.vault(),
-            txn,
-            super::wave_port::ApprovedCut {
-                actor: launch.actor,
-                actor_class: launch.class()?,
-                origin: creator_origin.clone(),
-                cut: cut.clone(),
-                statement: &launch.statement,
-                now,
-            },
-        )?;
         launch.dispatched_at = Some(self.vault().now_recorded_at());
-        launch.task_refs = writes.iter().map(|write| write.task_ref).collect();
+        launch.task_refs = task_refs;
         settle_held_attempts_in(self.vault(), txn, launch, owner_actor, now)
     }
 }
