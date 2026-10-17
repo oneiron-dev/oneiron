@@ -65,6 +65,13 @@ impl CoreAuth {
         }
         let mut auth = Self::from_verified(verified, slip.caveats.is_empty())?;
         auth.instrument = Some(*blake3::hash(token.as_bytes()).as_bytes());
+        // The work this request queues carries the slip it was admitted on,
+        // judged again when that work runs. A registry that keeps none
+        // leaves the request nothing to queue slip-bound work with.
+        let challenge = oneiron::authority::holder_proof_challenge(proof.timestamp, &proof.nonce);
+        auth.invocation_slip = vault
+            .bind_invocation_slip(&slip, &challenge, &signature)
+            .ok();
         auth.facets_owner_exempt = auth
             .verified_slip
             .as_ref()
@@ -157,6 +164,7 @@ impl CoreAuth {
             // Local host proofs have no caveats. Their logged mint id is stable.
             instrument: Some(claims.slip_id),
             verified_slip: Some(verified),
+            invocation_slip: None,
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
         })
