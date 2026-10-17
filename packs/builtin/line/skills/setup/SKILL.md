@@ -32,8 +32,9 @@ qualification passes.
 4. Check the connection. The check asks LINE which Official Account the access
    token belongs to, and passes only when LINE names it.
 5. Once the check passes, set the webhook URL on the channel's Messaging API
-   tab to the host's public address followed by `/v1/hooks/line/webhook`, and
-   turn webhooks on, so messages reach the agent. Each delivery is verified
+   tab to the URL the setup shows (`provider_urls`: the host's public address
+   followed by `/v1/hooks/line/webhook`), and turn webhooks on, so messages
+   reach the agent. Each delivery is verified
    with the channel secret before it is kept.
 
 ## When the check fails

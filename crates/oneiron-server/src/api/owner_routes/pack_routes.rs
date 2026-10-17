@@ -3,7 +3,8 @@
 //! lists what is installed, and binds or dials its hooks. Hub refs sync at
 //! their stored policy, and hub skills import, sync, restore and read their
 //! receipts here (OF-213). The organ inventory and the owner's organ build
-//! upload live here too (OF-575).
+//! upload live here too (OF-575), and so do the Slack app's manifest and
+//! install link (OF-519).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,7 +32,9 @@ use oneiron::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, Pac
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
-use crate::builtin_host::HostConnectionChecks;
+use crate::builtin_host::{
+    HostConnectionChecks, ProviderSetup, public_origin, slack_app_manifest, start_slack_install,
+};
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
@@ -49,6 +52,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/packs/setup/prepare", post(setup_prepare))
         .route("/packs/setup/answer", post(setup_answer))
         .route("/packs/setup/verify", post(setup_verify))
+        .route("/packs/slack/manifest", get(slack_manifest))
+        .route("/packs/slack/install", post(slack_install))
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
         .route("/packs/hooks/qualify", post(qualify_hooks))
@@ -996,6 +1001,9 @@ struct PackSetupReply {
     setup: PackSetupView,
     cards: Vec<GeneratedUiCard>,
     text: String,
+    /// A built-in channel's provider URLs at this host, and Slack's manifest.
+    #[serde(flatten)]
+    provider: ProviderSetup,
     /// Set when a card asked to store a credential: the owner secrets door
     /// takes the value, then a `secret_stored` answer pins its record.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1012,11 +1020,16 @@ struct PackSetupStoreSecret {
 }
 
 impl PackSetupReply {
-    fn new(setup: PackSetupView) -> Result<Self, OwnerError> {
+    fn new(setup: PackSetupView, server: &SyncServer) -> Result<Self, OwnerError> {
+        let provider = ProviderSetup::for_pack(
+            &setup.pack_name,
+            server.config.oauth_resource_indicator.as_deref(),
+        )?;
         Ok(Self {
             cards: setup.cards()?,
-            text: setup.text(),
+            text: setup.text() + &provider.text(),
             setup,
+            provider,
             store_secret: None,
         })
     }
@@ -1036,6 +1049,7 @@ async fn setup_view(
             server
                 .vault()
                 .pack_setup(&owner, &key.pack, key.source.as_deref())?,
+            &server,
         )
     })
     .await?;
@@ -1052,11 +1066,12 @@ async fn setup_prepare(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let reply = blocking(move || {
-        PackSetupReply::new(server.vault().prepare_pack_setup(
-            &owner,
-            &request.pack,
-            request.source.as_deref(),
-        )?)
+        PackSetupReply::new(
+            server
+                .vault()
+                .prepare_pack_setup(&owner, &request.pack, request.source.as_deref())?,
+            &server,
+        )
     })
     .await?;
     Ok(Json(reply))
@@ -1083,20 +1098,23 @@ async fn setup_answer(
                     PackSetupCardAction::Answer(answer) => answer,
                     PackSetupCardAction::Verify { connection } => {
                         let checks = HostConnectionChecks::new(&server)?;
-                        return PackSetupReply::new(vault.verify_pack_connection(
-                            &owner,
-                            &request.pack,
-                            source,
-                            &connection,
-                            &checks,
-                        )?);
+                        return PackSetupReply::new(
+                            vault.verify_pack_connection(
+                                &owner,
+                                &request.pack,
+                                source,
+                                &connection,
+                                &checks,
+                            )?,
+                            &server,
+                        );
                     }
                     PackSetupCardAction::StoreSecret {
                         connection,
                         secret,
                         effector,
                     } => {
-                        let mut reply = PackSetupReply::new(view)?;
+                        let mut reply = PackSetupReply::new(view, &server)?;
                         reply.store_secret = Some(PackSetupStoreSecret {
                             door: "/v1/owner/secrets/register",
                             connection,
@@ -1113,7 +1131,10 @@ async fn setup_answer(
                 ));
             }
         };
-        PackSetupReply::new(vault.answer_pack_setup(&owner, &request.pack, source, &answer)?)
+        PackSetupReply::new(
+            vault.answer_pack_setup(&owner, &request.pack, source, &answer)?,
+            &server,
+        )
     })
     .await?;
     Ok(Json(reply))
@@ -1131,14 +1152,62 @@ async fn setup_verify(
     let request = json_payload(payload)?;
     let reply = blocking(move || {
         let checks = HostConnectionChecks::new(&server)?;
-        PackSetupReply::new(server.vault().verify_pack_connection(
-            &owner,
-            &request.pack,
-            request.source.as_deref(),
-            &request.connection,
-            &checks,
-        )?)
+        PackSetupReply::new(
+            server.vault().verify_pack_connection(
+                &owner,
+                &request.pack,
+                request.source.as_deref(),
+                &request.connection,
+                &checks,
+            )?,
+            &server,
+        )
     })
     .await?;
     Ok(Json(reply))
+}
+
+/// `GET /v1/owner/packs/slack/manifest`: the Slack app manifest at this
+/// host's public origin, to paste at api.slack.com/apps (OF-519). It needs
+/// no checked connection, since the app is made first.
+async fn slack_manifest(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<serde_json::Value> {
+    owner(&auth, &server)?;
+    let manifest = blocking(move || {
+        let origin =
+            public_origin(server.config.oauth_resource_indicator.as_deref()).ok_or_else(|| {
+                OwnerError::Invalid(
+                    "this host has no public https origin; set oauth_resource_indicator to it first"
+                        .to_owned(),
+                )
+            })?;
+        Ok(slack_app_manifest(&origin)?)
+    })
+    .await?;
+    Ok(Json(manifest))
+}
+
+/// The Slack setup to install for: by content hash when several wait.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlackInstallRequest {
+    #[serde(default)]
+    source: Option<String>,
+}
+
+/// `POST /v1/owner/packs/slack/install`: one link that installs the Slack
+/// app to the owner's workspace (OF-519). Slack's redirect redeems it once,
+/// within ten minutes, and the host stores and checks the bot token under
+/// this owner's proof.
+async fn slack_install(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SlackInstallRequest>, JsonRejection>,
+) -> OwnerReply<crate::builtin_host::SlackInstallLink> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let link = blocking(move || start_slack_install(&server, owner, request.source)).await?;
+    Ok(Json(link))
 }
