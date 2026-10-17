@@ -81,6 +81,16 @@ const THINK_THRESHOLD_VERSION: u32 = 1;
 /// How long the person row may trail an accept whose commit sent no change
 /// signal.
 const PERSON_THRESHOLD_SWEEP: std::time::Duration = std::time::Duration::from_secs(60);
+/// The dial of a ladder over one named model
+/// ([`DecisionHost::ladder_for_model`]): its Big rung and no other.
+pub const MODEL_DIAL: DecisionDial = DecisionDial {
+    first: DecisionRung::Big,
+    ceiling: DecisionRung::Big,
+    band: DecisionBand {
+        low: 0.35,
+        high: 0.65,
+    },
+};
 
 /// The ladder, its person queue and the bands every caller starts from.
 #[derive(Clone)]
@@ -98,6 +108,9 @@ pub struct DecisionHost {
     /// The owner's explicit opt-in to send unit text off the host,
     /// `[models.decisions.system_one].remote_opt_in`.
     remote_opt_in: bool,
+    /// The big model on the Big rung, kept so one named model can be asked
+    /// as it asks ([`Self::ladder_for_model`]).
+    big_model: Option<Arc<crate::big_rung::BigModel>>,
 }
 
 impl DecisionHost {
@@ -128,6 +141,7 @@ impl DecisionHost {
             image_pick: None,
             booking_parse: None,
             remote_opt_in: false,
+            big_model: None,
         }
     }
 
@@ -246,6 +260,7 @@ impl DecisionHost {
         runtime: tokio::runtime::Handle,
     ) -> Self {
         self.ladder.big = None;
+        self.big_model = None;
         let Some(settings) = settings else {
             return self;
         };
@@ -256,15 +271,42 @@ impl DecisionHost {
             default_units,
             runtime,
         )
+        .map(Arc::new)
         .and_then(|model| {
             let pin = model.pin();
-            ModelDecisionProvider::new(pin, Arc::new(model)).map_err(anyhow::Error::from)
+            let provider = ModelDecisionProvider::new(pin, Arc::clone(&model) as _)
+                .map_err(anyhow::Error::from)?;
+            Ok((model, provider))
         });
         match bound {
-            Ok(rung) => self.ladder.big = Some(Arc::new(rung)),
+            Ok((model, rung)) => {
+                self.ladder.big = Some(Arc::new(rung));
+                self.big_model = Some(model);
+            }
             Err(error) => tracing::warn!(%error, "the big model cannot fill its rung"),
         }
         self
+    }
+
+    /// A ladder whose one rung is `model` on the Big rung (OF-184): asked as
+    /// the configured big model is, worded and on its meter, but of that
+    /// model alone with no owner's fallback, so the model that answers is
+    /// the one named. Every other slot is empty and no person is asked: run
+    /// it with [`MODEL_DIAL`]. Fails when `[models.decisions.big]` fills no
+    /// Big rung, or no chat model with that id is served alone by its own
+    /// id (a seat is not one model).
+    pub fn ladder_for_model(&self, model: &ModelId) -> anyhow::Result<HeldLadder> {
+        let big = self
+            .big_model
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no [models.decisions.big] fills the Big rung"))?;
+        let exact = big.for_model(model)?;
+        let pin = exact.pin();
+        let provider = ModelDecisionProvider::new(pin, Arc::new(exact))?;
+        Ok(HeldLadder {
+            big: Some(Arc::new(provider)),
+            ..HeldLadder::unstaffed()
+        })
     }
 
     /// The write gate's auto check through this ladder, worded `wording`,
@@ -631,6 +673,28 @@ impl SyncServer {
     #[must_use]
     pub fn decision_host(&self) -> &DecisionHost {
         &self.decisions
+    }
+
+    /// [`DecisionHost::ladder_for_model`] on this server's ladder.
+    pub fn decision_ladder_for_model(&self, model: &ModelId) -> anyhow::Result<HeldLadder> {
+        self.decisions.ladder_for_model(model)
+    }
+
+    /// The family `model` belongs to, as its provider's config or its
+    /// registry row names it; a seat's when every rung shares one. `None`
+    /// when nothing names it, never guessed.
+    pub fn model_family(&self, model: &ModelId) -> oneiron::Result<Option<String>> {
+        self.ai.models().model_family(&self.vault, model)
+    }
+
+    /// Every chat model served alone by its own id whose known family is
+    /// none of `models`', in id order: where a third opinion may come from,
+    /// each one a [`Self::decision_ladder_for_model`] takes. Empty when any
+    /// of `models` has no known family.
+    pub fn models_outside_families(&self, models: &[&ModelId]) -> oneiron::Result<Vec<ModelId>> {
+        self.ai
+            .models()
+            .models_outside_families(&self.vault, models)
     }
 
     /// Fills the ladder's rungs `[models]` binds beyond the house read, and
