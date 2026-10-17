@@ -113,7 +113,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             let labels = match &question.contract {
                 AnswerContract::Noul => LabelSet::Noul,
                 AnswerContract::Choice { options } => LabelSet::Choice(options),
-                AnswerContract::Score { .. } | AnswerContract::Box => {
+                AnswerContract::Score { .. } | AnswerContract::Box | AnswerContract::Point => {
                     return Err(invalid("a decision read takes noul and choice questions"));
                 }
             };
