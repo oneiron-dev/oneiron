@@ -193,8 +193,8 @@ impl Vault {
         let transition = super::write_custody_transition_in_txn(self, &mut wtxn, id, &rec.0, at)?;
         wtxn.commit()?;
         #[cfg(feature = "sync")]
-        if let Some(transition) = &transition {
-            self.refresh_custody_in_live_window(transition);
+        if transition.is_some() {
+            self.refresh_custody_in_live_windows();
         }
         #[cfg(not(feature = "sync"))]
         let _ = transition;

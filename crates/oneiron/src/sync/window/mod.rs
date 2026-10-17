@@ -36,6 +36,7 @@ pub mod test_hooks;
 mod tombstones;
 mod withdrawn;
 
+pub(in crate::sync) use self::admission::validate_promotion_snapshot;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
 pub(in crate::sync) use self::admission::validate_window_update_with_staged_worlds;

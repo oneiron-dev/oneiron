@@ -31,9 +31,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, HexId, Raw, SideTable};
 
-/// The latest transition this vault signed of each portable credential, by
-/// record id. The sync layer mirrors each into the window of its signing
-/// month.
+/// The latest transition this vault holds of each portable credential, signed
+/// here or taken from a window, by record id. The sync layer mirrors each into
+/// the window of its signing month.
 const TRANSITIONS: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SECRET_CUSTODY_TRANSITION);
 
@@ -111,24 +111,16 @@ pub(crate) fn sign_custody_transition(
     let body = encode_secret_custody_body(&bare)?;
     let mut sealed = Vec::new();
     if record.status != SecretCustodyStatus::Revoked {
-        for machine in fold.machines.keys() {
-            let Some(trusted) = fold.trusted_machine(*machine) else {
-                continue;
-            };
-            // A profile whose key does not import could open nothing.
-            let Ok(public) = HybridPublicKey::from_bytes(&trusted.profile.encryption_key.key)
-            else {
-                continue;
-            };
+        for (machine, public) in seal_recipients(fold) {
             let envelope = seal_value(
                 &vault_id,
                 id,
                 record.rotation_generation,
-                *machine,
+                machine,
                 &public,
                 &record.value_bytes,
             )?;
-            sealed.push((*machine, envelope));
+            sealed.push((machine, envelope));
         }
         if sealed.is_empty() || sealed.len() > MAX_RECIPIENTS {
             return Ok(None);
@@ -149,6 +141,20 @@ pub(crate) fn sign_custody_transition(
         return Ok(None);
     }
     Ok(Some(transition))
+}
+
+/// The machines a transition seals its value to under `fold`: each machine
+/// mine under the pin whose encryption key imports.
+fn seal_recipients(fold: &AuthorityFold) -> Vec<(EntityId, HybridPublicKey)> {
+    fold.machines
+        .keys()
+        .filter_map(|machine| {
+            let trusted = fold.trusted_machine(*machine)?;
+            // A profile whose key does not import could open nothing.
+            let public = HybridPublicKey::from_bytes(&trusted.profile.encryption_key.key).ok()?;
+            Some((*machine, public))
+        })
+        .collect()
 }
 
 /// Signs and stores, in the door's own write transaction, the transition of
@@ -187,7 +193,77 @@ pub(crate) fn write_custody_transition_in_txn(
     Ok(Some(transition))
 }
 
-/// Every transition this vault signed, by record id.
+/// Keeps `transition` as this vault's latest of its record when it supersedes
+/// the one held. A machine that took a peer's transition can then seal it
+/// again for a machine the roster gains, and drop the carrier it supersedes
+/// from the window that carrier rides.
+pub(crate) fn remember_custody_transition_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    transition: &CustodyTransition,
+) -> Result<()> {
+    let key = HexId(transition.id);
+    let held = TRANSITIONS.get(&vault.store, wtxn, &key)?;
+    if held
+        .and_then(|held| CustodyTransition::decode(&held).ok())
+        .is_some_and(|held| !transition.supersedes(&held))
+    {
+        return Ok(());
+    }
+    TRANSITIONS.put(&vault.store, wtxn, &key, &transition.encode())
+}
+
+/// Seals again, in `wtxn`, the latest transition of each portable record this
+/// vault holds whose value a machine now mine under the pin cannot open: the
+/// record at the same generation and status, its value sealed to every
+/// machine mine now, signed at `at` and never before the transition it
+/// replaces. A machine with no record writes it; one that holds the record
+/// finds it stale. Nothing is signed when this install is not a machine mine
+/// under the pin. Returns the transitions written.
+pub(crate) fn reseal_custody_transitions_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    at: u64,
+) -> Result<Vec<CustodyTransition>> {
+    let mine: Vec<EntityId> = {
+        let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+        seal_recipients(&fold)
+            .into_iter()
+            .map(|(machine, _)| machine)
+            .collect()
+    };
+    let mut due = Vec::new();
+    for (_, carrier) in TRANSITIONS.scan(&vault.store, wtxn)? {
+        let Ok(held) = CustodyTransition::decode(&carrier) else {
+            continue;
+        };
+        if held.status != SecretCustodyStatus::Revoked
+            && mine
+                .iter()
+                .any(|machine| !held.sealed.iter().any(|(to, _)| to == machine))
+        {
+            due.push(held);
+        }
+    }
+    let mut written = Vec::new();
+    for held in due {
+        let Some(record) = super::read_secret_custody_in_txn(&vault.store, wtxn, &held.id)? else {
+            continue;
+        };
+        if (record.rotation_generation, status_rank(record.status)) != held.order() {
+            continue;
+        }
+        let signed_at = at.max(held.signed_at.saturating_add(1));
+        if let Some(transition) =
+            write_custody_transition_in_txn(vault, wtxn, held.id, &record, signed_at)?
+        {
+            written.push(transition);
+        }
+    }
+    Ok(written)
+}
+
+/// Every transition this vault holds, by record id.
 pub(crate) fn custody_transitions(vault: &Vault) -> Result<Vec<(EntityId, Vec<u8>)>> {
     let rtxn = vault.store.env.read_txn()?;
     Ok(TRANSITIONS
@@ -202,6 +278,17 @@ impl CustodyTransition {
     /// its status (active, suspended, revoked).
     pub(crate) fn order(&self) -> (u32, u8) {
         (self.generation, status_rank(self.status))
+    }
+
+    /// Whether this carrier replaces `other`, of the same record: a later
+    /// [`Self::order`], or the same one signed later, as a re-seal is. Two
+    /// carriers signed in the same second settle on the greater bytes, the
+    /// same on every machine.
+    pub(crate) fn supersedes(&self, other: &Self) -> bool {
+        match (self.order(), self.signed_at).cmp(&(other.order(), other.signed_at)) {
+            std::cmp::Ordering::Equal => self.encode() > other.encode(),
+            later => later.is_gt(),
+        }
     }
 
     /// What the signature covers: the vault and every field but the

@@ -96,6 +96,7 @@ pub use self::owner_door::{
 };
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_transitions,
+    remember_custody_transition_in_txn, reseal_custody_transitions_in_txn,
     write_custody_transition_in_txn,
 };
 pub use self::types::{
