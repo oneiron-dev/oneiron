@@ -101,6 +101,7 @@ impl Vault {
                     verdict,
                     permissions: &permissions,
                     qualification: qualification.as_ref(),
+                    world: None,
                 },
             )?;
             if matches!(disposition, PackInstallDisposition::Installed(_)) {

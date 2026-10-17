@@ -5146,6 +5146,8 @@ pub enum PackCandidateReason {
     QualificationRequired,
     #[serde(rename = "advisories")]
     Advisories,
+    #[serde(rename = "needs_world")]
+    NeedsWorld,
 }
 
 /// `oneiron::skill_hub::pack_catalog::admission_types::BundledSkillPermissions`.

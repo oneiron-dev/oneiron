@@ -745,7 +745,7 @@ export type PackAdapter = { builtin: string } | { script: string }
 /** `oneiron::skill_hub::pack_catalog::admission_types::PackInstallStatus` */
 export type PackInstallStatus = "active" | "candidate"
 /** `oneiron::skill_hub::pack_catalog::admission_types::PackCandidateReason` */
-export type PackCandidateReason = "rules_hit" | "code_auto_install_off" | "qualification_required" | "advisories"
+export type PackCandidateReason = "rules_hit" | "code_auto_install_off" | "qualification_required" | "advisories" | "needs_world"
 /** `oneiron::skill_hub::pack_catalog::admission_types::BundledSkillPermissions` */
 export type BundledSkillPermissions = { skill_id: string; bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] }
 /** `oneiron::skill_hub::pack_catalog::admission_types::PackPermissions` */

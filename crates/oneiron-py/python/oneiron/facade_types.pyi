@@ -1941,7 +1941,7 @@ class PackAdapterScript(TypedDict):
     script: str
 PackAdapter = PackAdapterBuiltin | PackAdapterScript
 PackInstallStatus = Literal["active", "candidate"]
-PackCandidateReason = Literal["rules_hit", "code_auto_install_off", "qualification_required", "advisories"]
+PackCandidateReason = Literal["rules_hit", "code_auto_install_off", "qualification_required", "advisories", "needs_world"]
 class BundledSkillPermissions(TypedDict):
     skill_id: str
     bins: list[str]

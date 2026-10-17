@@ -107,6 +107,24 @@ impl Vault {
         Ok(found)
     }
 
+    /// Whether `world` is a live local world on the caller's snapshot, as
+    /// [`Self::local_world_named_in_txn`] reads them.
+    pub(crate) fn is_local_world_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        world: EntityId,
+    ) -> Result<bool> {
+        if world == crate::claim::base_world_id()
+            || crate::entity_id::is_foreign_world_id_range(world)
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .shape_bodies_in_txn(txn, ENTITY_TYPE_WORLD)?
+            .iter()
+            .any(|(id, _)| *id == world))
+    }
+
     /// The live setup plane, keeping an entity-backed row only when
     /// `visible` admits its entity. Base reality and received worlds are not
     /// this vault's arrangement, so they are not rows, and neither is a

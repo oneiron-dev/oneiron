@@ -393,7 +393,7 @@ declare namespace Sdk {
   type PackKind = "capability" | "connector" | "agent";
   type PackAdapter = { builtin: string } | { script: string };
   type PackInstallStatus = "active" | "candidate";
-  type PackCandidateReason = "rules_hit" | "code_auto_install_off" | "qualification_required" | "advisories";
+  type PackCandidateReason = "rules_hit" | "code_auto_install_off" | "qualification_required" | "advisories" | "needs_world";
   type BundledSkillPermissions = { skill_id: string; bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] };
   type PackPermissions = { bundled_skills: BundledSkillPermissions[]; widening_bundled_skills: BundledSkillPermissions[]; grants: string[]; wakes: string[]; hooks: string[]; organs: string[]; section_verbs: string[]; section_authorities: string[]; widening_grants: string[]; widening_wakes: string[]; widening_hooks: string[]; widening_organs: string[]; widening_section_verbs: string[]; widening_section_authorities: string[] };
   type ConnectorQualificationReceipt = { suite: string; report_hash: string; protocol_revision: string; manifest_hash: number[]; qualified_at: number };
