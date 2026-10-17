@@ -1127,9 +1127,10 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
 /// MESSAGE's. `None` when it lies in none, or cannot be placed.
 fn answer_container(vault: &Vault, open: &AnswerOpen) -> Option<EntityId> {
     let record = match open {
-        AnswerOpen::Turn(turn) | AnswerOpen::Retry { turn, .. } => {
-            EntityId::from_hex(turn.turn_ref.as_deref()?).ok()?
-        }
+        AnswerOpen::Turn(turn) => EntityId::from_hex(turn.turn_ref.as_deref()?).ok()?,
+        // A Retry's TURN lands only with its reply (FIX 3152): the reply it
+        // answers again sits in the same conversation.
+        AnswerOpen::Retry { action, .. } => action.message,
         AnswerOpen::Continue(message) => *message,
     };
     vault
