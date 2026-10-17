@@ -216,9 +216,15 @@ pub trait McpCodeModeProvider: Send + Sync {
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig>;
     /// A compaction seat for a run the host holds none for, its summaries
-    /// bylined `byline`, its passes queued in `credential`'s turn; `None`
-    /// keeps the run's window raw.
-    fn compaction(&self, _byline: WriteActor, _credential: &str) -> Option<RunCompaction> {
+    /// bylined `byline`, its passes queued in `credential`'s turn, its calls
+    /// spent under `spend` when the run spends under a scope; `None` keeps
+    /// the run's window raw.
+    fn compaction(
+        &self,
+        _byline: WriteActor,
+        _credential: &str,
+        _spend: Option<&SpendScopeId>,
+    ) -> Option<RunCompaction> {
         None
     }
     /// The host's typed seat pick, above the raw backend; absent for legacy vaults.
@@ -236,10 +242,11 @@ pub trait McpCodeModeProvider: Send + Sync {
     }
 }
 
-/// Builds one run's compaction seat from the run's write actor and the
+/// Builds one run's compaction seat from the run's write actor, the
 /// credential its passes queue under (its registered fingerprint's stream
-/// connection).
-pub type RunCompactionSeat = Arc<dyn Fn(WriteActor, &str) -> RunCompaction + Send + Sync>;
+/// connection) and the spend scope its calls spend under, if any.
+pub type RunCompactionSeat =
+    Arc<dyn Fn(WriteActor, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
 
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given.
@@ -403,7 +410,9 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .lock()
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
                 .take(run_id)
-                .or_else(|| provider.compaction(write_actor, &request.actor.stream_connection.0));
+                .or_else(|| {
+                    provider.compaction(write_actor, &request.actor.stream_connection.0, None)
+                });
             if let Some(seat) = seat.as_mut() {
                 // Its summaries are born where the run's credential writes.
                 seat.place(placement.0, placement.1);

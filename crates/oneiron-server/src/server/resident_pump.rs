@@ -396,7 +396,8 @@ fn run_bound(
         .enable_all()
         .build()
         .map_err(text)?;
-    let mut compaction = provider.compaction(actor, key);
+    // Its compaction passes spend under the attempt's scope too.
+    let mut compaction = provider.compaction(actor, key, metered.as_ref());
     let mut full = 0;
     loop {
         let outcome = enter_run(
