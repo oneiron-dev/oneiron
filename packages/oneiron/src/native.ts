@@ -118,6 +118,9 @@ vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
+vaultSettingsWakePolicySet(input: unknown): unknown
+vaultSettingsInferenceDefaults(input: unknown): unknown
+vaultSettingsInferenceDefaultsReplace(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
