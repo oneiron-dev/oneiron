@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 268 code-mode rows (251 host rows, 17 run rows), 798 declarations.
-// Replies: 202 fully typed, 36 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Census: 269 code-mode rows (251 host rows, 18 run rows), 800 declarations.
+// Replies: 202 fully typed, 36 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 20 unknown (the run rows and ask, wait).
 // Opaque serde_json::Value leaves: 52; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
@@ -500,7 +500,7 @@ declare namespace Sdk {
   type TaskAskSettlementReason = "first_word" | "all_responded" | "deadline" | "stale";
   type TaskAskSettlement = { group_ref: EntityId; reference: EntityId; revision: number; at: number; cutoff_order: number; reason: TaskAskSettlementReason; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: EntityId[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref?: EntityId | null; policy_surface: TaskAskSurface; link_result_proof?: number[] | null };
   type TaskAskResult = { effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback?: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Leader" | "Team";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "Team";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait };
@@ -807,6 +807,8 @@ declare namespace Sdk {
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null; confessions?: number | null; spend?: number | null; spendCap?: number | null; calls?: number | null };
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
   type TaskWaitSetRequest = { tasks: string[]; all?: boolean | null; n_of?: number | null; until?: number | null; step_key: string };
+  type SummarizeInputEffort = "low" | "medium" | "high";
+  type SummarizeInput = { ref: string; effort?: SummarizeInputEffort | null; group?: string[] | null; defer?: boolean | null };
   type BudgetLegibilityEnvelope = { remaining_units: number; limit_units: number; remaining_ms: number; wrap_up: boolean; finalize_by_ms?: number | null };
 }
 declare const ai: {
@@ -1003,6 +1005,7 @@ declare namespace self {
 }
 /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
 declare function steer(input: Sdk.SteerRequest): Promise<Sdk.Reply<Sdk.SteerReceipt>>;
+declare function summarize(input: Sdk.SummarizeInput): Promise<Sdk.Reply<unknown>>;
 declare const tasks: {
   /** Admits one person's word on an ask; the word is evidence, never approval. */
   answer(input: Sdk.TaskAnswerRequest): Promise<Sdk.Reply<Sdk.TaskAskAnswer>>;
