@@ -133,9 +133,38 @@ impl MemoriesSection {
 }
 
 impl TasksSection {
+    /// Renders each TASK a block names that the caller's TASKS read admitted
+    /// but the render cap left off (OF-579): a pinned row is never shed, as a
+    /// pinned MEMORIES row is not. `intents` are the rows this section was
+    /// rendered from, so a task the caller's read withholds stays off. The
+    /// footer stops counting a row it now shows. [`Self::tag_hook_pins`] then
+    /// tags it.
+    pub fn pin_hook_tasks(&mut self, intents: &[super::TaskIntentPresence], pins: &[HookPin]) {
+        for id in pins.iter().flat_map(|pin| &pin.refs) {
+            let id = id.to_hex();
+            if self.rows.iter().any(|row| row.id == id) {
+                continue;
+            }
+            let Some(intent) = intents.iter().find(|intent| intent.id == id) else {
+                continue;
+            };
+            self.rows.push(super::tasks::intent_row(intent));
+            if let Some(overflow) = &mut self.overflow {
+                overflow.known_omitted_rows = overflow.known_omitted_rows.saturating_sub(1);
+            }
+        }
+        if self
+            .overflow
+            .as_ref()
+            .is_some_and(|overflow| overflow.known_omitted_rows == 0 && overflow.source_exhausted)
+        {
+            self.overflow = None;
+        }
+    }
+
     /// Tags each TASKS row a block names with the block's hook, in place.
-    /// The rows are the ones the caller's TASKS already reads; a block adds
-    /// none. The first block to name a row tags it. Returns the blocks that
+    /// The rows are the ones the caller's TASKS already reads; only
+    /// [`Self::pin_hook_tasks`] adds one. The first block to name a row tags it. Returns the blocks that
     /// tagged a row.
     pub fn tag_hook_pins(&mut self, pins: &[HookPin]) -> BTreeSet<EntityId> {
         let mut delivered = BTreeSet::new();
