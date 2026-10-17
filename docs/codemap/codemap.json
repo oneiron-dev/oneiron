@@ -5158,6 +5158,7 @@
      "path": "src/blob_artifact/esign/ledger.rs",
      "purpose": "Claims are the document state machine",
      "surface": {
+      "const": 1,
       "crate-vis": 12,
       "fn": 3
      }
@@ -5186,7 +5187,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -10140,17 +10141,20 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "WeaveItemCorrection",
+      "WeaveItemTarget",
       "WeaveLinkCorrection"
      ],
      "path": "src/claim/scoped_read/weave_correction.rs",
-     "purpose": "Authenticated wrong-link labels emitted by the live weave report",
+     "purpose": "Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project or…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2,
-      "struct": 1
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -10236,6 +10240,7 @@
       "WeaveDigestFramed",
       "WeaveDigestRequest",
       "WeaveDigestView",
+      "WeaveItemCorrectionView",
       "WeaveItemView",
       "WeaveLinkCorrectionView",
       "WeaveReaderKind",
@@ -10245,15 +10250,16 @@
       "WeaveScheduleView",
       "WeaveSectionInput",
       "WeaveSectionView",
+      "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest"
      ],
      "path": "src/claim/scoped_read/weave_serve.rs",
      "purpose": "The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
-      "fn": 11,
-      "struct": 11
+      "fn": 13,
+      "struct": 13
      }
     },
     {
@@ -14596,7 +14602,7 @@
      "purpose": "Explicit memory pins bypass query relevance and render shedding, never read authority",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -32840,7 +32846,7 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 5,
       "struct": 4,
@@ -38692,8 +38698,8 @@
      "path": "src/secret_custody/use_handle.rs",
      "purpose": "`self.use(handle)` (OF-560; ARCH-0069 \"One use(handle) call\"): an agent hands a secret to one trusted…",
      "surface": {
-      "const": 2,
-      "crate-vis": 3,
+      "const": 3,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 2,
       "re-export": 1,
@@ -38744,8 +38750,8 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 3,
-      "fn": 7
+      "crate-vis": 2,
+      "fn": 8
      }
     },
     {
@@ -46624,7 +46630,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 313
+      "fn": 315
      }
     },
     {
@@ -46801,7 +46807,7 @@
      "purpose": "`self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's…",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -52978,7 +52984,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 163,
+   "over_bar": 164,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3207,
    "test_files": 903
@@ -60966,7 +60972,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 267
+      "fn": 269
      }
     },
     {
@@ -61983,7 +61989,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 268
+      "fn": 270
      }
     },
     {
@@ -64620,7 +64626,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -64750,7 +64756,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -64801,6 +64807,16 @@
      "purpose": "The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/secret_use_doors.rs",
+     "purpose": "The host door of `self.use` (OF-560)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -64896,9 +64912,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/weave_doors.rs",
-     "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link in their own report…",
+     "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -70968,7 +70984,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChatBrain",
@@ -71522,7 +71538,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 295,
+     "files": 296,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71909,7 +71925,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 584,
+   "source_files": 585,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72887,6 +72903,7 @@
       "UpdateCampaignProgramRequest",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
+      "WeaveItemCorrectionView",
       "WeaveItemView",
       "WeaveLinkCorrectionView",
       "WeaveReportRequest",
@@ -72894,6 +72911,7 @@
       "WeaveSectionInput",
       "WeaveSectionKind",
       "WeaveSectionView",
+      "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
       "WidenProposalAnswer",
       "WidenProposalState",
@@ -72928,7 +72946,7 @@
      "purpose": "—",
      "surface": {
       "enum": 242,
-      "struct": 602
+      "struct": 604
      }
     },
     {
