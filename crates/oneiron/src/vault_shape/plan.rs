@@ -127,7 +127,11 @@ fn classify(
 
 /// The named door an item lands through, where the vault has one. A grant
 /// row mints only from the bound it carries.
-fn door(change: ShapeChange, target: &ShapeTarget, after: Option<&ShapeRow>) -> Option<&'static str> {
+fn door(
+    change: ShapeChange,
+    target: &ShapeTarget,
+    after: Option<&ShapeRow>,
+) -> Option<&'static str> {
     match (change, target) {
         (ShapeChange::Create, ShapeTarget::World { .. }) => Some("create_world"),
         (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),

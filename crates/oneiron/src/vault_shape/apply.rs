@@ -58,7 +58,10 @@ pub enum ShapeItemState {
     /// A new grant an actor's apply filed to the owner's widen inbox, where
     /// accepting `proposal_ref` mints it. Until the owner answers, it waits
     /// as [`Self::Proposed`] does, and an owner's apply may land it.
-    Filed { proposal_ref: String, expires_at: u64 },
+    Filed {
+        proposal_ref: String,
+        expires_at: u64,
+    },
     /// An authority operation, for its AUTHORITY_LOG ceremony.
     Ceremony,
     /// The vault has no door for it yet; nothing landed.

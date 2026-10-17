@@ -122,7 +122,10 @@ impl ShapeGrantBound {
             _ => return None,
         };
         // Only a form that builds back to the same bound states it whole.
-        wire.bound().ok().filter(|built| built == bound).map(|_| wire)
+        wire.bound()
+            .ok()
+            .filter(|built| built == bound)
+            .map(|_| wire)
     }
 
     /// Whether a mint of this bound is an action widening, else a disclosure
