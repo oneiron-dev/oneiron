@@ -67,6 +67,11 @@ const PLACEMENT_WORDING: &str = "Which node of the task-type tree is this task? 
 specific live node whose kind fits the task's subgoal and site, or the root when none fits.";
 /// How long one placement may take before the rule rung's reading stands.
 pub(crate) const PLACEMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+/// The planner's shape question (OF-541, OF-389): this host's wording.
+const PLANNER_WORDING: &str = "Which team shape should take this need? Pick the option whose \
+model, pattern and width fit the need and its care level at the least expected spend.";
+/// How long one shape pick may take before the planner's deterministic pick stands.
+const PLANNER_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -375,6 +380,25 @@ impl DecisionHost {
             bands: self.bands.clone(),
             wording: PLACEMENT_WORDING.to_owned(),
             deadline,
+        }
+    }
+
+    /// A leased agent run's planner ladder (OF-541, OF-389): the shape pick
+    /// and the type placement for `principal`, up to the Big rung, each call
+    /// on its own fresh clock.
+    pub(crate) fn host_planner_decisions(
+        &self,
+        principal: EntityId,
+    ) -> oneiron::code_run::HostPlannerDecisions<'_> {
+        oneiron::code_run::HostPlannerDecisions {
+            ladder: &self.ladder,
+            principal,
+            bands: self.bands.clone(),
+            planner_wording: PLANNER_WORDING.to_owned(),
+            planner_budget: PLANNER_BUDGET,
+            placement_dial: self.dial(DecisionRung::Big),
+            placement_wording: PLACEMENT_WORDING.to_owned(),
+            placement_budget: PLACEMENT_BUDGET,
         }
     }
 
