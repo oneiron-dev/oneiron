@@ -261,6 +261,7 @@ impl Vault {
             channels: BTreeSet::new(),
             actor_class: None,
             org_ref: None,
+            grant_ref: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
@@ -603,17 +604,17 @@ impl Vault {
         Ok(verified)
     }
     /// Lands the host-signed record of an executed ownership change in the
-    /// change's own writer. The fold admits it as a roster-signed Owner
-    /// action and keeps no state for it; the change itself is the shared
-    /// act's.
+    /// change's own writer, answering the entry's hash for the receipt to
+    /// name. The fold admits it as a roster-signed Owner action and keeps no
+    /// state for it; the change itself is the shared act's.
     pub(crate) fn append_owner_handover_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         handover: OwnerHandover,
-    ) -> Result<()> {
+    ) -> Result<AuthorityEntryHash> {
         handover.validate()?;
-        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::OwnerHandover(handover))
+        self.append_hashed_slip_op_in_txn(txn, issuer, AuthorityOp::OwnerHandover(handover))
     }
     pub(super) fn append_slip_op_in_txn(
         &self,
@@ -621,6 +622,15 @@ impl Vault {
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
     ) -> Result<()> {
+        self.append_hashed_slip_op_in_txn(txn, issuer, op)
+            .map(|_| ())
+    }
+    fn append_hashed_slip_op_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
@@ -644,7 +654,7 @@ impl Vault {
         {
             return Err(invalid_authority());
         }
-        Ok(())
+        Ok(hash)
     }
 }
 pub(super) fn next_entry(

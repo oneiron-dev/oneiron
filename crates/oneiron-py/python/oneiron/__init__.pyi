@@ -342,6 +342,8 @@ class Oneiron:
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
+        def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
+        @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs": ...
         @property
         def disclosure(self) -> "Oneiron._VaultDisclosureVerbs": ...
@@ -490,6 +492,8 @@ class Oneiron:
             """An Admin with the add_member power takes back a pending invitation."""
     class _VaultGuestsVerbs:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
+        def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
+            """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""
@@ -531,6 +535,16 @@ class Oneiron:
             """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
         def delete(self, spec: Facade.EmbeddingSpaceProbeDeleteRequest) -> Facade.EmbeddingSpaceProbeDeleted:
             """Removes one stored embedding space probe by its id."""
+    class _VaultSettingsVerbs:
+        @property
+        def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...
+    class _VaultSettingsLearningVerbs:
+        def __call__(self, spec: Facade.LearningSettingsRequest) -> Facade.LearningSettingsView:
+            """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
+        def put(self, spec: Facade.LearningSettingPut) -> Facade.LearningSettingsView:
+            """The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope."""
+        def clear(self, spec: Facade.LearningSettingClear) -> Facade.LearningSettingsView:
+            """The owner clears one learned-setting row of a key, mode and scope."""
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""

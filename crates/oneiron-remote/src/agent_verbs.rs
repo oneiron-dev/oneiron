@@ -225,6 +225,9 @@ impl OneironClient {
                 "vault.guests.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::GuestRevokeResponse,
                 >(client, verb, &input),
+                "vault.guests.mint_slip" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GuestSlipMinted,
+                >(client, verb, &input),
                 "vault.authority.handoff_alarms" => remote_agent_verb_output::<
                     Vec<oneiron::authority::AuthorityHandoffAlarm>,
                 >(client, verb, &input),
@@ -286,6 +289,15 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.embedding_spaces.probes.delete" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::EmbeddingSpaceProbeDeleted,
+                >(client, verb, &input),
+                "vault.settings.learning" => remote_agent_verb_output::<
+                    oneiron::learning_setting_doors::LearningSettingsView,
+                >(client, verb, &input),
+                "vault.settings.learning.put" => remote_agent_verb_output::<
+                    oneiron::learning_setting_doors::LearningSettingsView,
+                >(client, verb, &input),
+                "vault.settings.learning.clear" => remote_agent_verb_output::<
+                    oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
                 "vault.lenses.propose" => remote_agent_verb_output::<
                     oneiron::receipt::LensProposalReceipt,
@@ -1408,6 +1420,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.guests.revoke", value)
     }
+    pub fn vault_guests_mint_slip(
+        &self,
+        input: &oneiron::task_verb::sdk::GuestSlipMintRequest,
+    ) -> Result<oneiron::task_verb::sdk::GuestSlipMinted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.guests.mint_slip", value)
+    }
     pub fn vault_authority_handoff_alarms(
         &self,
         input: &oneiron::task_verb::sdk::EmptyRequest,
@@ -1647,6 +1671,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.embedding_spaces.probes.delete", value)
+    }
+    pub fn vault_settings_learning(
+        &self,
+        input: &oneiron::learning_setting_doors::LearningSettingsRequest,
+    ) -> Result<oneiron::learning_setting_doors::LearningSettingsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.learning", value)
+    }
+    pub fn vault_settings_learning_put(
+        &self,
+        input: &oneiron::learning_setting_doors::LearningSettingPut,
+    ) -> Result<oneiron::learning_setting_doors::LearningSettingsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.learning.put", value)
+    }
+    pub fn vault_settings_learning_clear(
+        &self,
+        input: &oneiron::learning_setting_doors::LearningSettingClear,
+    ) -> Result<oneiron::learning_setting_doors::LearningSettingsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.learning.clear", value)
     }
     pub fn vault_lenses_propose(
         &self,

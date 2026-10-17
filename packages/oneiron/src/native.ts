@@ -85,6 +85,7 @@ vaultMembersAccept(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersWithdrawInvitation(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
+vaultGuestsMintSlip(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
@@ -105,6 +106,9 @@ vaultEmbeddingSpacesMoveAbandon(input: unknown): unknown
 vaultEmbeddingSpacesProbesList(input: unknown): unknown
 vaultEmbeddingSpacesProbesPut(input: unknown): unknown
 vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
+vaultSettingsLearning(input: unknown): unknown
+vaultSettingsLearningPut(input: unknown): unknown
+vaultSettingsLearningClear(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown

@@ -87,6 +87,10 @@ declare namespace self {
       outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
     };
   };
+  const leader: {
+    advice(input: { top?: number | null }): Promise<unknown>;
+    pattern(input: { skill: string }): Promise<unknown>;
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;
@@ -194,6 +198,7 @@ declare const vault: {
     ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
   };
   guests: {
+    mint_slip(input: { expires_at: number; grant_ref: string; holder_key: string }): Promise<unknown>;
     revoke(input: { grant_ref: string }): Promise<unknown>;
   };
   habits: {
@@ -312,6 +317,12 @@ declare const vault: {
   };
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
+  };
+  settings: {
+    learning: ((input: { key?: string | null }) => Promise<unknown>) & {
+      clear(input: { key: string; mode: "seed" | "pin"; project?: string | null; task_type?: string | null }): Promise<unknown>;
+      put(input: { key: string; mode: "seed" | "pin"; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null }): Promise<unknown>;
+    };
   };
   shared: {
     deletion(input: object): Promise<unknown>;

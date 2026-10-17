@@ -840,6 +840,59 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
     }
 }
 
+/// The owner's learned-setting rows on a stopped vault; `serve` answers the
+/// same at `/v1/owner/settings/learning`.
+pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow::Result<()> {
+    use crate::cli::{LearningSettingModeArg, LearningSettingsCommand};
+    use oneiron::learning_setting_doors::{
+        self as doors, LearningSettingClear, LearningSettingMode, LearningSettingPut,
+        LearningSettingsRequest,
+    };
+    let mode = |mode: LearningSettingModeArg| match mode {
+        LearningSettingModeArg::Seed => LearningSettingMode::Seed,
+        LearningSettingModeArg::Pin => LearningSettingMode::Pin,
+    };
+    let serve = match &command {
+        LearningSettingsCommand::List(args) => &args.serve,
+        LearningSettingsCommand::Put(args) => &args.serve,
+        LearningSettingsCommand::Clear(args) => &args.serve,
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, "GET /v1/owner/settings/learning")?;
+    let owner = local_owner(&vault)?;
+    let view = match command {
+        LearningSettingsCommand::List(args) => doors::learning_settings_as_owner(
+            &vault,
+            &owner,
+            &LearningSettingsRequest { key: args.key },
+        )?,
+        LearningSettingsCommand::Put(args) => doors::put_learning_setting_as_owner(
+            &vault,
+            &owner,
+            LearningSettingPut {
+                key: args.key,
+                mode: mode(args.mode),
+                value: args.value,
+                weight_runs: args.weight_runs,
+                why: args.why,
+                project: args.project,
+                task_type: args.task_type,
+            },
+        )?,
+        LearningSettingsCommand::Clear(args) => doors::clear_learning_setting_as_owner(
+            &vault,
+            &owner,
+            LearningSettingClear {
+                key: args.key,
+                mode: mode(args.mode),
+                project: args.project,
+                task_type: args.task_type,
+            },
+        )?,
+    };
+    emit(&view)
+}
+
 /// The owner's legal holds (OF-470) on a stopped vault; `serve` answers the
 /// same at `/v1/owner/legal-holds`. Lifting a hold is only the one "Lift the
 /// hold and erase?" confirm: its title and prompt are printed first, and it

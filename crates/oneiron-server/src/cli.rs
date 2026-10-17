@@ -8,6 +8,7 @@ use crate::config::ServeArgs;
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod hook_args;
+mod learning_setting_args;
 mod owner_args;
 mod wake_args;
 pub use hook_args::{
@@ -33,6 +34,10 @@ pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
     VaultKeyNamedArgs,
+};
+pub use learning_setting_args::{
+    LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg,
+    LearningSettingPutArgs, LearningSettingsCommand,
 };
 pub use wake_args::{WakeArgs, WakeCommand};
 
@@ -114,6 +119,10 @@ pub enum Command {
     /// Fork alarms a held root handoff left: list them, or acknowledge one.
     #[command(subcommand)]
     HandoffAlarms(HandoffAlarmsCommand),
+    /// Your learned settings: the catalog and your seed and pin rows at the
+    /// vault, a project or a task type; put or clear one.
+    #[command(subcommand)]
+    LearningSettings(LearningSettingsCommand),
     /// Your legal holds: place, widen, list, read the log, or lift one
     /// through the "Lift the hold and erase?" confirm.
     #[command(subcommand)]
@@ -908,6 +917,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
+        Command::LearningSettings(command) => commands::learning_settings(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
         Command::Guests(command) => commands::guests(command),
         Command::EmbeddingSpaces(command) => commands::embedding_spaces(command),

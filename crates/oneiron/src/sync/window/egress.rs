@@ -216,15 +216,13 @@ pub(super) fn scrub_local_claim_carriers(
             return;
         }
         let deleted =
-            crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &rtxn, &id)
-                .and_then(|raw| {
-                    crate::deletion::row_deletion_marked(
-                        &vault.store,
-                        &rtxn,
-                        &id,
-                        raw.as_deref().map(Vec::as_slice),
-                    )
-                });
+            crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, &rtxn, &id, |raw| {
+                crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, Some(raw))
+            })
+            .and_then(|verdict| match verdict {
+                Some(marked) => Ok(marked),
+                None => crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, None),
+            });
         match deleted {
             Ok(true) => deleted_carriers.push((id, carrier.to_vec())),
             Ok(false) => {}
@@ -242,18 +240,24 @@ pub(super) fn scrub_local_claim_carriers(
     if key.world().is_some() {
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         for id in &ids {
-            if let Some(raw) =
-                crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &rtxn, id)?
-                && crate::sync::types::retained_world_shell_belongs_to_window(
-                    vault,
-                    &rtxn,
-                    doc,
-                    &tombstones,
-                    id,
-                    &raw,
-                    key,
-                    false,
-                )?
+            if crate::ports::EntityStoreRead::port_entity_with_raw(
+                &vault.store,
+                &rtxn,
+                id,
+                |raw| {
+                    crate::sync::types::retained_world_shell_belongs_to_window(
+                        vault,
+                        &rtxn,
+                        doc,
+                        &tombstones,
+                        id,
+                        raw,
+                        key,
+                        false,
+                    )
+                },
+            )?
+            .unwrap_or(false)
             {
                 retained.push(*id);
             }
@@ -339,14 +343,13 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
         if failure.is_some() {
             return;
         }
-        let marked = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, rtxn, &id)
-            .and_then(|raw| {
-                crate::deletion::row_deletion_marked(
-                    &vault.store,
-                    rtxn,
-                    &id,
-                    raw.as_deref().map(Vec::as_slice),
-                )
+        let marked =
+            crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, rtxn, &id, |raw| {
+                crate::deletion::row_deletion_marked(&vault.store, rtxn, &id, Some(raw))
+            })
+            .and_then(|verdict| match verdict {
+                Some(marked) => Ok(marked),
+                None => crate::deletion::row_deletion_marked(&vault.store, rtxn, &id, None),
             });
         match marked {
             Ok(true) => deleted.push((raw_key.to_owned(), id)),

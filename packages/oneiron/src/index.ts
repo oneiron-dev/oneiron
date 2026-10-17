@@ -303,6 +303,8 @@ export class Oneiron {
     },
     guests: {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
+      /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
+      mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
@@ -345,6 +347,15 @@ export class Oneiron {
         /** Removes one stored embedding space probe by its id. */
         delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest): Facade.EmbeddingSpaceProbeDeleted => this.#call(() => this.#client.vaultEmbeddingSpacesProbesDelete(input) as Facade.EmbeddingSpaceProbeDeleted),
       },
+    },
+    settings: {
+      /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
+      learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {
+        /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
+        put: (input: Facade.LearningSettingPut): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningPut(input) as Facade.LearningSettingsView),
+        /** The owner clears one learned-setting row of a key, mode and scope. */
+        clear: (input: Facade.LearningSettingClear): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningClear(input) as Facade.LearningSettingsView),
+      }),
     },
     lenses: {
       /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
