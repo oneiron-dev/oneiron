@@ -18,9 +18,8 @@ use super::CampaignLifecycle;
 use super::parse::invalid;
 use crate::campaign::claims::normalize_campaign_pack_token;
 use crate::campaign::enrollment::{
-    AuthoredCampaignProgram, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
-    CAMPAIGN_PROGRAM_OUTBOUND_PAYLOAD_MAX_BYTES, CampaignProgramAudience, CampaignProgramDraft,
-    CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft,
+    AuthoredCampaignProgram, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, CampaignProgramAudience,
+    CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
@@ -326,14 +325,8 @@ impl CampaignProgramOutboundSpec {
     }
 }
 
-/// Decodes a lowercase-hex payload, refusing one past the payload bound before
-/// decoding it.
+/// Decodes a lowercase-hex payload.
 fn payload_from_hex(hex: &str) -> Result<Vec<u8>> {
-    if hex.len() > CAMPAIGN_PROGRAM_OUTBOUND_PAYLOAD_MAX_BYTES.saturating_mul(2) {
-        return Err(invalid(
-            "a step's outbound payload exceeds the maximum size",
-        ));
-    }
     let not_hex = || invalid("a step's outbound payload must be lowercase hex");
     if !hex.len().is_multiple_of(2) {
         return Err(not_hex());

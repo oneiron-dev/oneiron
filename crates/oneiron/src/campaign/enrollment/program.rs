@@ -8,8 +8,8 @@ use super::storage::{
 use crate::Vault;
 use crate::campaign::claims::{CampaignMemberChannel, normalize_campaign_pack_token};
 use crate::campaign::surface::{
-    CAMPAIGN_NAME_MAX_BYTES, CampaignLifecycle, CampaignRecord, campaign_type_byte,
-    load_campaign_in_txn, owned_campaign_in_txn, read_campaign,
+    CampaignLifecycle, CampaignRecord, campaign_type_byte, load_campaign_in_txn,
+    owned_campaign_in_txn, read_campaign,
 };
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -281,25 +281,10 @@ pub fn campaign_program_step(
 // The checked authoring doors (`vault.campaign.program.*`)
 // ---------------------------------------------------------------------------
 
-/// Longest accepted campaign program name, in bytes: the campaign's own bound,
-/// for the same reason (every read echoes it, so an unbounded one is an
-/// unbounded row).
-pub const CAMPAIGN_PROGRAM_NAME_MAX_BYTES: usize = CAMPAIGN_NAME_MAX_BYTES;
-
-/// The most steps one campaign program holds. Every read assembles the whole
-/// step list, so an unbounded one is an unbounded read.
-pub const CAMPAIGN_PROGRAM_MAX_STEPS: usize = 64;
-
 /// Longest accepted step channel token, in bytes: CA-01's bound on a
 /// `campaign.member` channel, which every enrollment at the step copies, so a
 /// longer token could never enroll anyone.
 pub const CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES: usize = 512;
-
-/// Longest accepted outbound verb on a step, in bytes.
-pub const CAMPAIGN_PROGRAM_OUTBOUND_VERB_MAX_BYTES: usize = 200;
-
-/// Largest accepted frozen outbound payload on a step, in bytes.
-pub const CAMPAIGN_PROGRAM_OUTBOUND_PAYLOAD_MAX_BYTES: usize = 64 * 1024;
 
 /// The authored half of a campaign program, stored beside its binding by the
 /// checked doors ([`create_campaign_program`] and its siblings).
@@ -805,23 +790,19 @@ fn intake_open(
         })
 }
 
-/// The draft rules that need no transaction: the name, the step count, unique
-/// step ids, each step's channel and outbound bounds, and an entry step that is
-/// one of the draft's own steps.
+/// The draft rules that need no transaction: the name, unique step ids, each
+/// step's channel and outbound shape, and an entry step that is one of the
+/// draft's own steps. An owner's program is never refused for its size or its
+/// step count (rule 5); an outbound connector's own payload limit is met at
+/// send time.
 fn validate_program_draft(draft: &CampaignProgramDraft) -> Result<()> {
     if draft.name.trim().is_empty() {
         return Err(invalid("campaign program name must not be blank"));
-    }
-    if draft.name.len() > CAMPAIGN_PROGRAM_NAME_MAX_BYTES {
-        return Err(invalid("campaign program name exceeds the maximum length"));
     }
     if draft.name.chars().any(char::is_control) {
         return Err(invalid(
             "campaign program name must not contain control characters",
         ));
-    }
-    if draft.steps.len() > CAMPAIGN_PROGRAM_MAX_STEPS {
-        return Err(invalid("campaign program has more steps than the maximum"));
     }
     for (index, step) in draft.steps.iter().enumerate() {
         if draft.steps[..index]
@@ -858,18 +839,8 @@ fn validate_step_draft(step: &CampaignProgramStepDraft) -> Result<()> {
         return Err(invalid("a step's channel must be normalized"));
     }
     if let Some(outbound) = &step.outbound {
-        if outbound.verb.trim().is_empty()
-            || outbound.verb.len() > CAMPAIGN_PROGRAM_OUTBOUND_VERB_MAX_BYTES
-            || outbound.verb.chars().any(char::is_control)
-        {
-            return Err(invalid(
-                "a step's outbound verb must be a non-empty name within the maximum length",
-            ));
-        }
-        if outbound.payload.len() > CAMPAIGN_PROGRAM_OUTBOUND_PAYLOAD_MAX_BYTES {
-            return Err(invalid(
-                "a step's outbound payload exceeds the maximum size",
-            ));
+        if outbound.verb.trim().is_empty() || outbound.verb.chars().any(char::is_control) {
+            return Err(invalid("a step's outbound verb must be a non-empty name"));
         }
     }
     Ok(())
