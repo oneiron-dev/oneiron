@@ -86,12 +86,18 @@ the file (`hermes memory setup`). With Hermes's built-in memory on, Oneiron
 runs beside it; with it off, Oneiron is the agent's memory. The package's
 README has the rest.
 
-`oneiron mcp` needs the host's `curl` 7.76 or newer on `PATH`, the same as
-`oneiron api`. Instead of `--credential-file` it also reads the slip from
-`ONEIRON_SECRET` and its seed from `ONEIRON_BINDING_KEY` (the `token` and
-`binding_key` fields `token agent` prints without `--out`; `--secret-env` and
-`--binding-key-env` name other variables). The curl it runs inherits neither
-variable. The file keeps the secret out of the agent's own config.
+`oneiron mcp` holds one connection to the vault for its life. By default
+that is the vault's app-tier socket (`/ws`, subprotocol `oneiron.mcp.v1`),
+and every message, the wake poll's included, rides it. A vault that offers
+no MCP carrier there gets one pooled HTTP client instead, which
+`--transport http` asks for from the start. Either way each request still
+carries a holder proof signed for it alone, and runs through the vault's
+`/mcp` or `/mcp/tool-first` route. Instead of `--credential-file` it also
+reads the slip from `ONEIRON_SECRET` and its seed from `ONEIRON_BINDING_KEY`
+(the `token` and `binding_key` fields `token agent` prints without `--out`;
+`--secret-env` and `--binding-key-env` name other variables). No process the
+bridge starts inherits either variable. The file keeps the secret out of the
+agent's own config.
 
 Each request gets 120 seconds, answer included (`--request-timeout-secs`), and
 an answer that starts arriving and then stalls for 30 seconds is given up on

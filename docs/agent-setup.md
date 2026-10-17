@@ -14,7 +14,7 @@ A source build can take several minutes; this is not a five-minute build claim.
 ## Prerequisites
 
 - Python 3.11 or newer.
-- `curl` 7.76 or newer on `PATH` (used by `oneiron api` and `oneiron mcp`).
+- `curl` 7.76 or newer on `PATH` (used by `oneiron api`).
 - For source installation: Git, Rust through rustup, a native C/C++ compiler,
   CMake, and pkg-config. `rust-toolchain.toml` pins the Rust toolchain; rustup
   selects/downloads it when Cargo runs in the checkout.
