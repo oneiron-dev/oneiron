@@ -245,6 +245,49 @@ impl Vault {
     }
 }
 
+impl Vault {
+    /// The pack install rules on a generic catalog connector's listed tools
+    /// (OF-189): hidden instructions, zero-width, RTL and homoglyph
+    /// deception, and parameter-description injection, read on each tool's
+    /// name, its description and its resolved input schema, unused
+    /// definitions included. `Some` names the first refusal.
+    pub fn screen_connector_tools(
+        &self,
+        tools: &[PackObservedTool],
+        holder: &str,
+    ) -> Result<Option<String>> {
+        let txn = self.store.env.read_txn()?;
+        let resolution = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+        let Some(policy) = resolution.pack_install_policy() else {
+            return Ok(Some("pack install policy unavailable".into()));
+        };
+        let rules = policy.effective(holder);
+        let mut seen = BTreeSet::new();
+        for PackObservedTool {
+            name,
+            description,
+            input_schema,
+        } in tools
+        {
+            if !seen.insert(name) {
+                return Ok(Some(format!("duplicate listed tool: {name}")));
+            }
+            let resolved = match ResolvedToolSchema::parse(input_schema) {
+                Ok(schema) => schema,
+                Err(reason) => return Ok(Some(format!("tool {name}: {reason}"))),
+            };
+            if let Some(reason) = decoded_rule(name, &rules)
+                .or_else(|| decoded_rule(description, &rules))
+                .map(str::to_owned)
+                .or_else(|| screen_resolved_schema(&resolved, &rules))
+            {
+                return Ok(Some(format!("tool {name}: {reason}")));
+            }
+        }
+        Ok(None)
+    }
+}
+
 fn screen_resolved_schema(
     schema: &ResolvedToolSchema,
     rules: &EffectivePackInstallPolicy,
