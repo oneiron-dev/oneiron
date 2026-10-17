@@ -46,8 +46,12 @@ pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool
     )
 }
 
+/// LMDB → CRDT for a canonical window doc: every row the window holds except
+/// those of a world withheld from an unknown destination, a world window's
+/// own world excepted (`canonical_withheld_worlds`).
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
-    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Unknown)
+    let withheld = super::device_only::canonical_withheld_worlds(vault, window_key)?;
+    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Worlds(&withheld))
 }
 
 /// [`reverse_rematerialize`] into a sealed window's own mirror document
@@ -62,17 +66,27 @@ pub(crate) fn reverse_rematerialize_for_sealing(
     reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Nothing)
 }
 
-/// [`reverse_rematerialize`] for only the `rows` a local commit just wrote,
-/// not the window's whole learned range: each one this window holds (by its
-/// learned month and world) is mirrored as a cold open would mirror it, so a
-/// live window gets a write made after it loaded (the live mirror).
+/// [`reverse_rematerialize`] for only the `rows` a commit just wrote, not the
+/// window's whole learned range: each one this window holds (by its learned
+/// month and world) is mirrored as a cold open would mirror it, so a live
+/// window gets a write made after it loaded (the live mirror). An `edited`
+/// row, one a local write changed, also replaces the carrier the doc holds,
+/// and so do its outgoing edges.
 pub(crate) fn reverse_rematerialize_rows(
     vault: &Vault,
     doc: &LoroDoc,
     window_key: &WindowKey,
     rows: &std::collections::BTreeSet<EntityId>,
+    edited: &std::collections::BTreeSet<EntityId>,
 ) -> Result<u32> {
-    reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Unknown, Some(rows))
+    let withheld = super::device_only::canonical_withheld_worlds(vault, window_key)?;
+    reverse_rematerialize_scan(
+        vault,
+        doc,
+        window_key,
+        super::Withhold::Worlds(&withheld),
+        Some((rows, edited)),
+    )
 }
 
 /// [`reverse_rematerialize`], packing every row except those of a world
@@ -88,15 +102,21 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     reverse_rematerialize_scan(vault, doc, window_key, withhold, None)
 }
 
-/// The reverse pass over the window's learned range, or over `only` (each
-/// row kept when its learned time falls in the window's month).
+/// The reverse pass over the window's learned range, or over the rows of
+/// `committed` (each kept when its learned time falls in the window's month),
+/// whose edited rows replace the carriers they differ from.
 fn reverse_rematerialize_scan(
     vault: &Vault,
     doc: &LoroDoc,
     window_key: &WindowKey,
     withhold: super::Withhold<'_>,
-    only: Option<&std::collections::BTreeSet<EntityId>>,
+    committed: Option<(
+        &std::collections::BTreeSet<EntityId>,
+        &std::collections::BTreeSet<EntityId>,
+    )>,
 ) -> Result<u32> {
+    let only = committed.map(|(rows, _)| rows);
+    let is_edited = |id: &EntityId| committed.is_some_and(|(_, edited)| edited.contains(id));
     let start_ts = window_key
         .start_timestamp()
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
@@ -357,7 +377,19 @@ fn reverse_rematerialize_scan(
                 )?;
             let fixed_actor_mismatch = crate::dreamer_runner::authority::is_base_agent_actor(id)?
                 && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice());
-            if !map_contains_binary(&entities_map, &hex_id) || dominates || fixed_actor_mismatch {
+            // A local edit to a row the doc already carries replaces it.
+            let edited = if is_edited(id) {
+                let outbound = pack_sync::canonical_outbound_blob(&raw)?;
+                map_get_bytes(&entities_map, &hex_id).as_deref()
+                    != Some(outbound.as_deref().unwrap_or(raw.as_slice()))
+            } else {
+                false
+            };
+            if !map_contains_binary(&entities_map, &hex_id)
+                || dominates
+                || fixed_actor_mismatch
+                || edited
+            {
                 // Pack rows mirror the canonical wire header/body (origin
                 // handle/generation, exact identity/payload), not the
                 // receiver-local materialization. A corrupt local pack row
@@ -472,7 +504,7 @@ fn reverse_rematerialize_scan(
             {
                 continue;
             }
-            if map_contains_binary(&edges_map, &edge_key) {
+            if map_contains_binary(&edges_map, &edge_key) && !is_edited(id) {
                 continue;
             }
             let edge_val = encode_edge_value_for_crdt(
@@ -482,6 +514,10 @@ fn reverse_rematerialize_scan(
                 edge.vad,
                 edge.provenance,
             )?;
+            // An edited source's edge replaces only a carrier it differs from.
+            if map_get_bytes(&edges_map, &edge_key).as_deref() == Some(edge_val.as_slice()) {
+                continue;
+            }
             map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)?;
             wrote_any = true;
         }

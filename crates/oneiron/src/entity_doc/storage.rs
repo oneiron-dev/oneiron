@@ -367,7 +367,7 @@ pub(super) fn stamp_document_birth(
     }
 }
 
-fn replace_text(
+pub(super) fn replace_text(
     body: &[u8],
     field: &TextField,
     doc: &str,

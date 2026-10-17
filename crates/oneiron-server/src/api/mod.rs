@@ -252,6 +252,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/conversations/{conversation_id}/summaries",
             post(mint_core_scope_summary),
         )
+        .route(
+            "/summaries/{summary_id}/rederive",
+            post(rederive_core_scope_summary),
+        )
         .route("/turns/annotate", post(annotate_turn_vad))
         .route("/surface-events", post(submit_core_surface_event))
         .route_layer(middleware::from_fn_with_state(
@@ -341,6 +345,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/summaries/{summary_id}/covers",
             get(get_core_summary_covers),
         )
+        .route("/summary-attempts/{attempt}", get(get_core_summary_status))
+        .route(
+            "/summaries/{summary_id}/derivation",
+            get(get_core_summary_metadata),
+        )
+        .route("/summary-purposes", get(list_core_summary_purposes))
         .route("/claims/{claim_id}/drill", get(drill_core_header))
         .route("/turns/{turn_id}", get(get_core_turn))
         .route("/turns/annotate", get(read_turn_vad_annotation))

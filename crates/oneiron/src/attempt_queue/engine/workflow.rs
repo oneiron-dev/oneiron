@@ -76,11 +76,11 @@ impl AttemptQueue<'_> {
     /// Finds a unique retry tip in the transaction that releases the next step.
     pub(crate) fn retry_tip_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         start: AttemptId,
     ) -> Result<AttemptRecord> {
         let mut current = self
-            .get_in_write_txn(txn, start)?
+            .get_in_txn(txn, start)?
             .ok_or_else(|| invalid_transition("retry_tip", "missing"))?;
         let mut seen = std::collections::HashSet::new();
         let mut children = std::collections::HashMap::new();
