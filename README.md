@@ -129,7 +129,7 @@ to its modules and source files. It does not cover the macOS app.
 | [oneiron-napi](./crates/oneiron-napi) | Native Node.js bindings. |
 | [oneiron-py](./crates/oneiron-py) | Native Python extension. |
 | [oneiron-remote](./crates/oneiron-remote) | Shared embedded and remote SDK backend. |
-| [oneiron-uniffi](./crates/oneiron-uniffi) | Definition-only UniFFI interface contract. |
+| [oneiron-uniffi](./crates/oneiron-uniffi) | UniFFI binding of the SDK verb table over the shared `OneironClient` (embedded and remote). |
 | [oneiron-android](./crates/oneiron-android) | JNI/Kotlin ownership adapter. |
 | [oneiron-llm-anthropic](./crates/oneiron-llm-anthropic) | Anthropic Messages adapter. |
 | [oneiron-llm-gemini](./crates/oneiron-llm-gemini) | Gemini adapter. |

@@ -1,8 +1,12 @@
-//! The complete DTO inventory for the WIRE head contract.
+//! The typed UniFFI records of the SDK surface.
 //!
 //! Every type here is an owned, liftable UniFFI value. No borrowed reference,
 //! raw pointer, C union, manual data carrier, or dynamic JSON value crosses
-//! the authored boundary.
+//! the authored boundary. `crate::codec` lowers each input record into the
+//! engine type the shared `OneironClient` takes and lifts each engine output
+//! back. A verb row with no record here crosses its input and output as
+//! [`WireJson`], parsed into and written from the row's engine types on the
+//! Rust side.
 //!
 //! Width rules:
 //!
@@ -18,8 +22,8 @@
 ///
 /// Field names stay semantic (`value`, `metadata`, `scope`, `body`, `data`,
 /// `input`) while this wrapper makes the transport representation explicit.
-/// The future runtime arm validates a single complete JSON value before it
-/// dispatches into the core facade.
+/// The runtime parses it as one complete JSON value (a verb input: as that
+/// verb's engine input type) before anything reaches the engine.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireJson {
     /// A single complete JSON value in canonical text form.
@@ -37,6 +41,18 @@ pub struct OpenOptions {
     /// Embedding width for the opened directory; omitted uses the engine
     /// default.
     pub dimensions: Option<u32>,
+}
+
+/// What `pair` returns: the server origin and the credential `connect` takes.
+///
+/// Store the credential as one secret; the pairing link cannot be redeemed
+/// twice.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Paired {
+    /// The server origin to pass to `connect`.
+    pub url: String,
+    /// The credential to pass to `connect`.
+    pub credential: String,
 }
 
 // ── witness ─────────────────────────────────────────────────────────────
@@ -78,11 +94,25 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// Turn ref (create-or-get); omitted means a fresh turn.
     pub turn_ref: Option<String>,
+    /// A quote on a project room's thread reply: a scalar span of one MESSAGE
+    /// in the room. Omitted means no quote.
+    pub quote: Option<QuoteSpan>,
     /// Messages, attributed to the bound actor unless authored by `System`.
     pub messages: Vec<WitnessMessage>,
-    /// Unix seconds; omitted is stamped at the call boundary by the future
-    /// runtime arm.
+    /// Unix seconds; omitted is stamped with the current time at the call
+    /// boundary.
     pub occurred_at: Option<i64>,
+}
+
+/// The quoted span of one MESSAGE: the message and its scalar range.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct QuoteSpan {
+    /// The quoted MESSAGE (not the TURN that holds it), as 32 hex.
+    pub message: String,
+    /// First quoted scalar.
+    pub start: u32,
+    /// One past the last quoted scalar.
+    pub end: u32,
 }
 
 /// Receipt for one witnessed turn.
@@ -318,8 +348,8 @@ pub struct StructuralPutInput {
     pub text_fields: Option<Vec<TextIndexField>>,
     /// Outgoing edges.
     pub edges: Option<Vec<StructuralEdgeSpec>>,
-    /// Unix seconds; omitted is stamped at the call boundary by the future
-    /// runtime arm.
+    /// Unix seconds; omitted is stamped with the current time at the call
+    /// boundary.
     pub occurred_at: Option<i64>,
     /// Unix seconds; omitted follows `occurred_at`.
     pub learned_at: Option<i64>,
@@ -468,8 +498,8 @@ pub struct HabitCheckinInput {
     pub id: Option<String>,
     /// Extra body fields.
     pub data: Option<WireJson>,
-    /// Unix seconds; omitted is stamped at the call boundary by the future
-    /// runtime arm.
+    /// Unix seconds; omitted is stamped with the current time at the call
+    /// boundary.
     pub occurred_at: Option<i64>,
     /// Unix seconds; omitted follows `occurred_at`.
     pub learned_at: Option<i64>,
@@ -490,8 +520,8 @@ pub struct AdmitImportedClaimInput {
     pub predicate: String,
     /// Claim value.
     pub value: WireJson,
-    /// Unix seconds; omitted is stamped at the call boundary by the future
-    /// runtime arm.
+    /// Unix seconds; omitted is stamped with the current time at the call
+    /// boundary.
     pub occurred_at: Option<i64>,
     /// Unix seconds; omitted follows `occurred_at`.
     pub learned_at: Option<i64>,
@@ -508,8 +538,8 @@ pub struct BlobArtifactInput {
     pub name: String,
     /// Media type.
     pub media_type: String,
-    /// Unix seconds; omitted is stamped at the call boundary by the future
-    /// runtime arm.
+    /// Unix seconds; omitted is stamped with the current time at the call
+    /// boundary.
     pub occurred_at: Option<i64>,
     /// Unix seconds; omitted follows `occurred_at`.
     pub learned_at: Option<i64>,
@@ -540,6 +570,9 @@ pub enum Effort {
     High,
     Xhigh,
     Max,
+    /// Call mode for live calls: light effort under a hard deadline, the
+    /// request's `deadline_ms` or else the vault's call-mode deadline.
+    Call,
 }
 
 /// Recall scoping: narrowing only; unset means the directory floor.
@@ -591,9 +624,25 @@ pub struct MemoryItem {
     pub facet: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f32>,
+    /// A conversation record's current reactions, one grouped line per
+    /// glyph; a TURN's lines are followed by those of each message it
+    /// quotes. Empty for every other item.
+    pub reactions: Vec<String>,
+    /// For a TURN item, the messages whose words the query matched, best
+    /// first. Empty for every other item.
+    pub cited_messages: Vec<CitedMessage>,
     /// For a TURN or MESSAGE item, the conversation it is in (32 hex), when
     /// the reader may read that conversation.
     pub conversation_id: Option<String>,
+}
+
+/// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CitedMessage {
+    /// The message's short ref, the one its witness receipt returned.
+    pub short_id: String,
+    /// The message's text (capped), as the turn's text revision pins it.
+    pub value_text: String,
 }
 
 /// What the requested scope excluded.
@@ -601,6 +650,9 @@ pub struct MemoryItem {
 pub struct ScopeHonesty {
     /// Worlds excluded by the requested scope.
     pub out_of_scope_worlds: Vec<String>,
+    /// The census stopped at its scan cap or at the answer's deadline, so a
+    /// world past it may be missing.
+    pub census_capped: bool,
 }
 
 /// Execution health, independent of result count.
@@ -687,7 +739,7 @@ pub struct MemoryPack {
     pub scope_honesty: ScopeHonesty,
     /// Retrieval accounting.
     pub retrieval_meta: RetrievalMeta,
-    /// Schema version; the first runtime consumer populates this from
+    /// Schema version, the engine's
     /// [`crate::HEAD_MEMORY_PACK_SCHEMA_VERSION`].
     pub pack_version: u32,
     /// Text rendering in the requested format; absent means typed only.
@@ -773,6 +825,23 @@ pub struct OutboundDraftInput {
     pub job_ref: Option<String>,
     /// Unix seconds; omitted means now.
     pub occurred_at: Option<i64>,
+    /// The saved mention `target` came from, when the agent named the person:
+    /// the send refuses while that mention is unsettled.
+    pub mention: Option<MentionProvenance>,
+}
+
+/// Where a saved mention sits: the turn and message holding it, and its byte
+/// span in the message text.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MentionProvenance {
+    /// The turn whose tags hold the mention, as 32 hex.
+    pub turn: String,
+    /// The message the mention is in, as 32 hex.
+    pub message: String,
+    /// The mention's byte span start in the message text.
+    pub start: u64,
+    /// The mention's byte span end in the message text.
+    pub end: u64,
 }
 
 /// Receipt for one scheduled outbound intent.
