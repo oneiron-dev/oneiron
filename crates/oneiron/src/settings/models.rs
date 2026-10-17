@@ -3,15 +3,20 @@
 //! parked, and is set when the owner answers a quota question
 //! `use_fallback`. This is owner policy, kept apart from the deployment's
 //! runtime cooldowns: a checkpoint keeps it, and a restore keeps the live
-//! vault's rows.
+//! vault's rows. The Responses `store` switch (OF-602) lives here too.
 
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 
 /// The owner's standing fallback for each offer, by the offer's key: the
 /// engine model id its calls go to while it is parked. Key: hex64.
 const FALLBACKS: SideTable<String, String, Raw> = SideTable::new(&side_table::MODEL_OWNER_FALLBACK);
+
+/// Whether providers keep Responses (`store`). Absent is off.
+const RESPONSES_STORE: SideTable<(), bool, Named> =
+    SideTable::new(&side_table::MODEL_OWNER_RESPONSES_STORE);
 
 impl Vault {
     /// The engine id of the model the owner named for the offer whose key is
@@ -29,5 +34,22 @@ impl Vault {
         FALLBACKS.put(self, &mut txn, &offer.to_owned(), &model.to_owned())?;
         txn.commit()?;
         Ok(())
+    }
+
+    /// Whether the owner lets a provider keep each Responses turn (`store`),
+    /// so a reconnected socket resumes its chain. Off by default.
+    pub fn responses_store(&self) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(RESPONSES_STORE
+            .get(&self.store, &rtxn, &())?
+            .unwrap_or(false))
+    }
+
+    /// The owner turns the Responses `store` switch on or off.
+    pub fn set_responses_store(&self, owner: &AuthenticatedOwner, on: bool) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            RESPONSES_STORE.put(&self.store, txn, &(), &on)
+        })
     }
 }

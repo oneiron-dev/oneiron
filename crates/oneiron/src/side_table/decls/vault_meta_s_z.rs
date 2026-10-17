@@ -183,6 +183,9 @@ side_tables! {
     /// calls go to while the offer is parked, set by a `use_fallback` answer. Owner policy, kept
     /// apart from the deployment's runtime cooldowns. Key: hex64 (the offer's cooldown key).
     MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw Authored;
+    /// The owner's Responses `store` switch (OF-602): on, a provider keeps each response and a
+    /// reconnected socket resumes the chain. Absent is off. Key: ().
+    MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().
