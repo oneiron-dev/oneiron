@@ -698,6 +698,7 @@ model = "house:qwen3.8-27b"
 recipe = "prompts/decision-read/recipe.toml"   # your prompt package; relative to this file
 max_response_bytes = 67108864                  # one answer body (the default, 64 MiB)
 person_threshold = 0.9                         # the PersonThreshold row's start value
+think_threshold = 0.8                          # the ThinkThreshold row's start value
 ```
 
 The recipe is yours, not the server's (`format = 3`): it names the plain
@@ -775,6 +776,16 @@ stays rare (0.9 asked nobody on test 5's held-out set) until the Coach tunes
 it from the cases where a person changed the answer. A host passes it to
 `DecisionBandPolicy::set_person_threshold`. Without the row, the person
 reading is recorded on every receipt and routes nothing.
+
+`think_threshold` starts the ThinkThreshold row: a paired "does this need
+more thinking?" reading (Q2) at or above it lets the call step up a rung
+while its clock allows (`ReasoningCause::PairedHigh`). The house read
+measures Q2 jointly with each question's labels. A generated read (a
+caller's own model, `DecisionLadder::run_pack_generated`) asks the ladder's
+paired question, the recipe's `paired` wording, beside each of its questions
+in the same generation, and reads its P(yes) per question. A host passes the
+value to `DecisionBandPolicy::set_think_threshold`. A door a host builds
+itself has no row, so its Q2 readings stay on the receipt and route nothing.
 
 "Ask a person?" asks for escalation, not for an actor. Who the ask goes to is
 the caller's: it sets `DecisionLadder.ask_to` to an `AskTo` (the role asked,
@@ -1393,8 +1404,10 @@ bind:
   it holds no row for, so the call goes to the next rung.
 - **System One**: the seat `[models.decisions.system_one]` binds (below).
 - **Escalation**: the house model's decision read (section 9), when its
-  recipe names the paired question. The recipe's person question becomes the
-  ladder's "ask up?" question, and `person_threshold` becomes its row.
+  recipe names the paired question. The recipe's paired question becomes the
+  ladder's "need more thinking?" question, and `think_threshold` its row; its
+  person question becomes the ladder's "ask up?" question, and
+  `person_threshold` becomes its row.
 - **Big**: the big model, through the seat `[models.decisions.big]` names
   (below).
 - **The local head**: no typed provider fills it yet, so the ladder steps
