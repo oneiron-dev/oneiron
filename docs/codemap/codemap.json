@@ -17597,7 +17597,7 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 8,
       "struct": 10
@@ -42821,7 +42821,7 @@
      "path": "src/tagging/save.rs",
      "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
