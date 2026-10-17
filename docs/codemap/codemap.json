@@ -34704,6 +34704,7 @@
      "kind": "src",
      "notable": [
       "ArtifactKind",
+      "ArtifactUnlocks",
       "CheckpointKey"
      ],
      "path": "src/recovery/checkpoint/artifact.rs",
@@ -34711,8 +34712,8 @@
      "surface": {
       "crate-vis": 8,
       "enum": 1,
-      "fn": 5,
-      "struct": 1
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -34968,6 +34969,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostOrderHolds"
+     ],
+     "path": "src/recovery/checkpoint/host_holds.rs",
+     "purpose": "Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -34981,7 +34996,7 @@
      "surface": {
       "enum": 1,
       "fn": 15,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -35090,6 +35105,7 @@
      "path": "src/recovery/checkpoint/tiers.rs",
      "purpose": "Snapshot classification",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1
      }
@@ -40204,13 +40220,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 29
      }
     },
     {
@@ -47527,7 +47543,7 @@
      "surface": {
       "crate-vis": 10,
       "fn": 3,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 2
      }
     },
@@ -47677,9 +47693,10 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "NewVaultKeyWrap",
       "VaultKeyStatus",
       "VaultKeyUnlock",
       "VaultKeyWrapInfo",
@@ -47688,9 +47705,9 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 6,
-      "enum": 3,
-      "fn": 14,
+      "crate-vis": 7,
+      "enum": 4,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -49605,7 +49622,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -50060,9 +50077,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3023,
+   "source_files": 3024,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62046,6 +62063,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/vault_key_routes.rs",
+     "purpose": "`/v1/owner/vault-key`: the vault data key's wraps on a running server (OF-570 E1), the host half of the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/weave_routes.rs",
      "purpose": "`/v1/owner/weave`: the owner's doors to the weave lens (OF-499)",
      "surface": {
@@ -63033,15 +63060,20 @@
       "SecretRotateArgs",
       "SecretScanArgs",
       "SecretScanSwitch",
+      "SecretSourceArgs",
       "SecretsCommand",
       "ServeOnlyArgs",
+      "UnlockMethod",
+      "VaultKeyArgs",
+      "VaultKeyCommand",
+      "VaultKeyNamedArgs",
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 8,
-      "struct": 28
+      "enum": 10,
+      "struct": 31
      }
     },
     {
@@ -63317,7 +63349,8 @@
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 4,
-      "fn": 13
+      "fn": 13,
+      "re-export": 1
      }
     },
     {
@@ -63327,6 +63360,17 @@
      "path": "src/commands/owner/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/vault_key.rs",
+     "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1
+     }
     },
     {
      "bucket": "s",
@@ -65859,13 +65903,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -65973,7 +66017,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -66054,6 +66098,16 @@
      "purpose": "UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/vault_key.rs",
+     "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -67161,7 +67215,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 254,
+     "files": 255,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67210,7 +67264,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -67371,9 +67425,9 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`"
     },
@@ -67469,9 +67523,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 28,
+   "over_bar": 29,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 482,
+   "source_files": 485,
    "test_files": 182
   },
   "oneiron-spawn": {
