@@ -4,8 +4,9 @@
 //! then empties the environment by raw walks over every database, not by the
 //! delete tear or demotion. Every canonical row goes with its projections,
 //! documents, windows and residence rows, of any kind and in any state. Kept
-//! are the authority log and MACHINE rows, a held record, and the side rows
-//! the host still talks to its home with and reopens this environment by.
+//! are the authority log and MACHINE rows, a held record (a world key pad whose
+//! world or sealed claim is held, too), and the side rows the host still talks
+//! to its home with and reopens this environment by.
 //! Nothing else is written: no tombstone, deletion marker, audit row, Loro op,
 //! outbox row, receipt or release row.
 
@@ -351,6 +352,13 @@ fn keep_reason(
         return Ok(Some(KeepReason::Kind(kind)));
     }
     if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
+        return Ok(Some(KeepReason::LegalHold));
+    }
+    // A pad is its world key's erasable half: a hold on the world or on a
+    // claim the key seals keeps it, as the delete guard refuses it (OF-470).
+    if kind == Some(registry::ENTITY_TYPE_WORLD_KEY_PAD)
+        && crate::world_keys::held_pad_world_in_txn(store, txn, raw)?
+    {
         return Ok(Some(KeepReason::LegalHold));
     }
     // A guard that cannot read the pin keeps the row too: keeping is safe.

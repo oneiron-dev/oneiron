@@ -395,6 +395,44 @@ pub(crate) fn reject_held_pad_world_in_txn(
     Ok(())
 }
 
+/// Whether a legal hold stands on the world of the pad row `raw` or on a claim
+/// its key seals: [`reject_held_pad_world_in_txn`]'s read as a bool, for a walk
+/// that keeps the pad rather than refusing (OF-470). A row of another kind, a
+/// header-only pad shell and a world whose keys were destroyed already read
+/// false. A hold on the pad id itself stays the caller's check.
+pub(crate) fn held_pad_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    raw: &[u8],
+) -> Result<bool> {
+    if raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Ok(false);
+    }
+    let Some(world) = pad_body_world(raw).transpose()? else {
+        return Ok(false);
+    };
+    if world_keys_destroyed_fact_in_txn(store, txn, world)? {
+        return Ok(false);
+    }
+    if crate::store::legal_hold::held_in_txn(store, txn, world.as_bytes())? {
+        return Ok(true);
+    }
+    let claims = store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)?
+        .collect::<Result<Vec<_>>>()?;
+    for id in claims {
+        let Some(claim) = store.port_entity_raw(txn, &id)? else {
+            continue;
+        };
+        if matches!(crate::sync::types::entity_world(&claim), Ok(Some(of)) if of == world)
+            && crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Destroys `world`'s keys on this replica, in the caller's write transaction:
 /// purges every pad row of the world, stages each one's hard tombstone, and
 /// writes the permanent destroyed fact with its receipt. `target` is any row

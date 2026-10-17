@@ -72,6 +72,11 @@ pub(crate) fn birth_message_stream_in_txn(
         "entity_doc.message_stream",
     )?;
     storage::persist(vault, txn, entity, &mut head, &doc, None)?;
+    // Quotes taken of the atomic text are pinned at the birth frontier,
+    // before any appended delta moves the head.
+    crate::conversation_dag::pin_body_quotes_at_message_birth_in_txn(
+        vault, txn, entity, text, actor,
+    )?;
     Ok(())
 }
 
