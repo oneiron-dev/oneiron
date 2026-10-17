@@ -824,8 +824,6 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             })
         },
     );
-    // The nightly Coach jobs that need the host's model or rules (OF-420).
-    let coach_host = crate::ai_host::coach_host::spawn(&sync_server);
     // The ladder's workers plain serve runs. Wire health and the standing
     // pump pass under the same admission.
     let admitted = || -> crate::server::HousekeepingAdmission {
@@ -837,6 +835,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 .map(|admission| Box::new(admission) as Box<dyn Send>)
         })
     };
+    // The nightly Coach jobs that need the host's model or rules (OF-420).
+    let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
     // Due standing questions are answered through the ladder (OF-506).
@@ -844,16 +844,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
     }
     // Uncertain identities are decided, or asked of the person (OF-123).
-    ladder_workers.push(crate::ai_host::identity::spawn(&sync_server));
+    ladder_workers.push(crate::ai_host::identity::spawn(&sync_server, admitted()));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     ladder_workers.push(crate::ai_host::coach_heal::spawn(
         &sync_server,
         config.failure_signals.publisher_candidates()?,
+        admitted(),
     ));
     // The owner's model-graded detectors read the retrieval telemetry (OF-418).
     ladder_workers.extend(crate::ai_host::self_heal_detectors::spawn(
         &sync_server,
         &config.self_heal,
+        admitted(),
     ));
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or

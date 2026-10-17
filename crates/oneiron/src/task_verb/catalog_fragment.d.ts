@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 268 code-mode rows (251 host rows, 17 run rows), 801 declarations.
-// Replies: 199 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
-// Opaque serde_json::Value leaves: 53; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 269 code-mode rows (252 host rows, 17 run rows), 803 declarations.
+// Replies: 200 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) & { budget?: BudgetLegibilityEnvelope };
@@ -110,6 +110,8 @@ declare namespace Sdk {
   type AttemptId = { bytes: number[] };
   type TaskRouteOutcome = { DreamerAttempt: { attempt_ref: AttemptId } } | { AgentDispatch: { attempt_ref: AttemptId; agent_def_ref: EntityId } } | { PeerSyncedOnly: { actor_ref: EntityId } } | { ChildAddressed: { actor_ref: EntityId } } | { HumanFollowup: { actor_ref: EntityId } };
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
+  type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
+  type TaskWaveReceipt = { attempt_ref: string; state: string };
   type TaskUpdateRequest = { task_ref: string; resultRef?: string | null };
   type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean };
   type QuoteSpan = { message: EntityId; start: number; end: number };
@@ -1017,6 +1019,8 @@ declare const tasks: {
   /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
   update(input: Sdk.TaskUpdateRequest): Promise<Sdk.Reply<Sdk.TaskUpdateReceipt>>;
   wait(input: Sdk.TaskWaitSetRequest): Promise<Sdk.Reply<unknown>>;
+  /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
+  wave(input: Sdk.TaskWaveRequest): Promise<Sdk.Reply<Sdk.TaskWaveReceipt>>;
 };
 declare const vault: {
   artifacts: {
