@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 262 facade rows, 992 declarations.
-Inputs: 218 of 262 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 211 of 262 fully typed, 41 typed down to an opaque serde_json::Value leaf, 10 with a shape the generator could not read
+Census: 263 facade rows, 993 declarations.
+Inputs: 219 of 263 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 212 of 263 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
 """
 
@@ -345,6 +345,10 @@ class ShapeTargetMember(TypedDict):
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
+class ShapeTargetFacet(TypedDict):
+    kind: Literal["facet"]
+    person: str
+    name: str
 class ShapeTargetPack(TypedDict):
     kind: Literal["pack"]
     name: str
@@ -361,10 +365,13 @@ class ShapeTargetChannel(TypedDict):
 class ShapeTargetGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: str
+class ShapeTargetManifest(TypedDict):
+    kind: Literal["manifest"]
+    manifest_ref: str
 class ShapeTargetSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
-ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetFacet | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetManifest | ShapeTargetSync
 class ShapeRowShared(TypedDict):
     kind: Literal["shared"]
     vault_id: int
@@ -375,6 +382,10 @@ class ShapeRowMember(TypedDict):
     role: ShapeMemberRole
 class ShapeRowWorld(TypedDict):
     kind: Literal["world"]
+    name: str
+class ShapeRowFacet(TypedDict):
+    kind: Literal["facet"]
+    person: str
     name: str
 class ShapeRowPack(TypedDict):
     kind: Literal["pack"]
@@ -399,6 +410,10 @@ class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: NotRequired[str]
     bound: NotRequired[ShapeGrantBound | None]
+class ShapeRowManifest(TypedDict):
+    kind: Literal["manifest"]
+    manifest_ref: str
+    body: str
 class ShapeRowSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
@@ -406,7 +421,7 @@ class ShapeRowSync(TypedDict):
 class ShapeRowRetire(TypedDict):
     kind: Literal["retire"]
     target: ShapeTarget
-ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowFacet | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowManifest | ShapeRowSync | ShapeRowRetire
 class ShapeSeed(TypedDict):
     rows: list[ShapeRow]
 class StoredShapeSeed(TypedDict):
@@ -976,7 +991,7 @@ class AttemptView(TypedDict):
     yours: bool
     claimed_at: NotRequired[int | None]
     backoff_until: NotRequired[int | None]
-TaskAskHoldReason = Literal["NoLiveRoute"]
+TaskAskHoldReason = Literal["NoLiveRoute", "ApprovalRequired"]
 TaskAskEffectAuthorization = Literal["not_evaluated_by_ask"]
 class TaskAskCoverage(TypedDict):
     met: bool
@@ -1420,6 +1435,7 @@ class WeaveReportView(TypedDict):
     narrowing: ScopedReadReceipt
 class WeaveDigestRequest(TypedDict):
     scheduled_for: NotRequired[int | None]
+GeneratedUiCatalog = Literal["lens_atom_kit"]
 LensText = str
 class LensTextSpanLiteral(TypedDict):
     type: Literal["literal"]
@@ -1699,25 +1715,6 @@ SelfUiBindableProperty = Literal["checked", "selected", "value", "text"]
 class SelfUiBinding(TypedDict):
     stateKey: str
     property: SelfUiBindableProperty
-LensNode = TypedDict("LensNode", {"id": str, "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "children": NotRequired[list[LensNode]]})
-class GeneratedLens(TypedDict):
-    kit_version: int
-    apps_contract_version: int
-    root: LensNode
-class WeaveLensRefusal(TypedDict):
-    reason: str
-    skill_ref: str
-    skill_version: str
-    model: str
-    refused_at: int
-class WeaveDigestView(TypedDict):
-    scheduled_for: int
-    rendered_at: int
-    sections: list[WeaveSectionView]
-    narrowing: ScopedReadReceipt
-    lens: NotRequired[GeneratedLens | None]
-    lens_refused: NotRequired[WeaveLensRefusal | None]
-GeneratedUiCatalog = Literal["lens_atom_kit"]
 GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
 GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
 class GeneratedUiActionDeclaration(TypedDict):
@@ -1733,10 +1730,28 @@ class GeneratedUiCardLifecycle(TypedDict):
     revision: int
     archiveReason: NotRequired[GeneratedUiArchiveReason | None]
 GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+LensNode = TypedDict("LensNode", {"id": str, "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "children": NotRequired[list[LensNode]]})
+class GeneratedLens(TypedDict):
+    kit_version: int
+    apps_contract_version: int
+    root: LensNode
 class LensFrameCard(TypedDict):
     card_id: str
     render: GeneratedUiRender
     lens: GeneratedLens
+class WeaveLensRefusal(TypedDict):
+    reason: str
+    skill_ref: str
+    skill_version: str
+    model: str
+    refused_at: int
+class WeaveDigestView(TypedDict):
+    scheduled_for: int
+    rendered_at: int
+    sections: list[WeaveSectionView]
+    narrowing: ScopedReadReceipt
+    lens: NotRequired[LensFrameCard | None]
+    lens_refused: NotRequired[WeaveLensRefusal | None]
 class WeaveWrongLinkRequest(TypedDict):
     source_ref: str
     kind: str
@@ -3096,6 +3111,11 @@ class TaskAskShort(TypedDict):
     until: NotRequired[int | None]
     default: NotRequired[TaskAskDefault]
 TaskAskRequest = TaskAskSpec | TaskAskShort
+class TaskAskLaunchHold(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    surface_ref: str
+    denied: bool
 class TaskAskReceipt(TypedDict):
     handle: TaskAskHandle
     task_refs: list[EntityId]
@@ -3103,6 +3123,7 @@ class TaskAskReceipt(TypedDict):
     idempotent_replay: bool
     statement: NotRequired[FanoutStatement | None]
     task_records: list[RecordRef]
+    launch: NotRequired[TaskAskLaunchHold | None]
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
@@ -3971,7 +3992,7 @@ class DecisionReceipt(TypedDict):
     images: NotRequired[list[ImagePin]]
     think_row: NotRequired[int | None]
     person_row: NotRequired[int | None]
-HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline"]
+HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
     candidate: str

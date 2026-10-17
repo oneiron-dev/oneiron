@@ -278,6 +278,8 @@ pub struct MediaRuntime {
     /// Each job seat's rungs, by engine id: the rung a kept job is taken up
     /// on again after a restart.
     job_rungs: BTreeMap<ModelId, LadderRung>,
+    /// The offers' health, which a job taken up again reports its end to.
+    rests: Option<Arc<OfferCooldowns>>,
     /// The render targets (provider names) that render from a banked
     /// identity's reference clip on each call and keep no clone.
     reference_targets: BTreeSet<String>,
@@ -320,6 +322,7 @@ impl MediaRuntime {
             jobs: Mutex::default(),
             store: None,
             job_rungs: BTreeMap::new(),
+            rests: None,
             reference_targets: BTreeSet::new(),
             cloners: BTreeMap::new(),
             live_asr: BTreeMap::new(),
@@ -365,6 +368,7 @@ impl MediaRuntime {
             config.media.budget_units,
             BudgetExhaustionPolicy::Suspend,
         ));
+        runtime.rests = Some(Arc::clone(rests));
         runtime.reference_targets = config
             .providers
             .iter()
@@ -656,6 +660,7 @@ impl MediaRuntime {
                     provider_job: job.provider_job.clone(),
                     request,
                     ended: None,
+                    receipt: job.receipt.clone(),
                 },
             );
         }
@@ -760,7 +765,10 @@ impl MediaRuntime {
     /// A job a restart left running, taken up again on the rung that took
     /// it: a permit admitted afresh on this runtime's meter for the call
     /// its caller sent, and started for the job's polls without a new
-    /// submit. A job whose rung left the config cannot be taken up.
+    /// submit. It carries the served receipt it went out with, and its end
+    /// counts toward its offer's health as a sent request's does: a
+    /// recovering offer's one probation request when that slot is free. A
+    /// job whose rung left the config cannot be taken up.
     fn take_up(&self, row: &JobRow) -> LlmResult<HeldJob> {
         let rung = self
             .job_rungs
@@ -781,11 +789,17 @@ impl MediaRuntime {
         let permit = run.admit_media(selector, &bound, &rung.offer.binding)?;
         let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
         gate.resume(&bound, permit.lease())?;
+        // A resting offer, or one whose probation request is out, takes no
+        // report from it.
+        let probe = self
+            .rests
+            .as_ref()
+            .and_then(|rests| rests.try_probe(&rung.offer.binding, &rung.wire_model).ok());
         Ok(HeldJob {
             gate,
             permit: Some(permit),
-            probe: None,
-            receipt: None,
+            probe,
+            receipt: row.receipt.clone(),
             provider_job: row.provider_job.clone(),
             model: rung.model.clone(),
             operation: row.operation,
