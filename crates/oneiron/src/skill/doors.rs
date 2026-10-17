@@ -243,7 +243,7 @@ impl Vault {
         }
         let parent = self.read_skill_record_in_txn(wtxn, parent_id)?;
         if fork_id == parent_id
-            || crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, fork_id)?.is_some()
+            || crate::ports::EntityStoreRead::port_entity_present(&self.store, wtxn, fork_id)?
         {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "fork target entity already exists",

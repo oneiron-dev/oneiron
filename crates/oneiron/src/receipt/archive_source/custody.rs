@@ -262,7 +262,7 @@ pub(crate) fn receipt_archive_custody_exists(
     holder: &EntityId,
 ) -> Result<bool> {
     for id in receipt_archives_for_holder(store, txn, holder)? {
-        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?.is_some() {
+        if crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)? {
             return Ok(true);
         }
     }
