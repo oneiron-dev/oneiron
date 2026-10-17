@@ -42,6 +42,85 @@ pub struct RowBirth {
     /// Lowercase hex of the hash of the exact inputs as read; empty for a
     /// stated birth that read nothing.
     pub content_hash: String,
+    /// Refs a copy of this birth withholds from its destination
+    /// ([`RowBirth::masked`]); empty in the vault's own birth row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub withheld: Vec<WithheldRef>,
+}
+
+/// A ref a birth names that its copy's destination may not see (Q26 = B): a
+/// handle in its place, never the ref.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WithheldRef {
+    /// `wh_` and 16 hex of the ref keyed by the copy's [`WithheldKey`]: one
+    /// ref reads as one handle within a copy, and the handle never reverses.
+    pub handle: String,
+    pub role: WithheldRole,
+}
+
+/// What a withheld ref was in the birth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WithheldRole {
+    Input,
+    Prompt,
+    Trigger,
+}
+
+/// One copy's masking key. An export takes a fresh one, so its handles link
+/// to no other copy; a replicated birth, which its destination keeps
+/// immutable, takes its destination's stable key, so a resync writes the same
+/// handles.
+pub struct WithheldKey([u8; 32]);
+
+impl WithheldKey {
+    #[must_use]
+    pub fn fresh() -> Self {
+        let mut key = [0; 32];
+        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut key);
+        Self(key)
+    }
+
+    /// The stable key for every copy bound for `destination`: the vault's
+    /// local withheld secret, made on first use and never shipped, keys a
+    /// hash of the destination bytes. One destination reads one ref as one
+    /// handle on every sync; two destinations cannot join their handles.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors as they occur.
+    pub fn for_destination(vault: &crate::Vault, destination: &[u8]) -> Result<Self> {
+        vault.with_write_txn_grouped(|txn| {
+            Self::for_destination_in_txn(&vault.store, txn, destination)
+        })
+    }
+
+    /// [`WithheldKey::for_destination`] inside the caller's transaction.
+    pub(crate) fn for_destination_in_txn(
+        store: &impl ManifestDbs,
+        txn: &mut RwTxn<'_>,
+        destination: &[u8],
+    ) -> Result<Self> {
+        let secret = if let Some(secret) = WITHHELD_SECRET.get(store, txn, &())? {
+            secret
+        } else {
+            let secret = Self::fresh().0;
+            WITHHELD_SECRET.put(store, txn, &(), &secret)?;
+            secret
+        };
+        let mut hasher = blake3::Hasher::new_keyed(&secret);
+        hasher.update(b"oneiron.provenance.withheld.destination.v1\0");
+        hasher.update(destination);
+        Ok(Self(*hasher.finalize().as_bytes()))
+    }
+
+    fn handle(&self, row: &EntityId) -> String {
+        format!(
+            "wh_{}",
+            &blake3::keyed_hash(&self.0, row.as_bytes()).to_hex()[..16]
+        )
+    }
 }
 
 impl RowBirth {
@@ -52,7 +131,42 @@ impl RowBirth {
         Self {
             made_by,
             content_hash: String::new(),
+            withheld: Vec::new(),
         }
+    }
+
+    /// This birth as a copy carries it to a destination that sees only the
+    /// rows `ships` admits (Q26 = B). Each input, and the trigger, whose row
+    /// it refuses moves to `withheld` as a handle. Who made the row, by which
+    /// process and when, and the input hash ship whole.
+    #[must_use]
+    pub fn masked(&self, ships: impl Fn(&EntityId) -> bool, key: &WithheldKey) -> Self {
+        let mut birth = self.clone();
+        let mut withheld = std::mem::take(&mut birth.withheld);
+        birth.made_by.inputs.retain(|input| {
+            if ships(&input.row) {
+                return true;
+            }
+            withheld.push(WithheldRef {
+                handle: key.handle(&input.row),
+                role: match input.role {
+                    MadeByInputRole::Input => WithheldRole::Input,
+                    MadeByInputRole::Prompt => WithheldRole::Prompt,
+                },
+            });
+            false
+        });
+        if let Some(row) = birth.made_by.trigger.as_ref().map(MadeByTrigger::row)
+            && !ships(&row)
+        {
+            withheld.push(WithheldRef {
+                handle: key.handle(&row),
+                role: WithheldRole::Trigger,
+            });
+            birth.made_by.trigger = None;
+        }
+        birth.withheld = withheld;
+        birth
     }
 
     /// The birth of a row `actor` wrote through `door` at `at`, made from
@@ -99,6 +213,7 @@ impl RowBirth {
             } else {
                 Self::content_hash_of(read)
             },
+            withheld: Vec::new(),
         })
     }
 
@@ -120,10 +235,24 @@ impl RowBirth {
     /// birth commit). A concluded birth names what it was made from.
     fn check_shape(&self) -> Result<()> {
         let made_by = &self.made_by;
+        let withheld = |role: WithheldRole| self.withheld.iter().any(|w| w.role == role);
         let has_prompt = made_by
             .inputs
             .iter()
-            .any(|input| input.role == MadeByInputRole::Prompt);
+            .any(|input| input.role == MadeByInputRole::Prompt)
+            || withheld(WithheldRole::Prompt);
+        let names_trigger = made_by.trigger.is_some() || withheld(WithheldRole::Trigger);
+        let names_input = !made_by.inputs.is_empty()
+            || withheld(WithheldRole::Input)
+            || withheld(WithheldRole::Prompt);
+        let handles_ok = self.withheld.len() <= MAX_BIRTH_INPUTS + 1
+            && self.withheld.iter().all(|w| {
+                w.handle.len() == 19
+                    && w.handle.strip_prefix("wh_").is_some_and(|hex| {
+                        hex.bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    })
+            });
         let hash_ok = self.content_hash.len() <= MAX_CONTENT_HASH_HEX
             && self
                 .content_hash
@@ -132,8 +261,9 @@ impl RowBirth {
         if !made_by.process.is_valid()
             || made_by.inputs.len() > MAX_BIRTH_INPUTS
             || !hash_ok
-            || (made_by.trigger.is_some() && !has_prompt)
-            || (made_by.process.class == MadeByClass::Concluded && made_by.inputs.is_empty())
+            || !handles_ok
+            || (names_trigger && !has_prompt)
+            || (made_by.process.class == MadeByClass::Concluded && !names_input)
         {
             return Err(Error::InvalidConfig(
                 "a row birth needs a valid process, bounded inputs, a hex input hash and a prompt \
@@ -152,6 +282,11 @@ const ROW_BIRTH: SideTable<EntityId, RowBirth, Named> =
 /// The born-from index. Key: id16 (the trigger's ref) + id16 (the born row).
 const BIRTH_BY_TRIGGER: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::PROVENANCE_BIRTH_BY_TRIGGER);
+
+/// The vault's local secret behind [`WithheldKey::for_destination`]. Key:
+/// `()`; value: 32 raw bytes. Local only: no copy or sync ships it.
+const WITHHELD_SECRET: SideTable<(), [u8; 32], Raw> =
+    SideTable::new(&side_table::PROVENANCE_WITHHELD_SECRET);
 
 /// A run's durable replay record, the identity a `Run` trigger names.
 const CODE_RUN_REPLAY_KEYS: SideTable<EntityId, (), Raw> =
@@ -196,6 +331,12 @@ pub(crate) fn stamp_row_birth_in_txn(
     birth: &RowBirth,
 ) -> Result<()> {
     birth.check_shape()?;
+    // A local producer names its own refs; only a copy withholds any.
+    if !birth.withheld.is_empty() {
+        return Err(Error::InvalidConfig(
+            "a locally stamped row birth withholds no ref".into(),
+        ));
+    }
     if !live_entity_row_in_txn(store, txn, row)?.is_live() {
         return Err(Error::InvalidConfig(
             "a row birth names a row this transaction does not hold".into(),
