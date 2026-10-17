@@ -18909,7 +18909,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 22,
+      "const": 23,
       "crate-vis": 8,
       "fn": 10,
       "trait": 1
@@ -18975,6 +18975,21 @@
       "crate-vis": 2,
       "fn": 3,
       "struct": 7,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContributionForks",
+      "ContributionReplayHost"
+     ],
+     "path": "src/dreamer_runner/maintenance/contribution.rs",
+     "purpose": "The Coach's contribution checks (ARCH-0037 #lineage-credit, ARCH-0053): each sampled credited run's skill…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -19105,7 +19120,7 @@
       "crate-vis": 7,
       "fn": 1,
       "mod": 14,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -19549,7 +19564,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -26142,7 +26157,7 @@
      "purpose": "The owner's review of what the Dreamer proposes from one import (ARCH-0027 trust tier): imported material…",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -53053,7 +53068,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54063,7 +54078,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3282,
+   "source_files": 3283,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67239,7 +67254,7 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -68129,6 +68144,8 @@
       "ApiCommand",
       "Cli",
       "Command",
+      "DeviceCommand",
+      "DeviceEnrolArgs",
       "DreamerCommand",
       "DreamerGrantArgs",
       "EmbedderCommand",
@@ -68160,10 +68177,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 10,
+      "enum": 11,
       "fn": 3,
       "re-export": 10,
-      "struct": 22
+      "struct": 23
      }
     },
     {
@@ -68346,7 +68363,7 @@
       "const": 1,
       "crate-vis": 7,
       "fn": 12,
-      "re-export": 20,
+      "re-export": 21,
       "struct": 1
      }
     },
@@ -68369,6 +68386,16 @@
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/device.rs",
+     "purpose": "`device enrol`: enrols this stopped vault's machine with its home, from the owner's machine pairing link…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -68783,7 +68810,7 @@
      "path": "src/config/device_sync.rs",
      "purpose": "`[device_sync]`: the home this machine keeps its vault in sync with",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "struct": 1
      }
     },
@@ -69468,7 +69495,17 @@
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/enrolment.rs",
+     "purpose": "A device's enrolment with its home (ARCH-0023b: \"a device connects the moment it is enrolled\")",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -73121,7 +73158,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -73205,10 +73242,10 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
@@ -73459,7 +73496,7 @@
    },
    "over_bar": 51,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 613,
+   "source_files": 615,
    "test_files": 182
   },
   "oneiron-spawn": {
