@@ -39,7 +39,7 @@ export type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_r
 /** `oneiron::memory::diary_read::DiaryReadsRequest` */
 export type DiaryReadsRequest = { limit?: number | null }
 /** `oneiron::memory::diary_read::DiaryReadRecord` */
-export type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null }
+export type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null; source: string }
 /** `oneiron::memory::diary_read::DiaryReviewState` */
 export type DiaryReviewState = "pending" | "approved" | "declined" | "used"
 /** `oneiron::memory::diary_read::DiaryReadRequest` */
