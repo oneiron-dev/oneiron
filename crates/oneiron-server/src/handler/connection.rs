@@ -30,8 +30,13 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
         .route("/ws", get(ws_upgrade_handler))
         .with_state(server.clone())
         .layer(axum::middleware::from_fn_with_state(
-            server,
+            server.clone(),
             crate::auth::admit_http_binding,
+        ))
+        // FIX 811: a refused upgrade is its connection's receipt.
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            crate::api::call_receipt::connection_receipt,
         ))
 }
 
@@ -82,12 +87,18 @@ async fn ws_upgrade_handler(
     // that — it bounds inbound reads only — so the outbound side is held by
     // [`GuardedTransport::fits_below_write_through`], which refuses per frame
     // in release builds.
+    // FIX 811: the socket's unattributed replies name the connection its
+    // upgrade arrived on.
+    let connection = crate::api::call_receipt::connection_id();
     let mut response = ws
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
         .on_upgrade(move |socket| {
-            handle_connection(socket, server, conn_id, session_jti, locality, machine)
+            crate::api::call_receipt::on_connection(
+                connection,
+                handle_connection(socket, server, conn_id, session_jti, locality, machine),
+            )
         })
         .into_response();
     if let Some(value) = home_proof {

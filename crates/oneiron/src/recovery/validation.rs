@@ -44,15 +44,21 @@ pub(crate) fn trusted_soft_addressing_edge(
     }
     // A canonical window need not contain a recipient from another month.
     // If it does, validate it here; otherwise the capture/replay doors prove
-    // the PERSON against the vault holding the neighboring window.
-    if let Some(person) = snapshot
+    // the PERSON or AGENT_DEF against the vault holding the neighboring window.
+    if let Some(recipient) = snapshot
         .entity_blobs
         .iter()
         .find(|row| row.id == *target.as_bytes())
-        && EntityMetadataHeader::parse(&person.blob)
-            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+        && EntityMetadataHeader::parse(&recipient.blob).is_none_or(|h| {
+            !matches!(
+                h.entity_type,
+                crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF
+            )
+        })
     {
-        return Err(invalid("retained addressing recipient is not a PERSON"));
+        return Err(invalid(
+            "retained addressing recipient is not a PERSON or AGENT_DEF",
+        ));
     }
     let fields = crate::edge::decode_edge_value_for_kind(crate::EdgeKind::AddressedTo, value)?;
     if fields.layout != crate::edge::EdgeValueLayout::Structural

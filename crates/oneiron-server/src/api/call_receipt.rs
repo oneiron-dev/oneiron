@@ -11,14 +11,113 @@
 //! session writes no row, and every off-record route says so on its reply
 //! (`x-oneiron-receipt-ref: none; no-record`), since no wire receipt may
 //! record that a session ran.
+//!
+//! A reply no credential attributed (FIX 811, Engine ruling 10-18): a
+//! pre-auth refusal (the binding door's, a credential that does not
+//! authenticate, an unbound socket's) or a protocol-only reply (MCP
+//! `initialize`, `tools/list`, parse errors; WS `auth.bind` and `ping`) is
+//! recorded for the connection it arrived on ([`connection_call`]): the
+//! connection's id, no person, no credential, and the normal row life. A
+//! door records its own; [`connection_receipt`], outside the binding door,
+//! records what reached no door.
 
+use std::future::Future;
+use std::sync::Arc;
+
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue};
+use axum::middleware::Next;
 use axum::response::Response;
-use oneiron::receipt::{ActionInputs, CallReceiptInput};
+use oneiron::receipt::{ActionInputs, CallOutcome, CallReceiptInput, CallTransport};
 use serde_json::{Map, Value};
 
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+
+tokio::task_local! {
+    /// The id of the connection the call in flight arrived on: one per
+    /// accepted socket, never derived from the peer's address.
+    static CONNECTION_ID: u128;
+}
+
+/// Runs `call` as one connection's: every reply inside it that no credential
+/// attributed names `id` ([`request_connection`]).
+pub(crate) fn on_connection<F: Future>(id: u128, call: F) -> impl Future<Output = F::Output> {
+    CONNECTION_ID.scope(id, call)
+}
+
+/// A fresh connection id, for one accepted socket.
+pub(crate) fn mint_connection_id() -> u128 {
+    let mut id = [0_u8; 16];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut id);
+    u128::from_be_bytes(id)
+}
+
+/// The id of the connection the call in flight arrived on, minted on the
+/// spot for a call outside any (an in-process or managed-listener request),
+/// which is then its own connection.
+pub(crate) fn connection_id() -> u128 {
+    CONNECTION_ID
+        .try_with(|id| *id)
+        .unwrap_or_else(|_| mint_connection_id())
+}
+
+/// [`connection_id`] as the 32 hex a receipt's `actor_ref` states.
+pub(crate) fn request_connection() -> String {
+    format!("{:032x}", connection_id())
+}
+
+/// The receipt input of a reply no credential attributed (FIX 811): the
+/// connection is its actor, of class `connection`, with no credential and
+/// no captured inputs.
+pub(crate) fn connection_call(
+    transport: CallTransport,
+    verb: String,
+    outcome: CallOutcome,
+    request_digest: String,
+    result_digest: Option<String>,
+) -> CallReceiptInput {
+    CallReceiptInput {
+        transport,
+        verb,
+        actor_ref: request_connection(),
+        actor_class: oneiron::receipt::CONNECTION_CALL_ACTOR_CLASS.to_owned(),
+        credential_ref: None,
+        outcome,
+        request_digest,
+        result_digest,
+        inputs: None,
+        served: Vec::new(),
+    }
+}
+
+/// Records a socket's reply no credential attributed (FIX 811): a WS
+/// `auth.bind` or `ping`, or a frame the socket refused. A socket never runs
+/// inside an off-record session.
+pub(crate) fn record_socket_reply(
+    server: &SyncServer,
+    verb: String,
+    outcome: CallOutcome,
+    request_digest: String,
+    result_digest: Option<String>,
+) -> CallStamp {
+    record(
+        server,
+        false,
+        connection_call(
+            CallTransport::Ws,
+            verb,
+            outcome,
+            request_digest,
+            result_digest,
+        ),
+    )
+}
+
+/// Says a door answered this reply's receipt, recorded or not, so
+/// [`connection_receipt`] leaves it alone.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DoorAnswered;
 
 /// The header every facade reply states its call receipt in.
 pub(crate) const RECEIPT_REF_HEADER: &str = "x-oneiron-receipt-ref";
@@ -62,11 +161,13 @@ impl CallStamp {
         }
     }
 
-    /// Stamps `x-oneiron-receipt-ref` on a reply.
+    /// Stamps `x-oneiron-receipt-ref` on a reply, and marks it answered by
+    /// its door ([`DoorAnswered`]).
     pub(crate) fn stamp_header(&self, response: &mut Response) {
         if let Some(value) = self.header_value() {
             response.headers_mut().insert(RECEIPT_REF_HEADER, value);
         }
+        response.extensions_mut().insert(DoorAnswered);
     }
 
     /// States the receipt in a JSON object: `receipt_ref`, which is `null`
@@ -171,17 +272,98 @@ pub(crate) fn action_inputs(
 }
 
 /// Writes one call's receipt, or states the anonymous exception without
-/// writing. A row that cannot be written is logged and the reply carries no
-/// ref: the call itself already happened.
+/// writing. Best effort (FIX 813, Engine ruling 10-18): the call's own work
+/// has already committed or rolled back, so a row that cannot be written
+/// blocks nothing and changes nothing in the reply but its missing ref. It
+/// is logged as one warn line naming the row (transport, verb, actor class,
+/// outcome) and the error.
 pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInput) -> CallStamp {
     if anonymous {
         return CallStamp::NoRecord;
     }
+    let transport = input.transport;
+    let verb = input.verb.clone();
+    let actor_class = input.actor_class.clone();
+    let outcome = input.outcome.clone();
     match server.vault().record_call_receipt(input) {
         Ok(receipt_ref) => CallStamp::Recorded(receipt_ref),
         Err(error) => {
-            tracing::warn!(%error, "call answered without its receipt");
+            tracing::warn!(
+                ?transport,
+                %verb,
+                %actor_class,
+                ?outcome,
+                %error,
+                "call answered without its receipt"
+            );
             CallStamp::Unrecorded
         }
     }
+}
+
+/// The door a path's replies are recorded by, and the verb an unattributed
+/// reply there states: the facade's verb, the MCP endpoint, a refused WS
+/// upgrade. `None` for routes that keep no wire receipt.
+fn receipted_door(path: &str) -> Option<(CallTransport, String)> {
+    if let Some(verb) = path.strip_prefix("/v1/core/facade/") {
+        return Some((CallTransport::HttpFacade, verb.to_owned()));
+    }
+    match path {
+        "/mcp" | "/mcp/tool-first" => {
+            Some((CallTransport::Mcp, path.trim_start_matches('/').to_owned()))
+        }
+        "/ws" => Some((CallTransport::Ws, "ws.upgrade".to_owned())),
+        _ => None,
+    }
+}
+
+/// FIX 811's outer door, outside the binding door: a facade, MCP or WS
+/// upgrade reply that reached no door's receipt (the binding door's or the
+/// deleted vault's refusal, a request no credential authenticates) is
+/// recorded for its connection and states the ref in
+/// `x-oneiron-receipt-ref`. The server read none of its body, so its request
+/// digest is of no bytes. An accepted WS upgrade is no call and records
+/// nothing; neither does a request in an anonymous off-record session.
+pub(crate) async fn connection_receipt(
+    State(server): State<Arc<SyncServer>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Some((transport, verb)) = receipted_door(request.uri().path()) else {
+        return next.run(request).await;
+    };
+    let session = request_session_ref(request.headers()).map(str::to_owned);
+    let mut response = next.run(request).await;
+    let status = response.status();
+    if response.extensions().get::<DoorAnswered>().is_some()
+        || response.headers().contains_key(RECEIPT_REF_HEADER)
+        || (transport == CallTransport::Ws && status == axum::http::StatusCode::SWITCHING_PROTOCOLS)
+    {
+        return response;
+    }
+    let anonymous = session.is_some_and(|session_ref| {
+        server
+            .vault()
+            .off_record_session_is_anonymous_for(&session_ref, None)
+    });
+    let outcome = if status.is_success() {
+        CallOutcome::Ok
+    } else {
+        CallOutcome::Refused {
+            code: format!("HTTP_{}", status.as_u16()),
+        }
+    };
+    let stamp = record(
+        &server,
+        anonymous,
+        connection_call(
+            transport,
+            verb,
+            outcome,
+            oneiron::receipt::call_bytes_digest(&[]),
+            None,
+        ),
+    );
+    stamp.stamp_header(&mut response);
+    response
 }

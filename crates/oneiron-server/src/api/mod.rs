@@ -518,8 +518,14 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // digests and body limits see the decoded bytes.
         .layer(middleware::from_fn(self::body_codec::body_codec))
         .layer(middleware::from_fn_with_state(
-            server,
+            server.clone(),
             crate::auth::admit_http_binding,
+        ))
+        // FIX 811: outside the binding door, so a reply that reached no
+        // door's receipt is still its connection's.
+        .layer(middleware::from_fn_with_state(
+            server,
+            call_receipt::connection_receipt,
         ))
 }
 
