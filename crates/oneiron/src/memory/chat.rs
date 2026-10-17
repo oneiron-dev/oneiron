@@ -22,6 +22,14 @@
 //! or cites something the pack does not contain abstains, and its answer text
 //! never escapes. "Not in memory" is a value here, never an empty string.
 //!
+//! This is the answer boundary (OF-063, Engine ruling 1231). An answer that
+//! cites a source its pack does not carry is refused: its abstention carries
+//! the typed [`RecordRefusal`] a refused claim write carries, with its own
+//! reference-refusal receipt (none in an anonymous off-record session). A
+//! composed answer that stands is read for its prose record links
+//! (`oneiron://`) before it is returned, and each link that does not resolve
+//! for the caller leaves an `unlinked` receipt; the text is kept as written.
+//!
 //! The engine carries no composition. [`ChatComposer`] is implemented
 //! host-side, like `LlmBackend`, so no SDK, model id, prompt text, persona, or
 //! product module enters this crate; prompt packages, model selection, and
@@ -43,6 +51,12 @@ use crate::serialize::{SerializeConfig, serialize_pack};
 
 /// Chat uses the same closed five-level effort vocabulary as retrieval.
 pub type ChatDepth = Effort;
+
+/// The row the answer boundary's receipts name: chat has no verb-table row,
+/// so its receipts name the engine's `.chat` door.
+const CHAT_ANSWER_ROW: &str = "memory.chat";
+/// The field a composed answer's prose links are receipted at.
+const CHAT_ANSWER_FIELD: &str = "/answer";
 
 impl Effort {
     /// The retrieval effort priced by a chat request.
@@ -189,6 +203,20 @@ pub enum ChatResponse {
         /// Zero when no composer ran; the composer's own figure when one did.
         #[serde(rename = "tokensUsed")]
         tokens_used: u32,
+        /// The answer boundary's typed refusal, when it refused a composed
+        /// answer for citing a source its pack does not carry (OF-063,
+        /// Engine ruling 1231); none for every other abstention.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refusal: Option<RecordRefusal>,
+        /// That refusal's own receipt (`reference_refusal:<hex>`): none
+        /// without a refusal, or when no record was kept, as in an anonymous
+        /// off-record session.
+        #[serde(
+            default,
+            rename = "receiptRef",
+            skip_serializing_if = "Option::is_none"
+        )]
+        receipt_ref: Option<String>,
     },
 }
 
@@ -302,6 +330,8 @@ impl Memory<'_> {
                 reason,
                 gaps,
                 tokens_used: 0,
+                refusal: None,
+                receipt_ref: None,
             });
         }
 
@@ -322,6 +352,8 @@ impl Memory<'_> {
                         reason: ChatAbstentionReason::BackendDeclined,
                         gaps,
                         tokens_used: composed.tokens_used,
+                        refusal: None,
+                        receipt_ref: None,
                     });
                 }
                 let tokens_used = composed.tokens_used;
@@ -336,15 +368,36 @@ impl Memory<'_> {
                 reason: ChatAbstentionReason::InsufficientEvidence,
                 gaps,
                 tokens_used,
+                refusal: None,
+                receipt_ref: None,
             });
         }
         let Some(source_short_ids) = validate_answer_sources(&pack, &proposed) else {
+            // A citation the pack does not carry is a refused answer: typed,
+            // and receipted on its own write (Engine ruling 1231).
+            let refusal = uncarried_source(&pack, &proposed).map(answer_refusal);
+            let receipt_ref = refusal
+                .as_ref()
+                .and_then(|refusal| refusal.receipt(self, CHAT_ANSWER_ROW));
             return Ok(ChatResponse::Abstained {
                 reason: ChatAbstentionReason::InsufficientEvidence,
                 gaps,
                 tokens_used,
+                refusal,
+                receipt_ref,
             });
         };
+        // The composed answer stands: its prose links are read at this
+        // boundary, receipt-only, and the text is returned as written.
+        if composer.is_some() {
+            crate::gate::record_references::admit_prose_text(
+                self,
+                CHAT_ANSWER_ROW,
+                CHAT_ANSWER_FIELD,
+                &answer,
+                0,
+            );
+        }
 
         Ok(ChatResponse::Answered {
             answer,
@@ -559,6 +612,36 @@ fn validate_answer_sources(pack: &MemoryPack, proposed: &[String]) -> Option<Vec
         return None;
     }
     Some(sources)
+}
+
+/// The index in `proposed` of the first source the pack does not carry: a
+/// nonblank citation of no item in it. `None` when every citation is
+/// carried, or the answer failed the gate only by citing nothing or a blank.
+fn uncarried_source(pack: &MemoryPack, proposed: &[String]) -> Option<usize> {
+    proposed.iter().position(|candidate| {
+        !candidate.trim().is_empty()
+            && !pack
+                .items
+                .iter()
+                .any(|item| item.short_id == *candidate || item.reference() == *candidate)
+    })
+}
+
+/// The typed refusal of an answer whose citation at `index` its pack does
+/// not carry: the citation's pointer, never the cited ref.
+fn answer_refusal(index: usize) -> RecordRefusal {
+    let field = format!("/source_short_ids/{index}");
+    RecordRefusal {
+        reason: RefusalReason::InventedReference,
+        code: MEMORY_CODE_INVENTED_REFERENCE.to_owned(),
+        message: format!(
+            "the answer cites a source at `{field}` that the evidence it was composed from does not carry; the answer was refused"
+        ),
+        suggestions: vec![
+            "Cite only the short ids of items in the pack the answer was composed from.".to_owned(),
+        ],
+        field,
+    }
 }
 
 /// Every short id the pack carries, in pack order: what an extractive answer

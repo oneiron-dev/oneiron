@@ -423,7 +423,7 @@ pub(crate) fn put_served_form_in_txn(
 }
 
 /// Writes one reference-refusal receipt record (OF-063) at the fresh `id`,
-/// in the caller's transaction: `facts`, refused at `at`. Like a served-form
+/// in the caller's transaction: `facts`, refused at `at` for `reason`. Like a served-form
 /// record it takes no intent, no dedupe and no index row of its own. A record
 /// its own decoder would refuse is never written.
 pub(super) fn put_reference_refusal_in_txn(
@@ -431,6 +431,7 @@ pub(super) fn put_reference_refusal_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     facts: &ReferenceRefusalFacts,
+    reason: crate::memory::RefusalReason,
     at: u64,
 ) -> Result<()> {
     if vault.store.port_entity_record(txn, &id)?.is_some() {
@@ -438,7 +439,7 @@ pub(super) fn put_reference_refusal_in_txn(
             "reference refusal record id occupied",
         ));
     }
-    let receipt = reference_refusal::reference_refusal_receipt(&id, facts, at);
+    let receipt = reference_refusal::reference_refusal_receipt(&id, facts, reason, at);
     if !reference_refusal::binds(&id, &receipt) {
         return Err(Error::InvariantViolation("reference refusal record shape"));
     }

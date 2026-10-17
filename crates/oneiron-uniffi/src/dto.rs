@@ -163,7 +163,7 @@ pub struct ClaimInput {
     pub salience: Option<f32>,
 }
 
-/// Receipt for one committed (or refused) claim.
+/// Receipt for one committed claim.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct CommitReceipt {
     /// Short ref of the written claim.
@@ -174,6 +174,51 @@ pub struct CommitReceipt {
     pub superseded_short_id: Option<String>,
     /// Gate decision ref, resolvable through `vault.receipts`.
     pub receipt_ref: String,
+}
+
+/// What became of one element of a per-element claim batch (`vault.commit`,
+/// `vault.claims.seed`): its landed receipt, or its typed refusal and the
+/// refusal's own receipt (OF-063). A refused element persisted nothing.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum CommitOutcome {
+    /// The claim landed.
+    Landed {
+        /// Its receipt.
+        receipt: CommitReceipt,
+    },
+    /// Nothing of the element persisted.
+    Refused {
+        /// Why, typed.
+        refusal: RecordRefusal,
+        /// The refusal's receipt (`reference_refusal:<hex>`); none when no
+        /// record was kept, as in an anonymous off-record session.
+        receipt_ref: Option<String>,
+    },
+}
+
+/// Why a write or an answer was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RefusalReason {
+    /// A record it named does not resolve for its writer.
+    InventedReference,
+    /// The gate, the door's authority or the write's own checks refused it.
+    GateRefused,
+}
+
+/// A typed refusal: why, the facade error's code and words, and the refused
+/// element's or slot's JSON pointer.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RecordRefusal {
+    /// Why it was refused.
+    pub reason: RefusalReason,
+    /// The facade error code.
+    pub code: String,
+    /// What was refused, in words.
+    pub message: String,
+    /// Remediation hints.
+    pub suggestions: Vec<String>,
+    /// The refused element's or slot's JSON pointer (`/claims/2`).
+    pub field: String,
 }
 
 /// Selector for `vault.forget`: a claim ref, or a subject/predicate pair.

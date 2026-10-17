@@ -3,29 +3,35 @@ use super::*;
 impl Memory<'_> {
     // ── internals ───────────────────────────────────────────────────────
 
+    /// Commits each of `claims` as its own gated write, through `row`. The
+    /// batch is not atomic: each element's write is its own transaction
+    /// ([`Self::commit_one`]), so a refused element rolls back alone and
+    /// sinks no other. Each answers its landed receipt or its typed refusal
+    /// (OF-063, Engine ruling 1221); a refusal is receipted on a write of its
+    /// own once the element's write has rolled back, so the receipt
+    /// survives it, and names the element's pointer, never what it held.
     pub(in crate::memory) fn commit_all(
         &self,
+        row: &'static str,
         claims: &[ClaimInput],
         auto_supersede: bool,
         forced_approval: Option<ClaimApprovalStatus>,
-    ) -> Vec<CommitReceipt> {
-        let mut receipts = Vec::with_capacity(claims.len());
-        for input in claims {
+    ) -> Vec<CommitOutcome> {
+        let mut outcomes = Vec::with_capacity(claims.len());
+        for (index, input) in claims.iter().enumerate() {
             match self.commit_one(input, auto_supersede, forced_approval) {
-                Ok(receipt) => receipts.push(receipt),
-                // Nothing landed: the attempted id stays a plain field and
-                // the receipt names no record (OF-063).
-                Err(err) => receipts.push(CommitReceipt {
-                    claim_short_id: input.id.clone().unwrap_or_default(),
-                    approval: "rejected".to_owned(),
-                    superseded_short_id: None,
-                    receipt_ref: format!("rejected:{}", err.code),
-                    claim: None,
-                    superseded: None,
-                }),
+                Ok(receipt) => outcomes.push(CommitOutcome::Landed(receipt)),
+                Err(err) => {
+                    let refusal = RecordRefusal::from_error(&err, format!("/claims/{index}"));
+                    let receipt_ref = refusal.receipt(self, row);
+                    outcomes.push(CommitOutcome::Refused {
+                        refusal,
+                        receipt_ref,
+                    });
+                }
             }
         }
-        receipts
+        outcomes
     }
 
     pub(super) fn commit_one(

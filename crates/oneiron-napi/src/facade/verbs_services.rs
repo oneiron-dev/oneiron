@@ -20,17 +20,19 @@ use super::boundary::{
 use super::bridge::ActorScopedVault;
 use super::convert::{
     calendar_event_from_engine, calendar_range_to_engine, calendar_selectors_to_engine,
-    commit_receipt_from_engine, entity_ref_receipt_from_engine, memory_pack_from_engine,
-    read_receipt_from_engine, recall_scope_to_engine, structural_put_to_engine,
+    commit_outcome_from_engine, commit_receipt_from_engine, entity_ref_receipt_from_engine,
+    memory_pack_from_engine, read_receipt_from_engine, recall_scope_to_engine,
+    structural_put_to_engine,
 };
 use super::dtos::{
     NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead,
     NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval,
     NapiCalendarInviteInput, NapiCalendarRange, NapiCalendarSearchRequest, NapiCalendarSel,
-    NapiClaimInput, NapiCommitReceipt, NapiConsolidationJobInput, NapiDreamerJobRef,
-    NapiDreamerJobView, NapiEntityRefReceipt, NapiHabitCheckinInput, NapiLexicalHit,
-    NapiLexicalHits, NapiMemoryPack, NapiNeighborHit, NapiNeighborHits, NapiNeighborOpts,
-    NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope, NapiStructuralPutInput,
+    NapiClaimInput, NapiCommitOutcome, NapiCommitReceipt, NapiConsolidationJobInput,
+    NapiDreamerJobRef, NapiDreamerJobView, NapiEntityRefReceipt, NapiHabitCheckinInput,
+    NapiLexicalHit, NapiLexicalHits, NapiMemoryPack, NapiNeighborHit, NapiNeighborHits,
+    NapiNeighborOpts, NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope,
+    NapiStructuralPutInput,
 };
 use super::numeric::claim_input_to_engine;
 use oneiron::task_verb::sdk::{
@@ -340,20 +342,21 @@ impl ActorScopedVault {
     }
 
     /// Seed-write entry point (EF-301 consumer): every element is FORCED
-    /// proposed regardless of source, individually gated, with receipts.
+    /// proposed regardless of source, individually gated, each with its
+    /// receipt or its typed refusal (OF-063).
     #[napi]
-    pub fn seed_claims(&self, claims: Vec<NapiClaimInput>) -> napi::Result<Vec<NapiCommitReceipt>> {
+    pub fn seed_claims(&self, claims: Vec<NapiClaimInput>) -> napi::Result<Vec<NapiCommitOutcome>> {
         let mut engine_claims = Vec::with_capacity(claims.len());
         for claim in &claims {
             engine_claims.push(claim_input_to_engine(claim).map_err(facade_error)?);
         }
-        let receipts = self
+        let outcomes = self
             .facade()?
             .seed_claims(&engine_claims)
             .map_err(facade_error)?;
-        Ok(receipts
+        Ok(outcomes
             .into_iter()
-            .map(commit_receipt_from_engine)
+            .map(commit_outcome_from_engine)
             .collect())
     }
 

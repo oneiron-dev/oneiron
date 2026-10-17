@@ -100,11 +100,11 @@ func claimsCompile(client: Oneiron) throws {
     )
     let _: String = claim.predicate
 
-    let _: [CommitReceipt] = try client.commit(claims: [claim])
+    let _: [CommitOutcome] = try client.commit(claims: [claim])
     let _: CommitReceipt = try client.claimUpsert(claim: claim)
     let _: CommitReceipt = try client.remember(claim: claim)
     let _: CommitReceipt = try client.claimRetract(claimRef: "claim:compile-only")
-    let _: [CommitReceipt] = try client.seedClaims(claims: [claim])
+    let _: [CommitOutcome] = try client.seedClaims(claims: [claim])
 
     let selector = ForgetSelector(
         shortRef: "claim:compile-only",

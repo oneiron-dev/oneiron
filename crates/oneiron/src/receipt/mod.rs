@@ -87,7 +87,7 @@ pub use self::questions::{
     QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
 };
 pub(crate) use self::reference_refusal::{
-    ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals,
+    ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals, receipt_refusal,
 };
 pub use self::served_form::{PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};

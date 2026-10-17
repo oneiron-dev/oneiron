@@ -116,17 +116,50 @@ pub struct NapiClaimInput {
     pub salience: Option<f64>,
 }
 
-/// Receipt for one committed (or rejected) claim.
+/// Receipt for one committed claim.
 #[napi(object)]
 pub struct NapiCommitReceipt {
     /// Short ref of the written claim (hash suffix tracks body revisions).
     pub claim_short_id: String,
-    /// `auto` | `proposed` | `rejected`.
+    /// `auto` | `proposed`.
     pub approval: String,
     /// Short ref of the superseded prior claim, if any.
     pub superseded_short_id: Option<String>,
     /// Gate decision ref (`gate:<hex>`) resolvable via `receipts()`.
     pub receipt_ref: String,
+}
+
+/// What became of one element of a per-element claim batch (`commit`,
+/// `seedClaims`): its landed receipt, or its typed refusal (OF-063). A
+/// refused element persisted nothing.
+#[napi(object)]
+pub struct NapiCommitOutcome {
+    /// `landed` | `refused`.
+    pub outcome: String,
+    /// The landed claim's receipt; set only when `outcome` is `landed`.
+    pub receipt: Option<NapiCommitReceipt>,
+    /// The typed refusal; set only when `outcome` is `refused`.
+    pub refusal: Option<NapiRecordRefusal>,
+    /// The outcome's receipt: the landed claim's gate decision ref, or the
+    /// refusal's own `reference_refusal:<hex>` receipt. None for a refusal
+    /// no record was kept of, as in an anonymous off-record session.
+    pub receipt_ref: Option<String>,
+}
+
+/// A typed refusal: why, the facade error's code and words, and the refused
+/// element's JSON pointer.
+#[napi(object)]
+pub struct NapiRecordRefusal {
+    /// `INVENTED_REFERENCE` | `GATE_REFUSED`.
+    pub reason: String,
+    /// The facade error code.
+    pub code: String,
+    /// What was refused, in words.
+    pub message: String,
+    /// Remediation hints.
+    pub suggestions: Vec<String>,
+    /// The refused element's JSON pointer (`/claims/2`).
+    pub field: String,
 }
 
 /// Receipt for one safe delete.
