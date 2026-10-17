@@ -46084,7 +46084,7 @@
      "path": "src/sync/withdrawn_cutoffs.rs",
      "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
