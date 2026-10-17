@@ -73,6 +73,7 @@ impl Vault {
                 decision: None,
                 lease: None,
                 delivered_at: None,
+                file: None,
             };
             row.once_digest = Some(*row.ask_digest(&reveal).as_bytes());
             let grants = load_active_standing_grants(&self.store, txn)?;
@@ -101,9 +102,10 @@ impl Vault {
         reveal: &EntityId,
     ) -> Result<SecretRevealWait> {
         self.with_write_txn_grouped(|txn| {
+            // A file's read is collected by reading the file again.
             let mut row = REVEALS
                 .get(&self.store, txn, reveal)?
-                .filter(|row| row.is_agents(&asker.agent))
+                .filter(|row| row.is_agents(&asker.agent) && row.file.is_none())
                 .ok_or(Error::EntityNotFound)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let answer = |decision, row: &RevealRow| -> Result<SecretRevealWait> {
@@ -213,7 +215,7 @@ impl Vault {
 
 /// Files the owner's ask for `row`, now: its window, the digest an answer
 /// must carry, and the pending Gate record that names both.
-fn file_ask_in_txn(
+pub(super) fn file_ask_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     reveal: &EntityId,
@@ -271,6 +273,6 @@ fn deliver_in_txn(
     })
 }
 
-fn standing(grant_ref: &str) -> String {
+pub(super) fn standing(grant_ref: &str) -> String {
     format!("standing:{grant_ref}")
 }

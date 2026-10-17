@@ -34,3 +34,8 @@ paragraph's visible text the way `set_format` counts its targets. An out-of-rang
 `occurrence` the first-copy anchor is unchanged. A quote that matches more than one copy now yields a
 typed `EditNote` with the copy count and the anchored copy, which `apply_with_notes` returns (the
 value-only `apply` drops it).
+The set_format-occurrence change (2026-10-17) touches `src/edit/verbs/run_formatting.rs`, `src/edit/mod.rs`
+and `src/edit_v4.rs`. `set_format` takes an optional 1-based `occurrence` that formats the n-th copy of a
+repeated `expect`, counted the way the ambiguity check counts its matches. A copy the paragraph does not
+hold reads as an expect mismatch. Without `occurrence` a repeated `expect` still refuses. The suite's
+`EditStep::SetRunFormatting` literals do not carry the new field; the suite is outside the workspace.

@@ -138,7 +138,7 @@ declare const tasks: {
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
-  update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
+  update(input: { attempt?: object | null; report?: "ack" | object | object | object | object | object | object | null; report_key?: string | null; resultRef?: string | null; task_ref: string }): Promise<unknown>;
   wait(input: { all?: boolean | null; n_of?: number | null; step_key: string; tasks: string[]; until?: number | null }): Promise<unknown>;
   wave(input: { constraints?: unknown; epic_task_ref: string; objective: string; planner_ref: string }): Promise<unknown>;
 };
@@ -160,18 +160,22 @@ declare const vault: {
         diff(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
         discard(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
         edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] } | { format: "pptx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
-        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[] }): Promise<unknown>;
-        open(input: { artifact_ref: string; run_root_ref?: string | null }): Promise<unknown>;
+        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] }): Promise<unknown>;
+        open(input: { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null }): Promise<unknown>;
       };
       head(input: { artifact_ref: string }): Promise<unknown>;
       import(input: { artifact_ref: string; version?: number | null; made_by?: unknown }): Promise<unknown>;
       preview(input: { artifact_ref: string }): Promise<unknown>;
+      proposal: {
+        read(input: { artifact_ref: string; proposal_ref: string }): Promise<unknown>;
+        settle(input: { artifact_ref: string; proposal_ref: string; verdict: "accept" | "reject"; scope?: object | null; reviewed_head: number[]; reviewed: { fork_ref: string; reviewed_fork: number[] }[]; reason?: string | null }): Promise<unknown>;
+      };
       read(input: { artifact_ref: string; at?: number[] | null }): Promise<unknown>;
     };
     born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
     create(input: { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null }): Promise<unknown>;
     discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
-    export(input: { artifact_ref: string; version?: number | null }): Promise<unknown>;
+    export(input: { artifact_ref: string; version?: number | null; why?: string | null }): Promise<unknown>;
     keep(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     proposals(input: { artifact_ref: string }): Promise<unknown>;
     propose_deck(input: { artifact_ref: string; context?: unknown; made_by?: unknown; run_ref: string; transaction: unknown }): Promise<unknown>;
@@ -262,6 +266,11 @@ declare const vault: {
     retire(input: { space: string }): Promise<unknown>;
   };
   export(input: { format?: string | null }): Promise<unknown>;
+  fanout: {
+    ack(input: { answer: "ack" | "ack_and_remember"; launch_ref: string; plan_digest: string; remembered_cap?: number | null }): Promise<unknown>;
+    launch(input: { launch_ref: string }): Promise<unknown>;
+    resume(input: { launch_ref: string; plan_digest: string; remembered_cap?: number | null; ruling: "approve_once" | "approve_and_remember" | "deny" }): Promise<unknown>;
+  };
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {
@@ -403,6 +412,9 @@ declare const vault: {
   };
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
+  };
+  secrets: {
+    lift_history(input: { start?: boolean }): Promise<unknown>;
   };
   settings: {
     inference_defaults: ((input: object) => Promise<unknown>) & {

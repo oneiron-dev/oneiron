@@ -19,7 +19,7 @@ use serde_json::Value;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::runtime_hooks::verb::{HOOK_RESULT_NOT_RETAINED, VerbAskCredential};
 use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume};
-use crate::task_verb::sdk::{AgentVerb, validate_input};
+use crate::task_verb::sdk::{AgentVerb, masked_reveal_reply, revealed_hook_view, validate_input};
 use crate::{EntityId, Vault};
 
 /// A row's domain: a blocking hook that fails hides a read row's result and
@@ -92,11 +92,25 @@ fn row_pre_resumable(
 /// A write the row committed stays reported as committed: a storage failure
 /// in its post chain is logged, not returned.
 ///
+/// A `reveal.wait` answer's value never reaches a hook (OF-560): the chain
+/// reads the answer with the secret's handle where the value was, and the
+/// caller's view gets the value back where the chain left the handle.
+///
 /// # Errors
 ///
 /// A hook's stop, as the refusal the caller reads; a read row's storage
 /// errors.
 pub fn row_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<Value> {
+    if let Some(masked) = masked_reveal_reply(&pre.call().verb, &result)
+        && masked != result
+    {
+        let view = chain_post(vault, pre, masked.clone())?;
+        return Ok(revealed_hook_view(view, &masked, &result));
+    }
+    chain_post(vault, pre, result)
+}
+
+fn chain_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<Value> {
     if pre.call().domain == VerbDomain::Read {
         return vault.post_verb_hooks(pre, result)?.map_err(stopped);
     }
@@ -115,7 +129,8 @@ pub fn row_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<
 /// gets the args every rewrite left. The generated `invoke` is its one
 /// caller, so a call on a surface settlement can rebuild saves its resume
 /// target with an ask, and a call settlement already ran answers what it
-/// returned.
+/// returned. A `reveal.wait` saves none: settlement would keep the value it
+/// returned, so the caller's retry resumes it.
 ///
 /// # Errors
 ///
@@ -129,6 +144,7 @@ pub fn row(
 ) -> MemoryResult<Value> {
     let resume = memory
         .resume_bounds()
+        .filter(|_| verb != AgentVerb::RevealWait.as_str())
         .map(|(session, room)| VerbResume::Row { session, room });
     // Bound on every call: a retry of a call an ask parked meets its saved
     // reference whether or not a hook takes the verb now.

@@ -53,6 +53,12 @@ pub struct ArtifactExportRequest {
     /// The born-with text to send with the file; absent sends none (OF-491).
     #[serde(default)]
     pub travel: Option<TravelChoice>,
+    /// Why an agent needs the keys in a file stored with keys in it, one
+    /// line (OF-560). With a grant over them the agent reads the stored
+    /// bytes, and the read's receipt keeps this; otherwise the owner is
+    /// asked, and the keys read masked. Absent, they read masked.
+    #[serde(default)]
+    pub why: Option<String>,
 }
 
 /// One version's export file, its bytes base64, with the born-with text the
@@ -396,10 +402,10 @@ impl Memory<'_> {
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
         let vault = self.vault();
-        let Some(file) = vault.export_blob_artifact_as(
+        let Some(file) = self.export_blob_artifact_sighted(
             &entity(&input.artifact_ref)?,
             input.version,
-            self.secret_sight()?,
+            input.why.as_deref(),
         )?
         else {
             return Ok(None);

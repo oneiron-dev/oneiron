@@ -202,8 +202,8 @@ fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
             match merge_replicated_turn_in_txn(vault, wtxn, turn)? {
                 TurnMerge::Written => merged += 1,
                 TurnMerge::Held => {}
-                TurnMerge::Refused => {
-                    tracing::warn!(window, key = %id, "room turn row does not merge here; left out");
+                TurnMerge::Refused(reason) => {
+                    tracing::warn!(window, key = %id, ?reason, "room turn row does not merge here; left out");
                 }
             }
         }

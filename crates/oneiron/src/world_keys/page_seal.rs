@@ -26,9 +26,18 @@
 //!   mirror's id and incarnation with it ([`reopen_delivered_page_seal`]): no
 //!   wrap opens it, and its mirror is written at the first open, before any
 //!   wrap.
+//! - A restore makes a new sealed vault and copies the rows into it (no
+//!   converter): the same vault id and data key under a fresh incarnation
+//!   ([`VaultPageSeal::fresh_incarnation`], or an artifact's own key for a
+//!   restore where no vault is). A restore over a sealed vault swaps two
+//!   environments whose mirrors stay where they are, so while it publishes,
+//!   each mirror names both incarnations (at most [`MIRROR_CANDIDATES`]) and
+//!   an open takes the one whose page key opens its environment
+//!   ([`SealedSwap`]); every later rewrite names that one alone.
 //!
 //! Body files, `.lines`, LFS staging and lock files stay outside the tier.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -48,7 +57,10 @@ pub const PAGE_SEAL_WARNING: &str =
     "the maximum tier seals every vault page and is slower: point reads about 20x, scans about 12x";
 
 const PAGE_KEY_CONTEXT: &str = "oneiron/vault-page-key/v1";
-const MIRROR_VERSION: u32 = 1;
+const MIRROR_VERSION: u32 = 2;
+/// The most incarnations a mirror names: the live vault's and the one a
+/// restore over it publishes in its place.
+pub(crate) const MIRROR_CANDIDATES: usize = 2;
 /// The most a mirror file is, for its reader and its writer alike: a wrap
 /// change whose mirror would be larger is refused before it commits.
 const MIRROR_LIMIT: u64 = 1 << 20;
@@ -68,6 +80,13 @@ static OPENED: LazyLock<Mutex<HashMap<PathBuf, Arc<Zeroizing<[u8; 32]>>>>> =
 /// Held while a mirror is read from a vault and written, and through each
 /// wrap change on a sealed vault, so the last writer writes the latest wraps.
 static MIRRORING: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    /// The page key the read-only door opens one sealed vault with on this
+    /// thread, by canonical root, for the length of one read ([`read_sealed`]).
+    static READING: RefCell<Option<(PathBuf, Arc<Zeroizing<[u8; 32]>>)>> =
+        const { RefCell::new(None) };
+}
 
 /// What opens a sealed vault's pages: the page key, the vault it belongs to,
 /// and the vault data key it derives from. No `Serialize`, a `Debug` that
@@ -116,6 +135,15 @@ impl VaultPageSeal {
         data_key: VaultDataKey,
         origin: SealOrigin,
     ) -> Self {
+        Self::derive_shared(vault_id, incarnation, Arc::new(data_key), origin)
+    }
+
+    fn derive_shared(
+        vault_id: [u8; 32],
+        incarnation: [u8; 32],
+        data_key: Arc<VaultDataKey>,
+        origin: SealOrigin,
+    ) -> Self {
         let page_key = Arc::new(Zeroizing::new(
             data_key.derive(PAGE_KEY_CONTEXT, &incarnation),
         ));
@@ -123,9 +151,24 @@ impl VaultPageSeal {
             vault_id,
             incarnation,
             page_key,
-            data_key: Arc::new(data_key),
+            data_key,
             origin,
         }
+    }
+
+    /// A seal for a vault restored in this one's place or beside it: this
+    /// seal's vault and data key under a fresh incarnation. It creates the
+    /// restored vault, as a new vault's seal does; the restored rows carry the
+    /// key's wraps, and its mirror follows them.
+    pub fn fresh_incarnation(&self) -> Result<Self> {
+        let mut incarnation = [0u8; 32];
+        os_fill(&mut incarnation)?;
+        Ok(Self::derive_shared(
+            self.vault_id,
+            incarnation,
+            Arc::clone(&self.data_key),
+            SealOrigin::New,
+        ))
     }
 
     /// The vault this seal belongs to. A new vault takes it as its own id.
@@ -140,13 +183,14 @@ impl VaultPageSeal {
     }
 }
 
-/// The mirror file's content.
+/// The mirror file's content. It names one incarnation, or while a restore
+/// publishes a vault in another's place, up to [`MIRROR_CANDIDATES`].
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Mirror {
     version: u32,
     vault_id: [u8; 32],
-    incarnation: [u8; 32],
+    incarnations: Vec<[u8; 32]>,
     carried: CarriedVaultKey,
 }
 
@@ -155,23 +199,61 @@ impl Mirror {
         Self {
             version: MIRROR_VERSION,
             vault_id: seal.vault_id,
-            incarnation: seal.incarnation,
+            incarnations: vec![seal.incarnation],
             carried,
         }
+    }
+}
+
+/// The data key an artifact's carried wrap opened to, kept for a sealed vault
+/// restored from it: opaque, never handed out as bytes, and wiped when the
+/// last holder drops.
+#[derive(Clone)]
+pub(crate) struct OpenedDataKey {
+    vault_id: [u8; 32],
+    key: Arc<VaultDataKey>,
+}
+
+impl OpenedDataKey {
+    pub(super) fn new(vault_id: [u8; 32], key: VaultDataKey) -> Self {
+        Self {
+            vault_id,
+            key: Arc::new(key),
+        }
+    }
+
+    /// A seal for a vault restored from the artifact: its vault id and data
+    /// key under a fresh incarnation. It creates the restored vault, whose
+    /// rows carry the key's wraps; its second open checks the key against
+    /// their commitment.
+    pub(crate) fn restored_page_seal(&self) -> Result<VaultPageSeal> {
+        let mut incarnation = [0u8; 32];
+        os_fill(&mut incarnation)?;
+        Ok(VaultPageSeal::derive_shared(
+            self.vault_id,
+            incarnation,
+            Arc::clone(&self.key),
+            SealOrigin::New,
+        ))
     }
 }
 
 /// Where the vault at `vault_path` keeps its page-seal mirror:
 /// `<parent>/.<vault dir name>.page-seal`, beside the vault, never in it.
 pub fn page_seal_custody_path(vault_path: &Path) -> Result<PathBuf> {
-    let root = match vault_path.canonicalize() {
-        Ok(root) => root,
+    mirror_beside(&custody_root(vault_path)?)
+}
+
+/// The vault path a mirror sits beside: canonical, or absolute where nothing
+/// is there yet.
+fn custody_root(vault_path: &Path) -> Result<PathBuf> {
+    match vault_path.canonicalize() {
+        Ok(root) => Ok(root),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::path::absolute(vault_path)?
+            Ok(std::path::absolute(vault_path)?)
         }
-        Err(error) => return Err(error.into()),
-    };
-    mirror_beside(&root)
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn mirror_beside(root: &Path) -> Result<PathBuf> {
@@ -248,9 +330,10 @@ pub fn reopen_delivered_page_seal(
             "the delivered key is not the data key this sealed vault's mirror names",
         ));
     }
+    let incarnation = select_incarnation(vault_path, &mirror, &key)?;
     Ok(VaultPageSeal::derive(
         mirror.vault_id,
-        mirror.incarnation,
+        incarnation,
         key,
         SealOrigin::Delivered { new: false },
     ))
@@ -268,12 +351,55 @@ pub fn unlock_page_seal(vault_path: &Path, unlock: &VaultKeyUnlock<'_>) -> Resul
         return Err(refused(ORPHANED));
     }
     let (key, opened) = mirror.carried.open_recording(&mirror.vault_id, unlock)?;
+    let incarnation = select_incarnation(vault_path, &mirror, &key)?;
     Ok(VaultPageSeal::derive(
         mirror.vault_id,
-        mirror.incarnation,
+        incarnation,
         key,
         SealOrigin::Unlocked(opened),
     ))
+}
+
+/// The incarnation `mirror` names whose page key under `key` opens the vault
+/// at `vault_path`: its only one, or, after a restore over a sealed vault
+/// that was not yet confirmed, the candidate the environment there opens
+/// under.
+fn select_incarnation(vault_path: &Path, mirror: &Mirror, key: &VaultDataKey) -> Result<[u8; 32]> {
+    if let [only] = mirror.incarnations.as_slice() {
+        return Ok(*only);
+    }
+    for incarnation in &mirror.incarnations {
+        let page_key = Zeroizing::new(key.derive(PAGE_KEY_CONTEXT, incarnation));
+        if opens_under(vault_path, &page_key) {
+            return Ok(*incarnation);
+        }
+    }
+    Err(refused(
+        "none of the incarnations the page-seal mirror names opens this vault",
+    ))
+}
+
+/// Whether the environment at `vault_path` opens under `page_key`: a
+/// read-only open with no lock file, which reads one sealed page and closes.
+fn opens_under(vault_path: &Path, page_key: &[u8; 32]) -> bool {
+    let mut options = heed::EnvOpenOptions::new();
+    options.page_key(page_key);
+    // SAFETY: a read-only, lock-free environment never writes `data.mdb` or
+    // touches `lock.mdb`, and it closes before this returns. It is asked only
+    // for a mirror naming several incarnations, before its vault opens, so no
+    // environment of this process covers these files; heed's registry
+    // refuses the open if one does.
+    let opened = unsafe {
+        options.flags(heed::EnvFlags::READ_ONLY | heed::EnvFlags::NO_LOCK);
+        options.open(vault_path)
+    };
+    match opened {
+        Ok(env) => {
+            env.prepare_for_closing().wait();
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Refuses to create a vault at `root` where a page-seal mirror is beside
@@ -319,6 +445,11 @@ fn read_mirror(vault_path: &Path) -> Result<Mirror> {
         serde_json::from_slice(&raw).map_err(|_| refused("the page-seal mirror is malformed"))?;
     if mirror.version != MIRROR_VERSION {
         return Err(refused("the page-seal mirror is of another version"));
+    }
+    if mirror.incarnations.is_empty() || mirror.incarnations.len() > MIRROR_CANDIDATES {
+        return Err(refused(
+            "the page-seal mirror names no incarnation, or more than a restore leaves",
+        ));
     }
     Ok(mirror)
 }
@@ -380,15 +511,25 @@ fn open_no_follow(path: &Path, write_new: bool) -> Result<File> {
 }
 
 /// Puts the page key on `options` when the vault at `root` is sealed, for a
-/// door that opens it without a config: the key of a vault this process
-/// opened. A sealed vault this process never opened refuses.
+/// door that opens it without a config: the seal its reader passed
+/// ([`read_sealed`]), or the key of a vault this process opened. A sealed
+/// vault this process never opened, read with no seal, refuses.
 pub(crate) fn seal_read_only(options: &mut heed::EnvOpenOptions, root: &Path) -> Result<bool> {
     let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let opened = OPENED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&canonical)
-        .cloned();
+    let explicit = READING.with(|reading| {
+        reading
+            .borrow()
+            .as_ref()
+            .filter(|(path, _)| *path == canonical)
+            .map(|(_, key)| Arc::clone(key))
+    });
+    let opened = explicit.or_else(|| {
+        OPENED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&canonical)
+            .cloned()
+    });
     if let Some(key) = opened {
         options.page_key(&key);
         return Ok(true);
@@ -399,6 +540,33 @@ pub(crate) fn seal_read_only(options: &mut heed::EnvOpenOptions, root: &Path) ->
         ));
     }
     Ok(false)
+}
+
+/// Runs `read`, which reads the vault at `root` through the read-only door,
+/// with `seal` as that vault's page seal: how a reader beside a sealed vault
+/// another process serves passes its seal, explicitly, for each read. With
+/// no seal, `read` runs as it is.
+pub(crate) fn read_sealed<T>(
+    root: &Path,
+    seal: Option<&VaultPageSeal>,
+    read: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    /// Puts back what the thread read with before, however `read` ends.
+    struct Restore(Option<(PathBuf, Arc<Zeroizing<[u8; 32]>>)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            READING.with(|reading| *reading.borrow_mut() = previous);
+        }
+    }
+    let Some(seal) = seal else {
+        return read();
+    };
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let _restore = Restore(
+        READING.with(|reading| reading.replace(Some((canonical, Arc::clone(&seal.page_key))))),
+    );
+    read()
 }
 
 /// The error of an environment opened with (`keyed`) or without a page key,
@@ -500,6 +668,51 @@ impl Vault {
         write_mirror(self.store.env.path(), &Mirror::of(seal, carried))
     }
 
+    /// Step 1 of a restore over this vault ([`SealedSwap`]), before the
+    /// exchange: the mirror beside this vault and the one beside
+    /// `replacement`, restored for its place under a fresh incarnation of its
+    /// seal, each name both incarnations, with the replacement's wraps. `None`
+    /// for a plain vault and a plain replacement; a replacement of another
+    /// tier, vault or key, or under this vault's own incarnation, is refused.
+    pub fn stage_sealed_swap(&self, replacement: &Vault) -> Result<Option<SealedSwap>> {
+        let (live, next) = match (self.sealed_page_seal()?, replacement.sealed_page_seal()?) {
+            (None, None) => return Ok(None),
+            (Some(live), Some(next)) => (live, next),
+            _ => return Err(refused("a restore over a vault keeps its tier")),
+        };
+        let commitment = live.data_key.commitment(&live.vault_id);
+        if live.vault_id != next.vault_id || commitment != next.data_key.commitment(&next.vault_id)
+        {
+            return Err(refused(
+                "the replacement is sealed under another vault's data key",
+            ));
+        }
+        if live.incarnation == next.incarnation {
+            return Err(refused(
+                "the replacement is sealed under the live vault's own incarnation",
+            ));
+        }
+        let carried = replacement
+            .resting_vault_key()?
+            .ok_or_else(|| refused("the replacement's vault key has no wrap"))?;
+        let swap = SealedSwap {
+            vault_id: live.vault_id,
+            live: live.incarnation,
+            replacement: next.incarnation,
+            carried,
+        };
+        let _mirroring = MIRRORING.lock().unwrap_or_else(PoisonError::into_inner);
+        write_mirror(
+            self.store.env.path(),
+            &swap.mirror(vec![swap.live, swap.replacement]),
+        )?;
+        write_mirror(
+            replacement.store.env.path(),
+            &swap.mirror(vec![swap.replacement, swap.live]),
+        )?;
+        Ok(Some(swap))
+    }
+
     /// Begins one wrap change ([`WrapTransition`]): on a sealed vault it
     /// holds the mirror lock until the change finishes.
     pub(super) fn begin_wrap_transition(&self) -> Result<WrapTransition<'_>> {
@@ -532,7 +745,7 @@ impl Vault {
             }
             read => read?,
         };
-        if mirror.vault_id != seal.vault_id || mirror.incarnation != seal.incarnation {
+        if mirror.vault_id != seal.vault_id || !mirror.incarnations.contains(&seal.incarnation) {
             return Err(refused("the page-seal mirror is another vault's"));
         }
         let carries_held = *mirror.carried.commitment() == seal.data_key.commitment(&seal.vault_id)
@@ -593,5 +806,68 @@ impl WrapTransition<'_> {
                  rewritten ({error}); the next sealed open repairs it"
             )))
         })
+    }
+}
+
+/// A restore over a sealed vault, kept recoverable across its swap. The live
+/// vault and its replacement trade places in one exchange, but the mirror of
+/// each sits beside its directory, outside it, and does not move:
+/// 1. [`Vault::stage_sealed_swap`], before the exchange: the mirrors beside
+///    both name both incarnations.
+/// 2. The exchange.
+/// 3. [`Self::mirror_archive`], before the previous vault takes its archive
+///    name: the mirror beside that name names the previous vault's
+///    incarnation.
+/// 4. [`Self::confirm`], once the swap is durable: the mirror at the vault's
+///    path names the replacement's alone.
+///
+/// A crash between any two steps leaves each environment beside a mirror that
+/// names its incarnation. An open takes the one whose page key opens it, and
+/// its next mirror rewrite names that one alone.
+pub struct SealedSwap {
+    vault_id: [u8; 32],
+    live: [u8; 32],
+    replacement: [u8; 32],
+    carried: CarriedVaultKey,
+}
+
+impl std::fmt::Debug for SealedSwap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SealedSwap(..)")
+    }
+}
+
+impl SealedSwap {
+    fn mirror(&self, incarnations: Vec<[u8; 32]>) -> Mirror {
+        Mirror {
+            version: MIRROR_VERSION,
+            vault_id: self.vault_id,
+            incarnations,
+            carried: self.carried.clone(),
+        }
+    }
+
+    /// Step 3: the mirror beside `archive`, the name the previous vault is
+    /// about to take, names its incarnation, so it opens there.
+    pub fn mirror_archive(&self, archive: &Path) -> Result<()> {
+        let root = custody_root(archive)?;
+        let _mirroring = MIRRORING.lock().unwrap_or_else(PoisonError::into_inner);
+        write_mirror(&root, &self.mirror(vec![self.live]))
+    }
+
+    /// Removes the mirror [`Self::mirror_archive`] wrote beside `archive`,
+    /// when the previous vault did not take that name after all.
+    pub fn discard_archive_mirror(&self, archive: &Path) {
+        if let Ok(path) = page_seal_custody_path(archive) {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    /// Step 4, once the swap is durable: the mirror beside the vault at
+    /// `home` names the replacement's incarnation alone.
+    pub fn confirm(&self, home: &Path) -> Result<()> {
+        let root = custody_root(home)?;
+        let _mirroring = MIRRORING.lock().unwrap_or_else(PoisonError::into_inner);
+        write_mirror(&root, &self.mirror(vec![self.replacement]))
     }
 }

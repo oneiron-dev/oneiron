@@ -115,7 +115,11 @@ impl Memory<'_> {
     ) -> MemoryResult<crate::saved_query::SavedQueryRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
         Ok(crate::saved_query::create_saved_query(
-            self.vault, self.actor, request, now,
+            self.vault,
+            self.actor,
+            self.actor_class,
+            request,
+            now,
         )?)
     }
 

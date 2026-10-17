@@ -5,9 +5,9 @@
 //! proof reads the owner lens.
 use super::{
     ClaimReadStatus, ScopedRead, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence,
-    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensPlan, WeaveLensRender,
-    WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport, WeaveSectionKind,
-    WeaveSectionSpec,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensPlan, WeaveLensRefusal,
+    WeaveLensRender, WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport,
+    WeaveScheduleHold, WeaveSectionKind, WeaveSectionSpec,
 };
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
@@ -173,7 +173,7 @@ pub struct WeaveReportView {
 }
 
 /// One saved digest period, with the receipt saved with it, and its lens
-/// once the generate step has rendered the period.
+/// once the generate step has rendered the period, or why it rendered none.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WeaveDigestView {
     pub scheduled_for: u64,
@@ -182,6 +182,8 @@ pub struct WeaveDigestView {
     pub narrowing: ScopedReadReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lens: Option<GeneratedLens>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens_refused: Option<WeaveLensRefusal>,
 }
 
 /// Who a schedule is for, on the owner's wire.
@@ -234,6 +236,10 @@ pub struct WeaveScheduleView {
     /// The first due Unix second.
     pub next_due_at: u64,
     pub sections: Vec<WeaveSectionInput>,
+    /// Answer only: the timer left this row until `held.until`, after an
+    /// owner's due notice or a refused render. A write ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<WeaveScheduleHold>,
 }
 
 impl WeaveScheduleView {
@@ -251,8 +257,9 @@ impl WeaveScheduleView {
     }
 
     #[must_use]
-    pub fn from_schedule(row: &WeaveDigestSchedule) -> Self {
+    pub fn from_schedule(row: &WeaveDigestSchedule, held: Option<WeaveScheduleHold>) -> Self {
         Self {
+            held,
             reader: WeaveReaderRef::from_reader(row.reader),
             cadence: row.cadence,
             next_due_at: row.next_due_at,
@@ -379,10 +386,7 @@ impl Memory<'_> {
         let lens = super::weave_lens::compose_weave_lens(&read, &report, &render)?;
         // The render is kept, and the one before it settles on the skill's
         // corrections axis; neither gates the lens.
-        if let Err(error) = self
-            .vault()
-            .keep_live_weave_lens(reader, &report, &render)
-        {
+        if let Err(error) = self.vault().keep_live_weave_lens(reader, &report, &render) {
             tracing::warn!(?error, "the live weave lens render was not kept");
         }
         Ok(lens)
@@ -465,6 +469,7 @@ impl Memory<'_> {
             sections: self.weave_sections(&stored.report.value)?,
             narrowing: stored.report.receipt,
             lens,
+            lens_refused: stored.lens_refused,
         })
     }
 

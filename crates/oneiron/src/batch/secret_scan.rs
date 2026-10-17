@@ -1,4 +1,5 @@
 mod container;
+mod lift_history;
 mod mask;
 mod shapes;
 mod whole_read;
@@ -9,6 +10,11 @@ use heed::{RoTxn, RwTxn};
 pub(crate) use self::container::{
     is_container, masked_copy, scan_members as scan_container_members,
 };
+pub use self::lift_history::{
+    LiftCause, LiftCounts, LiftFamily, LiftTrigger, SecretLiftHistoryProposal, SecretLiftProgress,
+    SecretLiftReceipt, SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner,
+};
+pub(crate) use self::lift_history::{enqueue_lift_in_txn, run_lift_pass};
 pub(crate) use self::mask::admit::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
     scan_document_in_txn,
@@ -49,7 +55,17 @@ const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_ov
 /// vault owner switches it, and every switch writes a receipt
 /// ([`Vault::set_secret_scan_mode`](crate::Vault::set_secret_scan_mode)).
 /// Serve and export redact credentials in both modes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretScanMode {
     /// The write door scans. A secret it can place in text or a field goes

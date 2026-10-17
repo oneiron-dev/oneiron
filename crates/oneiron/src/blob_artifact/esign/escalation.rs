@@ -5,7 +5,8 @@
 //! held, never dropped: one hold per recipient, counting each repeat call.
 //! The host asks whether this one signature lands, first of the person the
 //! agent signs for (or, with no principal named, the document's sender),
-//! then up the chain to the vault owners. The ask is an e-signature act, so
+//! then up the chain to the vault owners: an ask its person leaves
+//! unanswered for [`ESIGN_ASK_CLIMB_HOURS`] climbs. The ask is an e-signature act, so
 //! at every rung only a natural person answers; a board or an agent holding
 //! the role never does. No rule or model rung answers that question:
 //! decide() advises and never grants, so the ask goes straight to the role
@@ -19,7 +20,7 @@ use super::ceremony::sign;
 use super::ledger::state_in;
 use super::model::*;
 use crate::llm::decision::catalogue;
-use crate::llm::decision::{AnswerContract, AskRole, DecisionQuestion, RoleRank};
+use crate::llm::decision::{AnswerContract, AskRole, DecisionAsk, DecisionQuestion, RoleRank};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,18 @@ const HELD: SideTable<String, HeldSigning, Named> = SideTable::new(&side_table::
 pub const HOLD_ALLOW: &str = "allow";
 /// The answer that keeps the signature from landing.
 pub const HOLD_DECLINE: &str = "decline";
+
+/// Hours a held sign act's unanswered ask waits on the person it went to
+/// before it climbs to the next role up its chain (CALLS "OF-415 held
+/// signing climb"). At the vault owners it waits on: no unanswered ask
+/// signs or lapses.
+pub const ESIGN_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
+    crate::learning_setting::SettingSpec {
+        key: "esign.ask.climb_hours",
+        min: 1.0,
+        max: 720.0,
+        seed: 24.0,
+    };
 /// The most bytes of the document title the question quotes.
 const TITLE_MAX_BYTES: usize = 256;
 
@@ -252,6 +265,31 @@ impl Vault {
             };
             HELD.put(&self.store, txn, &key(document, recipient), &held)
         })
+    }
+
+    /// Climbs a held sign act's unanswered `ask` one role up its chain once
+    /// [`ESIGN_ASK_CLIMB_HOURS`] have passed since it was asked: a person who
+    /// never answers passes the question on, through the climb that keeps
+    /// the ask's natural-person filter and ceiling. An ask at the vault
+    /// owners, or at no live holder, waits on. `true` when it climbed.
+    ///
+    /// # Errors
+    /// The setting or the climb's write failed.
+    pub fn climb_stale_esign_ask(&self, ask: &DecisionAsk) -> Result<bool> {
+        if ask.answer.is_some()
+            || ask
+                .role
+                .as_ref()
+                .is_none_or(|role| role.role.rank() == RoleRank::Owner)
+        {
+            return Ok(false);
+        }
+        let hours = crate::learning_setting::setting_value(self, &ESIGN_ASK_CLIMB_HOURS)?;
+        let waited = self.now_recorded_at().saturating_sub(ask.asked_at) as f64;
+        if waited < hours * 3600.0 {
+            return Ok(false);
+        }
+        Ok(self.climb_decision_ask(ask.seq)?.is_some())
     }
 
     /// Settles one hold with a role holder's answer. An allowed hold signs
