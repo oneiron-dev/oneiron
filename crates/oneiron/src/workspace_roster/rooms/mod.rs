@@ -9,6 +9,7 @@ mod participation;
 mod replica;
 #[cfg(test)]
 mod tests;
+mod thread_projection;
 mod upkeep;
 mod witness;
 use super::ProjectRoom;
@@ -43,6 +44,7 @@ use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thr
 pub(crate) use replica::{TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use witness::admit_witness;
 
