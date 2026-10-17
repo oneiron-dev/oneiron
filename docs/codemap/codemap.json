@@ -14345,6 +14345,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/fanout.rs",
+     "purpose": "The fan-out launches that wait on the owner, as TASKS lead rows (OF-393): a held launch's pause row with the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -14538,7 +14548,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 9,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -45970,7 +45980,7 @@
      "surface": {
       "crate-vis": 22,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -51755,7 +51765,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52898,7 +52908,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3202,
+   "source_files": 3203,
    "test_files": 903
   },
   "oneiron-android": {
