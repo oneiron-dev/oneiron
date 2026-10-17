@@ -38,6 +38,8 @@ use crate::server::SyncServer;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::shared_act_doors::*;
+// The shared-vault invitation doors (OF-531) too.
+pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
 // The owner's guest revoke door (OF-232) too.
@@ -465,7 +467,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.members.add"
         | "vault.members.change"
         | "vault.members.remove"
-        | "vault.members.leave" => super::shared_act_doors::person(server, auth, verb).map(drop),
+        | "vault.members.leave"
+        | "vault.members.invitations"
+        | "vault.members.accept"
+        | "vault.members.decline"
+        | "vault.members.withdraw_invitation" => {
+            super::shared_act_doors::person(server, auth, verb).map(drop)
+        }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
         "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {

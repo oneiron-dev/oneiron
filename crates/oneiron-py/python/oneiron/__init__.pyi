@@ -477,13 +477,21 @@ class Oneiron:
             """The executed delete-the-vault act, if any."""
     class _VaultMembersVerbs:
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
-            """An Admin adds a live person to a shared vault at a non-root role."""
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin removes one member from a shared vault."""
         def leave(self, spec: Facade.SharedVaultRequest) -> Facade.SharedActExecutionReceipt:
             """A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead."""
+        def invitations(self, spec: Facade.SharedVaultRequest) -> list[Facade.SharedInvitation]:
+            """The caller's own pending invitations into a shared vault."""
+        def accept(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
+            """The invitee accepts their own invitation and joins the shared vault at its role."""
+        def decline(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
+            """The invitee declines their own invitation; nothing is granted."""
+        def withdraw_invitation(self, spec: Facade.SharedInvitationWithdrawRequest) -> Facade.SharedActExecutionReceipt:
+            """An Admin with the add_member power takes back a pending invitation."""
     class _VaultGuestsVerbs:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
     class _VaultLegalHoldsVerbs:

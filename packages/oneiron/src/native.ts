@@ -80,6 +80,10 @@ vaultMembersAdd(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
+vaultMembersInvitations(input: unknown): unknown
+vaultMembersAccept(input: unknown): unknown
+vaultMembersDecline(input: unknown): unknown
+vaultMembersWithdrawInvitation(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
