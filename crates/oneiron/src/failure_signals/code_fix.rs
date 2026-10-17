@@ -267,8 +267,53 @@ struct QueuedCodeFix {
     record: CodeFixExport,
 }
 
-fn withheld(reason: CodeFixWithheld) -> Result<CodeFixVerdict> {
-    Ok(CodeFixVerdict::Withheld { reason })
+/// A record a door sealed and did not queue. Its caller queues it with
+/// [`queue_sealed_in_txn`] in the write that keeps what the record reports,
+/// so a crash leaves neither half alone.
+pub(crate) struct SealedCodeFix {
+    key: [u8; 16],
+    row: QueuedCodeFix,
+}
+
+/// A door's verdict before anything is queued: `Queued` under the id its
+/// sealed record carries, or `Withheld` with no record.
+pub(crate) type Sealing = (CodeFixVerdict, Option<SealedCodeFix>);
+
+fn withheld(reason: CodeFixWithheld) -> Result<Sealing> {
+    Ok((CodeFixVerdict::Withheld { reason }, None))
+}
+
+/// One record sealed under a fresh random id.
+fn seal(worlds: Vec<EntityId>, record: impl FnOnce(String) -> CodeFixExport) -> Sealing {
+    let mut key = [0u8; 16];
+    rand_core::OsRng.fill_bytes(&mut key);
+    let id = bytes_to_hex_lower(&key);
+    let row = QueuedCodeFix {
+        worlds,
+        record: record(id.clone()),
+    };
+    (
+        CodeFixVerdict::Queued { id },
+        Some(SealedCodeFix { key, row }),
+    )
+}
+
+/// Queues `sealed` in `txn`, if its source still stands there.
+pub(crate) fn queue_sealed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: &CodeFixSource,
+    sealed: SealedCodeFix,
+) -> Result<CodeFixVerdict> {
+    if code_fix_subject_in(vault, txn, source)?.is_none() {
+        return Ok(CodeFixVerdict::Withheld {
+            reason: CodeFixWithheld::UnknownCase,
+        });
+    }
+    QUEUE.put(&vault.store, txn, &sealed.key, &sealed.row)?;
+    Ok(CodeFixVerdict::Queued {
+        id: bytes_to_hex_lower(&sealed.key),
+    })
 }
 
 impl Vault {
@@ -283,6 +328,19 @@ impl Vault {
         replay: &dyn CodeFixReplay,
         scrubber: &dyn ExportScrubber,
     ) -> Result<CodeFixVerdict> {
+        let sealing = self.seal_invented_example(source, draft, replay, scrubber)?;
+        self.queue_sealing(source, sealing)
+    }
+
+    /// [`Vault::prepare_invented_example`] short of queueing: the caller
+    /// queues the sealed record.
+    pub(crate) fn seal_invented_example(
+        &self,
+        source: &CodeFixSource,
+        draft: InventedExampleDraft,
+        replay: &dyn CodeFixReplay,
+        scrubber: &dyn ExportScrubber,
+    ) -> Result<Sealing> {
         use CodeFixWithheld as W;
         if !self.config.failure_signals.exports() {
             return withheld(W::NotEligible);
@@ -336,7 +394,7 @@ impl Vault {
             note,
             conversation,
         } = draft;
-        self.queue_code_fix(source, worlds, |id| {
+        Ok(seal(worlds, |id| {
             CodeFixExport::InventedExample(InventedFailureExample {
                 version: CODE_FIX_RECORD_VERSION,
                 example_id: id,
@@ -344,7 +402,7 @@ impl Vault {
                 note,
                 conversation,
             })
-        })
+        }))
     }
 
     /// Seals the fixed or not-fixed result of shadow-replaying one candidate
@@ -356,6 +414,18 @@ impl Vault {
         candidate: CandidateFix,
         replay: &dyn CodeFixReplay,
     ) -> Result<CodeFixVerdict> {
+        let sealing = self.seal_candidate_fix_result(source, candidate, replay)?;
+        self.queue_sealing(source, sealing)
+    }
+
+    /// [`Vault::record_candidate_fix_result`] short of queueing: the caller
+    /// queues the sealed record.
+    pub(crate) fn seal_candidate_fix_result(
+        &self,
+        source: &CodeFixSource,
+        candidate: CandidateFix,
+        replay: &dyn CodeFixReplay,
+    ) -> Result<Sealing> {
         use CodeFixWithheld as W;
         if !self.config.failure_signals.exports() {
             return withheld(W::NotEligible);
@@ -385,7 +455,7 @@ impl Vault {
             example_id,
             failure_class,
         } = candidate;
-        self.queue_code_fix(source, worlds, |id| {
+        Ok(seal(worlds, |id| {
             CodeFixExport::FixResult(CandidateFixResult {
                 version: CODE_FIX_RECORD_VERSION,
                 result_id: id,
@@ -394,7 +464,7 @@ impl Vault {
                 failure_class,
                 outcome,
             })
-        })
+        }))
     }
 
     /// Reads up to `limit` sealed records this deployment may still send, in
@@ -451,28 +521,17 @@ impl Vault {
         })
     }
 
-    /// Queues one sealed record under a fresh random id, if its source still
-    /// stands at commit.
-    fn queue_code_fix(
+    /// Queues a door's sealed record in a write of its own, if its source
+    /// still stands at commit.
+    fn queue_sealing(
         &self,
         source: &CodeFixSource,
-        worlds: Vec<EntityId>,
-        record: impl FnOnce(String) -> CodeFixExport,
+        (verdict, sealed): Sealing,
     ) -> Result<CodeFixVerdict> {
-        let mut key = [0u8; 16];
-        rand_core::OsRng.fill_bytes(&mut key);
-        let id = bytes_to_hex_lower(&key);
-        let row = QueuedCodeFix {
-            worlds,
-            record: record(id.clone()),
+        let Some(sealed) = sealed else {
+            return Ok(verdict);
         };
-        self.with_write_txn_grouped(|txn| {
-            if code_fix_subject_in(self, txn, source)?.is_none() {
-                return withheld(CodeFixWithheld::UnknownCase);
-            }
-            QUEUE.put(&self.store, txn, &key, &row)?;
-            Ok(CodeFixVerdict::Queued { id })
-        })
+        self.with_write_txn_grouped(|txn| queue_sealed_in_txn(self, txn, source, sealed))
     }
 }
 

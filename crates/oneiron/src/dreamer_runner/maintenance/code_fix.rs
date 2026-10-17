@@ -14,7 +14,9 @@
 //! fail the same way, did the candidate fix it, may the example leave) is a
 //! typed question on the host's decision ladder. The export doors in
 //! `failure_signals` decide what leaves, and the failure's work row keeps
-//! each verdict here after the export queue drains.
+//! each verdict here after the export queue drains. Each record is queued in
+//! the write that keeps its verdict in the row, and a failure gets one run:
+//! a case whose run's blocked report already has a run gets none of its own.
 use std::cell::OnceCell;
 use std::ops::Bound;
 use std::time::{Duration, Instant};
@@ -29,11 +31,12 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     COACH_HEAL_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
 };
-use crate::failure_ladder::{BlockedReportRef, HealerCase};
+use crate::failure_ladder::{BlockedReportRef, HealerCase, healer_case_in_txn};
 use crate::failure_signals::{
     CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber,
     FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage, InventedRole,
-    ReplayRun, ScrubRun, ShadowRun, code_fix_subject_in, failed_case_in,
+    ReplayRun, ScrubRun, SealedCodeFix, Sealing, ShadowRun, code_fix_subject_in, failed_case_in,
+    queue_sealed_in_txn,
 };
 use crate::llm::decision::catalogue::CODE_FIX_JUDGMENT;
 use crate::llm::decision::{
@@ -119,6 +122,18 @@ pub struct CandidateRun {
     /// `None` when the replay could not run, or did not fail before the fix.
     pub outcome: Option<FixOutcome>,
     pub export: CodeFixVerdict,
+}
+
+/// A candidate's run and the record it sealed, queued in the write that
+/// keeps the run.
+type SealedRun = (CandidateRun, Option<SealedCodeFix>);
+
+/// A first run's result, its records sealed and not yet queued.
+struct Unkept {
+    at: u64,
+    failure_class: FailureClassV1,
+    example: Sealing,
+    candidates: Vec<SealedRun>,
 }
 
 /// What the Coach drafts for: the case or blocked report, its class and the
@@ -461,6 +476,11 @@ pub(super) fn wake_in_txn(
     if WORK.get(&vault.store, &*txn, &key)?.is_some() {
         return Ok(());
     }
+    if let CodeFixSource::Case { case_ref } = &source
+        && run_report_has_work_in(vault, txn, case_ref)?
+    {
+        return Ok(());
+    }
     WORK.put(
         &vault.store,
         txn,
@@ -474,6 +494,46 @@ pub(super) fn wake_in_txn(
         },
     )?;
     enqueue_run_in_txn(vault, txn, key, Some(parent), now)
+}
+
+/// Whether a blocked report the case's failing run filed has its own work
+/// row: that run replays the same failure, so the case queues none.
+fn run_report_has_work_in(vault: &Vault, txn: &heed::RoTxn<'_>, case_ref: &str) -> Result<bool> {
+    let Some(case) = healer_case_in_txn(vault, txn, case_ref)? else {
+        return Ok(false);
+    };
+    let run = EntityId::from_bytes(*case.failing_attempt_id.as_bytes())?;
+    for receipt in crate::self_heal::blocked_reports::receipts_of_run_in(vault, txn, run)? {
+        let key = work_key(&CodeFixSource::Blocked { receipt, run })?;
+        if WORK.contains(&vault.store, txn, &key)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The verdict a sealed record keeps: queued in `txn`, the write that keeps
+/// its run, unless its source no longer stands there.
+fn keep_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: &CodeFixSource,
+    (verdict, sealed): Sealing,
+) -> Result<CodeFixVerdict> {
+    match sealed {
+        Some(sealed) => queue_sealed_in_txn(vault, txn, source, sealed),
+        None => Ok(verdict),
+    }
+}
+
+fn keep_run_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: &CodeFixSource,
+    (mut run, sealed): SealedRun,
+) -> Result<CandidateRun> {
+    run.export = keep_in_txn(vault, txn, source, (run.export, sealed))?;
+    Ok(run)
 }
 
 /// Queues the `coach.code_fix` attempt for the work row `key`. One waiting
@@ -517,13 +577,16 @@ fn untried(settled: &CodeFixSettled, pinned: &[PublisherCandidate]) -> Vec<(Stri
 }
 
 /// Each of `candidates` kept as not run, for `reason`: it is not tried again.
-fn not_run(candidates: &[(String, String)], reason: CodeFixWithheld) -> Vec<CandidateRun> {
+fn not_run(candidates: &[(String, String)], reason: CodeFixWithheld) -> Vec<SealedRun> {
     candidates
         .iter()
-        .map(|(candidate_id, _)| CandidateRun {
-            candidate_id: candidate_id.clone(),
-            outcome: None,
-            export: CodeFixVerdict::Withheld { reason },
+        .map(|(candidate_id, _)| {
+            let run = CandidateRun {
+                candidate_id: candidate_id.clone(),
+                outcome: None,
+                export: CodeFixVerdict::Withheld { reason },
+            };
+            (run, None)
         })
         .collect()
 }
@@ -665,7 +728,9 @@ impl Vault {
     /// invented example through its export door, and the candidate's shadow
     /// replay, kept here and sent through its own door. A replay returns what
     /// the first run kept, with a run of each pinned publisher candidate it
-    /// had none of.
+    /// had none of. Every record a run sealed is queued in the write that
+    /// keeps the run, and one a run that lost the race to keep sealed is
+    /// dropped unsent.
     pub fn run_coach_code_fix(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -700,13 +765,14 @@ impl Vault {
                     .get(&self.store, &*txn, &key)?
                     .ok_or_else(super::invalid)?;
                 let mut settled = work.settled.take().ok_or_else(super::invalid)?;
-                for run in &runs {
+                for run in runs {
                     if !settled
                         .candidates
                         .iter()
-                        .any(|kept| kept.candidate_id == run.candidate_id)
+                        .any(|kept| kept.candidate_id == run.0.candidate_id)
                     {
-                        settled.candidates.push(run.clone());
+                        let run = keep_run_in_txn(self, txn, &work.source, run)?;
+                        settled.candidates.push(run);
                     }
                 }
                 work.settled = Some(settled.clone());
@@ -714,7 +780,7 @@ impl Vault {
                 Ok(settled)
             });
         }
-        let settled = self.code_fix_run(&work.source, route, decisions, host, now)?;
+        let unkept = self.code_fix_run(&work.source, route, decisions, host, now)?;
         self.with_write_txn_grouped(|txn| {
             let mut work = WORK
                 .get(&self.store, &*txn, &key)?
@@ -722,6 +788,18 @@ impl Vault {
             if let Some(first) = work.settled {
                 return Ok(first);
             }
+            let example = keep_in_txn(self, txn, &work.source, unkept.example)?;
+            let candidates: Vec<CandidateRun> = unkept
+                .candidates
+                .into_iter()
+                .map(|run| keep_run_in_txn(self, txn, &work.source, run))
+                .collect::<Result<_>>()?;
+            let settled = CodeFixSettled {
+                at: unkept.at,
+                failure_class: unkept.failure_class,
+                example,
+                candidates,
+            };
             work.settled = Some(settled.clone());
             WORK.put(&self.store, txn, &key, &work)?;
             Ok(settled)
@@ -735,11 +813,11 @@ impl Vault {
         decisions: &CodeFixDecisions<'_>,
         host: &dyn CodeFixHost,
         now: u64,
-    ) -> Result<CodeFixSettled> {
-        let withheld = |failure_class, reason| CodeFixSettled {
+    ) -> Result<Unkept> {
+        let withheld = |failure_class, reason| Unkept {
             at: now,
             failure_class,
-            example: CodeFixVerdict::Withheld { reason },
+            example: (CodeFixVerdict::Withheld { reason }, None),
             candidates: Vec::new(),
         };
         if !self.config.failure_signals.exports() {
@@ -824,7 +902,7 @@ impl Vault {
             evidence: &evidence,
         };
         let example = match draft {
-            Some(draft) => self.prepare_invented_example(
+            Some(draft) => self.seal_invented_example(
                 source,
                 InventedExampleDraft {
                     failure_class,
@@ -834,12 +912,15 @@ impl Vault {
                 &replay,
                 &scrubber,
             )?,
-            None => CodeFixVerdict::Withheld {
-                reason: CodeFixWithheld::NotDrafted,
-            },
+            None => (
+                CodeFixVerdict::Withheld {
+                    reason: CodeFixWithheld::NotDrafted,
+                },
+                None,
+            ),
         };
-        let candidates = self.replay_candidates(source, &replay, &example)?;
-        Ok(CodeFixSettled {
+        let candidates = self.replay_candidates(source, &replay, &example.0)?;
+        Ok(Unkept {
             at: now,
             failure_class,
             example,
@@ -859,7 +940,7 @@ impl Vault {
         missing: &[(String, String)],
         decisions: &CodeFixDecisions<'_>,
         host: &dyn CodeFixHost,
-    ) -> Result<Vec<CandidateRun>> {
+    ) -> Result<Vec<SealedRun>> {
         let found = {
             let txn = self.store.env.read_txn()?;
             code_fix_subject_in(self, &txn, source)?
@@ -890,13 +971,13 @@ impl Vault {
     }
 
     /// Each of the replay's candidates shadow-replayed against the real
-    /// failure, its result sent through its door beside `example`'s record.
+    /// failure, its result sealed by its door beside `example`'s record.
     fn replay_candidates(
         &self,
         source: &CodeFixSource,
         replay: &CoachReplay<'_>,
         example: &CodeFixVerdict,
-    ) -> Result<Vec<CandidateRun>> {
+    ) -> Result<Vec<SealedRun>> {
         let example_id = match example {
             CodeFixVerdict::Queued { id } => Some(id.clone()),
             CodeFixVerdict::Withheld { .. } => None,
@@ -910,7 +991,7 @@ impl Vault {
                 ShadowRun::NotFixed => Some(FixOutcome::NotFixed),
                 ShadowRun::Unavailable => None,
             };
-            let export = self.record_candidate_fix_result(
+            let (export, sealed) = self.seal_candidate_fix_result(
                 source,
                 CandidateFix {
                     candidate_id: candidate_id.clone(),
@@ -919,11 +1000,12 @@ impl Vault {
                 },
                 &Ran(shadow),
             )?;
-            candidates.push(CandidateRun {
+            let run = CandidateRun {
                 candidate_id: candidate_id.clone(),
                 outcome,
                 export,
-            });
+            };
+            candidates.push((run, sealed));
         }
         Ok(candidates)
     }

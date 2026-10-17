@@ -149,19 +149,32 @@ impl Vault {
     /// Storage errors.
     pub fn blocked_reports_of_run(&self, run: EntityId) -> Result<Vec<BlockedReportRef>> {
         let txn = self.store.env.read_txn()?;
-        BY_RUN
-            .iter_from(&self.store, &txn, run.as_bytes())?
-            .take(MAX_RUN_REPORTS)
-            .map(|row| {
-                let (key, _) = row?;
-                let mut receipt = [0; 16];
-                receipt.copy_from_slice(&key[16..]);
-                Ok(BlockedReportRef {
-                    receipt_ref: EntityId::from_bytes(receipt)?.to_hex(),
-                })
+        Ok(receipts_of_run_in(self, &txn, run)?
+            .into_iter()
+            .map(|receipt| BlockedReportRef {
+                receipt_ref: receipt.to_hex(),
             })
-            .collect()
+            .collect())
     }
+}
+
+/// The receipts of the blocked reports the durable run `run` filed, oldest
+/// first, at most 128.
+pub(crate) fn receipts_of_run_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+) -> Result<Vec<EntityId>> {
+    BY_RUN
+        .iter_from(&vault.store, txn, run.as_bytes())?
+        .take(MAX_RUN_REPORTS)
+        .map(|row| {
+            let (key, _) = row?;
+            let mut receipt = [0; 16];
+            receipt.copy_from_slice(&key[16..]);
+            EntityId::from_bytes(receipt)
+        })
+        .collect()
 }
 
 /// Whether the durable run `run` filed the report `receipt`. The record
