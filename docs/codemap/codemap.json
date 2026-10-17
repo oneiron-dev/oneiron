@@ -44200,7 +44200,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AskAuthorityScope",
@@ -44246,7 +44246,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 16,
-      "fn": 5,
+      "fn": 6,
       "struct": 21
      }
     },
@@ -51049,7 +51049,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 138,
+   "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3084,
    "test_files": 903
