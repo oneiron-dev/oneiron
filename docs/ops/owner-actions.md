@@ -1032,10 +1032,13 @@ The core conversation writes and the atomic batch are verbs too:
   them below it, which refuses a put that turns an agent definition back on.
 
 Each REST route (`POST /v1/core/conversations`, `.../{id}/turns`, `.../{id}/records`,
-`/v1/core/batch`) runs its verb as an action of your credential. It runs the verb's own door
-instead when the request is larger than one action argument (16 KiB of JSON), names a room
-turn, or comes from a credential that binds no person or agent. The route picks the path before
-it writes. A TURN write wakes the Dreamer once on either path.
+`/v1/core/batch`) runs its verb as an action of your credential: a person's, an agent's or a
+system job's. The whole body rides as one structured argument, so every size the route accepts
+runs as an action. It runs the verb's own door instead when the request names a room turn, or
+comes from a credential that binds no principal or read key. The route picks the path before it
+writes. A refusal answers with the code, words and suggestions the verb's own route refused
+with (a replay of a refused key keeps the code). A TURN write wakes the Dreamer once on either
+path.
 
 ## Widen proposals
 
