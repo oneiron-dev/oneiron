@@ -156,10 +156,13 @@ pub use fold_state::*;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
-pub use history_coverage::{AuthorityHistoryCoverage, AuthorityHistoryRequest};
+pub use history_coverage::{
+    AuthorityArchiveCoverage, AuthorityHistoryCoverage, AuthorityHistoryRequest,
+};
 pub use history_fetch::{
-    AUTHORITY_HISTORY_PAGE_MAX, AuthorityHistoryFetch, AuthorityHistoryPage,
-    AuthorityHistoryVerificationCoverage,
+    AUTHORITY_HISTORY_PAGE_BYTES, AUTHORITY_HISTORY_PAGE_MAX,
+    AUTHORITY_HISTORY_SELECTION_ID_CONTEXT, AuthorityHistoryFetch, AuthorityHistoryPage,
+    AuthorityHistorySelection, AuthorityHistoryVerificationCoverage,
 };
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
