@@ -22,7 +22,7 @@ pub(super) struct LiveShape {
 }
 
 /// A WORLD body's name: its `label` leaf, else its `name` leaf.
-fn world_name(body: &[u8]) -> Option<String> {
+pub(super) fn world_name(body: &[u8]) -> Option<String> {
     let value = rmpv::decode::read_value(&mut &body[..]).ok()?;
     if crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, body) {
         return None;
@@ -42,7 +42,7 @@ fn world_name(body: &[u8]) -> Option<String> {
 
 impl Vault {
     /// Live bodies of one entity type, off-record overlays left out.
-    fn shape_bodies_in_txn(
+    pub(super) fn shape_bodies_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         entity_type: u8,

@@ -177,6 +177,7 @@ impl Vault {
             live: ShapeSeed {
                 rows: live.rows.into_iter().map(|(row, _)| row).collect(),
             },
+            applies: self.open_shape_applies()?,
         })
     }
 

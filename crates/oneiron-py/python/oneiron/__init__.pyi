@@ -418,6 +418,8 @@ class Oneiron:
             """The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."""
         def plan(self, spec: Facade.ShapePlanRequest) -> Facade.ShapePlan:
             """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
+        def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
+            """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
     class _VaultClaimsVerbs:
         def upsert(self, claim: ClaimInput) -> CommitReceipt: ...
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:

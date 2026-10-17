@@ -219,6 +219,17 @@
       "section": false
     },
     {
+      "name": "vault.shape.apply",
+      "description": "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item.",
+      "input": "crate::vault_shape::ShapeApplyRequest",
+      "output": "crate::vault_shape::ShapeApplyReceipt",
+      "call": "memory.shape_apply(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "self.message",
       "description": "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.",
       "input": "crate::memory::MessagePersonRequest",

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 204 facade rows, 581 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 164.
+// UniFFI census: 205 facade rows, 585 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 165.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -1015,23 +1015,6 @@ pub struct StoredShapeSeed {
     pub seed: ShapeSeed,
 }
 
-/// `oneiron::vault_shape::ShapeRead`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ShapeRead {
-    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<StoredShapeSeed>,
-    #[serde(rename = "live")]
-    pub live: ShapeSeed,
-}
-
-/// `oneiron::vault_shape::ShapePlanRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ShapePlanRequest {
-    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<ShapeSeed>,
-}
-
 /// `oneiron::vault_shape::plan::ShapeChange`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ShapeChange {
@@ -1073,6 +1056,77 @@ pub struct ShapePlanItem {
     pub door: Option<String>,
 }
 
+/// `oneiron::vault_shape::apply::ShapeItemState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum ShapeItemState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "landed")]
+    Landed {
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "receipt")]
+        receipt: String,
+    },
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "ceremony")]
+    Ceremony,
+    #[serde(rename = "no_door")]
+    NoDoor,
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::vault_shape::apply::ShapeApplyItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeApplyItem {
+    #[serde(rename = "item")]
+    pub item: ShapePlanItem,
+    #[serde(rename = "state")]
+    pub state: ShapeItemState,
+}
+
+/// `oneiron::vault_shape::apply::ShapeApplyReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeApplyReceipt {
+    #[serde(rename = "frontier")]
+    pub frontier: String,
+    #[serde(rename = "seed_id")]
+    pub seed_id: String,
+    #[serde(rename = "author")]
+    pub author: String,
+    #[serde(rename = "started_at")]
+    pub started_at: u64,
+    #[serde(rename = "items")]
+    pub items: Vec<ShapeApplyItem>,
+    #[serde(rename = "done")]
+    pub done: bool,
+}
+
+/// `oneiron::vault_shape::ShapeRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeRead {
+    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<StoredShapeSeed>,
+    #[serde(rename = "live")]
+    pub live: ShapeSeed,
+    #[serde(rename = "applies")]
+    pub applies: Vec<ShapeApplyReceipt>,
+}
+
+/// `oneiron::vault_shape::ShapePlanRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapePlanRequest {
+    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<ShapeSeed>,
+}
+
 /// `oneiron::vault_shape::plan::ShapePlanSummary`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ShapePlanSummary {
@@ -1101,6 +1155,16 @@ pub struct ShapePlan {
     pub undeclared: Vec<ShapeRow>,
     #[serde(rename = "summary")]
     pub summary: ShapePlanSummary,
+}
+
+/// `oneiron::vault_shape::apply::ShapeApplyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeApplyRequest {
+    #[serde(rename = "plan")]
+    pub plan: ShapePlan,
+    #[serde(rename = "approve", default, skip_serializing_if = "Option::is_none")]
+    pub approve: Option<Vec<u32>>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::identity::MentionProvenance`.

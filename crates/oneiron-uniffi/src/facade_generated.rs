@@ -75,6 +75,11 @@ export_facade! {
     let output = client.vault_shape_plan(&input)?;
     crate::codec::lift_record("vault.shape.plan", &output)
 };
+"vault.shape.apply" => fn vault_shape_apply(&self, input: ShapeApplyRequest) -> ShapeApplyReceipt = |client| {
+    let input: oneiron::vault_shape::ShapeApplyRequest = crate::codec::lower_record("vault.shape.apply", input)?;
+    let output = client.vault_shape_apply(&input)?;
+    crate::codec::lift_record("vault.shape.apply", &output)
+};
 "self.message" => fn self_message(&self, input: MessagePersonRequest) -> MessagePersonReceipt = |client| {
     let input: oneiron::memory::MessagePersonRequest = crate::codec::lower_record("self.message", input)?;
     let output = client.self_message(&input)?;

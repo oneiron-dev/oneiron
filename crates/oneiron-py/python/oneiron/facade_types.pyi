@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 204 facade rows, 710 declarations.
-Inputs: 179 of 204 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 170 of 204 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 205 facade rows, 714 declarations.
+Inputs: 180 of 205 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 171 of 205 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 40; unread shapes: 1.
 """
 
@@ -354,14 +354,41 @@ class StoredShapeSeed(TypedDict):
     author: str
     written_at: int
     seed: ShapeSeed
-class ShapeRead(TypedDict):
-    seed: NotRequired[StoredShapeSeed | None]
-    live: ShapeSeed
-class ShapePlanRequest(TypedDict):
-    seed: NotRequired[ShapeSeed | None]
 ShapeChange = Literal["create", "update", "retire"]
 ShapeItemClass = Literal["receipted", "widening", "authority"]
 ShapePlanItem = TypedDict("ShapePlanItem", {"seq": int, "target": ShapeTarget, "change": ShapeChange, "class": ShapeItemClass, "before": NotRequired[ShapeRow | None], "after": NotRequired[ShapeRow | None], "door": NotRequired[str | None]})
+class ShapeItemStatePending(TypedDict):
+    state: Literal["pending"]
+class ShapeItemStateLanded(TypedDict):
+    state: Literal["landed"]
+    at: int
+    receipt: str
+class ShapeItemStateProposed(TypedDict):
+    state: Literal["proposed"]
+class ShapeItemStateCeremony(TypedDict):
+    state: Literal["ceremony"]
+class ShapeItemStateNoDoor(TypedDict):
+    state: Literal["no_door"]
+class ShapeItemStateRefused(TypedDict):
+    state: Literal["refused"]
+    reason: str
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+class ShapeApplyItem(TypedDict):
+    item: ShapePlanItem
+    state: ShapeItemState
+class ShapeApplyReceipt(TypedDict):
+    frontier: str
+    seed_id: str
+    author: str
+    started_at: int
+    items: list[ShapeApplyItem]
+    done: bool
+class ShapeRead(TypedDict):
+    seed: NotRequired[StoredShapeSeed | None]
+    live: ShapeSeed
+    applies: list[ShapeApplyReceipt]
+class ShapePlanRequest(TypedDict):
+    seed: NotRequired[ShapeSeed | None]
 class ShapePlanSummary(TypedDict):
     changes: int
     needs_word: int
@@ -374,6 +401,9 @@ class ShapePlan(TypedDict):
     items: list[ShapePlanItem]
     undeclared: list[ShapeRow]
     summary: ShapePlanSummary
+class ShapeApplyRequest(TypedDict):
+    plan: ShapePlan
+    approve: NotRequired[list[int]]
 class MentionProvenance(TypedDict):
     turn: str
     message: str

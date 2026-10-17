@@ -37,6 +37,7 @@ mod shared_act_doors;
 mod shared_member_doors;
 #[cfg(test)]
 pub(super) mod tests;
+mod vault_shape_doors;
 mod weave_doors;
 
 use std::sync::Arc;

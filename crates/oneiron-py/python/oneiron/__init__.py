@@ -517,6 +517,9 @@ class Oneiron:
         def plan(self, spec):
             """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
             return json.loads(_translate(lambda: self._client.vault_shape_plan(json.dumps(spec))))
+        def apply(self, spec):
+            """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
+            return json.loads(_translate(lambda: self._client.vault_shape_apply(json.dumps(spec))))
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

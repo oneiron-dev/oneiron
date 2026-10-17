@@ -20,6 +20,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.people.get", post(vault_people_get))
         .route("/vault.shape.read", post(vault_shape_read))
         .route("/vault.shape.plan", post(vault_shape_plan))
+        .route("/vault.shape.apply", post(vault_shape_apply))
         .route("/self.message", post(self_message))
         .route("/self.grants.ask", post(self_grants_ask))
         .route("/self.memory.diary.query", post(self_memory_diary_query))
@@ -660,6 +661,24 @@ async fn vault_shape_plan(
         "vault.shape.plan",
         value,
     )?))
+}
+async fn vault_shape_apply(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shape.apply")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shape.apply", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.shape.apply", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shape_apply(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn self_message(
     auth: CoreAuth,

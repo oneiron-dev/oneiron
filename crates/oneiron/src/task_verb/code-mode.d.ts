@@ -344,6 +344,7 @@ declare const vault: {
     };
   };
   shape: {
+    apply(input: { approve?: number[]; plan: object }): Promise<unknown>;
     plan(input: { seed?: object | null }): Promise<unknown>;
     read(input: object): Promise<unknown>;
   };

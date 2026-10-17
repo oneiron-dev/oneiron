@@ -15,10 +15,14 @@
 //! deleted line is never a deleted world. The shape holds no authority of its
 //! own; it says what should be true, never a new way of making it true.
 
+mod apply;
 mod live;
 mod plan;
 mod seed;
 
+pub use apply::{
+    ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
+};
 pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
 pub use seed::StoredShapeSeed;
 
@@ -245,6 +249,8 @@ pub struct ShapeRead {
     /// The setup plane as it stands, as rows a seed could declare. Adopting
     /// it folds the live arrangement into the seed.
     pub live: ShapeSeed,
+    /// Applies with an item still waiting for the owner's word, or torn.
+    pub applies: Vec<ShapeApplyReceipt>,
 }
 
 /// `vault.shape.plan`'s input.
