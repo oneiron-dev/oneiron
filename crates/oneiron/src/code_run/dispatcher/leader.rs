@@ -2,8 +2,9 @@
 
 use super::HostSelfDispatcher;
 use crate::agent_dispatch::{
-    AgentDispatcher, LeaderStarter, LeaderStarterSkills, LeaderTeamPlanner, agent_dispatch_actor,
-    decode_agent_dispatch_input,
+    AgentDispatcher, LeaderStarter, LeaderStarterSkills, LeaderTeamPlanner, LivePlanRequest,
+    PlannerDecisions, PlannerSeat, PlannerSkills, SpawnPlanReceipt, VaultLeaderTeamPlanner,
+    agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::AttemptRecord;
 use crate::code_run::storage::ExecutorStorage;
@@ -47,6 +48,64 @@ impl HostSelfDispatcher<'_> {
             planner,
             at,
         )
+    }
+
+    /// OF-541: plan this agent's next spawn on the live vault planner, over
+    /// its host-bound lease. The receipt rides the spawn's context
+    /// ([`crate::agent_dispatch::AgentSpawnContext::plan`]); planning launches
+    /// nothing.
+    pub fn plan_agent_spawn(
+        &self,
+        request: &LivePlanRequest<'_>,
+        at: u64,
+    ) -> Result<SpawnPlanReceipt> {
+        let (vault, leased) = self.leader_attempt()?;
+        AgentDispatcher::new(vault).plan_spawn_for_attempt(&leased, request, at)
+    }
+
+    /// OF-541: place a spawn's type once, against the tree in force for
+    /// this agent's project, before it is planned.
+    pub fn place_agent_spawn_type(
+        &self,
+        need: &str,
+        requested: Option<&crate::task_type::TaskTypeRef>,
+    ) -> Result<crate::task_type::TaskTypeRef> {
+        let (vault, leased) = self.leader_attempt()?;
+        AgentDispatcher::new(vault).place_spawn_type(&leased, need, requested)
+    }
+
+    /// OF-389: the CEO's top shapes on the installed vault planner, over
+    /// the leader's host-bound lease. Advice only: no work starts.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the advice binds the starter skills, planner skills, seats, executor, ladder, width and clock"
+    )]
+    pub fn leader_advice(
+        &self,
+        skills: &LeaderStarterSkills,
+        planner_skills: PlannerSkills,
+        seats: Vec<PlannerSeat>,
+        executor: &str,
+        decisions: Option<&PlannerDecisions<'_>>,
+        top: usize,
+        at: u64,
+    ) -> Result<serde_json::Value> {
+        let (vault, leased) = self.leader_attempt()?;
+        let dispatcher = AgentDispatcher::new(vault);
+        let planner = VaultLeaderTeamPlanner::new(
+            &dispatcher,
+            leased.clone(),
+            planner_skills,
+            seats,
+            executor,
+            top,
+            at,
+        );
+        let mut planner = match decisions {
+            Some(decisions) => planner.with_decisions(decisions),
+            None => planner,
+        };
+        dispatcher.leader_advice(&leased, skills, executor, &mut planner, at)
     }
 
     fn leader_attempt(&self) -> Result<(&Vault, AttemptRecord)> {

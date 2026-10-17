@@ -289,6 +289,15 @@ run per night. Approve a curator run and its next pass applies each demotion
 whose target is unchanged since grading; a retune proposal is advice only and
 changes nothing.
 
+The vault cleanup pass proposes archives and archives nothing until you
+accept (`/v1/owner/cleanup`); automatic archiving stays off until ARCH-0066's
+teeth #5 and #9 close. The next regular proactivity digest
+(`/v1/owner/proactivity/digest`) carries one `dreamer.cleanup` line: what
+cleanup archived since the last digest, and how many records wait in open
+proposals, with the cleanup view to restore any of them. Each proposal and
+your accept or reject count in the healer oversight receipts
+(`/v1/owner/healer/oversight`).
+
 The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
 detectors (refused Dreamer consolidations, consent storms and denials,
 per-actor write drift) over the last day of Gate receipts, and the read-side
@@ -1176,6 +1185,38 @@ The engine's one-off graph ask and saved graph recipes take the same
 answerer and keep the same receipts. There, a unit's outgoing neighbours join
 its state, and an image or audio asset among them is read as such. No door serves
 a one-off ask yet.
+
+### Typed questions over files
+
+The same ladder answers a typed question over parts of a file. Each unit is
+one call, read from the file version the ask pinned:
+
+| Unit | What the call reads | Where the answer lands |
+|----|----|----|
+| A sheet row | The row's cells across the asked range, plus an optional header row | A cell in the answer column: yes/no as a boolean, a pick as text, a score as a number |
+| A paragraph | The paragraph's text | A Word comment quoting it, in your display words |
+| A slide or shape | Its text, and its rendered image as an image | A modern comment with a severity band |
+| A file in a folder | An office file's text, a text file, or a PNG or JPEG as an image | One cell per file in a column of a result workbook |
+
+**Images.** Images are read at the Local-vision rung when
+`[models.roles.local_vision]` is bound and the dial spans the Local rung.
+Without that seat, a slide is read as its text alone, and an image file in a
+folder abstains.
+
+**Proposals.** The answers become one proposal on a copy. Keep or Discard
+settles it once (`vault.artifacts.keep`/`discard`). A unit with nothing to
+read abstains and writes nothing; an abstention is never a no. If every unit
+abstains, no proposal is made.
+
+**Receipts.** Every answer, abstentions included, keeps the ladder's full
+receipt and the file version it read. Keep's receipt carries the sheet
+answers and paragraph judgments next to the slide judgments.
+
+**Stale answers.** A folder column refuses Keep when a file it read has
+changed since; ask again. Answers never go to the owner's queue: the slide
+door holds its ceiling at Big. On a server the engine's
+`Memory::artifacts_ask_through` answers these asks. Until its door is in the
+SDK table, `vault.artifacts.review_slides` is the only door that serves one.
 
 ## 14. Tagger tiers and the teacher's handoff
 
