@@ -151,6 +151,12 @@ pub enum WeaveItemView {
         dreamed_at: u64,
         entries: u64,
     },
+    /// An agent-health card and its `health:` handle, the input the concern
+    /// door (`self.inbox.concern.outcome`) takes.
+    AgentHealth {
+        card_ref: String,
+        card: crate::dreamer_runner::maintenance::agent_health::AgentHealthCard,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -501,6 +507,10 @@ impl Memory<'_> {
                                     resident_ref: resident.to_hex(),
                                     dreamed_at: *dreamed_at,
                                     entries: *entries,
+                                },
+                                WeaveItem::AgentHealth { card } => WeaveItemView::AgentHealth {
+                                    card_ref: card.card_ref(),
+                                    card: card.clone(),
                                 },
                             })
                         })
