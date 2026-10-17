@@ -1,6 +1,7 @@
 //! Moving a formula's relative references by a row and column offset: what a
 //! shared formula's member reads, its anchor's text written from the member's
-//! cell. One tokenizer, the same reading as [`crate::xlfn`]: string literals,
+//! cell; and retargeting its sheet prefixes when sheets are renamed or
+//! deleted. One tokenizer, the same reading as [`crate::xlfn`]: string literals,
 //! quoted sheet names and structured references are never references, a name
 //! before `(` is a call, and a name before `!` is a sheet. `$` anchors stay.
 
@@ -107,6 +108,171 @@ pub(crate) fn shift_formula(formula: &str, rows: i64, cols: i64) -> Option<Strin
         i = end;
     }
     Some(out)
+}
+
+/// What a reference to one of the workbook's sheets becomes when its sheets
+/// change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SheetFate {
+    Keep,
+    Rename(String),
+    /// The sheet is gone: its references read `#REF!`, as Excel's do.
+    Delete,
+}
+
+/// `formula` with each sheet prefix (`Data!`, `'My data'!`, `Jan:Mar!`)
+/// retargeted by `fate`, asked of each sheet name as written. `None` when no
+/// prefix changed. A reference into another workbook (`[1]Data!A1`) stays;
+/// a 3D prefix with a deleted end reads `#REF!`.
+#[must_use]
+pub fn retarget_sheets(formula: &str, fate: &dyn Fn(&str) -> SheetFate) -> Option<String> {
+    let bytes = formula.as_bytes();
+    let mut out = String::with_capacity(formula.len());
+    let mut changed = false;
+    let mut external = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'"' {
+            let end = quoted_end(bytes, i);
+            out.push_str(&formula[i..end]);
+            i = end;
+            continue;
+        }
+        if b == b'[' {
+            let start = i;
+            let mut depth = 0;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\'' if matches!(bytes.get(i + 1), Some(b'[' | b']' | b'#' | b'\'')) => i += 1,
+                    b'[' => depth += 1,
+                    b']' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            out.push_str(&formula[start..i]);
+            // `[1]Data!` names a sheet of another workbook.
+            external = true;
+            continue;
+        }
+        let ch = formula[i..].chars().next()?;
+        let (prefix, end) = if b == b'\'' {
+            let end = quoted_end(bytes, i);
+            if bytes.get(end) != Some(&b'!') || end < i + 2 {
+                out.push_str(&formula[i..end]);
+                i = end;
+                continue;
+            }
+            let inner = formula[i + 1..end - 1].replace("''", "'");
+            (inner, end)
+        } else if ch.is_alphanumeric() || matches!(ch, '_' | '\\') {
+            if ch.is_ascii_digit() {
+                let end = number_end(bytes, i);
+                out.push_str(&formula[i..end]);
+                i = end;
+                external = false;
+                continue;
+            }
+            let mut end = token_end(formula, i);
+            // `Jan:Mar!` is a 3D prefix; `A1:Data!B2` is a range.
+            if bytes.get(end) == Some(&b':') && cell(&formula[i..end]).is_none() {
+                let second = token_end(formula, end + 1);
+                if second > end + 1 && bytes.get(second) == Some(&b'!') {
+                    end = second;
+                }
+            }
+            // `#REF!` is an error value, not a sheet.
+            if bytes.get(end) != Some(&b'!') || (i > 0 && bytes[i - 1] == b'#') {
+                out.push_str(&formula[i..end]);
+                i = end;
+                external = false;
+                continue;
+            }
+            (formula[i..end].to_owned(), end)
+        } else {
+            out.push(ch);
+            i += ch.len_utf8();
+            external = false;
+            continue;
+        };
+        let written = &formula[i..=end];
+        i = end + 1;
+        if std::mem::take(&mut external) || prefix.contains('[') {
+            out.push_str(written);
+            continue;
+        }
+        let ends: Vec<&str> = prefix.splitn(2, ':').collect();
+        let fates: Vec<SheetFate> = ends.iter().map(|name| fate(name)).collect();
+        if fates.iter().all(|fate| *fate == SheetFate::Keep) {
+            out.push_str(written);
+            continue;
+        }
+        changed = true;
+        if fates.contains(&SheetFate::Delete) {
+            out.push_str("#REF!");
+            continue;
+        }
+        let names: Vec<&str> = ends
+            .iter()
+            .zip(&fates)
+            .map(|(name, fate)| match fate {
+                SheetFate::Rename(to) => to.as_str(),
+                _ => name,
+            })
+            .collect();
+        out.push_str(&sheet_prefix(&names.join(":")));
+        out.push('!');
+    }
+    changed.then_some(out)
+}
+
+/// A sheet name as a reference writes it, quoted unless it is a plain
+/// identifier that cannot read as a cell.
+fn sheet_prefix(name: &str) -> String {
+    let plain = name
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.'))
+        && cell(name).is_none()
+        && !r1c1_like(name);
+    if plain {
+        return name.to_owned();
+    }
+    format!("'{}'", name.replace('\'', "''"))
+}
+
+/// `R`, `C12`, `R2C3`: what an R1C1 reference reads as.
+fn r1c1_like(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    let rest = upper.strip_prefix('R').unwrap_or(&upper);
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+    let rest = rest.strip_prefix('C').unwrap_or(rest);
+    rest.trim_start_matches(|c: char| c.is_ascii_digit())
+        .is_empty()
+}
+
+/// Past the closing quote of the string or quoted name opening at `start`;
+/// a doubled quote is an escaped one.
+fn quoted_end(bytes: &[u8], start: usize) -> usize {
+    let quote = bytes[start];
+    let mut i = start + 1;
+    while i < bytes.len() {
+        if bytes[i] == quote {
+            i += 1;
+            if bytes.get(i) != Some(&quote) {
+                return i;
+            }
+        }
+        i += 1;
+    }
+    i
 }
 
 /// One coordinate of a reference: its value and whether `$` fixes it.
