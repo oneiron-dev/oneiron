@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 271 facade rows, 873 generated types.
+// UniFFI census: 271 facade rows, 881 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 227.
 // WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -12659,6 +12659,8 @@ pub struct BodyCell {
     pub formula: Option<String>,
     #[serde(rename = "style", default, skip_serializing_if = "Option::is_none")]
     pub style: Option<u32>,
+    #[serde(rename = "format", default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
     #[serde(rename = "locked", default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<XlsxLock>,
 }
@@ -12709,6 +12711,146 @@ pub struct XlsxStyle {
     pub format: Option<String>,
 }
 
+/// `oneiron_docedit::xlsx_styles::XlsxColor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum XlsxColor {
+    #[serde(rename = "rgb")]
+    Rgb {
+        #[serde(rename = "argb")]
+        argb: String,
+    },
+    #[serde(rename = "theme")]
+    Theme {
+        #[serde(rename = "theme")]
+        theme: u32,
+        #[serde(rename = "tint", default, skip_serializing_if = "Option::is_none")]
+        tint: Option<f64>,
+    },
+    #[serde(rename = "indexed")]
+    Indexed {
+        #[serde(rename = "index")]
+        index: u32,
+    },
+    #[serde(rename = "auto")]
+    Auto,
+}
+
+/// `oneiron_docedit::xlsx_styles::XlsxFont`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxFont {
+    #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(rename = "size", default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    #[serde(rename = "bold", default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(rename = "italic", default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(rename = "underline", default, skip_serializing_if = "Option::is_none")]
+    pub underline: Option<String>,
+    #[serde(rename = "strike", default, skip_serializing_if = "Option::is_none")]
+    pub strike: Option<bool>,
+    #[serde(rename = "color", default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<XlsxColor>,
+}
+
+/// `oneiron_docedit::xlsx_styles::XlsxFill`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxFill {
+    #[serde(rename = "pattern")]
+    pub pattern: String,
+    #[serde(rename = "fg", default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<XlsxColor>,
+    #[serde(rename = "bg", default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<XlsxColor>,
+}
+
+/// `oneiron_docedit::xlsx_styles::XlsxEdge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxEdge {
+    #[serde(rename = "style")]
+    pub style: String,
+    #[serde(rename = "color", default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<XlsxColor>,
+}
+
+/// `oneiron_docedit::xlsx_styles::XlsxBorder`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxBorder {
+    #[serde(rename = "left", default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<XlsxEdge>,
+    #[serde(rename = "right", default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<XlsxEdge>,
+    #[serde(rename = "top", default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<XlsxEdge>,
+    #[serde(rename = "bottom", default, skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<XlsxEdge>,
+    #[serde(rename = "diagonal", default, skip_serializing_if = "Option::is_none")]
+    pub diagonal: Option<XlsxEdge>,
+    #[serde(
+        rename = "diagonal_up",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub diagonal_up: Option<bool>,
+    #[serde(
+        rename = "diagonal_down",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub diagonal_down: Option<bool>,
+}
+
+/// `oneiron_docedit::xlsx_styles::XlsxNumberFormat`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum XlsxNumberFormat {
+    #[serde(rename = "builtin")]
+    Builtin {
+        #[serde(rename = "id")]
+        id: u32,
+    },
+    #[serde(rename = "code")]
+    Code {
+        #[serde(rename = "code")]
+        code: String,
+    },
+}
+
+/// `oneiron_docedit::xlsx_styles::XlsxFormat`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxFormat {
+    #[serde(rename = "base")]
+    pub base: u32,
+    #[serde(rename = "font", default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<XlsxFont>,
+    #[serde(rename = "fill", default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<XlsxFill>,
+    #[serde(rename = "border", default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<XlsxBorder>,
+    #[serde(
+        rename = "number_format",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub number_format: Option<XlsxNumberFormat>,
+}
+
+/// `oneiron::office_body::xlsx::BodyFormat`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BodyFormat {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "format")]
+    pub format: XlsxFormat,
+}
+
 /// `oneiron::office_body::verbs::XlsxBodyView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxBodyView {
@@ -12720,6 +12862,8 @@ pub struct XlsxBodyView {
     pub names: Vec<BodyName>,
     #[serde(rename = "styles")]
     pub styles: Vec<XlsxStyle>,
+    #[serde(rename = "formats")]
+    pub formats: Vec<BodyFormat>,
 }
 
 /// `oneiron_docedit::live::pptx::NodeKind`.
@@ -13110,6 +13254,22 @@ pub enum XlsxBodyOp {
         cell: String,
         #[serde(rename = "style", default, skip_serializing_if = "Option::is_none")]
         style: Option<u32>,
+    },
+    #[serde(rename = "define_format")]
+    DefineFormat {
+        #[serde(rename = "id")]
+        id: String,
+        #[serde(rename = "format")]
+        format: XlsxFormat,
+    },
+    #[serde(rename = "set_format")]
+    SetFormat {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "cell")]
+        cell: String,
+        #[serde(rename = "format")]
+        format: String,
     },
     #[serde(rename = "clear")]
     Clear {
