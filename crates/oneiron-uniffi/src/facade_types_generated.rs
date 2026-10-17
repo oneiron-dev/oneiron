@@ -4370,6 +4370,8 @@ pub struct PackInstallReceipt {
     pub kinds: Vec<String>,
     #[serde(rename = "skills")]
     pub skills: Vec<String>,
+    #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     #[serde(rename = "installed_at")]
     pub installed_at: u64,
 }
