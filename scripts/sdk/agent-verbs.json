@@ -65,6 +65,18 @@
       "section": true
     },
     {
+      "name": "self.focus.scratchpad.recall",
+      "description": "Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full.",
+      "input": "crate::task_verb::sdk::ScratchpadRecallRequest",
+      "output": "crate::task_verb::sdk::ScratchpadRecallReply",
+      "call": "crate::task_verb::sdk::scratchpad_recall_reply(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "self.memory.diary",
       "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
       "prose_links": ["/content"],
@@ -2779,7 +2791,7 @@
     {
       "name": "vault.questions.answers",
       "input": "crate::receipt::QuestionAnswersRequest",
-      "output": "Vec<crate::llm::decision::questions::AnswerRecord>",
+      "output": "Vec<crate::receipt::QuestionAnswer>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
       "host_door": true,
       "scope": "Read",
