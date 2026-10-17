@@ -133,6 +133,41 @@ function redirectedInit(init: RequestInit, status: number): RequestInit {
 }
 
 /**
+ * The pending policy (OF-580): which facade answer becomes a `FacadePending`.
+ * Only a `202` is read, through a clone, and only a body that is the server's
+ * `PENDING_ASK` envelope with a pending hook naming its invocation and ask
+ * counts; the retry id is the one that hook names. It resolves to `null` for
+ * every other answer, a `202` that is no pending ask included, and the
+ * caller gets the original `Response`, unread. A pending's original body is
+ * cancelled: the clone has been read.
+ */
+async function facadePending<V extends FacadeVerb>(
+  verb: V,
+  input: FacadeInput<V>,
+  response: Response,
+): Promise<FacadePending<V> | null> {
+  if (response.status !== 202) {
+    return null;
+  }
+  const envelope = (await response
+    .clone()
+    .json()
+    .catch(() => null)) as FacadeErrorEnvelope | null;
+  const hook = envelope?.error?.hook;
+  if (
+    envelope === null ||
+    envelope.error?.code !== "PENDING_ASK" ||
+    hook?.status !== "pending" ||
+    typeof hook.invocation !== "string" ||
+    typeof hook.ask !== "string"
+  ) {
+    return null;
+  }
+  await response.body?.cancel().catch(() => undefined);
+  return { kind: "pending", verb, input, invocation: hook.invocation, ask: hook.ask, envelope };
+}
+
+/**
  * Caller headers ADD to the configured defaults. They may not silently swap
  * the configured credential for a different one: one credential, one
  * authority model, and a substitution is loud rather than quiet.
@@ -254,11 +289,8 @@ export class HttpBaseClient {
   }
 
   /**
-   * One facade call under `invocation`. A `202` whose body is the server's
-   * `PENDING_ASK` envelope is the one body this client reads: it resolves to a
-   * `FacadePending`, so a caller retries without parsing the envelope. Every
-   * other answer, a `202` that is no pending ask included, is the original
-   * `Response`, unread.
+   * One facade call under `invocation`: the original `Response`, or the
+   * `FacadePending` that `facadePending` reads off a `202`.
    */
   private async facadeCall<V extends FacadeVerb>(
     verb: V,
@@ -272,25 +304,7 @@ export class HttpBaseClient {
     const response = await this.request(`/v1/core/facade/${encodeURIComponent(verb)}`, {
       ...init, method: "POST", headers, body: JSON.stringify(input),
     });
-    if (response.status !== 202) {
-      return response;
-    }
-    const envelope = (await response
-      .clone()
-      .json()
-      .catch(() => null)) as FacadeErrorEnvelope | null;
-    const hook = envelope?.error?.hook;
-    if (
-      envelope === null ||
-      envelope.error?.code !== "PENDING_ASK" ||
-      hook?.status !== "pending" ||
-      typeof hook.invocation !== "string" ||
-      typeof hook.ask !== "string"
-    ) {
-      return response;
-    }
-    await response.body?.cancel().catch(() => undefined);
-    return { kind: "pending", verb, input, invocation: hook.invocation, ask: hook.ask, envelope };
+    return (await facadePending(verb, input, response)) ?? response;
   }
 
   /** `GET /api/core/discover` — vault capability bootstrap. */
