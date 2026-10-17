@@ -57,6 +57,8 @@ pub(super) fn provider_offer(
         catalog_revision: Some(provider.revision.clone()),
         custody,
         rates: provider.rates.clone(),
+        // A configured offer is the owner's; a funded run binds its payer.
+        payer_person: None,
     })
 }
 

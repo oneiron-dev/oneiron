@@ -8,6 +8,7 @@
 //! ONE-1896 graceful-cancel/landing doors in [`super::cancel`].
 mod enqueue_claim;
 mod mutate;
+mod place;
 mod prune;
 mod reads;
 mod redirect;

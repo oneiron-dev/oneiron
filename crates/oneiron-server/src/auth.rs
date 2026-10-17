@@ -305,6 +305,11 @@ pub(crate) struct CoreAuth {
     /// refuses a facet narrowing admits this one; the read lane still judges
     /// the owner binding in each read's own snapshot.
     facets_owner_exempt: bool,
+    /// The off-record session the request's `x-oneiron-session` header
+    /// names, as text: context, not authority. Every transport handle
+    /// `credential_memory` builds for this caller binds it, so a door acts
+    /// inside the session its caller named (OF-063, FIX 1668).
+    off_record_session: Option<String>,
 }
 
 impl CoreAuth {
@@ -341,6 +346,7 @@ impl CoreAuth {
             instrument: Some(verified.instrument),
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
+            off_record_session: None,
         }
     }
 
@@ -414,6 +420,7 @@ impl CoreAuth {
             instrument: None,
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
+            off_record_session: None,
         })
     }
 
@@ -432,6 +439,7 @@ impl CoreAuth {
             instrument: None,
             locality: CallerLocality::OffDevice,
             facets_owner_exempt: false,
+            off_record_session: None,
         }
     }
 
@@ -485,6 +493,21 @@ impl CoreAuth {
 
     pub(crate) fn principal_ref(&self) -> Option<&str> {
         self.principal_ref.as_deref()
+    }
+
+    /// The off-record session this request names, if any: context the
+    /// caller's handles bind, never authority (OF-063, FIX 1668).
+    pub(crate) fn off_record_session(&self) -> Option<&str> {
+        self.off_record_session.as_deref()
+    }
+
+    /// This caller, inside the off-record session its request names.
+    #[must_use]
+    pub(crate) fn in_off_record_session(mut self, session_ref: Option<&str>) -> Self {
+        self.off_record_session = session_ref
+            .filter(|session| !session.is_empty())
+            .map(str::to_owned);
+        self
     }
 
     /// The D13 actor class the slip binds, when it carries one (ONE-1441).
@@ -598,6 +621,9 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
             .map(|auth| {
                 auth.at(caller_locality(&parts.headers, &parts.extensions))
                     .at_invitee_door(path)
+                    .in_off_record_session(crate::api::call_receipt::request_session_ref(
+                        &parts.headers,
+                    ))
             })
             .map_err(Into::into)
     }
@@ -737,6 +763,7 @@ fn core_auth_for_live_claims(
         instrument: None,
         locality: CallerLocality::OffDevice,
         facets_owner_exempt: false,
+        off_record_session: None,
     })
 }
 
