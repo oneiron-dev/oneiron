@@ -92,9 +92,20 @@ impl Vault {
                     return Err(Error::CorruptedIndex("fork hash mismatch"));
                 }
                 let snapshot = super::snapshot::require_snapshot_schema(snapshot)?;
+                // A file the lift sweep marked reads as a withheld one does
+                // (OF-067).
+                let lifted = super::lift::lifted_entries_in_txn(
+                    self,
+                    &txn,
+                    &repo_mutation_snapshot_key(hash),
+                    &raw,
+                )?;
                 let mut files = BTreeMap::new();
                 for entry in snapshot.entries {
                     validate_relative_repo_path(&entry.path)?;
+                    if lifted.contains(&entry.path) {
+                        continue;
+                    }
                     let bytes = match entry.kind {
                         StoredRepoSnapshotEntryKind::File => entry.content,
                         StoredRepoSnapshotEntryKind::Symlink => entry

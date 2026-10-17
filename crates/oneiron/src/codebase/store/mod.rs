@@ -26,6 +26,7 @@ use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
 
 mod index_rows;
+mod lift;
 use self::index_rows::{
     codebase_ids_by_index, delete_exact_index_rows_for_snapshot, delete_index_rows_for_id,
     fork_has_other_snapshot, put_scope_index_rows_for_snapshot,
@@ -661,13 +662,16 @@ impl Vault {
         &self,
         code_artifact_id: &EntityId,
     ) -> Result<Option<CodebaseSnapshotMount<'_>>> {
-        let Some(snapshot) = self.get_codebase_snapshot(code_artifact_id)? else {
+        let txn = self.store.env.read_txn()?;
+        let Some(snapshot) = self.get_codebase_snapshot_in_txn(&txn, code_artifact_id)? else {
             return Ok(None);
         };
+        let withheld = self.codebase_withheld_paths_in_txn(&txn, &snapshot.fork_hash)?;
         Ok(Some(CodebaseSnapshotMount {
             vault: self,
             code_artifact_id: *code_artifact_id,
             snapshot,
+            withheld,
         }))
     }
 }

@@ -64,6 +64,7 @@
 //! and the narrow-only validator (manifest ∧ vault floor, most-restrictive
 //! wins).
 
+mod carrier_marks;
 mod codec;
 mod doors;
 mod floor;
@@ -88,6 +89,7 @@ mod floor_keys {
     pub(super) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
 }
 
+pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::doors::{

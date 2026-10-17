@@ -2,6 +2,7 @@
 
 mod compaction;
 mod folds;
+mod lift;
 mod reader_folds;
 mod reader_jobs;
 mod records;

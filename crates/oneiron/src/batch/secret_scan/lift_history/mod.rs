@@ -21,6 +21,7 @@
 mod authored;
 mod carriers;
 mod records;
+mod retained;
 mod side_rows;
 
 use std::borrow::Cow;

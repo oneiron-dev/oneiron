@@ -267,7 +267,7 @@ pub(crate) fn encode_report(report: &SnapshotCustodyReport) -> Result<Vec<u8>> {
     })
 }
 
-fn suggested_secret_name(path: &str) -> String {
+pub(crate) fn suggested_secret_name(path: &str) -> String {
     let mut name = String::from("snapshot_");
     for byte in path.bytes() {
         if byte.is_ascii_alphanumeric() {

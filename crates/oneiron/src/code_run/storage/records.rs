@@ -746,7 +746,10 @@ fn owned_body(
 }
 
 /// The body file of `output` in the first of `dirs` that holds it.
-fn open_body_file(output: &CodeRunRawOutput, dirs: Vec<BodyDir>) -> Result<std::fs::File> {
+pub(super) fn open_body_file(
+    output: &CodeRunRawOutput,
+    dirs: Vec<BodyDir>,
+) -> Result<std::fs::File> {
     for dir in dirs {
         if let Some(file) = dir.open_body(&output.raw_blake3, output.raw_len)? {
             return Ok(file);

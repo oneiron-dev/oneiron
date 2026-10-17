@@ -195,8 +195,10 @@ pub(super) fn restore_repo_snapshot(
     let snapshot = SNAPSHOT.get(&vault.store, &rtxn, &key)?.ok_or(Error::Code(
         CodeError::InvalidRepoMutationRecord("requested repo snapshot forkHash is unknown"),
     ))?;
-    drop(rtxn);
     let raw = SNAPSHOT.encode_value(&snapshot)?;
+    // A file the lift sweep marked is left as a withheld one is (OF-067).
+    let lifted = super::lift::lifted_entries_in_txn(vault, &rtxn, &key, &raw)?;
+    drop(rtxn);
     if *blake3::hash(&raw).as_bytes() != fork_hash && sha256_bytes(&raw) != fork_hash {
         return Err(Error::CorruptedIndex(
             "repo mutation snapshot hash mismatch",
@@ -220,7 +222,7 @@ pub(super) fn restore_repo_snapshot(
 
     for entry in snapshot.entries {
         validate_relative_repo_path(&entry.path)?;
-        if entry.kind == StoredRepoSnapshotEntryKind::Withheld {
+        if entry.kind == StoredRepoSnapshotEntryKind::Withheld || lifted.contains(&entry.path) {
             continue;
         }
         let target = repo_root.join(&entry.path);

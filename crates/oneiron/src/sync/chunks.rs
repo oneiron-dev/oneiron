@@ -157,6 +157,11 @@ pub fn serve_chunk_request(
 /// is standing authority to export.
 pub fn lfs_object_withheld(vault: &Vault, oid: LfsOid) -> Result<bool> {
     use crate::ports::{EdgeDirection, EdgeStoreRead};
+    // An object the lift sweep marked holds a hit a new upload is refused
+    // for (OF-067): it stays on this device.
+    if vault.lfs_object_secret_withheld(oid)? {
+        return Ok(true);
+    }
     let _accepting = vault.device_only_acceptance();
     let object = vault.lfs_object(oid)?.ok_or_else(invalid)?;
     let txn = vault.store.env.read_txn()?;

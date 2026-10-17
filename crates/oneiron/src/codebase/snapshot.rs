@@ -115,6 +115,10 @@ pub struct CodebaseSnapshotMount<'a> {
     pub(super) vault: &'a Vault,
     pub(super) code_artifact_id: EntityId,
     pub(super) snapshot: CodebaseSnapshot,
+    /// The paths the custody report beside the snapshot's fork withholds: a
+    /// file the lift sweep quarantined stays in the manifest its fork hash
+    /// binds, and is read as absent (OF-067).
+    pub(super) withheld: std::collections::BTreeSet<String>,
 }
 
 impl CodebaseSnapshotMount<'_> {
@@ -143,6 +147,9 @@ impl CodebaseSnapshotMount<'_> {
 
     pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
         validate_manifest_path(path)?;
+        if self.withheld.contains(path) {
+            return Ok(None);
+        }
         let Ok(index) = self
             .snapshot
             .files

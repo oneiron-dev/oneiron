@@ -11,6 +11,7 @@
 
 mod chunks;
 mod lifecycle;
+mod lift;
 mod oid;
 mod pointer;
 mod policy;
