@@ -31,13 +31,14 @@ use oneiron_docedit::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::note::{NotePin, NoteSpanResolution};
 use crate::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
+use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -424,12 +425,8 @@ impl crate::Vault {
             end: now,
         };
         let artifact = self.new_entity_id()?;
-        self.put_blob_artifact(
-            &artifact,
-            &BlobArtifactBody::new(request.name, PPTX_MEDIA_TYPE),
-            occurred,
-            now,
-        )?;
+        let body =
+            encode_blob_artifact_body(&BlobArtifactBody::new(request.name, PPTX_MEDIA_TYPE))?;
         let template_hash = *blake3::hash(&template_bytes).as_bytes();
         // The first version's made_by: the kept outline is the prompt, the
         // template version an input, and the replay key binds both hashes.
@@ -458,62 +455,79 @@ impl crate::Vault {
             at: now,
             trigger: request.trigger.clone(),
         };
-        let version = self.append_blob_artifact_version_made_by(
-            &artifact,
-            None,
-            &candidate.bytes,
-            &BlobVersionProvenance::AgentRun {
+        // The artifact, its first version and the creation record land in
+        // one transaction, or none of them does.
+        let record = self.with_write_txn_grouped(|wtxn| {
+            crate::ports::EntityStore::port_entity_put(
+                self,
+                wtxn,
+                &artifact,
+                &crate::ports::EntityRecord {
+                    entity_type: ENTITY_TYPE_BLOB_ARTIFACT,
+                    occurred,
+                    learned_at: now,
+                    body,
+                },
+            )?;
+            let version = self.append_blob_artifact_version_made_by_in_txn(
+                wtxn,
+                &artifact,
+                None,
+                &candidate.bytes,
+                &BlobVersionProvenance::AgentRun {
+                    run_ref: request.run_ref.to_owned(),
+                },
+                &made_by,
+                request.actor,
+                occurred,
+                now,
+            )?;
+            let record = DeckCreationRecord {
+                artifact,
+                version: version.version,
+                content_hash: version.content_hash,
+                outline: kept.note,
+                outline_version: kept.version.clone(),
+                outline_hash: kept.content_hash,
+                template: request.template,
+                template_hash,
                 run_ref: request.run_ref.to_owned(),
-            },
-            &made_by,
-            request.actor,
-            occurred,
-            now,
-        )?;
-        let record = DeckCreationRecord {
-            artifact,
-            version: version.version,
-            content_hash: version.content_hash,
-            outline: kept.note,
-            outline_version: kept.version.clone(),
-            outline_hash: kept.content_hash,
-            template: request.template,
-            template_hash,
-            run_ref: request.run_ref.to_owned(),
-            made_by: request.made_by,
-            slides: candidate
-                .report
-                .slides
-                .iter()
-                .map(|slide| CreatedSlide {
-                    part: slide.part.clone(),
-                    sld_id: slide.sld_id,
-                    page: slide.page.clone(),
-                    layout: slide.layout.clone(),
-                })
-                .collect(),
-            write_set: candidate.report.write_set.clone(),
-            omitted: candidate.report.omitted.clone(),
-            fit_unverified: candidate.fit.as_ref().err().map_or_else(Vec::new, |fit| {
-                fit.units
+                made_by: request.made_by,
+                slides: candidate
+                    .report
+                    .slides
                     .iter()
-                    .map(|unit| (unit.slide.clone(), unit.block.clone(), unit.shape))
-                    .collect()
-            }),
-            estimates: plan
-                .slides()
-                .iter()
-                .flat_map(|slide| &slide.fit.estimates)
-                .map(|estimate| CreatedEstimate {
-                    block: estimate.block.clone(),
-                    need: estimate.need,
-                    room: estimate.room,
-                    font: estimate.font.clone(),
-                })
-                .collect(),
-            created_at: now,
-        };
-        self.with_write_txn_grouped(|wtxn| CREATIONS.put(&self.store, wtxn, &artifact, &record))?;
+                    .map(|slide| CreatedSlide {
+                        part: slide.part.clone(),
+                        sld_id: slide.sld_id,
+                        page: slide.page.clone(),
+                        layout: slide.layout.clone(),
+                    })
+                    .collect(),
+                write_set: candidate.report.write_set.clone(),
+                omitted: candidate.report.omitted.clone(),
+                fit_unverified: candidate.fit.as_ref().err().map_or_else(Vec::new, |fit| {
+                    fit.units
+                        .iter()
+                        .map(|unit| (unit.slide.clone(), unit.block.clone(), unit.shape))
+                        .collect()
+                }),
+                estimates: plan
+                    .slides()
+                    .iter()
+                    .flat_map(|slide| &slide.fit.estimates)
+                    .map(|estimate| CreatedEstimate {
+                        block: estimate.block.clone(),
+                        need: estimate.need,
+                        room: estimate.room,
+                        font: estimate.font.clone(),
+                    })
+                    .collect(),
+                created_at: now,
+            };
+            CREATIONS.put(&self.store, wtxn, &artifact, &record)?;
+            Ok(record)
+        })?;
         Ok(DeckCreateOutcome::Created(Box::new(record)))
     }
 
