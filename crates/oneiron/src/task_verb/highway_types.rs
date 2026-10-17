@@ -97,6 +97,12 @@ impl HostBinding {
         self.run_id
     }
 
+    /// The executor run the host runs this try as, when it sealed one
+    /// (OF-181): the log a live-run action's fold verbs reach.
+    pub(crate) const fn executor_run(&self) -> Option<EntityId> {
+        self.run_id
+    }
+
     /// The try this binding sealed, read live in `vault`: still leased, by
     /// the same owner, at the same generation. A lapsed lease lends nothing.
     ///

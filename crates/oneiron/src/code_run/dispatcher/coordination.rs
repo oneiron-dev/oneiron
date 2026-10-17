@@ -1,6 +1,7 @@
 //! Code-mode composition: host-bound agents.spawn / ask / wait.
 use std::sync::Arc;
 
+use super::fold_verbs::FoldLog;
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::EntityId;
 use crate::agent_def::{
@@ -96,15 +97,19 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// A host action for a live agent run (OF-181): the run's leased try,
     /// read live, under the action's own run reference, so the action's
-    /// replay and provenance stay its own.
+    /// replay and provenance stay its own. Its fold verbs reach the log of
+    /// `executor_run`, the run the host runs that try as; with none, they
+    /// refuse.
     pub(crate) fn for_action_attempt(
         vault: &'a Vault,
         actor: WriteActor,
         action_ref: String,
         leased: &AttemptRecord,
+        executor_run: Option<EntityId>,
     ) -> Result<Self> {
         let mut dispatcher = Self::for_leased_agent_attempt(vault, actor, leased)?;
         dispatcher.run_ref = action_ref;
+        dispatcher.fold_log = executor_run.map_or(FoldLog::Unbound, FoldLog::Run);
         Ok(dispatcher)
     }
 
