@@ -572,22 +572,33 @@ pub struct ParkedConflictPass {
     pub settled: Vec<ConflictSettleReceipt>,
     /// Abstained, escalated, refused or failed: each stays for the owner.
     pub left_parked: usize,
+    /// The last marker asked about: the next pass starts after it.
+    pub last: Option<EntityId>,
 }
 
 /// Asks `decisions` about up to `limit` open conflicts `memory`'s actor may
 /// settle and settles each answer through the same authorised door a person
-/// uses. A failure on one conflict is logged by a closed name and leaves it
+/// uses. The pass starts at the first marker after `after` and wraps to the
+/// oldest, so the conflicts a ladder leaves parked never starve newer ones.
+/// A failure on one conflict is logged by a closed name and leaves it
 /// parked; the pass goes on.
 pub fn settle_parked_conflicts(
     memory: &crate::memory::Memory<'_>,
     decisions: &ConflictSettleDecisions<'_>,
+    after: Option<EntityId>,
     limit: usize,
     now: u64,
 ) -> crate::memory::MemoryResult<ParkedConflictPass> {
     let mut pass = ParkedConflictPass::default();
-    for conflict in memory.open_conflicts(None, None, limit)? {
+    let open = memory.open_conflicts(None, None, usize::MAX)?;
+    let start = after.map_or(0, |after| {
+        open.partition_point(|conflict| conflict.marker <= after)
+    });
+    let (older, newer) = open.split_at(start);
+    for conflict in newer.iter().chain(older).take(limit) {
         pass.asked += 1;
-        let settlement = match decisions.rule(memory.vault(), &conflict) {
+        pass.last = Some(conflict.marker);
+        let settlement = match decisions.rule(memory.vault(), conflict) {
             Ok(Some(settlement)) => settlement,
             Ok(None) => {
                 pass.left_parked += 1;
