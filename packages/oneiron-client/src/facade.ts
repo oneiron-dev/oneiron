@@ -655,7 +655,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.settings.learning": { description: "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.settings.learning.put": { description: "The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.settings.learning.clear": { description: "The owner clears one learned-setting row of a key, mode and scope.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.secrets.lift_history": { description: "The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.secrets.lift_history": { description: "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.widen_proposals": { description: "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.widen_proposals.approve": { description: "The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.widen_proposals.decline": { description: "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1160,7 +1160,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         }),
       },
       secrets: {
-        /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+        /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
         lift_history: (input: Facade.SecretLiftRequest, options?: O): FacadeReturns<"vault.secrets.lift_history">[K] => invoke("vault.secrets.lift_history", input, options, newInvocation()),
       },
       /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */

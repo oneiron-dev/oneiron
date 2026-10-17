@@ -64,7 +64,9 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
             .map_err(|_| Error::InvariantViolation("the lift sweep's carriers outgrew a byte"))?;
         for (key, value) in &rows {
             page.read += 1;
-            if write_payload_hit(value).is_some() {
+            if write_payload_hit(value).is_some()
+                || super::loro_blocks::hit(vault, txn, decl, key, value)?.is_some()
+            {
                 page.hits.push(cursor(place, key));
             }
         }
@@ -150,4 +152,32 @@ fn sync_page<'txn>(
         }
     }
     Ok((rows, true))
+}
+
+/// Carrier row `key` (a census cursor) as it is stored, with its table;
+/// `None` once it is gone.
+pub(super) fn stored(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    key: &[u8],
+) -> Result<Option<(&'static SideTableDecl, Vec<u8>)>> {
+    let Some((decl, row_key)) = carrier_of(key) else {
+        return Ok(None);
+    };
+    let row = match decl.db {
+        SideDb::VaultMeta => vault
+            .store
+            .vault_meta
+            .get(txn, row_key)?
+            .map(Cow::into_owned),
+        SideDb::SyncState => match std::str::from_utf8(row_key) {
+            Ok(row_key) => vault
+                .store
+                .sync_state
+                .get(txn, row_key)?
+                .map(Cow::into_owned),
+            Err(_) => None,
+        },
+    };
+    Ok(row.map(|row| (decl, row)))
 }

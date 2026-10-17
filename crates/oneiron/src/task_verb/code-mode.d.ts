@@ -415,7 +415,7 @@ declare const vault: {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
   };
   secrets: {
-    lift_history(input: { start?: boolean }): Promise<unknown>;
+    lift_history(input: { close?: object | null; start?: boolean }): Promise<unknown>;
   };
   settings: {
     inference_defaults: ((input: object) => Promise<unknown>) & {

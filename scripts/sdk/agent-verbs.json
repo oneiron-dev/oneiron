@@ -1540,7 +1540,7 @@
     },
     {
       "name": "vault.secrets.lift_history",
-      "description": "The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start.",
+      "description": "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued.",
       "input": "crate::policy_model::SecretLiftRequest",
       "output": "crate::policy_model::SecretLiftStatus",
       "call": "crate::policy_model::secret_lift_as_owner(memory.vault(), &memory.embedded_owner(\"vault.secrets.lift_history\")?, &input).map_err(crate::memory::MemoryError::from)?",
