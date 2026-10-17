@@ -356,7 +356,7 @@ pub fn recover_vaults_independently(
 /// their parents. The store door never needs a row's parents stored, so a
 /// machine that syncs what it opened holds the authority rows its windows
 /// carry, some above a gap a later page closes.
-fn page_root(
+pub(super) fn page_root(
     history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
     resident: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<Option<AuthorityVaultId>> {
@@ -395,15 +395,30 @@ impl Vault {
     /// order and judgement, and the refold before commit. One refused entry
     /// writes nothing.
     pub fn import_signed_authority_page(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
-        let mut decoded = Vec::with_capacity(blobs.len());
-        for bytes in blobs {
-            let entry = decode_authority_log_entry_body(bytes)?;
-            decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
-        }
+        self.import_page_in(decode_page(blobs)?, false)
+    }
+
+    /// [`Self::import_signed_authority_page`] for `decoded`. With `staged`,
+    /// the rows a repair staged earlier arrive beside the page
+    /// ([`super::history_repair`]), and the stage empties as they land.
+    pub(super) fn import_page_in(
+        &self,
+        mut decoded: Vec<DecodedRow>,
+        staged: bool,
+    ) -> Result<Vec<EntityId>> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
+        if staged {
+            let paged: BTreeSet<AuthorityEntryHash> =
+                decoded.iter().map(|(hash, _, _)| *hash).collect();
+            decoded.extend(
+                super::history_repair::staged_rows_in_txn(&self.store, &txn)?
+                    .into_iter()
+                    .filter(|(hash, _, _)| !resident.contains(hash) && !paged.contains(hash)),
+            );
+        }
         for (hash, bytes, entry) in &decoded {
             merged
                 .entry(*hash)
@@ -476,8 +491,25 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
         }
+        if staged {
+            super::history_repair::clear_stage_in_txn(&self.store, &mut txn)?;
+        }
         txn.commit()?;
         watch.finish()?;
         Ok(ids)
     }
+}
+
+/// One signed authority row as a page carries it: its hash, its original
+/// bytes and the entry they decode to.
+pub(super) type DecodedRow = (AuthorityEntryHash, Vec<u8>, AuthorityLogEntry);
+
+/// A page's rows, decoded and hashed, in the caller's order.
+pub(super) fn decode_page(blobs: &[Vec<u8>]) -> Result<Vec<DecodedRow>> {
+    let mut decoded = Vec::with_capacity(blobs.len());
+    for bytes in blobs {
+        let entry = decode_authority_log_entry_body(bytes)?;
+        decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
+    }
+    Ok(decoded)
 }
