@@ -81,6 +81,13 @@ enum ImportWarning {
     /// outside the folder. Counted, not named, as a notes import's stdout
     /// names no note.
     HardLinked { files: usize },
+    /// A folder past one of its `[limits]` rows: read and imported whole
+    /// all the same, and the row asks whether everything is okay (OF-520).
+    LimitCrossed {
+        row: &'static str,
+        limit: u64,
+        observed: u64,
+    },
 }
 
 #[derive(Serialize, Default)]

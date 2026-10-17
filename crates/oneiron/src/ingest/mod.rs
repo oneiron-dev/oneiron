@@ -99,4 +99,4 @@ pub mod history;
 mod parsed;
 pub use parsed::{ParsedImport, ParsedMessage};
 mod pdf;
-pub use pdf::{MAX_PDF_BYTES, PdfTextError, pdf_text};
+pub use pdf::{PdfText, PdfTextError, pdf_text};

@@ -234,11 +234,24 @@ folder brings, and its rescans make the edits that follow the files. The notes
 stay yours to read, title and edit, and your edits are yours. Note titles are
 per author, so a folder note may share a title with a note you wrote.
 
-A PDF lands as the text of its pages, titled by its file name, up to 16 MiB of
-file and the 1 MiB a note holds. Only the text layer is read: a scanned PDF
-reads as blank, and an encrypted or unreadable one is passed over and counted
-(`unreadable_pdf`). A PDF whose bytes change while its text does not keeps its
-note as it is.
+A PDF lands as the text of its pages, titled by its file name, whatever its
+size or page count. Only the text layer is read: a scanned PDF reads as blank,
+and an encrypted or unreadable one is passed over and counted
+(`unreadable_pdf`). A page whose content decodes past 8 MiB (the decoder's
+bound) is left out and the rest lands (`partly_read_pdf`). A PDF whose bytes
+change while its text does not keeps its note as it is.
+
+No file is passed over for its size. Text past the 1 MiB a note holds lands in
+parts, cut at a line break where one is near: the file's own note holds the
+first, and each next part is a note of its own (`<path>#part2`, titled
+`<title> (part 2)`, and so on), of the same kind, linked to the first. A
+markdown file's frontmatter stays in its first part, and each part's
+`[[links]]` are those in its own text. When the file shrinks, the parts its
+text no longer reaches are retracted. A folder whose notes hold more text than
+`[limits] import_folder_text_bytes` (256 MiB), or more notes than
+`import_folder_notes` (100,000), is read and imported whole all the same: the
+row asks whether everything is okay, and stdout names it in `warnings`
+(`"warning": "limit_crossed"`).
 
 Nothing is ever written to the folder: it feeds the vault, it is not the vault.
 A folder that is missing retracts nothing. A folder whose last file you
