@@ -92,6 +92,16 @@ side_tables! {
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;
+    /// One root's attestation of one authority checkpoint v2 image (OF-469): both signatures and
+    /// the root's key binding, with the policy digest it was made under. Key: hash32 (image id) +
+    /// root key (suite byte + key bytes).
+    AUTHORITY_CHECKPOINT_ATTESTATION: VaultMeta b"authority:checkpoint-attestation:v1:" Named;
+    /// The newest checkpoint v2 image whose stored attestations reached this vault's own root
+    /// policy, and that policy's digest (OF-469). Key: ().
+    AUTHORITY_CHECKPOINT_ATTESTED_HEAD: VaultMeta b"authority:checkpoint-attested-head:v1" Named;
+    /// One eligible root's certified checkpoint SLH-DSA key: the root's classical signature over
+    /// this install's hash-based key (OF-469). Key: root key (suite byte + key bytes).
+    AUTHORITY_CHECKPOINT_KEY_BINDING: VaultMeta b"authority:checkpoint-key-binding:v1:" Named;
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;

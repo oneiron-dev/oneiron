@@ -48,6 +48,39 @@ impl Default for PairingDescriptor {
 pub struct PairingLink {
     pub code: String,
     pub expires_at: u64,
+    /// The checkpoint pin's challenge and digest, when the vault has an
+    /// attested checkpoint (OF-469): the owner delivers them with the code,
+    /// and the joining device checks the pin redeem returns against them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<PairingPinRef>,
+}
+/// What an owner-delivered link says of the checkpoint pin the link keeps: the
+/// link's fresh single-use challenge and the pin's digest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairingPinRef {
+    pub challenge: [u8; 32],
+    pub digest: [u8; 32],
+}
+impl PairingPinRef {
+    /// The reference to `pin`: its challenge and digest.
+    pub fn of(pin: &AuthorityCheckpointPin) -> Result<Self> {
+        Ok(Self {
+            challenge: pin.challenge,
+            digest: pin.digest()?,
+        })
+    }
+    /// Whether `pin` is exactly the pin this reference names.
+    pub fn names(&self, pin: &AuthorityCheckpointPin) -> bool {
+        Self::of(pin).is_ok_and(|named| named == *self)
+    }
+}
+/// What redeeming a link gives: the slip, the machine it enrolled, and the
+/// checkpoint pin the link kept, for the joining device to check.
+pub struct PairingRedeemed {
+    pub slip: CapabilitySlip,
+    pub machine: Option<FoldedMachine>,
+    pub pin: Option<AuthorityCheckpointPin>,
 }
 /// Owner-approved identity constraints. Redemption can choose a connection key,
 /// but cannot replace these claims or add organization authority.
@@ -76,6 +109,9 @@ struct PairingPending {
     /// enrol that machine and cannot change the answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     machine: Option<PendingMachine>,
+    /// The checkpoint pin the link hands the joining device (OF-469).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pin: Option<AuthorityCheckpointPin>,
 }
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -121,13 +157,31 @@ pub fn pairing_binding_transcript(
     binding_key: &[u8; 32],
     holder_ref: &str,
 ) -> Result<Vec<u8>> {
+    pairing_binding_transcript_pinned(code, binding_key, holder_ref, None)
+}
+/// [`pairing_binding_transcript`] for a link that keeps a checkpoint pin: it
+/// also binds the link's challenge and the pin's digest, under its own domain.
+/// With no pin it is the unpinned transcript.
+pub fn pairing_binding_transcript_pinned(
+    code: &str,
+    binding_key: &[u8; 32],
+    holder_ref: &str,
+    pin: Option<&PairingPinRef>,
+) -> Result<Vec<u8>> {
     let code = normalize_code(code)?;
     if holder_ref.is_empty() || holder_ref.len() > 256 {
         return Err(invalid_authority());
     }
-    let mut msg = b"oneiron/pairing-binding/v2\0".to_vec();
+    let mut msg = match pin {
+        None => b"oneiron/pairing-binding/v2\0".to_vec(),
+        Some(_) => b"oneiron/pairing-binding/pinned/v1\0".to_vec(),
+    };
     msg.extend_from_slice(code.as_bytes());
     msg.extend_from_slice(binding_key);
+    if let Some(pin) = pin {
+        msg.extend_from_slice(&pin.challenge);
+        msg.extend_from_slice(&pin.digest);
+    }
     msg.extend_from_slice(holder_ref.as_bytes());
     Ok(msg)
 }
@@ -136,16 +190,57 @@ pub fn pairing_binding_transcript(
 /// a server, and the string is its own QR payload.
 #[must_use]
 pub fn format_pairing_link(origin: &str, code: &str, holder_ref: &str) -> String {
-    format!("{}/pair#{code}.{holder_ref}", origin.trim_end_matches('/'))
+    format_pinned_pairing_link(origin, code, holder_ref, None)
 }
-/// The inverse of [`format_pairing_link`]: `(origin, code, holder_ref)`.
+/// [`format_pairing_link`] for a link that keeps a checkpoint pin: the
+/// fragment adds the challenge and the pin's digest, each as 64 lower-case hex.
+#[must_use]
+pub fn format_pinned_pairing_link(
+    origin: &str,
+    code: &str,
+    holder_ref: &str,
+    pin: Option<&PairingPinRef>,
+) -> String {
+    let origin = origin.trim_end_matches('/');
+    match pin {
+        None => format!("{origin}/pair#{code}.{holder_ref}"),
+        Some(pin) => format!(
+            "{origin}/pair#{code}.{holder_ref}.{}.{}",
+            lower_hex(&pin.challenge),
+            lower_hex(&pin.digest)
+        ),
+    }
+}
+/// The inverse of [`format_pairing_link`]: `(origin, code, holder_ref)`. A
+/// link that keeps a checkpoint pin is refused here.
 pub fn parse_pairing_link(link: &str) -> Result<(String, String, String)> {
+    match parse_pinned_pairing_link(link)? {
+        (origin, code, holder_ref, None) => Ok((origin, code, holder_ref)),
+        _ => Err(invalid_authority()),
+    }
+}
+/// The inverse of [`format_pinned_pairing_link`]: `(origin, code, holder_ref,
+/// pin)`.
+pub fn parse_pinned_pairing_link(
+    link: &str,
+) -> Result<(String, String, String, Option<PairingPinRef>)> {
     let (location, fragment) = link.split_once('#').ok_or_else(invalid_authority)?;
     let origin = location
         .strip_suffix("/pair")
         .filter(|origin| !origin.is_empty())
         .ok_or_else(invalid_authority)?;
-    let (code, holder_ref) = fragment.split_once('.').ok_or_else(invalid_authority)?;
+    let mut parts = fragment.split('.');
+    let (Some(code), Some(holder_ref)) = (parts.next(), parts.next()) else {
+        return Err(invalid_authority());
+    };
+    let pin = match (parts.next(), parts.next(), parts.next()) {
+        (None, None, None) => None,
+        (Some(challenge), Some(digest), None) => Some(PairingPinRef {
+            challenge: hex32(challenge).ok_or_else(invalid_authority)?,
+            digest: hex32(digest).ok_or_else(invalid_authority)?,
+        }),
+        _ => return Err(invalid_authority()),
+    };
     let holder = crate::EntityId::from_hex(holder_ref).map_err(|_| invalid_authority())?;
     if holder.to_hex() != holder_ref {
         return Err(invalid_authority());
@@ -154,7 +249,26 @@ pub fn parse_pairing_link(link: &str) -> Result<(String, String, String)> {
         origin.to_owned(),
         normalize_code(code)?,
         holder_ref.to_owned(),
+        pin,
     ))
+}
+fn lower_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+/// 64 lower-case hex characters as 32 bytes.
+fn hex32(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    let mut out = [0; 32];
+    for (slot, pair) in out.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(out)
 }
 fn draw_code() -> String {
     use rand_core::{OsRng, RngCore};
@@ -258,6 +372,12 @@ impl Vault {
             }
         };
         let expires_at = now.saturating_add(CODE_TTL_SECS);
+        // A vault with an attested checkpoint pins it for the joining device,
+        // bound to this single-use link's fresh challenge (OF-469).
+        let mut challenge = [0; 32];
+        crate::world_keys::os_fill(&mut challenge)?;
+        let pin = self.authority_checkpoint_pin_in_txn(&txn, challenge)?;
+        let pin_ref = pin.as_ref().map(PairingPinRef::of).transpose()?;
         let pending = PairingPending {
             expires_at,
             slip_lifetime_secs,
@@ -265,10 +385,15 @@ impl Vault {
             host_key: issuer.binding_key(),
             principal,
             machine,
+            pin,
         };
         PAIRING_PENDING.put(&self.store, &mut txn, &row_key, &pending)?;
         txn.commit()?;
-        Ok(PairingLink { code, expires_at })
+        Ok(PairingLink {
+            code,
+            expires_at,
+            pin: pin_ref,
+        })
     }
     /// No prior bearer is required. The link is the one-use enrollment grant;
     /// the binding signature proves possession of the receiving connection key.
@@ -283,7 +408,21 @@ impl Vault {
         signature: &[u8],
     ) -> Result<CapabilitySlip> {
         self.redeem_pairing_link_in(issuer, code, holder_ref, binding_key, signature, None)
-            .map(|(slip, _)| slip)
+            .map(|redeemed| redeemed.slip)
+    }
+    /// Redeems any link, a machine's with its `request`, and returns the
+    /// checkpoint pin the link kept as well, for the joining device to check
+    /// against the challenge and digest its owner-delivered link carries.
+    pub fn redeem_pairing_link_pinned(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+        holder_ref: &str,
+        binding_key: [u8; 32],
+        signature: &[u8],
+        request: Option<&MachineEnrolmentRequest>,
+    ) -> Result<PairingRedeemed> {
+        self.redeem_pairing_link_in(issuer, code, holder_ref, binding_key, signature, request)
     }
     /// Redeems a link that adds a machine: the slip and the owner's profile
     /// for `request` land in one transaction, under the answer the owner gave
@@ -297,7 +436,7 @@ impl Vault {
         signature: &[u8],
         request: &MachineEnrolmentRequest,
     ) -> Result<(CapabilitySlip, FoldedMachine)> {
-        let (slip, machine) = self.redeem_pairing_link_in(
+        let redeemed = self.redeem_pairing_link_in(
             issuer,
             code,
             holder_ref,
@@ -305,7 +444,10 @@ impl Vault {
             signature,
             Some(request),
         )?;
-        Ok((slip, machine.ok_or_else(invalid_authority)?))
+        Ok((
+            redeemed.slip,
+            redeemed.machine.ok_or_else(invalid_authority)?,
+        ))
     }
     fn redeem_pairing_link_in(
         &self,
@@ -315,14 +457,9 @@ impl Vault {
         binding_key: [u8; 32],
         signature: &[u8],
         request: Option<&MachineEnrolmentRequest>,
-    ) -> Result<(CapabilitySlip, Option<FoldedMachine>)> {
+    ) -> Result<PairingRedeemed> {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
-        key.verify_strict(
-            &pairing_binding_transcript(code, &binding_key, holder_ref)?,
-            &signature,
-        )
-        .map_err(|_| invalid_authority())?;
         let mut txn = self.store.env.write_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
         let row_key = pairing_row_key(issuer, code)?;
@@ -330,6 +467,14 @@ impl Vault {
             .get(&self.store, &txn, &row_key)
             .map_err(|_| invalid_authority())?
             .ok_or_else(invalid_authority)?;
+        // The connection key signs the challenge and pin digest the link kept,
+        // so a redeemer handed another link's pin cannot spend this one.
+        let pin_ref = pending.pin.as_ref().map(PairingPinRef::of).transpose()?;
+        key.verify_strict(
+            &pairing_binding_transcript_pinned(code, &binding_key, holder_ref, pin_ref.as_ref())?,
+            &signature,
+        )
+        .map_err(|_| invalid_authority())?;
         if now >= pending.expires_at
             || pending.host_key != issuer.binding_key()
             || pending.machine.is_some() != request.is_some()
@@ -409,7 +554,11 @@ impl Vault {
         };
         PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
         txn.commit()?;
-        Ok((slip, machine))
+        Ok(PairingRedeemed {
+            slip,
+            machine,
+            pin: pending.pin,
+        })
     }
     /// The facet a credential redeemed from a link writes in, as the owner
     /// named it there: `None` for a link that named none.
