@@ -21733,7 +21733,7 @@
      "path": "src/federation/shared_act/membership.rs",
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6,
       "re-export": 1
      }
