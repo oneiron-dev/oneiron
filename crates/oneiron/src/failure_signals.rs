@@ -1,7 +1,8 @@
 //! Content-free, versioned tier-1 agent failure counts. This taxonomy is not
 //! the failure ladder's retry-routing class or a detector's repair tier.
 //! The two FIX6 code-fix exports, the Coach's invented examples and candidate
-//! fixes' results, live in the `code_fix` child beside them.
+//! fixes' results, live in the `code_fix` child beside them, and the
+//! `delivery` child sends both to the deployment's publisher.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,6 +12,7 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 mod code_fix;
+mod delivery;
 pub(crate) mod policy;
 mod verbatim;
 mod witness;
@@ -22,6 +24,11 @@ pub use code_fix::{
     ReplayRun, ScrubRun, ShadowRun,
 };
 pub(crate) use code_fix::{failed_case_in, failure_source_in};
+pub use delivery::{
+    FAILURE_SIGNAL_BATCH_VERSION, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB,
+    FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport,
+    FailureSignalTransportRequest,
+};
 pub use verbatim::{CODE_FIX_LINE_WORDS, CODE_FIX_SPAN_WORDS};
 pub use witness::Tier1Observation;
 
@@ -316,6 +323,22 @@ impl FailureSignalCounts {
             })
             .collect())
     }
+
+    fn ack(&self, delivered: &[Tier1FailureCount]) -> Result<()> {
+        let mut counts = self
+            .counts
+            .lock()
+            .map_err(|_| Error::InvariantViolation("failure signal counters poisoned"))?;
+        for row in delivered {
+            if let Some(count) = counts.get_mut(&row.dimensions) {
+                *count = count.saturating_sub(row.count);
+                if *count == 0 {
+                    counts.remove(&row.dimensions);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn executed_model(
@@ -513,6 +536,13 @@ impl crate::Vault {
             .diagnostics
             .failure_signals
             .export(self.config.failure_signals)
+    }
+
+    /// Takes counts the host delivered out of the aggregate, so the next
+    /// export carries only what was counted since. A count recorded between
+    /// the export and this ack stays for the next one.
+    pub fn ack_tier1_failure_counts(&self, delivered: &[Tier1FailureCount]) -> Result<()> {
+        self.store.diagnostics.failure_signals.ack(delivered)
     }
 
     /// Registers a producer's witness. Once the map has doubled since the

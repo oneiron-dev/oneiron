@@ -30,6 +30,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
         feedback_manifest("feedback_cloud"),
         feedback_manifest("feedback_collector"),
         feedback_manifest("feedback_github"),
+        failure_signals_manifest(),
         linear_manifest(),
         manifest(
             "esign", "signing", "Native signing request organ.",
@@ -715,6 +716,29 @@ fn feedback_manifest(channel: &'static str) -> OutboundCapabilityManifest {
             OutboundPermissionState::Conditional,
             false,
             "Requires one approval for one bundle and one destination; never a standing grant.",
+        )],
+    )
+}
+
+// OF-380: the failure-signal batch a participating deployment sends its
+// publisher. Its standing grant is the participation itself, kept by the
+// engine's delivery door; it is never an owner's per-send approval.
+fn failure_signals_manifest() -> OutboundCapabilityManifest {
+    manifest(
+        "failure_signals",
+        "telemetry",
+        "Content-free tier-1 counts and sealed code-fix records; no world text.",
+        vec![verb(
+            "send",
+            "POST",
+            json!({"batch":"failure-signal batch JSON","target":"exact HTTPS publisher endpoint"}),
+            OutboundInterruptionClass::Ambient,
+            OutboundDeliverySemanticsKind::FireAndForget,
+            None,
+            OutboundRetryClass::NonIdempotentInterrupt,
+            OutboundPermissionState::Conditional,
+            false,
+            "Allowed while the deployment participates (managed terms or the owner's opt-in).",
         )],
     )
 }

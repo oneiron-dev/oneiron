@@ -8,7 +8,7 @@
 //!
 //! The same switch gates the two code-fix exports (FIX6, owner ruling
 //! 2026-10-16): the Coach's invented examples and candidate fixes' fixed or
-//! not-fixed results ([`Vault::export_code_fix_records`](crate::Vault::export_code_fix_records)).
+//! not-fixed results ([`Vault::pending_code_fix_records`](crate::Vault::pending_code_fix_records)).
 //! Neither carries real chat text, and a failure that touched a private world
 //! sends counts only.
 
