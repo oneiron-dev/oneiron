@@ -2232,13 +2232,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/guest_revoke.rs",
      "purpose": "OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one ask guest's…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -2761,7 +2761,7 @@
      "path": "src/authority/task_actor.rs",
      "purpose": "Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -10718,14 +10718,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HostPlannerBinding"
+      "HostPlannerBinding",
+      "HostPlannerDecisions"
      ],
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
       "crate-vis": 5,
       "fn": 8,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -65664,8 +65665,22 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 2,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PlannerSeatSetting",
+      "PlannerSettings"
+     ],
+     "path": "src/config/models/planner.rs",
+     "purpose": "`[models.planner]`: the seats a leased agent's planned spawns choose among (OF-541, OF-389)",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 2
      }
     },
     {
@@ -65953,7 +65968,7 @@
      "path": "src/decision_host.rs",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 15,
       "struct": 1
      }
@@ -67266,7 +67281,7 @@
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
       "crate-vis": 3,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -68574,7 +68589,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/server/resident_pump.rs",
@@ -69406,7 +69421,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 41,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69611,7 +69626,7 @@
     "server": {
      "files": 28,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Sync server state and maintenance jobs, split by concern"
     },
@@ -69672,9 +69687,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 35,
+   "over_bar": 36,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 542,
+   "source_files": 543,
    "test_files": 182
   },
   "oneiron-spawn": {
