@@ -322,8 +322,38 @@ pub(crate) async fn hook_pins_section(
     if pins.is_empty() || memories.and_then(|controls| controls.enabled) == Some(false) {
         return Ok(None);
     }
-    let vault = &server.vault;
-    let read = super::super::scoped_read_for_core_auth(vault, auth)?;
+    let read = super::super::scoped_read_for_core_auth(&server.vault, auth)?;
+    let Some(pinned) = hook_pins_projection(&server.vault, auth, read, room_id, pins)? else {
+        return Ok(None);
+    };
+    pinned.receipt.record(&server.vault).await?;
+    Ok(Some(pinned.section))
+}
+
+/// A no-retrieval board's hook-pin rows and the receipt their delivery owes.
+pub(crate) struct HookPinsDelivery {
+    pub(crate) section: oneiron::MemoriesSection,
+    pub(crate) receipt: HookPinsReceipt,
+}
+
+/// The owner's post-hoc receipt for hook-pin rows that go out under a contact's standing
+/// clearance, held until the board carrying them is delivered.
+pub(crate) struct HookPinsReceipt {
+    delivered: Vec<oneiron::EntityId>,
+    interlocutors: Option<oneiron::InterlocutorSet>,
+    channels: std::collections::BTreeSet<String>,
+}
+
+/// [`hook_pins_section`]'s rows, read under `read` (the caller's own ceiling) narrowed to the
+/// board's room (or the caller alone) and clamped to those present, with the receipt left for
+/// the caller to record once the board is delivered. `None` when no row is admitted.
+pub(crate) fn hook_pins_projection<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+    read: oneiron::claim::ScopedRead<'a>,
+    room_id: Option<oneiron::EntityId>,
+    pins: &[oneiron::context_board::HookPin],
+) -> Result<Option<HookPinsDelivery>, ApiError> {
     let (room_members, room) = super::super::resolve_core_room(vault, auth, &read, room_id)?;
     let interlocutors =
         super::super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref())?;
@@ -354,23 +384,44 @@ pub(crate) async fn hook_pins_section(
         .map(|row| oneiron::EntityId::from_hex(&row.id))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| core_engine_error("memory delivery id failed", error))?;
-    let channels: std::collections::BTreeSet<String> = room_id
+    let channels = room_id
         .map(|room| oneiron::consent::contact_disclosure_room_channel(&room))
         .into_iter()
         .collect();
-    let vault = std::sync::Arc::clone(vault);
-    tokio::task::spawn_blocking(move || {
-        vault.record_standing_disclosure_uses(
-            &delivered,
-            interlocutors.as_ref(),
-            &std::collections::BTreeMap::new(),
-            &channels,
-        )
-    })
-    .await
-    .map_err(|_| ApiError::internal_server_error("disclosure receipt task failed"))?
-    .map_err(|error| core_engine_error("disclosure receipt failed", error))?;
-    Ok(Some(section))
+    Ok(Some(HookPinsDelivery {
+        section,
+        receipt: HookPinsReceipt {
+            delivered,
+            interlocutors,
+            channels,
+        },
+    }))
+}
+
+impl HookPinsReceipt {
+    /// The rows this receipt covers.
+    pub(crate) fn delivered(&self) -> &[oneiron::EntityId] {
+        &self.delivered
+    }
+
+    /// Records the receipt: call it once the rows are going out, never for a board only read.
+    pub(crate) async fn record(
+        self,
+        vault: &std::sync::Arc<oneiron::Vault>,
+    ) -> Result<(), ApiError> {
+        let vault = std::sync::Arc::clone(vault);
+        tokio::task::spawn_blocking(move || {
+            vault.record_standing_disclosure_uses(
+                &self.delivered,
+                self.interlocutors.as_ref(),
+                &std::collections::BTreeMap::new(),
+                &self.channels,
+            )
+        })
+        .await
+        .map_err(|_| ApiError::internal_server_error("disclosure receipt task failed"))?
+        .map_err(|error| core_engine_error("disclosure receipt failed", error))
+    }
 }
 
 pub(crate) fn resolve_companion_assembly(

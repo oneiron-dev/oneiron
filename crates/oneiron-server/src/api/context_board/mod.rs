@@ -470,7 +470,12 @@ pub(crate) async fn context_board_hydrate(
         served.rows
     });
     // An agent's reader list joins it as its READERS section.
-    let readers = served_readers(&server, &auth).map(|(section, rows)| {
+    let readers = served_readers(
+        &server,
+        &auth,
+        &oneiron::context_board::PeopleView::new(&people, &resident),
+    )
+    .map(|(section, rows)| {
         parts.sections.push(section);
         rows
     });
