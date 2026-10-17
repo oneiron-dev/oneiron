@@ -284,6 +284,15 @@ pub struct CanonicalShellWorld {
     pub world: [u8; 16],
 }
 
+/// One owner-signed custody transition a base window carries (OF-422): opaque
+/// signed and sealed bytes, kept as the window holds them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalCustodyTransition {
+    pub id: [u8; 16],
+    pub carrier: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalContainerManifest {
@@ -328,6 +337,10 @@ pub struct CanonicalSnapshot {
     /// an artifact with none encodes as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub suppressed_tasks: Vec<[u8; 16]>,
+    /// The base window's custody transitions (OF-422), by record id. Absent
+    /// when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custody_transitions: Vec<CanonicalCustodyTransition>,
 }
 
 impl CanonicalSnapshot {
@@ -391,6 +404,7 @@ impl CanonicalSnapshot {
             "head_move_receipts",
             "note_forks",
             "note_proposals",
+            "custody",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
@@ -516,6 +530,7 @@ pub(crate) fn capture_canonical_window_within(
             "head_move_receipts",
             "note_forks",
             "note_proposals",
+            "custody",
         ]
         .contains(&name.as_str())
     }) {
@@ -549,6 +564,7 @@ pub(crate) fn capture_canonical_window_within(
             .as_bytes(),
         },
         suppressed_tasks: Vec::new(),
+        custody_transitions: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
@@ -571,6 +587,14 @@ pub(crate) fn capture_canonical_window_within(
             return Err(invalid("noncanonical edge key"));
         }
         snapshot.base_edges.push(edge);
+    }
+    for (key, carrier) in binary_rows_within(doc, "custody", budget)? {
+        snapshot
+            .custody_transitions
+            .push(CanonicalCustodyTransition {
+                id: parse_id(&key)?,
+                carrier,
+            });
     }
     for (key, value) in binary_rows_within(doc, "tombstones", budget)? {
         snapshot.tombstones.push(CanonicalTombstone {
@@ -858,6 +882,9 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     }
     for edge in &snapshot.base_edges {
         insert(&doc, "edges", &edge.key()?, &edge.value)?;
+    }
+    for row in &snapshot.custody_transitions {
+        insert(&doc, "custody", &id(row.id)?.to_hex(), &row.carrier)?;
     }
     for tombstone in &snapshot.tombstones {
         insert(
