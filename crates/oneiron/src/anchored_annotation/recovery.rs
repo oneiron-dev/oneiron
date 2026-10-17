@@ -180,10 +180,10 @@ fn pair_paragraph(
 
 impl Vault {
     pub(super) fn text_limits_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<TextLimits> {
-        // Reading a spot's words is read-only: the shipped package ceilings
-        // bound it, and the vault's live Word archive policy.
+        // Reading a spot's words is bound by the vault's live package and
+        // Word archive policy, as this transaction sees them.
         Ok(TextLimits {
-            package: crate::gate::shipped_docedit_package_limits(),
+            package: self.docedit_package_limits_in_txn(txn)?,
             docx: self.docx_archive_limits_in_txn(txn, None)?,
         })
     }

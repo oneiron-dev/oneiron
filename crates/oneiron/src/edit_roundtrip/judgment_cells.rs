@@ -85,18 +85,6 @@ fn sheet_cells(
     named_sheet_cells(bytes, &bundle.sheet, &|cell| targets.contains(cell))
 }
 
-/// The workbook's sheet names, in workbook order.
-pub(crate) fn sheet_names(bytes: &[u8]) -> Result<Vec<String>> {
-    let pkg = opc::read(bytes)?;
-    let workbook = pkg.part("xl/workbook.xml").ok_or_else(invalid)?;
-    Ok(xml::elements(workbook)
-        .map_err(|_| invalid())?
-        .iter()
-        .filter(|e| e.is("sheet", SHEET_NS))
-        .filter_map(|e| e.attribute("name").map(str::to_owned))
-        .collect())
-}
-
 /// The saved values of the cells `wanted` selects on one named sheet: the
 /// stored value, or a formula with its saved cache. Nothing is recalculated.
 pub(crate) fn named_sheet_cells(

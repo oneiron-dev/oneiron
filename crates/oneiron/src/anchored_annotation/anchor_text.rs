@@ -7,11 +7,14 @@
 //! detached comment keeps a snapshot of its text, so a person can be offered
 //! the exact words when they return; nothing here reattaches on a guess.
 
+use std::collections::BTreeMap;
+
 use oneiron_docedit::retained_opc::{Limits, Package};
+use oneiron_docedit::xlsx_body::read_xlsx_cells;
+use oneiron_xlsx_formula::cell_display_text;
 
 use super::model::{A1Range, Locator};
-use crate::edit_roundtrip::judgment_cells::{named_sheet_cells, sheet_names};
-use crate::edit_roundtrip::{CellRef, CellValue, OfficeFormat};
+use crate::edit_roundtrip::{CellRef, OfficeFormat};
 
 /// Cells joined in a range snapshot: across a row, then down rows.
 const CELL_SEPARATOR: char = '\t';
@@ -31,7 +34,7 @@ pub(super) struct TextLimits {
 /// The text under `locator` in `bytes`, or `None` when the spot cannot be read.
 pub(super) fn anchor_text(bytes: &[u8], locator: &Locator, limits: &TextLimits) -> Option<String> {
     match locator {
-        Locator::Xlsx { sheet, range } => xlsx_range_text(bytes, sheet, *range),
+        Locator::Xlsx { sheet, range } => xlsx_range_text(bytes, sheet, *range, limits),
         Locator::Docx {
             para_path,
             char_start,
@@ -81,7 +84,7 @@ pub(super) fn find_text(
         return Vec::new();
     }
     let mut found = match format {
-        OfficeFormat::Xlsx => find_in_sheets(bytes, text),
+        OfficeFormat::Xlsx => find_in_sheets(bytes, text, limits),
         OfficeFormat::Docx => docx_blocks(bytes, limits)
             .map(|blocks| {
                 blocks
@@ -215,26 +218,56 @@ fn char_occurrences(haystack: &str, needle: &str) -> Vec<(u64, u64)> {
     out
 }
 
-fn cell_text(value: &CellValue) -> String {
-    match value {
-        CellValue::Blank => String::new(),
-        CellValue::Text(text) | CellValue::Error(text) => text.clone(),
-        CellValue::Bool(true) => "TRUE".to_owned(),
-        CellValue::Bool(false) => "FALSE".to_owned(),
-        CellValue::Number(number) => number.to_string(),
-        CellValue::Formula { cached, .. } => cached.as_deref().map(cell_text).unwrap_or_default(),
-    }
+/// Each sheet's cells that `wanted` picks, as a person sees them (a
+/// formula's saved result under the cell's number format), in workbook
+/// order. The workbook is read under the live package ceilings.
+fn sheet_texts(
+    bytes: &[u8],
+    limits: &TextLimits,
+    wanted: &dyn Fn(&str, &CellRef) -> bool,
+) -> Option<Vec<(String, BTreeMap<CellRef, String>)>> {
+    let book = read_xlsx_cells(bytes, limits.package).ok()?;
+    Some(
+        book.sheets
+            .iter()
+            .map(|sheet| {
+                let cells = sheet
+                    .cells
+                    .iter()
+                    .map(|cell| {
+                        let at = CellRef {
+                            col: cell.col,
+                            row: cell.row,
+                        };
+                        (at, cell)
+                    })
+                    .filter(|(at, _)| wanted(sheet.name.as_str(), at))
+                    .map(|(at, cell)| (at, cell_display_text(&book, cell)))
+                    .collect();
+                (sheet.name.clone(), cells)
+            })
+            .collect(),
+    )
 }
 
-fn xlsx_range_text(bytes: &[u8], sheet: &str, range: A1Range) -> Option<String> {
-    let cells = named_sheet_cells(bytes, sheet, &|cell| in_range(cell, range)).ok()?;
+fn xlsx_range_text(
+    bytes: &[u8],
+    sheet: &str,
+    range: A1Range,
+    limits: &TextLimits,
+) -> Option<String> {
+    let (_, cells) = sheet_texts(bytes, limits, &|name, cell| {
+        name == sheet && in_range(cell, range)
+    })?
+    .into_iter()
+    .find(|(name, _)| name == sheet)?;
     let rows: Vec<String> = (range.row_start..=range.row_end)
         .map(|row| {
             (range.col_start..=range.col_end)
                 .map(|col| {
                     cells
                         .get(&CellRef { col, row })
-                        .map(cell_text)
+                        .cloned()
                         .unwrap_or_default()
                 })
                 .collect::<Vec<_>>()
@@ -251,7 +284,7 @@ fn in_range(cell: &CellRef, range: A1Range) -> bool {
 }
 
 /// Same-shaped ranges whose cells read exactly as the snapshot.
-fn find_in_sheets(bytes: &[u8], text: &str) -> Vec<Locator> {
+fn find_in_sheets(bytes: &[u8], text: &str, limits: &TextLimits) -> Vec<Locator> {
     let rows: Vec<Vec<&str>> = text
         .split(ROW_SEPARATOR)
         .map(|row| row.split(CELL_SEPARATOR).collect())
@@ -261,16 +294,13 @@ fn find_in_sheets(bytes: &[u8], text: &str) -> Vec<Locator> {
     if height == 0 || width == 0 || rows.iter().any(|row| row.len() != width as usize) {
         return Vec::new();
     }
-    let Ok(sheets) = sheet_names(bytes) else {
+    let Some(sheets) = sheet_texts(bytes, limits, &|_, _| true) else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for sheet in sheets {
-        let Ok(cells) = named_sheet_cells(bytes, &sheet, &|_| true) else {
-            continue;
-        };
+    for (sheet, cells) in sheets {
         for (corner, value) in &cells {
-            if cell_text(value) != rows[0][0] {
+            if value != rows[0][0] {
                 continue;
             }
             let matches = (0..height).all(|dy| {
@@ -279,7 +309,7 @@ fn find_in_sheets(bytes: &[u8], text: &str) -> Vec<Locator> {
                         col: corner.col + dx,
                         row: corner.row + dy,
                     };
-                    cells.get(&cell).map(cell_text).unwrap_or_default()
+                    cells.get(&cell).map(String::as_str).unwrap_or_default()
                         == rows[dy as usize][dx as usize]
                 })
             });
