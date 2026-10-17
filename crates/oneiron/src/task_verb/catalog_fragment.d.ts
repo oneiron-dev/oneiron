@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 290 code-mode rows (272 host rows, 18 run rows), 904 declarations.
-// Replies: 233 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 291 code-mode rows (273 host rows, 18 run rows), 906 declarations.
+// Replies: 234 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 65; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -794,6 +794,8 @@ declare namespace Sdk {
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
   type WorkflowCheck = "solved" | "replay";
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; unmet?: number[]; replay?: BatchOutput | null };
+  type LibraryRetireInput = { workflow: string };
+  type LibraryRetireOutput = { retired: LibraryCard };
   type LibraryRunInput = { workflow: string; args?: Record<string, string> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
   type KeyInput = { key: string; modifiers?: string[]; ref?: string | null };
@@ -993,6 +995,8 @@ declare namespace self {
       find(input: Sdk.LibraryFindInput): Promise<Sdk.Reply<Sdk.LibraryFindOutput>>;
       /** Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.Reply<Sdk.ProposeOutput>>;
+      /** Takes a program out of the replay library for every later run, and returns the card it had. */
+      retire(input: Sdk.LibraryRetireInput): Promise<Sdk.Reply<Sdk.LibraryRetireOutput>>;
       /** Runs a replay library program live with its arguments; a missed postcondition goes back to the planner. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.Reply<Sdk.LibraryRunOutput>>;
     };

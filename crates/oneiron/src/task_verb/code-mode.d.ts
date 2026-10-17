@@ -43,6 +43,7 @@ declare namespace self {
     library: {
       find(input: { site?: string | null; subgoal?: string | null }): Promise<unknown>;
       propose(input: { args?: object; params?: string[]; postcondition: object[]; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal: string }): Promise<unknown>;
+      retire(input: { workflow: string }): Promise<unknown>;
       run(input: { args?: object; workflow: string }): Promise<unknown>;
     };
     observe(input: { since?: number | null }): Promise<unknown>;
