@@ -66,6 +66,7 @@ pub(super) fn mesh_row(peer: MachineId, mut entry: LlmCatalogEntry) -> Option<Mo
         catalog: entry,
         scores: BTreeMap::new(),
         fetched_at: BTreeMap::new(),
+        tokens_per_o200k: None,
     };
     row.validate().ok().map(|()| row)
 }
