@@ -976,10 +976,10 @@
     },
     {
       "name": "vault.members.add",
-      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept.",
+      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",
-      "output": "crate::federation::SharedActExecutionReceipt",
-      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
+      "output": "crate::task_verb::sdk::SharedMemberInvited",
+      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, None, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},

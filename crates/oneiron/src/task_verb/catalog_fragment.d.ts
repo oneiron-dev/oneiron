@@ -4,7 +4,7 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 269 code-mode rows (252 host rows, 17 run rows), 803 declarations.
+// Census: 269 code-mode rows (252 host rows, 17 run rows), 805 declarations.
 // Replies: 200 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
 // Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -287,7 +287,9 @@ declare namespace Sdk {
   type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: number; recipient: string; change: SharedVaultChange; completed_at: number };
   type EmptyRequest = Record<string, never>;
   type SharedVaultDeletion = { vault_id: number; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number };
-  type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null };
+  type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null; holder_key?: string | null };
+  type InvitationSlip = { slip_id: string; slip: string; expires_at: number };
+  type SharedMemberInvited = { receipt: SharedActExecutionReceipt; credential?: InvitationSlip | null };
   type SharedMemberRoleRequest = { vault_id: number; member: string; role: FederationGrantRole };
   type SharedMemberRequest = { vault_id: number; member: string };
   type SharedInvitationState = "pending" | { accepted: { at: number } } | { declined: { at: number } } | { withdrawn: { by: string; at: number } };
@@ -1228,8 +1230,8 @@ declare const vault: {
   members: {
     /** The invitee accepts their own invitation and joins the shared vault at its role. */
     accept(input: Sdk.SharedInvitationRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
-    /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
-    add(input: Sdk.SharedMemberAddRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
+    add(input: Sdk.SharedMemberAddRequest): Promise<Sdk.Reply<Sdk.SharedMemberInvited>>;
     /** An Admin assigns another non-root role to a member who is not an Owner. */
     change(input: Sdk.SharedMemberRoleRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
     /** The invitee declines their own invitation; nothing is granted. */

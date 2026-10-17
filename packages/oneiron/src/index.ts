@@ -322,8 +322,8 @@ export class Oneiron {
       close_erase_ask: (input: Facade.SharedEraseAskCloseRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedCloseEraseAsk(input) as Facade.SharedEraseAsk),
     },
     members: {
-      /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
-      add: (input: Facade.SharedMemberAddRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedActExecutionReceipt),
+      /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
+      add: (input: Facade.SharedMemberAddRequest): Facade.SharedMemberInvited => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedMemberInvited),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
       /** An Admin removes one member from a shared vault. */
