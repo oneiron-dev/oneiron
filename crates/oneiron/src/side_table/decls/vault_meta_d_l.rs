@@ -390,6 +390,9 @@ side_tables! {
     /// example's and the candidate fix's, kept after the export queue drains. Never real chat
     /// text. Key: id16(case key).
     FAILURE_SIGNALS_CODE_FIX_WORK: VaultMeta b"failure_signals:code_fix_work:v1:" Named;
+    /// A diagnostic already counted into the tier-1 failure aggregate, and when it observed; a
+    /// later capture of the same diagnostic counts nothing (OF-380). Key: id16 (diagnostic id).
+    FAILURE_SIGNALS_TIER1_COUNTED: VaultMeta b"failure_signals:tier1_counted:v1:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
