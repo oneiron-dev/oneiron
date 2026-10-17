@@ -393,6 +393,10 @@ side_tables! {
     /// A diagnostic already counted into the tier-1 failure aggregate, and when it observed; a
     /// later capture of the same diagnostic counts nothing (OF-380). Key: id16 (diagnostic id).
     FAILURE_SIGNALS_TIER1_COUNTED: VaultMeta b"failure_signals:tier1_counted:v1:" Raw;
+    /// One tier-1 failure count not yet delivered to the publisher, kept across restarts: the
+    /// count (u64be), then its content-free dimensions as JSON. Key: bytes32 (blake3 of that
+    /// JSON).
+    FAILURE_SIGNALS_TIER1_COUNTS: VaultMeta b"failure_signals:tier1_counts:v1:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so

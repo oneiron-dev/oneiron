@@ -698,6 +698,7 @@ The counts come from the Coach's detectors. Each diagnostic they raise counts on
 recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
 `other` with its detector named. Your own refusal of a single consent ask is never counted. A
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
+Counts wait in the vault, across restarts, until the publisher takes them.
 
 ## Model-graded self-heal detectors
 
