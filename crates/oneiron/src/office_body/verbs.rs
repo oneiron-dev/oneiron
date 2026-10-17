@@ -16,6 +16,7 @@ use super::{
     OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, ProposalSettleRequest, ReviewedFork,
     SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
 };
+use crate::batch::secret_scan::LiftedKeys;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -353,7 +354,7 @@ impl Memory<'_> {
             .office_body_head(&artifact)?
             .ok_or_else(|| MemoryError::not_found("the artifact has no live body"))?;
         let at = input.at.as_deref();
-        Ok(match head.kind {
+        let view = match head.kind {
             OfficeBodyKind::Docx => OfficeBodyView::Docx {
                 body: self.vault().read_docx_body(&artifact, at)?.into(),
             },
@@ -363,7 +364,42 @@ impl Memory<'_> {
             OfficeBodyKind::Pptx => OfficeBodyView::Pptx {
                 body: self.vault().read_pptx_body(&artifact, at)?.into(),
             },
-        })
+        };
+        self.lifted_body_view(&artifact, view)
+    }
+
+    /// `view` of `artifact`'s body as the bound actor reads it: a reader
+    /// other than the owner reads each key the lift sweep marked in the body
+    /// as its handle (OF-067).
+    pub(super) fn lifted_body_view<T: Serialize + serde::de::DeserializeOwned>(
+        &self,
+        artifact: &EntityId,
+        view: T,
+    ) -> MemoryResult<T> {
+        self.lifted_view(view, || self.vault().typed_body_lifted_keys(artifact))
+    }
+
+    /// `ops` for `artifact`'s body with each handle of a key the body's
+    /// lifted texts hold back as its value: a writer that kept a handle it
+    /// read writes the value again, one that deleted it removed the secret
+    /// (OF-067).
+    fn lifted_body_ops(
+        &self,
+        artifact: &EntityId,
+        ops: &OfficeBodyOps,
+    ) -> MemoryResult<OfficeBodyOps> {
+        let mut value = serde_json::to_value(ops)
+            .map_err(|_| crate::Error::InvariantViolation("office body ops did not encode"))?;
+        if !LiftedKeys::names_a_handle(&value.to_string()) {
+            return Ok(ops.clone());
+        }
+        let keys = self.vault().typed_body_lifted_keys(artifact)?;
+        if keys.is_empty() || !keys.resolve_json(&mut value) {
+            return Ok(ops.clone());
+        }
+        Ok(serde_json::from_value(value).map_err(|_| {
+            crate::Error::InvariantViolation("resolved office body ops did not decode")
+        })?)
     }
 
     /// `vault.artifacts.body.commits`: every commit receipt, in commit order,
@@ -385,7 +421,7 @@ impl Memory<'_> {
         let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.edit")?;
         let base = input.base.as_deref();
         let actor = self.body_actor();
-        Ok(match &input.ops {
+        Ok(match &self.lifted_body_ops(&artifact, &input.ops)? {
             OfficeBodyOps::Docx { ops } => self
                 .vault()
                 .edit_docx_body(&artifact, base, ops, actor, &made_by)?,
@@ -431,7 +467,7 @@ impl Memory<'_> {
         let fork = self.body_ref(&input.fork_ref)?;
         let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.fork_edit")?;
         let actor = self.body_actor();
-        Ok(match &input.ops {
+        Ok(match &self.lifted_body_ops(&artifact, &input.ops)? {
             OfficeBodyOps::Docx { ops } => self
                 .vault()
                 .edit_docx_body_fork(&artifact, &fork, ops, actor, &made_by)?,
@@ -452,7 +488,8 @@ impl Memory<'_> {
     ) -> MemoryResult<OfficeBodyDiff> {
         let artifact = self.body_ref(&input.artifact_ref)?;
         let fork = self.body_ref(&input.fork_ref)?;
-        Ok(self.vault().office_body_fork_diff(&artifact, &fork)?)
+        let diff = self.vault().office_body_fork_diff(&artifact, &fork)?;
+        self.lifted_body_view(&artifact, diff)
     }
 
     /// `vault.artifacts.body.fork.merge`: lands one reviewed fork, its
@@ -464,12 +501,13 @@ impl Memory<'_> {
     ) -> MemoryResult<OfficeBodyDiff> {
         let artifact = self.body_ref(&input.artifact_ref)?;
         let fork = self.body_ref(&input.fork_ref)?;
-        Ok(self.vault().merge_office_body_fork(
+        let diff = self.vault().merge_office_body_fork(
             &artifact,
             &fork,
             (&input.reviewed_head, &input.reviewed_fork),
             self.body_actor(),
-        )?)
+        )?;
+        self.lifted_body_view(&artifact, diff)
     }
 
     /// `vault.artifacts.body.proposal.read`.
@@ -479,9 +517,11 @@ impl Memory<'_> {
     ) -> MemoryResult<OfficeBodyProposal> {
         let artifact = self.body_ref(&input.artifact_ref)?;
         let proposal = self.body_ref(&input.proposal_ref)?;
-        self.vault()
+        let proposal = self
+            .vault()
             .office_body_proposal(&artifact, &proposal)?
-            .ok_or_else(|| MemoryError::not_found("no such proposal on the artifact"))
+            .ok_or_else(|| MemoryError::not_found("no such proposal on the artifact"))?;
+        self.lifted_body_view(&artifact, proposal)
     }
 
     /// `vault.artifacts.body.proposal.settle`: the proposal after the answer.
@@ -508,12 +548,13 @@ impl Memory<'_> {
             reviewed: &reviewed,
             reason: input.reason.as_deref(),
         };
-        Ok(self.vault().settle_office_body_proposal(
+        let settled = self.vault().settle_office_body_proposal(
             &artifact,
             &proposal,
             &request,
             self.body_actor(),
-        )?)
+        )?;
+        self.lifted_body_view(&artifact, settled)
     }
 
     /// `vault.artifacts.body.fork.discard`: the discarded fork's record.
@@ -569,6 +610,7 @@ impl Memory<'_> {
         input: &OfficeBodyArtifactRequest,
     ) -> MemoryResult<XlsxPreview> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        Ok(self.vault().preview_xlsx_body(&artifact)?)
+        let preview = self.vault().preview_xlsx_body(&artifact)?;
+        self.lifted_body_view(&artifact, preview)
     }
 }

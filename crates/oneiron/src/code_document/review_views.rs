@@ -15,6 +15,7 @@ use super::verbs::{
     CodeChangeView, CodeOperationView, CodeStateView, change_view, operation_view, state_view,
 };
 use super::{CodeDocumentFrontier, CodeOpAttribution};
+use crate::batch::secret_scan::LiftedKeys;
 use crate::code_symbol::{
     CodeAttributedChange, render_attributed_semantic_diff, semantic_code_diff,
 };
@@ -229,6 +230,18 @@ impl Memory<'_> {
         ) else {
             return Ok(None);
         };
+        // A lifted key reads as its handle to all but the owner (OF-067).
+        let keys = if self.reads_lifted_keys_masked()? {
+            let vault = self.vault();
+            let txn = vault.store.env.read_txn()?;
+            LiftedKeys::of_in_txn(
+                &vault.store,
+                &txn,
+                before.iter().chain(&after).map(|file| file.text.as_str()),
+            )?
+        } else {
+            LiftedKeys::default()
+        };
         let mut unpaired: Vec<Option<TreeFile>> = before.into_iter().map(Some).collect();
         let mut pairs = Vec::new();
         for new in after {
@@ -260,7 +273,7 @@ impl Memory<'_> {
         }
         not_text.sort();
         not_text.dedup();
-        Ok(Some(CodeRepoDiffView {
+        let view = CodeRepoDiffView {
             files: files
                 .into_iter()
                 .map(|(mut file, changes)| {
@@ -270,7 +283,8 @@ impl Memory<'_> {
                 .collect(),
             not_text,
             rendered,
-        }))
+        };
+        self.lifted_view(view, || Ok(keys)).map(Some)
     }
 
     /// A tree's files; `None` when its revision is not there.
