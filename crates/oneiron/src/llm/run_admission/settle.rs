@@ -6,7 +6,7 @@ use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;
 use super::host::{UnitRate, Unpriced, convert};
 use super::permit::RunPermit;
-use super::receipt::{RunEvent, RunTokenUsage};
+use super::receipt::{RunEvent, RunStreamUsage, RunTokenUsage};
 
 /// How a permitted call ended, for its settlement.
 #[derive(Debug, Clone, Copy)]
@@ -23,12 +23,14 @@ pub enum CallOutcome<'a> {
 }
 
 impl RunInner {
-    /// Settles `permit` on this run, its issuer. Only [`RunPermit::settle`]
-    /// and the permit's drop call this, once.
+    /// Settles `permit` on this run, its issuer. Only [`RunPermit::settle`],
+    /// [`RunPermit::settle_stream`] and the permit's drop call this, once.
+    /// `stream` is a metered stream's audio, for the receipt.
     pub(super) fn settle(
         &self,
         permit: &RunPermit,
         outcome: CallOutcome<'_>,
+        stream: Option<RunStreamUsage>,
     ) -> Result<BudgetSettlement, RunDenied> {
         // A settled permit never starts, so its run stops holding it.
         self.lock_paid().remove(permit.lease.id());
@@ -107,6 +109,7 @@ impl RunInner {
                     CallOutcome::Used(quantity) => Some(quantity),
                     _ => None,
                 },
+                stream,
                 units: charged,
                 unit: line_unit.clone(),
                 allocation_units: allocation.as_ref().map(|(units, _)| *units),
