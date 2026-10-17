@@ -78,6 +78,7 @@ impl HostUnitDecider<'_> {
             reversibility: call.reversibility,
             deadline: call.deadline,
             label: self.label,
+            ask_to: None,
         }
     }
 }

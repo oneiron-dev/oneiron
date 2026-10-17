@@ -3,19 +3,22 @@
 //! state, its image assets as images read at the Local-vision rung, its
 //! audio assets as clips heard at the first rung that reads audio, and the
 //! ladder's full decision comes back for the engine to land, keeping its
-//! receipt. The standing pump answers each due standing question here, as
+//! receipt. The standing pump answers each due standing question here, for
 //! the question's own principal under the question's own dial, criteria
-//! and call clock, on the vault's home node only. It sleeps until the next
-//! question falls due and wakes early on a committed change.
+//! and call clock, on the vault's home node only. A dial up to the person
+//! asks the question's responsible role, its principal, and the ask climbs
+//! to the vault's owners (OF-516); each pass also climbs every open ask no
+//! live actor holds. It sleeps until the next question falls due and wakes
+//! early on a committed change.
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::questions::{
     GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionCriteria,
-    refresh_due_questions_with,
+    refresh_due_questions_by_role,
 };
 use oneiron::llm::decision::{
-    DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
+    AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
     DecisionProvider, DecisionQuestion, DecisionRung, LocatedDecision, Reversibility,
     TypedDecision,
 };
@@ -38,8 +41,12 @@ const PASS_FLOOR: Duration = Duration::from_secs(1);
 /// a clock of its own.
 pub(crate) struct LadderGraphAnswerer<'s> {
     server: &'s SyncServer,
+    /// Whose question the ladder answers: its receipt and asks name them.
     principal: EntityId,
-    class: EdgeActorClass,
+    /// Who runs it: a Local-vision read is seated on a run of theirs.
+    runner: WriteActor,
+    /// Where a person ask goes; none holds the dial below the person.
+    ask_to: Option<AskTo>,
     dial: DecisionDial,
     budget: Duration,
     /// The question's criteria, beside the sources in each call's state.
@@ -50,29 +57,64 @@ pub(crate) struct LadderGraphAnswerer<'s> {
 
 impl<'s> LadderGraphAnswerer<'s> {
     /// An answerer for `asker`, climbing `dial` with `budget` per unit. A
-    /// ceiling of `human` lets a unit's ask reach the next authorised role.
+    /// ceiling of `human` is held at `big`: a graph answer never queues an
+    /// owner ask.
     pub(crate) fn new(
         server: &'s SyncServer,
         asker: WriteActor,
-        dial: DecisionDial,
+        mut dial: DecisionDial,
         budget: Duration,
     ) -> Result<Self> {
+        dial.ceiling = dial.ceiling.min(DecisionRung::Big);
         if dial.first > dial.ceiling {
             return Err(Error::InvalidConfig(
                 "a graph question's dial starts at the owner ask".into(),
             ));
         }
-        Ok(Self {
+        Ok(Self::build(
             server,
-            principal: asker.entity_ref(),
-            class: asker.actor_class(),
+            asker.entity_ref(),
+            asker,
+            None,
+            dial,
+            budget,
+        ))
+    }
+
+    /// An answerer for `principal`'s standing question, run by `runner` and
+    /// climbing all of `dial`: a dial up to the person queues its ask to
+    /// `to`, the question's responsible role (OF-516), which the ask climbs.
+    pub(crate) fn routed(
+        server: &'s SyncServer,
+        principal: EntityId,
+        runner: WriteActor,
+        to: AskTo,
+        dial: DecisionDial,
+        budget: Duration,
+    ) -> Self {
+        Self::build(server, principal, runner, Some(to), dial, budget)
+    }
+
+    fn build(
+        server: &'s SyncServer,
+        principal: EntityId,
+        runner: WriteActor,
+        ask_to: Option<AskTo>,
+        dial: DecisionDial,
+        budget: Duration,
+    ) -> Self {
+        Self {
+            server,
+            principal,
+            runner,
+            ask_to,
             vision: LocalVisionModel::bound(&server.ai)
                 && dial.first <= DecisionRung::Local
                 && DecisionRung::Local <= dial.ceiling,
             dial,
             budget,
             criteria: QuestionCriteria::default(),
-        })
+        }
     }
 
     /// The answerer, judging each unit by `criteria`.
@@ -158,14 +200,21 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
             None
         } else {
             Some(
-                vision_rung(self.server, self.principal, self.class, images, "graph.ask")
-                    .map_err(|error| Error::InvalidConfig(error.to_string()))?,
+                vision_rung(
+                    self.server,
+                    self.runner.entity_ref(),
+                    self.runner.actor_class(),
+                    images,
+                    "graph.ask",
+                )
+                .map_err(|error| Error::InvalidConfig(error.to_string()))?,
             )
         };
         let mut ladder = host.ladder().ladder();
         if let Some(rung) = &local {
             ladder.local = Some(rung as &dyn DecisionProvider);
         }
+        ladder.ask_to = self.ask_to.as_ref();
         if !(images.is_empty() && audio.is_empty()) {
             let Some(first) = ladder.first_media_reader(
                 dial.first,
@@ -207,6 +256,8 @@ pub(crate) struct LadderCall<'a> {
     pub(crate) deadline: &'a RetrievalDeadline,
     /// The run label a vision seat's read is recorded under.
     pub(crate) label: &'a str,
+    /// Where a person ask goes; none is the vault's owners.
+    pub(crate) ask_to: Option<&'a AskTo>,
 }
 
 /// The call through the host's ladder. A call with images starts at the
@@ -234,6 +285,7 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
     if let Some(rung) = &local {
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
+    ladder.ask_to = call.ask_to;
     ladder.run_images(
         call.question,
         call.principal,
@@ -250,10 +302,7 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
 /// A Box or Point call through the host's ladder, seated as [`ladder_decide`]
 /// seats it: the host's presence question first, then the coordinates
 /// ([`oneiron::llm::decision::DecisionLadder::run_located`]).
-pub(crate) fn ladder_located(
-    server: &SyncServer,
-    call: LadderCall<'_>,
-) -> Result<LocatedDecision> {
+pub(crate) fn ladder_located(server: &SyncServer, call: LadderCall<'_>) -> Result<LocatedDecision> {
     let host = server.decision_host();
     let mut dial = call.dial;
     let sees = !call.images.is_empty()
@@ -274,6 +323,7 @@ pub(crate) fn ladder_located(
     if let Some(rung) = &local {
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
+    ladder.ask_to = call.ask_to;
     ladder.run_located(
         call.question,
         call.principal,
@@ -335,21 +385,24 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
 }
 
 /// One pass on the vault's home node: every due standing question, each
-/// asked as its principal on the ladder under its own dial, criteria and
-/// call clock. Off home it does nothing. The engine holds a failed question
-/// before it is due again; its error logs by kind, as its text can quote the
-/// vault.
+/// asked for its principal on the ladder under its own dial, criteria and
+/// call clock, run by the first live holder of its responsible-role chain;
+/// then every open ask no live actor holds climbs to the next role that has
+/// one. Off home it does nothing. The engine holds a failed question before
+/// it is due again; its error logs by kind, as its text can quote the vault.
 pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
     if !at_home(server.vault(), now)? {
         return Ok(());
     }
-    let batch = refresh_due_questions_with(server.vault(), now, |record, asker| {
-        Ok(LadderGraphAnswerer::new(
+    let batch = refresh_due_questions_by_role(server.vault(), now, |record, runner, to| {
+        Ok(LadderGraphAnswerer::routed(
             server,
-            asker,
+            record.principal,
+            runner,
+            to,
             record.definition.dial,
             record.definition.deadline(),
-        )?
+        )
         .with_criteria(record.definition.criteria.clone()))
     })?;
     for failure in &batch.failures {
@@ -358,6 +411,16 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             kind = ?failure.error.kind(),
             "a standing question was not refreshed; it is held, then runs again"
         );
+    }
+    match server.vault().climb_unheld_decision_asks() {
+        Ok(climbed) => {
+            for (seq, role) in &climbed {
+                tracing::info!(seq, role = ?role.role, "an unheld decision ask climbed");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "unheld decision asks were not climbed");
+        }
     }
     crate::decision_artifact::pump_answer_wakes(server, now)
 }
