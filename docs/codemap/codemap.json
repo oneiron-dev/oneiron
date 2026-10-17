@@ -45850,6 +45850,7 @@
       "ProjectGoalDismissRequest",
       "ProjectRefRequest",
       "ProjectTradeoffRouteRequest",
+      "QueryAffect",
       "RecallRequest",
       "ReceiptsRequest",
       "RoomClaimRequest",
@@ -45876,9 +45877,9 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "re-export": 18,
-      "struct": 35
+      "struct": 36
      }
     },
     {
