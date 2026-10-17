@@ -516,6 +516,30 @@ whose answer or failure it holds. When no checker loads, code mode runs unchecke
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
 
+### Planned spawns (`[models.planner]`)
+
+An agent run the server leases can ask for help with
+`self.agents.spawn({need, ...})` and have the vault's planner pick the shape:
+the model, the pattern and the width. Its leader calls
+(`self.leader.advice`, `self.leader.pattern`) read the same planner. Each
+seat joins a model this host serves to the AGENT_DEF that runs on it:
+
+```toml
+[models.planner]
+top = 3                      # optional; shapes the leader's advice returns by default
+
+[[models.planner.seats]]
+model = "anthropic/claude-sonnet-5-5@1"  # an engine model ID, one seat per model
+agent = "sys.team_lead"                  # a seeded definition's logical ID, or an AGENT_DEF hex ID
+```
+
+The planned child runs the chosen seat's definition, its type placed on the
+need's text. The pick and the placement go through the host's decision
+ladder (section 13), each on its own 10-second clock. A seat whose
+definition this vault does not hold is skipped, with a log line. With no
+seat, the server lends no planner: a spawn that names an `agent` runs it
+directly, and a planned spawn or a leader call answers `planner_unbound`.
+
 ## 7. Raw calls
 
 With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
