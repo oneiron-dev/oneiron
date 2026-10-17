@@ -22234,7 +22234,7 @@
      "path": "src/federation/shared_act/membership.rs",
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "re-export": 1
      }
@@ -48051,6 +48051,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeMemberRole",
+      "ShapePreset",
+      "ShapePresetMember",
+      "ShapePresetPick"
+     ],
+     "path": "src/vault_shape/member.rs",
+     "purpose": "Shared-vault membership as shape rows (ARCH-0043 presets as seeds)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -48066,13 +48084,13 @@
      "surface": {
       "const": 2,
       "enum": 3,
-      "fn": 2,
-      "re-export": 4,
+      "fn": 3,
+      "re-export": 5,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ShapeChange",
@@ -52506,7 +52524,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52571,7 +52589,7 @@
    },
    "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3180,
+   "source_files": 3181,
    "test_files": 903
   },
   "oneiron-android": {
@@ -72061,10 +72079,14 @@
       "ShapeGrantBound",
       "ShapeItemClass",
       "ShapeItemState",
+      "ShapeMemberRole",
       "ShapePlan",
       "ShapePlanItem",
       "ShapePlanRequest",
       "ShapePlanSummary",
+      "ShapePreset",
+      "ShapePresetMember",
+      "ShapePresetPick",
       "ShapeRead",
       "ShapeRow",
       "ShapeSeed",
@@ -72242,8 +72264,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 225,
-      "struct": 573
+      "enum": 227,
+      "struct": 575
      }
     },
     {
