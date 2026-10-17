@@ -456,6 +456,14 @@ impl ActionRegistry {
                 .map_err(|_| invalid("action encoding"))?,
         )
         .as_bytes();
+        // A live run's lease, read live again before a replayed answer
+        // returns and before any effect: one that moved on meanwhile does
+        // neither.
+        let lease_holds = || {
+            live_run
+                .as_ref()
+                .map_or(Ok(()), |run| run.leased_record(vault).map(drop))
+        };
         let previous = vault.get_code_run_replay_record(&run_id)?;
         let frozen = previous.as_ref().map_or_else(
             || crate::unix_seconds_now().saturating_mul(1000),
@@ -490,6 +498,7 @@ impl ActionRegistry {
                     "shared action is in flight or needs reconciliation",
                 ));
             }
+            lease_holds()?;
             return record
                 .replay_cursor()
                 .dispatch(call)
@@ -498,6 +507,7 @@ impl ActionRegistry {
                     read_receipt,
                 });
         }
+        lease_holds()?;
         // Reserve the EXISTING replay record before effects. A crash or racing
         // caller sees an incomplete record and fails closed, never re-dispatches.
         let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(frozen, seed));

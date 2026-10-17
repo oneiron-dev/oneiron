@@ -8,6 +8,7 @@ mod embedding;
 mod housekeeping;
 mod leases;
 mod lifecycle;
+mod live_runs;
 mod media_embedding;
 mod message_stream;
 mod oversight;
@@ -26,6 +27,9 @@ mod windows;
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::{SyncServer, TaskWorkTurn};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
+pub(crate) use self::live_runs::{
+    HeldLiveRun, LiveRunCaller, LiveRunRefusal, LiveRuns, ResolvedLiveRun,
+};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
 pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub use self::oversight::OversightStartError;
