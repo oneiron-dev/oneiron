@@ -1,5 +1,6 @@
 //! Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION`
-//! side table: one declaration, four row shapes (version/head/answer/label) tagged by family.
+//! side table: one declaration, row shapes tagged by family (version/head/answer/label here;
+//! backfill, backfill_at and window beside their own code).
 
 use super::super::types::invalid;
 use super::records::*;
@@ -237,6 +238,13 @@ pub fn edit_question(
         secret_scan_before_put(&record)?;
         QUESTION_VERSION.put(&vault.store, txn, &VersionKey { id, version }, &record)?;
         super::arrival::watch(&vault.store, txn, &record)?;
+        // A backfill was scheduled over the old definition; the new one is
+        // backfilled only when its principal schedules it again.
+        super::backfill::QUESTION_BACKFILL_AT.delete(
+            &vault.store,
+            txn,
+            &super::backfill::BackfillAtKey(id),
+        )?;
         head.version = version;
         head.last_refresh = None;
         head.retry_at = None;

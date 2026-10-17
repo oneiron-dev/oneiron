@@ -1813,6 +1813,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_questions_backfill(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.backfill")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.backfill", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_questions_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.questions.read")?;
         let output = py
