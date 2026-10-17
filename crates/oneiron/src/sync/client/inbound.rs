@@ -240,20 +240,13 @@ impl SyncClient {
         {
             return Err(TransportError::InvalidPayload("unfollowed world window"));
         }
-        if self.config.residence_mode == SyncResidenceMode::Opened
-            && self.config.federation_peer.is_none()
-            && matches!(
-                sub_tag,
-                window_sub_tags::UPDATE
-                    | window_sub_tags::VV_REQUEST
-                    | window_sub_tags::VV_RESPONSE
-                    | window_sub_tags::REPLACEMENT
-            )
-            && self
-                .vault
-                .sync_state_get(&format!("rp:w:{window_key}"))
-                .map_err(|e| TransportError::Storage(e.to_string()))?
-                .is_none()
+        if matches!(
+            sub_tag,
+            window_sub_tags::UPDATE
+                | window_sub_tags::VV_REQUEST
+                | window_sub_tags::VV_RESPONSE
+                | window_sub_tags::REPLACEMENT
+        ) && !self.full_window_exchange_allowed(window_key)?
         {
             return Err(TransportError::InvalidPayload(
                 "full-window exchange requires causal promotion",
@@ -431,9 +424,13 @@ impl SyncClient {
                     });
                 }
                 let evidence = self.staged_entity_evidence()?;
+                // Judged again once no demotion holds the window closed.
                 let (window, conflicts) = self
                     .manager
-                    .replace_window(&key, payload, &evidence)
+                    .replace_window_admitted(&key, payload, &evidence, || {
+                        self.full_window_exchange_allowed(window_key)
+                            .unwrap_or(false)
+                    })
                     .map_err(|error| match error {
                         Error::Sync(SyncError::SyncProtocolError {
                             context: SyncProtocolValidation::ReplacementBusy,
@@ -636,13 +633,18 @@ impl SyncClient {
             let mut progressed = false;
             let mut index = 0;
             while index < self.staged_world_updates.len() {
-                let (key, bytes) = &self.staged_world_updates[index];
+                let key = self.staged_world_updates[index].0.clone();
                 let live = self.ensure_window(key.as_str())?;
+                // A window demoted since its frame was staged stays closed.
+                if !self.full_window_exchange_allowed(key.as_str())? {
+                    self.staged_world_updates.remove(index);
+                    continue;
+                }
                 match crate::sync::window::validate_window_update_with_staged_worlds(
                     &self.vault,
                     &live.doc,
-                    bytes,
-                    key,
+                    &self.staged_world_updates[index].1,
+                    &key,
                     &evidence,
                 ) {
                     Ok(()) => {}

@@ -159,6 +159,7 @@ pub fn set_memory_watch(
                     definition: SavedQueryDefinition {
                         schema_version: SAVED_QUERY_SCHEMA_VERSION,
                         owner_actor: owner,
+                        owner_actor_class: EdgeActorClass::Human,
                         scope: QueryScope::default(),
                         definition_version: 1,
                         filter: FilterAst::EdgeExists {

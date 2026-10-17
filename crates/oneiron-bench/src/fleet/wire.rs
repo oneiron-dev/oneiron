@@ -3,7 +3,9 @@ use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use oneiron::federation::ScopeAxis;
-use oneiron::sync::transport::{PROTOCOL_VERSION, TAG_PROTOCOL_HELLO, TAG_RPC};
+use oneiron::sync::transport::{
+    MAX_CODEC_INNER_BYTES, TAG_RPC, WireSocket, encode_protocol_hello,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,7 +13,7 @@ use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
 use super::Result;
 
-type Socket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+type Socket = WireSocket<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>>;
 
 /// Reserve one kernel-selected client port per listener group. Siblings reuse
 /// only that owned port and connect to distinct destinations. macOS otherwise
@@ -126,11 +128,10 @@ impl Agent {
                     format!("fleet client connect {index} to {address}: {error}"),
                 )
             })?;
-            let (mut socket, _) = tokio_tungstenite::client_async(request, tcp).await?;
+            let (socket, _) = tokio_tungstenite::client_async(request, tcp).await?;
+            let mut socket = WireSocket::to_our_server(socket, MAX_CODEC_INNER_BYTES);
             socket
-                .send(Message::Binary(
-                    vec![TAG_PROTOCOL_HELLO, PROTOCOL_VERSION].into(),
-                ))
+                .send(Message::Binary(encode_protocol_hello().into()))
                 .await?;
             match socket
                 .next()

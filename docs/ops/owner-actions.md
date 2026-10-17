@@ -366,6 +366,38 @@ reason, the connection and who answered, never the value. An agent's granted rev
 lease to its model connection, and an unanswered ask lapses after an hour. A standing grant is
 revoked in the consent registry like any other.
 
+A file stored with keys in it reads masked to an agent. An agent that needs the keys passes `why`
+to `vault.artifacts.export`. The same check then runs over the file's keys. Inside a standing grant
+the agent reads the stored bytes, and each read leaves its own receipt with the why. Outside one it
+gets the masked copy, and you get one ask for that agent, file, project and run. You answer it
+like any other reveal; approve once opens the agent's next read of that file.
+
+## Answer a found key
+
+When a write's mask lifts a key out of a record, or marks a file, you get one inbox notice for
+that record, whatever number of keys it held. The notice lists each key's handle, its kind and
+where it sat. Answer each key one of four ways:
+
+```sh
+oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
+oneiron api raw POST /v1/owner/secrets/rotate --data '{"name": "masked/<hex>", "value_base64": "..."}'
+oneiron api raw POST /v1/owner/secrets/found/delete --data '{"handle": "sc12"}'
+oneiron api raw POST /v1/owner/secrets/found/grant \
+  --data '{"handle": "sc12", "agent": "<32 hex>", "project": "<32 hex>"}'
+oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc12"}'
+```
+
+- **Rotate** gives the key's custody record a new value. Use the custody `name` from the listing.
+- **Delete** hard-deletes the record or file that held the key. The key itself stays in custody.
+- **Grant** gives one agent a standing grant on the key's class, in that project (or outside any
+  project when you leave it out), until you revoke it.
+- **Not a secret** overrules the scan. The value goes back into the record's body where the handle
+  was, or the file's mark drops it. The custody record is revoked, and the scan stops flagging that
+  value in that record.
+
+Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
+file. A key in a claim or a text field keeps its handle.
+
 ## Bind a secret so an agent can use it
 
 An agent can hand a secret to a trusted operation, such as Slack's `auth.test`, with
@@ -802,8 +834,10 @@ oldest first (50 unless `limit` says fewer, at most 500). Each ask carries:
 - the principal it is for, and the evidence ids;
 - why it was asked;
 - the answer the ladder held, if any, and the model that read it;
-- your answer, once given.
-`open=true` keeps only the unanswered asks.
+- your answer, once given;
+- `withdrawn_at`, when the decision stopped waiting on it (an exploration
+  overrun ask that lapsed, for example).
+`open=true` keeps only the asks that are neither answered nor withdrawn.
 
 Answer one with `POST /v1/owner/decisions/asks/answer`:
 
@@ -816,7 +850,8 @@ options) or `score` (a number in its range). An abstention is not an answer.
 The decision waiting on the ask gets your answer. When your answer differs
 from the ladder's, the case is kept for the Coach, which tunes when the
 ladder asks you. Sending the same answer again changes nothing. A different
-answer to an answered ask is refused.
+answer to an answered ask is refused, and so is any answer to a withdrawn
+ask.
 
 ## The vault key on a new host
 

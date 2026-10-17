@@ -9,7 +9,8 @@ use oneiron::{DreamerConsolidationScope, WakeTrigger};
 use tokio::sync::Notify;
 
 use super::{
-    HintSignal, NowMillis, SessionHintCarrier, Tick, TickSource, WakeSignal, system_now_ms,
+    ArmedLane, HintSignal, NowMillis, SessionHintCarrier, Tick, TickSource, WakeSignal,
+    system_now_ms,
 };
 use crate::session::SessionHint;
 
@@ -49,6 +50,49 @@ struct PushState {
     /// Session-lifecycle hints in ARRIVAL order (see
     /// [`SESSION_HINT_QUEUE_CAP`]).
     session_hints: std::collections::VecDeque<SessionHintCarrier>,
+    /// What each timer lane of the receiving stack is armed for.
+    armed: ArmedWakes,
+}
+
+/// Timer lanes [`ArmedLane`] names.
+const ARMED_LANES: usize = 3;
+
+fn armed_lane(lane: ArmedLane) -> usize {
+    match lane {
+        ArmedLane::Queue => 0,
+        ArmedLane::Policy => 1,
+        ArmedLane::Session => 2,
+    }
+}
+
+/// The instant (unix milliseconds) each timer lane is armed for, and the
+/// earliest of them, published to [`HintPusher::next_wake`] subscribers.
+/// A record, never a timer: the lanes sleep on their own.
+#[derive(Debug)]
+struct ArmedWakes {
+    lanes: [Option<u64>; ARMED_LANES],
+    next: tokio::sync::watch::Sender<Option<u64>>,
+}
+
+impl Default for ArmedWakes {
+    fn default() -> Self {
+        Self {
+            lanes: [None; ARMED_LANES],
+            next: tokio::sync::watch::Sender::new(None),
+        }
+    }
+}
+
+impl ArmedWakes {
+    fn record(&mut self, lane: ArmedLane, at_ms: Option<u64>) {
+        self.lanes[armed_lane(lane)] = at_ms;
+        let next = self.lanes.iter().flatten().min().copied();
+        self.next.send_if_modified(|published| {
+            let changed = *published != next;
+            *published = next;
+            changed
+        });
+    }
 }
 
 struct PushShared {
@@ -207,6 +251,12 @@ impl PushTick {
             self.shared.notify.notified().await;
         }
     }
+
+    /// Records `lane`'s armed instant in the shared mailbox, for
+    /// [`HintPusher::next_wake`] (see [`TickSource::note_armed`]).
+    pub(super) fn record_armed(&self, lane: ArmedLane, at_ms: Option<u64>) {
+        self.shared.lock_state().armed.record(lane, at_ms);
+    }
 }
 
 impl Drop for PushTick {
@@ -243,6 +293,10 @@ impl TickSource for PushTick {
 
     fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
         self.delivered_session_hint.take()
+    }
+
+    fn note_armed(&mut self, lane: ArmedLane, at_ms: Option<u64>) {
+        self.record_armed(lane, at_ms);
     }
 }
 
@@ -330,6 +384,16 @@ impl HintPusher {
         }
         self.shared.notify.notify_one();
         Ok(())
+    }
+
+    /// The earliest instant (unix milliseconds) any timer lane of the
+    /// receiving stack is armed for, `None` while none is, updated as the
+    /// lanes re-arm. A host that may suspend this process arms its own timer
+    /// for it and, when that fires, wakes the stack with [`Self::push_hint`]:
+    /// each lane then re-reads what is due on the wall clock.
+    #[must_use]
+    pub fn next_wake(&self) -> tokio::sync::watch::Receiver<Option<u64>> {
+        self.shared.lock_state().armed.next.subscribe()
     }
 
     /// Pushes a session-lifecycle hint (ONE-1685) onto the bounded ORDERED

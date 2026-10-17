@@ -5,8 +5,10 @@
 //! decide() advises and never grants. The ask goes first to the person the
 //! agent signs for (or the document's sender) and climbs to the vault
 //! owners; it is an e-signature act, so at every rung it resolves only to a
-//! natural person holding the role, who answers on the decision-ask door. A
-//! hold that fails a tick stays as it was for the next, never dropped.
+//! natural person holding the role, who answers on the decision-ask door.
+//! An ask its person leaves unanswered for `esign.ask.climb_hours` climbs to
+//! the next role. A hold that fails a tick stays as it was for the next,
+//! never dropped.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -119,7 +121,8 @@ fn ask(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
         .esign_hold_asked(&held.document, &held.recipient, held.held_at, question.id)
 }
 
-/// Settles one asked hold once a holder of its role answered it.
+/// Settles one asked hold once a holder of its role answered it, and climbs
+/// an ask left unanswered past its wait.
 fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
     let Some(ask) = server
         .decision_host()
@@ -128,6 +131,16 @@ fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()
     else {
         return Ok(());
     };
+    if ask.answer.is_none() {
+        if server.vault().climb_stale_esign_ask(&ask)? {
+            tracing::info!(
+                document = %held.document,
+                recipient = %held.recipient,
+                "esign hold's unanswered ask climbed its role chain"
+            );
+        }
+        return Ok(());
+    }
     let Some(answer) = ask.answer else {
         return Ok(());
     };

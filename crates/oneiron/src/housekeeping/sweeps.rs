@@ -14,7 +14,7 @@
 //! sweep also retries a bounded number of files a revoke or an expiry could
 //! not remove then.
 
-use super::{Deadline, HardEraseWork, HousekeepingSweep, SweepWork};
+use super::{Deadline, HardEraseWork, HousekeepingSweep, SecretLiftWork, SweepWork};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -134,6 +134,7 @@ pub(super) fn run(
         HousekeepingSweep::SharedActMaturity => SweepWork::SharedActs {
             noticed: count(vault.notify_matured_shared_acts()?),
         },
+        HousekeepingSweep::SecretLiftHistory => return secret_lift(vault, deadline),
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -247,6 +248,26 @@ fn ppr_cache(vault: &Vault, now: u64, deadline: &Deadline, cursor: Option<&[u8]>
             });
         }
     }
+}
+
+/// Works the queued lift run a page at a time until it ends or the deadline
+/// passes. Its cursor lives in the run's own row, which commits with each
+/// row it rewrites, so the schedule keeps none.
+fn secret_lift(vault: &Vault, deadline: &Deadline) -> Result<Run> {
+    let (pass, complete) = crate::batch::secret_scan::run_lift_pass(vault, || deadline.passed())?;
+    Ok(Run {
+        work: SweepWork::SecretLift(SecretLiftWork {
+            rows_read: pass.read,
+            masked: pass.masked,
+            proposals: pass.proposals,
+            failed: pass.failed,
+            paused: pass.paused,
+            finished: pass.finished,
+        }),
+        complete,
+        cursor: None,
+        covered_until: None,
+    })
 }
 
 /// The envelope the host lapses an overdue instance under: the vault owner's,
