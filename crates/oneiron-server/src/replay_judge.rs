@@ -687,12 +687,8 @@ impl<'a> ServeAxisBandit<'a> {
 
     /// Whether `receipt`'s run met `criterion` under `arm`'s instructions.
     fn met(&self, arm: &Arm, receipt: &str, criterion: &Value) -> Result<bool> {
-        self.notes.live_axis_met(
-            self.target,
-            &arm.record,
-            receipt,
-            criterion,
-        )
+        self.notes
+            .live_axis_met(self.target, &arm.record, receipt, criterion)
     }
 }
 

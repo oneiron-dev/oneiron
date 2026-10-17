@@ -7,9 +7,7 @@ use super::{
 use crate::retrieval_quality::RetrievalQuality;
 use crate::{
     EntityId, Result, Vault,
-    receipt::{
-        CallOutcome, CallReceipt, CallTransport, ReceiptKind, ReceiptQuery, ReceiptRecord,
-    },
+    receipt::{CallOutcome, CallReceipt, CallTransport, ReceiptKind, ReceiptQuery, ReceiptRecord},
     store::RetrievalRunRecord,
 };
 use rmpv::Value;
