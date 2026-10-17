@@ -89,6 +89,82 @@ fn effect(
     }
 }
 
+/// The co-actor binding a served Linear dispatch is admitted with (OF-427),
+/// read under the outbound admission writer: `request` must still be the
+/// exact mirror operation of the TASK's current dirty revision, under the
+/// same frozen operation binding [`Vault::authorize_linear_effect`] keeps,
+/// and the revision must have a verified writer. Returns that writer's gate
+/// input; the scheduler is the dispatch's own actor.
+pub(crate) fn linear_effect_writer_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: &LinearEffectRequest,
+) -> Result<ExternalEffectGateInput, crate::outbound_intent_ledger::IntentLedgerError> {
+    use crate::outbound_intent_ledger::IntentLedgerError;
+    let refused =
+        || IntentLedgerError::InvalidInput("linear effect is not the current mirror operation");
+    let linear = |error: LinearSyncError| match error {
+        LinearSyncError::Store(error) => IntentLedgerError::from(error),
+        _ => refused(),
+    };
+    let issue_id = request.issue.as_ref().map(|issue| issue.issue_id.as_str());
+    if request.operation_id == [0; 32]
+        || (request.kind == LinearEffectKind::Create) != request.issue.is_none()
+        || issue_id.is_some_and(|id| id.trim().is_empty())
+    {
+        return Err(refused());
+    }
+    let state = linear_effect_state_in_txn(vault, txn, request.task_ref).map_err(linear)?;
+    let expected = linear_operation_id(
+        LinearSyncDirection::TaskToIssue,
+        request.task_ref,
+        state.revision,
+        issue_id,
+        None,
+        None,
+    );
+    let link_matches = match (&state.link, &request.issue) {
+        (None, None) => true,
+        (Some(link), Some(issue)) => {
+            link.issue.issue_id == issue.issue_id && link.issue.team_id == issue.team_id
+        }
+        _ => false,
+    };
+    if !link_matches
+        || state.dirty_revision != Some(state.revision)
+        || state.snapshot.revision != state.revision
+        || state.snapshot.fields != request.fields
+        || expected != request.operation_id
+    {
+        return Err(refused());
+    }
+    let writer = state.writer.ok_or_else(refused)?;
+    let class = EdgeActorClass::try_from_u8(writer.actor_class).ok_or_else(refused)?;
+    for (id, actor_class) in [
+        (request.scheduler_actor, EdgeActorClass::System),
+        (writer.actor_ref, class),
+    ] {
+        let entity_type = vault
+            .get_entity_type_in_txn(txn, &id)?
+            .ok_or(IntentLedgerError::InvalidBoundActor)?;
+        crate::provenance::validate_actor_class(entity_type, actor_class)?;
+    }
+    let digest = binding(request, writer.actor_ref).map_err(linear)?;
+    let mut key = EFFECT_AUTH_KEY.to_vec();
+    key.extend_from_slice(&request.operation_id);
+    let bound = vault
+        .store
+        .vault_meta
+        .get(txn, &key)?
+        .map(|raw| raw.as_ref() == digest.as_slice());
+    match bound {
+        Some(false) => return Err(refused()),
+        Some(true) => {}
+        None => vault.store.vault_meta.put(txn, &key, &digest)?,
+    }
+    Ok(effect(writer.actor_ref, class, request))
+}
+
 impl Vault {
     /// Authorizes a Linear mutation against BOTH the current TASK writer and
     /// the configured host scheduler, through the existing ExternalEffect
@@ -182,6 +258,33 @@ impl Vault {
             Ok(Some(format!("gate:{}", id.to_hex())))
         })?;
         admitted.ok_or(LinearSyncError::AuthorizationDenied)
+    }
+
+    /// The live recheck before a retried send through the recorded outbound
+    /// door (OF-427). That door admits both actors once, inside its own
+    /// admission, and its replay does not run the writer again. So an
+    /// operation whose frozen binding is already stored rechecks that binding
+    /// and both actors' live grants here, charging nothing. An operation not
+    /// yet admitted passes: its first admission runs inside the door.
+    ///
+    /// # Errors
+    /// As [`Self::authorize_linear_effect`], for an admitted operation.
+    pub fn recheck_admitted_linear_effect(
+        &self,
+        request: &LinearEffectRequest,
+    ) -> LinearSyncResult<()> {
+        let mut key = EFFECT_AUTH_KEY.to_vec();
+        key.extend_from_slice(&request.operation_id);
+        let admitted = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            self.store.vault_meta.get(&txn, &key)?.is_some()
+        };
+        // The binding row is never removed, so this admission observes it
+        // too and charges no budget.
+        if admitted {
+            self.authorize_linear_effect(request)?;
+        }
+        Ok(())
     }
 }
 

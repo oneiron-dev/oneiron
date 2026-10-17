@@ -17,7 +17,7 @@ use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
     KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
-    KEY_ORIGIN_CONVERSATION, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
+    KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
     KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
@@ -128,6 +128,15 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         })?;
         entries.push((Value::from(KEY_TEAM), Value::from(json)));
     }
+    if let Some(plan) = &input.plan {
+        plan.validate()?;
+        let json = serde_json::to_string(plan).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "spawn plan receipt must encode",
+            ))
+        })?;
+        entries.push((Value::from(KEY_PLAN), Value::from(json)));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -177,6 +186,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut room = None;
     let mut join = None;
     let mut team = None;
+    let mut plan = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -399,6 +409,21 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
             KEY_TEAM => {
                 team = Some(decode_team_stamp(value)?);
             }
+            KEY_PLAN => {
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "plan must be a serialized spawn plan receipt",
+                    ),
+                ))?;
+                let receipt: super::SpawnPlanReceipt =
+                    serde_json::from_str(json).map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "plan must decode as a spawn plan receipt",
+                        ))
+                    })?;
+                receipt.validate()?;
+                plan = Some(receipt);
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -467,6 +492,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         room,
         join,
         team,
+        plan,
     })
 }
 
@@ -539,7 +565,7 @@ pub(crate) fn attempt_team_stamp(record: &AttemptRecord) -> Result<Option<super:
         .transpose()
 }
 
-pub(super) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispatchInput> {
+pub(crate) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispatchInput> {
     if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
         return None;
     }

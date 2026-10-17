@@ -31,6 +31,7 @@ mod consult_party_backfill;
 mod consult_payload;
 mod consult_result;
 mod create_facade;
+mod create_origin;
 mod create_spec;
 mod create_validation;
 mod decision_port;
@@ -70,7 +71,10 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
-pub(crate) use wire_decode::{TaskBinding, leader_task_body_in, task_binding, task_is_blocked_in};
+pub(crate) use wire_decode::{
+    TaskBinding, leader_task_body_in, leader_task_brief_in, task_binding, task_is_blocked_in,
+    task_text_in,
+};
 mod wire_encode;
 
 #[cfg(test)]

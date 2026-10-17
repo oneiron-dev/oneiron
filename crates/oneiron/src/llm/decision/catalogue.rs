@@ -146,8 +146,8 @@ pub const AI_VERDICT_ROUTINE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
-/// The paired yes/no question every decision read asks beside the labels: does this need
-/// more thinking? Keyed by its wording alone.
+/// The paired yes/no question every decision read asks jointly with each question's labels:
+/// does this need more thinking? Keyed by its wording alone.
 pub const THINK_MORE: QuestionFamily = QuestionFamily {
     name: "decision.think_more",
     version: 1,
@@ -155,7 +155,8 @@ pub const THINK_MORE: QuestionFamily = QuestionFamily {
 };
 
 /// The host's person question, asked beside the call's questions when the dial reaches the
-/// person: ask up to the next authorised role? Keyed by its wording alone.
+/// person and read apart from them: ask up to the next authorised role? Keyed by its wording
+/// alone.
 pub const ASK_UP: QuestionFamily = QuestionFamily {
     name: "decision.ask_up",
     version: 1,
@@ -321,6 +322,15 @@ pub const COACH_HEAL_ROUTE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// The Coach's code-fix checks (DEC-0005 FIX6, OF-380): which failure class a case is, whether
+/// a replay fails the way the case did, whether a candidate fix's shadow replay no longer fails,
+/// and whether an invented example is safe to leave the vault. Keyed by the check.
+pub const CODE_FIX_JUDGMENT: QuestionFamily = QuestionFamily {
+    name: "coach.code_fix_check",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -356,4 +366,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     TASK_SURFACE,
     IDENTITY_SETTLE,
     COACH_HEAL_ROUTE,
+    CODE_FIX_JUDGMENT,
 ];

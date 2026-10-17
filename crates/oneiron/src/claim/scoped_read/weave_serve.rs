@@ -5,8 +5,9 @@
 //! proof reads the owner lens.
 use super::{
     ClaimReadStatus, ScopedRead, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence,
-    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLinkCorrection, WeaveReader,
-    WeaveReport, WeaveSectionKind, WeaveSectionSpec,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensPlan, WeaveLensRender,
+    WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport, WeaveSectionKind,
+    WeaveSectionSpec,
 };
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
@@ -296,6 +297,91 @@ impl Memory<'_> {
             sections: self.weave_sections(&report.value)?,
             narrowing: report.receipt,
         })
+    }
+
+    /// `vault.weave.lens`, before its generate step: the bound actor's live
+    /// report, read as [`Self::weave_report`] reads it and keyed for the
+    /// weave-report skill. `None` when the skill does not load (retired,
+    /// unapproved or deleted).
+    pub fn weave_lens_prepare(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        request: &WeaveReportRequest,
+    ) -> MemoryResult<Option<WeaveLiveLens>> {
+        let reader = self.weave_reader(owner)?;
+        let role = match reader {
+            WeaveReader::Person(_) => "person",
+            WeaveReader::Owner(_) => "owner",
+            WeaveReader::Agent(_) => "agent",
+        };
+        let report = self.live_weave_report(reader, request)?;
+        let sections = self.weave_sections(&report)?;
+        Ok(WeaveLiveLens::prepare(self.vault(), role, report, &sections)?)
+    }
+
+    /// `vault.weave.lens`, after its generate step: re-reads the live report
+    /// under the bound actor's current read and composes `answer`, the
+    /// step's plan, over it. The plan was written over what the first read
+    /// admitted, so a report that changed meanwhile is refused, as is a plan
+    /// that does not cite each of its items exactly once.
+    pub fn weave_lens_finish(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        request: &WeaveReportRequest,
+        live: WeaveLiveLens,
+        answer: &str,
+        model: &str,
+    ) -> MemoryResult<GeneratedLens> {
+        let reader = self.weave_reader(owner)?;
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let report = read.weave_report(reader, &Self::weave_recipe(request)?)?.value;
+        if report != live.report {
+            return Err(MemoryError::new(
+                crate::memory::MEMORY_CODE_INVALID_STATE,
+                "the weave report changed while its lens rendered",
+                &["Ask for the lens again."],
+            ));
+        }
+        let plan: WeaveLensPlan = serde_json::from_str(answer.trim()).map_err(|_| {
+            MemoryError::new(
+                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                "the model's answer is not a weave lens plan",
+                &["Ask for the lens again."],
+            )
+        })?;
+        if plan.validate(&report).is_err() {
+            return Err(MemoryError::new(
+                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                "the model's plan does not cite each report item exactly once",
+                &["Ask for the lens again."],
+            ));
+        }
+        let render = WeaveLensRender {
+            plan,
+            skill_ref: live.skill_ref,
+            skill_version: live.skill_version,
+            model: model.to_owned(),
+            rendered_at: self.vault().store.clock.now_recorded_at(),
+        };
+        Ok(super::weave_lens::compose_weave_lens(&read, &report, &render)?)
+    }
+
+    /// The live report for `reader` under the bound actor's read.
+    fn live_weave_report(
+        &self,
+        reader: WeaveReader<'_>,
+        request: &WeaveReportRequest,
+    ) -> MemoryResult<WeaveReport> {
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        Ok(read.weave_report(reader, &Self::weave_recipe(request)?)?.value)
+    }
+
+    fn weave_recipe(request: &WeaveReportRequest) -> MemoryResult<Vec<WeaveSectionSpec>> {
+        request
+            .sections
+            .iter()
+            .map(WeaveSectionInput::spec)
+            .collect()
     }
 
     /// `vault.weave.digest`: one of the bound actor's saved digests, under

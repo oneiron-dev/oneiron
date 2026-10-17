@@ -41,6 +41,9 @@ pub(super) enum BaseGuards {
         /// The project whose leader chat admitted this witness; its records
         /// are settled after the landing's effect.
         leader_project: Option<EntityId>,
+        /// The room thread reply's quote the room guard proved (OF-460): the
+        /// TURN is minted with it, or a stored one must already carry it.
+        quoted: Option<crate::conversation_dag::QuotedReply>,
     },
 }
 
@@ -370,7 +373,7 @@ impl Memory<'_> {
         }
         let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
         super::reject_erased_person_in_txn(self.vault, wtxn, plan.conversation_id, person_author)?;
-        crate::workspace_roster::admit_room_witness(
+        let quoted = crate::workspace_roster::admit_room_witness(
             self.vault,
             wtxn,
             self.actor,
@@ -417,17 +420,21 @@ impl Memory<'_> {
             mint_conversation: current_conversation.is_none(),
             person_author,
             leader_project,
+            quoted,
         })
     }
 
     /// Stages the admitted turn into base: one batch, its text ops, the open
-    /// session's activity bump and the turn's session membership.
+    /// session's activity bump and the turn's session membership. A minted
+    /// quoted reply also takes its `Parent` and `RepliesTo` edges and its
+    /// citation pin here, in the TURN's own write (OF-460).
     pub(super) fn stage_in_base(
         &self,
         plan: &WitnessPlan<'_>,
         admission: &WitnessAdmission<'_>,
         sink: &BaseSink<'_>,
         mint_conversation: bool,
+        quoted: Option<&crate::conversation_dag::QuotedReply>,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> MemoryResult<()> {
         let mut batch = self.vault.batch_in();
@@ -455,6 +462,9 @@ impl Memory<'_> {
                         body,
                     )
                     .edge(&plan.turn_id, EdgeKind::ChildOf, &plan.conversation_id, 1.0);
+                if let Some(quoted) = quoted {
+                    batch = quoted.edges(batch, &plan.turn_id, plan.learned_at);
+                }
             }
             // Only a genuinely new child re-dirties an established TURN. A
             // byte-identical deterministic MESSAGE retry is a transcript no-op;
@@ -498,6 +508,9 @@ impl Memory<'_> {
             }
         }
         batch.apply(wtxn)?;
+        if let (Some(quoted), AdmittedTurn::Mint { .. }) = (quoted, &admission.turn) {
+            quoted.pin_in_txn(self.vault, wtxn)?;
+        }
         // The re-put moves the TURN only to `old + 1`, which a scope cursor a
         // later TURN advanced can already be past; the re-dirty carrier puts it
         // past every cursor in this same commit.

@@ -423,6 +423,9 @@ pub struct Memory<'v> {
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
+    /// The running agent attempt a host bound as this surface's TASK creator
+    /// (`with_task_host`, OF-532).
+    pub(super) task_host: Option<crate::task_verb::HostBinding>,
     /// The off-record session the host's request named
     /// (`in_off_record_session`): context, not authority.
     pub(super) off_record_session: Option<String>,
@@ -478,6 +481,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             invocation: None,
+            task_host: None,
             off_record_session: None,
         }
     }
@@ -512,6 +516,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             invocation: None,
+            task_host: None,
             off_record_session: None,
         }
     }
@@ -555,6 +560,7 @@ impl<'v> Memory<'v> {
                 owner_authorship: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
+                task_host: self.task_host.clone(),
                 off_record_session: self.off_record_session.clone(),
             },
         })
@@ -633,6 +639,23 @@ impl Memory<'_> {
     #[must_use]
     pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
         self.invocation
+    }
+
+    /// Binds the running agent attempt whose TASK creates this surface makes
+    /// (OF-532): a TASK it creates for an agent then runs inside that
+    /// attempt's lease tree and project. A host builds the binding from the
+    /// leased row it holds, never from caller text. It grants nothing: each
+    /// create re-proves the lease, the actor and the spend scope in its own
+    /// transaction, and a stale one refuses.
+    #[must_use]
+    pub fn with_task_host(mut self, binding: crate::task_verb::HostBinding) -> Self {
+        self.task_host = Some(binding);
+        self
+    }
+
+    /// The TASK creator a host bound, if any.
+    pub(crate) fn task_host(&self) -> Option<&crate::task_verb::HostBinding> {
+        self.task_host.as_ref()
     }
 
     /// The owner authorship of a claim write in `txn`, revalidated there.
