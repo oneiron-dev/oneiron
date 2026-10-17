@@ -277,6 +277,13 @@ fn refresh_with(
                 answered_at: now,
             };
             land(vault, txn, actor, principal, &answer, &raw, rows.as_deref())?;
+            arrival::watch_sources(
+                &vault.store,
+                txn,
+                question,
+                answer.unit,
+                &answer.decision.evidence,
+            )?;
             QUESTION_ANSWER.put(
                 &vault.store,
                 txn,

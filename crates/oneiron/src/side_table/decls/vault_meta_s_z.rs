@@ -536,6 +536,13 @@ side_tables! {
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;
+    /// What a standing answer rests on beyond its unit, as a source-to-root refresh watcher (an
+    /// edit to a neighbour queues the root's arrival). Key: id16(source) + id16(question) +
+    /// id16(unit).
+    TYPED_QUESTION_RESTS_ON: VaultMeta b"typed_question:rests_on:v1:" Raw;
+    /// The sources a unit's latest standing answer rests on, so the next answer replaces their
+    /// watchers. Key: id16(question) + id16(unit).
+    TYPED_QUESTION_ROOT_SOURCES: VaultMeta b"typed_question:root_sources:v1:" Named;
     /// Unit-to-question refresh watcher. Key: id16(unit) + id16(question).
     TYPED_QUESTION_UNIT_WATCH: VaultMeta b"typed_question:unit:v1:" Raw;
     TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;
@@ -583,6 +590,9 @@ side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw;
+    /// The blake3 of the escrow capsule each escrow wrap last handed to the host's outbound spool
+    /// (OF-570, CROSS-ARCH-0022 invariant 03). Key: string (wrap id).
+    VAULT_KEY_ESCROW_SPOOLED: VaultMeta b"vault_key:escrow_spooled:v1:" Named;
     /// The vault data key's commitment and birth (OF-570 E1). Never the key. Key: ().
     VAULT_KEY_STATE: VaultMeta b"vault_key:state:v1" Named;
     /// One way to unlock the vault data key: an E0 `VaultDek` envelope and its public

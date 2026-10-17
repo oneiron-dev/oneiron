@@ -1,6 +1,7 @@
 //! Retirement of copied agent source when a captured input is erased.
 use super::birth_custody::{birth_carriers_for_holder_in_txn, retire_birth_source_holder_in_txn};
-use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{
     entity_id::EntityId,
     error::{Error, Result},
@@ -15,10 +16,6 @@ const INPUT: SideTable<(EntityId, EntityId), (), Raw> =
 /// Empty marker: a captured dependency input has been retired.
 const RETIRED_INPUT: SideTable<EntityId, (), Raw> =
     SideTable::new(&side_table::AGENT_DEF_BIRTH_INPUT_RETIRED);
-/// The ARCH-0023b global local hard-delete marker (owned by
-/// `crate::deletion::tombstone`); read-only here for the retired/deleted check.
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 pub(super) fn check_inputs(
     store: &Store,
@@ -27,7 +24,7 @@ pub(super) fn check_inputs(
 ) -> Result<()> {
     for input in inputs {
         if RETIRED_INPUT.contains(store, txn, input)?
-            || HARD_DELETE_MARKER.contains(store, txn, &HexId(*input))?
+            || store.port_deletion_marked(txn, DeletionMarker::HardDelete, input)?
             || store.off_record_sessions.contains_entity(input)?
         {
             return Err(Error::Artifact(

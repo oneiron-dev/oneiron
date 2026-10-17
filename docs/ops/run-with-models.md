@@ -1335,6 +1335,11 @@ names none.
   every source, image and clip it read. Before the answer lands, the pump
   reads the neighbours and every source again. If any changed, nothing in
   that pass lands.
+- **Arrivals.** With `refresh.on_arrival`, a write to a unit queues that
+  unit, and so does a write to anything its newest answer rests on: a
+  neighbour it read, or a source it names as evidence. Each new answer
+  replaces what the one before it rested on. A unit dropped from the
+  definition drops its watchers.
 - **Failures.** A question that fails is held for five minutes and then runs
   again. An edit or a resume lifts the hold. The server logs the error's
   kind only.
