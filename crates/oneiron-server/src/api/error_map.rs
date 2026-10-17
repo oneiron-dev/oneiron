@@ -7,6 +7,22 @@ use axum::extract::rejection::QueryRejection;
 use oneiron::ErrorKind;
 
 pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
+    // A held first write names the consents it waits on and the join that
+    // files them; the generic conversation-state answer would drop both.
+    if matches!(
+        error,
+        oneiron::Error::Record(oneiron::error::RecordError::RoomJoinHeld(_))
+    ) {
+        return ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("room_join_held".to_owned()),
+            },
+            [
+                "File the join with vault.rooms.join and the intent_key named here; the write goes through once those parties consent.",
+            ],
+        );
+    }
     match error.kind() {
         ErrorKind::ConversationDenied => ApiError::forbidden_scope("conversation_actor"),
         ErrorKind::ConversationState => ApiError::invalid_state(Some("conversation_state")),
@@ -53,6 +69,13 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
         ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
+        ErrorKind::WorkCompanionRequired => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Start a work companion in this workspace; its policy refuses a brought one."],
+        ),
         ErrorKind::HeadAdvanceOffTrunk => ApiError::invalid_state(Some("head_advance_off_trunk")),
         ErrorKind::DagParentOutsideConversation => {
             ApiError::invalid_state(Some("dag_parent_outside_conversation"))

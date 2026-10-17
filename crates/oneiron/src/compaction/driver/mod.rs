@@ -1,6 +1,6 @@
 //! RT-05 in-engine compaction backend, margin law, and single-flight driver.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -69,8 +69,10 @@ pub trait CompactionBackend: Send + Sync {
 /// One message-log row the host hands the backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactionWindowMessage {
+    /// The MESSAGE whose words `content` renders: a `DerivedFrom` target
+    /// when the vault stores it.
     pub message_id: EntityId,
-    /// The covered TURN entity — the `DerivedFrom` target and the H-S3 probe
+    /// The covered TURN entity — a `DerivedFrom` target and the H-S3 probe
     /// subject.
     pub turn_id: EntityId,
     /// Rendered MESSAGE content: the material the backend summarizes.
@@ -628,15 +630,25 @@ impl CompactionDriver {
         session_ref: &EntityId,
         window: Vec<CompactionWindowMessage>,
     ) -> Result<CompactionRequest> {
-        let mut sources: Vec<EntityId> = Vec::new();
-        for message in &window {
-            if sources.len() >= super::EPOCH_SUMMARY_MAX_DERIVED_EDGES {
-                break;
+        // Every record the window's text was read from (OF-013): each TURN
+        // and each MESSAGE, uncut. A deleted MESSAGE stays a source, so the
+        // summary is born withdrawn; an id the vault never stored is none.
+        let sources = {
+            let rtxn = vault.store.env.read_txn()?;
+            let mut seen = BTreeSet::new();
+            let mut sources = Vec::new();
+            for message in &window {
+                if seen.insert(message.turn_id) {
+                    sources.push(message.turn_id);
+                }
+                if seen.insert(message.message_id)
+                    && stored_or_deleted_in(vault, &rtxn, &message.message_id)?
+                {
+                    sources.push(message.message_id);
+                }
             }
-            if !sources.contains(&message.turn_id) {
-                sources.push(message.turn_id);
-            }
-        }
+            sources
+        };
         self.seal_request(
             vault,
             session_ref,
@@ -815,4 +827,14 @@ fn snapshot_watermark(vault: &Vault) -> Result<CompactionWatermark> {
         turn_id: watermark.last_turn_id,
         turn: None,
     })
+}
+
+/// Whether the vault stores `id`, or stored it until a deletion whose
+/// tombstone stands.
+fn stored_or_deleted_in(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_record(&vault.store, rtxn, id)?.is_some()
+            || crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, rtxn, id)?
+                .deleted,
+    )
 }
