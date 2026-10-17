@@ -49661,7 +49661,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 9,
-      "fn": 8,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -49809,7 +49809,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "enum": 4,
       "fn": 23,
       "struct": 2
@@ -66229,7 +66229,7 @@
      "path": "src/commands/owner/recovery_kit.rs",
      "purpose": "`oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -67885,6 +67885,7 @@
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 1
