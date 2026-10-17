@@ -103,10 +103,10 @@ declare const vault: {
     waits(input: { artifact_ref: string }): Promise<unknown>;
   };
   authority: {
+    audit(input: { after?: string | null; kinds?: ("grant" | "revoke" | "confirm" | "other")[]; limit?: number | null }): Promise<unknown>;
     handoff_alarms: ((input: object) => Promise<unknown>) & {
       acknowledge(input: { signer: string }): Promise<unknown>;
     };
-    audit(input: { after?: string | null; kinds?: ("grant" | "revoke" | "confirm" | "other")[]; limit?: number | null }): Promise<unknown>;
   };
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
@@ -140,6 +140,9 @@ declare const vault: {
   export(input: { format?: string | null }): Promise<unknown>;
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
+  graph: {
+    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
+  };
   habits: {
     checkin(input: { data?: unknown; habit_ref: string; id?: string | null; learned_at?: number | null; occurred_at: number }): Promise<unknown>;
   };
@@ -210,6 +213,13 @@ declare const vault: {
     proposals(input: { conversation_ref: string }): Promise<unknown>;
     propose(input: { card_id: string; goal: object; picks: object; source_message_ref: string }): Promise<unknown>;
     route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
+  };
+  questions: {
+    answers(input: { id: string }): Promise<unknown>;
+    create(input: { definition: unknown }): Promise<unknown>;
+    edit(input: { definition: unknown; expected_version: number; id: string }): Promise<unknown>;
+    pause(input: { id: string; paused: boolean }): Promise<unknown>;
+    read(input: { id: string; version?: number | null }): Promise<unknown>;
   };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
