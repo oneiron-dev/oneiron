@@ -344,6 +344,10 @@ impl VoiceCascadeSession {
         }
         let admission = guard
             .admit_for_request(request)
+            .inspect_err(|denied| {
+                self.vault
+                    .budget_denied_hooks(denied, &guard, request.model.as_str(), None);
+            })
             .map_err(|_| invalid("voice budget admission denied"))?;
         let lease = admission.lease;
         active.budget = Some(super::budget::GenerationBudget {
@@ -555,6 +559,20 @@ impl VoiceCascadeSession {
         self.prepared_asr = None;
         self.preparation_active = false;
         Ok(true)
+    }
+
+    /// The host could not carry `generation`'s output on: a sentence was not
+    /// spoken, its safeguard did not run, or a brain event was refused. A
+    /// generation left live there would refuse the next final, and a gap in
+    /// its speech would play as if nothing were missing. Dispatch the stop
+    /// before another playback dequeue. `None` for a stale generation.
+    pub fn fail_output(&mut self, generation: GenerationEpoch) -> Option<OutputStop> {
+        (!self.ended
+            && self
+                .generation
+                .as_ref()
+                .is_some_and(|active| active.request.generation == generation))
+        .then(|| self.stop_generation(StopReason::OutputFailed, true))
     }
 
     /// Explicit normal end/disconnect. The host also ends ASR and drops its task,

@@ -9,22 +9,28 @@
 //! - Admission refuses every insert into the map that is not a whole
 //!   transition signed for this vault, in the latest state, at a snapshot's
 //!   root and in every retained operation.
-//! - Reverse rematerialization mirrors the transitions this vault signed.
+//! - Reverse rematerialization mirrors the latest transition this vault holds
+//!   of each record, and drops from an older window the carrier it
+//!   supersedes.
 //! - Forward rematerialization and Observer B judge each signer against this
 //!   vault's folded roster as it is now, and write what stands into this
 //!   vault's custody through the local door, with the value this machine
 //!   opens. A machine the value was not sealed to keeps the transition unread.
+//! - A machine the roster gains gets the value from a re-seal: the latest
+//!   transition signed again by a machine that holds the record, at the same
+//!   generation and status ([`Vault::reseal_custody_for_roster`]).
 
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
-use super::loro_support::{map_get_bytes, map_insert_bytes};
+use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_transitions,
+    remember_custody_transition_in_txn, reseal_custody_transitions_in_txn,
 };
 
 /// The base window root map that carries custody transitions.
@@ -92,10 +98,13 @@ pub(crate) fn admit_custody_map(
     Ok(())
 }
 
-/// Writes into `doc` the latest transition this vault signed of each
-/// credential whose transition rides window `key`, never over a later one
-/// the window already holds. Returns whether it wrote any; the caller
-/// commits.
+/// Brings window `key`'s custody map up to this vault's latest transitions.
+/// One that rides the window is written unless the map holds it or one that
+/// supersedes it. A record whose latest transition rides another window has
+/// its carrier here dropped once that transition supersedes it, so a rotated
+/// or revoked value's ciphertext stops riding the month it was signed in; a
+/// closed window catches up as it opens. Returns whether it wrote any; the
+/// caller commits.
 pub(crate) fn mirror_custody_transitions(
     vault: &Vault,
     doc: &LoroDoc,
@@ -105,46 +114,61 @@ pub(crate) fn mirror_custody_transitions(
         return Ok(false);
     }
     let mut due = Vec::new();
-    for (id, carrier) in custody_transitions(vault)? {
-        if let Ok(transition) = CustodyTransition::decode(&carrier)
-            && transition_window(&transition) == *key
-        {
-            due.push((id, carrier, transition.order()));
-        }
-    }
-    if due.is_empty() {
-        return Ok(false);
-    }
-    let map = doc.get_map(CUSTODY_MAP);
-    let mut wrote = false;
-    for (id, carrier, order) in due {
-        let hex = id.to_hex();
-        let held = map_get_bytes(&map, &hex);
-        if held.as_deref() == Some(carrier.as_slice())
-            || held
-                .and_then(|held| CustodyTransition::decode(&held).ok())
-                .is_some_and(|held| held.order() >= order)
-        {
+    let mut elsewhere = Vec::new();
+    for (_, carrier) in custody_transitions(vault)? {
+        let Ok(latest) = CustodyTransition::decode(&carrier) else {
             continue;
+        };
+        if transition_window(&latest) == *key {
+            due.push((latest, carrier));
+        } else {
+            elsewhere.push(latest);
         }
-        map_insert_bytes(&map, &hex, &carrier)?;
-        wrote = true;
+    }
+    let mut wrote = false;
+    if !due.is_empty() {
+        let map = doc.get_map(CUSTODY_MAP);
+        for (latest, carrier) in due {
+            let hex = latest.id.to_hex();
+            let held = map_get_bytes(&map, &hex);
+            if held.as_deref() == Some(carrier.as_slice())
+                || held
+                    .and_then(|held| CustodyTransition::decode(&held).ok())
+                    .is_some_and(|held| !latest.supersedes(&held))
+            {
+                continue;
+            }
+            map_insert_bytes(&map, &hex, &carrier)?;
+            wrote = true;
+        }
+    }
+    if !elsewhere.is_empty() && holds_custody_map(doc) {
+        let map = doc.get_map(CUSTODY_MAP);
+        for latest in elsewhere {
+            let hex = latest.id.to_hex();
+            if map_get_bytes(&map, &hex)
+                .and_then(|held| CustodyTransition::decode(&held).ok())
+                .is_some_and(|held| latest.supersedes(&held))
+            {
+                map_delete(&map, &hex)?;
+                wrote = true;
+            }
+        }
     }
     Ok(wrote)
+}
+
+/// Whether `doc` holds a custody map. Looking a root up by name creates it:
+/// look first.
+fn holds_custody_map(doc: &LoroDoc) -> bool {
+    matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key(CUSTODY_MAP))
 }
 
 /// Writes every transition window `key`'s document holds into this vault's
 /// custody, as a window open does. A transition that fails is logged and
 /// left; it never stops the open.
 pub(crate) fn apply_custody_map(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
-    if key.world().is_some() {
-        return;
-    }
-    // Looking a root up by name creates it: look first.
-    let LoroValue::Map(roots) = doc.get_value() else {
-        return;
-    };
-    if !roots.contains_key(CUSTODY_MAP) {
+    if key.world().is_some() || !holds_custody_map(doc) {
         return;
     }
     let mut rows = Vec::new();
@@ -180,6 +204,8 @@ pub(crate) fn materialize_custody_from_delta(
 
 /// Judges each carrier against this vault's folded roster, opens the value
 /// sealed to this machine, and writes what stands through the custody door.
+/// Each that stands is kept as the record's latest when it supersedes the one
+/// this vault holds.
 fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
     if rows.is_empty() {
         return;
@@ -228,6 +254,7 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
                 {
                     written += 1;
                 }
+                remember_custody_transition_in_txn(vault, wtxn, transition)?;
             }
             Ok(written)
         })
@@ -244,24 +271,41 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
 }
 
 impl Vault {
-    /// Mirrors this vault's custody transitions into the live window they
-    /// ride, after the door that wrote one committed (OF-422). Best effort:
-    /// a window opened later mirrors them as it opens.
-    pub(crate) fn refresh_custody_in_live_window(&self, transition: &CustodyTransition) {
-        let key = transition_window(transition);
-        let Some((window, _, _)) = self.live_window(&key) else {
-            return;
-        };
-        match mirror_custody_transitions(self, &window.doc, &window.key) {
-            Ok(true) => {
-                window
-                    .doc
-                    .commit_with(loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN));
+    /// Mirrors this vault's latest custody transitions into every live base
+    /// window after a door or a re-seal wrote one (OF-422): the window a
+    /// transition rides takes it, and one it left drops the carrier it
+    /// supersedes. Best effort: a window opened later catches up as it opens.
+    pub(crate) fn refresh_custody_in_live_windows(&self) {
+        for window in self.live_windows() {
+            if window.key.world().is_some() {
+                continue;
             }
-            Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(window = %window.key, error = %error, "custody transition not mirrored");
+            match mirror_custody_transitions(self, &window.doc, &window.key) {
+                Ok(true) => {
+                    window.doc.commit_with(
+                        loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN),
+                    );
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(window = %window.key, error = %error, "custody transition not mirrored");
+                }
             }
         }
+    }
+
+    /// Seals each portable credential's value again for the machines the
+    /// roster gained since its latest transition, then brings the live
+    /// windows up to this vault's latest transitions (OF-422). A sync lane
+    /// runs it on its upkeep tick, after the authority rows it took. Returns
+    /// how many it sealed again.
+    pub(crate) fn reseal_custody_for_roster(&self) -> Result<usize> {
+        // The install key loads before the write transaction opens.
+        let _ = self.load_install_signing_if_minted();
+        let at = self.now_recorded_at();
+        let written =
+            self.with_write_txn_grouped(|wtxn| reseal_custody_transitions_in_txn(self, wtxn, at))?;
+        self.refresh_custody_in_live_windows();
+        Ok(written.len())
     }
 }

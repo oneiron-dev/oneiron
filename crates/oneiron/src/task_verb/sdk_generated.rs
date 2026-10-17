@@ -50,6 +50,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.inbox.concern",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest,
+                >(),
+            ),
+            (
+                "self.inbox.concern.outcome",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest,
+                >(),
+            ),
+            (
+                "self.inbox.concern.move",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+                >(),
+            ),
+            (
                 "vault.people.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
             ),
@@ -90,7 +108,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "tasks.update",
-                crate::code_run::vault_read::request_schema::<TaskRequest>(),
+                crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
             (
                 "vault.witness",
@@ -251,6 +269,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.members.leave",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.guests.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GuestRevokeRequest,
                 >(),
             ),
             (
@@ -748,6 +772,82 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRunInput>(),
             ),
             (
+                "self.desktop.open",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::OpenInput>(),
+            ),
+            (
+                "self.desktop.observe",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ObserveInput>(),
+            ),
+            (
+                "self.desktop.find",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::FindInput>(),
+            ),
+            (
+                "self.desktop.click",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ClickInput>(),
+            ),
+            (
+                "self.desktop.click_at",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::PointInput>(),
+            ),
+            (
+                "self.desktop.type",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::TypeInput>(),
+            ),
+            (
+                "self.desktop.select",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::SelectInput>(),
+            ),
+            (
+                "self.desktop.key",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::KeyInput>(),
+            ),
+            (
+                "self.desktop.hotkey",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::HotkeyInput>(),
+            ),
+            (
+                "self.desktop.scroll",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ScrollInput>(),
+            ),
+            (
+                "self.desktop.wait_for",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::WaitForInput>(),
+            ),
+            (
+                "self.desktop.expect",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ExpectInput>(),
+            ),
+            (
+                "self.desktop.screenshot",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ScreenshotInput>(),
+            ),
+            (
+                "self.desktop.view",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ViewInput>(),
+            ),
+            (
+                "self.desktop.crop",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::CropInput>(),
+            ),
+            (
+                "self.desktop.zoom",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::ZoomInput>(),
+            ),
+            (
+                "self.desktop.batch",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::BatchInput>(),
+            ),
+            (
+                "self.desktop.windows",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::WindowsInput>(),
+            ),
+            (
+                "self.desktop.window",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::WindowInput>(),
+            ),
+            (
                 "vault.commit",
                 crate::code_run::vault_read::request_schema::<CommitRequest>(),
             ),
@@ -887,6 +987,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
+            (
+                "self.spawn",
+                crate::code_run::vault_read::request_schema::<crate::code_run::ReaderSpawnInput>(),
+            ),
+            (
+                "tasks.wait",
+                crate::code_run::vault_read::request_schema::<crate::code_run::TaskWaitSetRequest>(
+                ),
+            ),
         ])
     });
     SCHEMAS.get(verb)
@@ -957,6 +1066,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.identity.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.concern" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.concern.outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.concern.move" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1040,6 +1170,10 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert(
                 "label".to_owned(),
                 schema.pointer("/properties/label")?.clone(),
+            );
+            properties.insert(
+                "assignee".to_owned(),
+                schema.pointer("/properties/assignee")?.clone(),
             );
             &["spec"]
         }
@@ -1276,6 +1410,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.members.leave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.guests.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2114,6 +2255,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::dreamer_runner::maintenance::identity::IdentityActNowRequest =
                 decode(value.clone())?;
         }
+        "self.inbox.concern" => {
+            let _input: crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest =
+                decode(value.clone())?;
+        }
+        "self.inbox.concern.outcome" => {
+            let _input: crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest =
+                decode(value.clone())?;
+        }
+        "self.inbox.concern.move" => {
+            let _input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest =
+                decode(value.clone())?;
+        }
         "vault.people.list" => {
             let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
         }
@@ -2143,7 +2296,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: TaskCreateRequest = decode(value.clone())?;
         }
         "tasks.update" => {
-            let _input: TaskRequest = decode(value.clone())?;
+            let _input: TaskUpdateRequest = decode(value.clone())?;
         }
         "vault.witness" => {
             let input: crate::memory::WitnessTurn = decode(value.clone())?;
@@ -2261,6 +2414,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.members.leave" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.guests.revoke" => {
+            let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -2582,6 +2738,63 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.browser.library.run" => {
             let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
         }
+        "self.desktop.open" => {
+            let _input: oneiron_browser::OpenInput = decode(value.clone())?;
+        }
+        "self.desktop.observe" => {
+            let _input: oneiron_browser::ObserveInput = decode(value.clone())?;
+        }
+        "self.desktop.find" => {
+            let _input: oneiron_browser::FindInput = decode(value.clone())?;
+        }
+        "self.desktop.click" => {
+            let _input: oneiron_browser::ClickInput = decode(value.clone())?;
+        }
+        "self.desktop.click_at" => {
+            let _input: oneiron_browser::PointInput = decode(value.clone())?;
+        }
+        "self.desktop.type" => {
+            let _input: oneiron_browser::TypeInput = decode(value.clone())?;
+        }
+        "self.desktop.select" => {
+            let _input: oneiron_browser::SelectInput = decode(value.clone())?;
+        }
+        "self.desktop.key" => {
+            let _input: oneiron_browser::KeyInput = decode(value.clone())?;
+        }
+        "self.desktop.hotkey" => {
+            let _input: oneiron_browser::HotkeyInput = decode(value.clone())?;
+        }
+        "self.desktop.scroll" => {
+            let _input: oneiron_browser::ScrollInput = decode(value.clone())?;
+        }
+        "self.desktop.wait_for" => {
+            let _input: oneiron_browser::WaitForInput = decode(value.clone())?;
+        }
+        "self.desktop.expect" => {
+            let _input: oneiron_browser::ExpectInput = decode(value.clone())?;
+        }
+        "self.desktop.screenshot" => {
+            let _input: oneiron_browser::ScreenshotInput = decode(value.clone())?;
+        }
+        "self.desktop.view" => {
+            let _input: oneiron_browser::ViewInput = decode(value.clone())?;
+        }
+        "self.desktop.crop" => {
+            let _input: oneiron_browser::CropInput = decode(value.clone())?;
+        }
+        "self.desktop.zoom" => {
+            let _input: oneiron_browser::ZoomInput = decode(value.clone())?;
+        }
+        "self.desktop.batch" => {
+            let _input: oneiron_browser::BatchInput = decode(value.clone())?;
+        }
+        "self.desktop.windows" => {
+            let _input: oneiron_browser::WindowsInput = decode(value.clone())?;
+        }
+        "self.desktop.window" => {
+            let _input: oneiron_browser::WindowInput = decode(value.clone())?;
+        }
         "vault.commit" => {
             let input: CommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -2699,6 +2912,9 @@ pub fn invoke(
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
         "self.identity.answer" => encode(self_identity_answer(memory, decode(value)?)?),
         "self.identity.settle" => encode(self_identity_settle(memory, decode(value)?)?),
+        "self.inbox.concern" => encode(self_inbox_concern(memory, decode(value)?)?),
+        "self.inbox.concern.outcome" => encode(self_inbox_concern_outcome(memory, decode(value)?)?),
+        "self.inbox.concern.move" => encode(self_inbox_concern_move(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
@@ -2749,6 +2965,7 @@ pub fn invoke(
         "vault.members.change" => encode(vault_members_change(memory, decode(value)?)?),
         "vault.members.remove" => encode(vault_members_remove(memory, decode(value)?)?),
         "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
+        "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -2976,6 +3193,82 @@ pub fn invoke_browser(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
+        "self.desktop.open" => serde_json::to_value(self_desktop_open(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.observe" => serde_json::to_value(self_desktop_observe(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.find" => serde_json::to_value(self_desktop_find(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.click" => serde_json::to_value(self_desktop_click(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.click_at" => serde_json::to_value(self_desktop_click_at(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.type" => serde_json::to_value(self_desktop_type(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.select" => serde_json::to_value(self_desktop_select(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.key" => serde_json::to_value(self_desktop_key(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.hotkey" => serde_json::to_value(self_desktop_hotkey(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.scroll" => serde_json::to_value(self_desktop_scroll(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.wait_for" => serde_json::to_value(self_desktop_wait_for(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.expect" => serde_json::to_value(self_desktop_expect(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.screenshot" => serde_json::to_value(self_desktop_screenshot(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.view" => serde_json::to_value(self_desktop_view(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.crop" => serde_json::to_value(self_desktop_crop(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.zoom" => serde_json::to_value(self_desktop_zoom(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.batch" => serde_json::to_value(self_desktop_batch(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.windows" => serde_json::to_value(self_desktop_windows(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.window" => serde_json::to_value(self_desktop_window(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
         _ => {
             return Err(oneiron_browser::BrowserError::Input(format!(
                 "{verb} is not a browser verb"
@@ -3060,6 +3353,24 @@ pub fn self_identity_settle(
 ) -> MemoryResult<crate::dreamer_runner::maintenance::identity::IdentityActNow> {
     memory.identity_act_now(&input)
 }
+pub fn self_inbox_concern(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView> {
+    memory.concern_card(&input)
+}
+pub fn self_inbox_concern_outcome(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary> {
+    memory.concern_outcome(&input)
+}
+pub fn self_inbox_concern_move(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome> {
+    memory.concern_move(&input)
+}
 pub fn vault_people_list(
     memory: &Memory<'_>,
     input: crate::memory::PeopleListRequest,
@@ -3095,6 +3406,7 @@ pub fn cancel(
     memory: &Memory<'_>,
     input: TaskRequest,
 ) -> MemoryResult<crate::task_verb::TaskCancelReceipt> {
+    crate::gate::record_references::admit_row_references(memory, "cancel", &input, &["/task_ref"])?;
     memory.cancel(crate::task_verb::TaskCancelTarget::Task(
         crate::EntityId::from_hex(&input.task_ref)?,
     ))
@@ -3145,21 +3457,21 @@ pub fn tasks_create(
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
-    input: TaskRequest,
+    input: TaskUpdateRequest,
 ) -> MemoryResult<crate::task_verb::TaskUpdateReceipt> {
-    memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.update",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.tasks_update_request(&input)
 }
 pub fn vault_witness(
     memory: &Memory<'_>,
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     crate::memory::caps::check_witness_turn(&input)?;
-    crate::gate::record_references::admit_prose_links(
-        memory,
-        "vault.witness",
-        &input,
-        &["/messages/*[author=companion]/content"],
-    )?;
     memory.witness(&input)
 }
 pub fn vault_claims_upsert(
@@ -3233,6 +3545,7 @@ pub fn vault_kv_put(
     memory: &Memory<'_>,
     input: crate::memory::KeyValuePut,
 ) -> MemoryResult<crate::memory::KeyValuePutReceipt> {
+    crate::gate::record_references::admit_prose_links(memory, "vault.kv.put", &input, &["/value"])?;
     memory.key_value_put(&input)
 }
 pub fn vault_kv_delete(
@@ -3432,6 +3745,12 @@ pub fn vault_members_leave(
         None,
         input,
     )
+}
+pub fn vault_guests_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GuestRevokeRequest,
+) -> MemoryResult<crate::receipt::GuestRevokeResponse> {
+    crate::task_verb::sdk::revoke_guest_embedded(memory, input)
 }
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,
@@ -3642,18 +3961,36 @@ pub fn vault_artifacts_keep(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::KeptProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.keep",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_keep(&input)
 }
 pub fn vault_artifacts_discard(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::DiscardedProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.discard",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_discard(&input)
 }
 pub fn vault_artifacts_undo(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::UndoneKeep> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.undo",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_undo(&input)
 }
 pub fn can(
@@ -3803,12 +4140,6 @@ pub fn vault_rooms_speak(
     memory: &Memory<'_>,
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
-    crate::gate::record_references::admit_prose_links(
-        memory,
-        "vault.rooms.speak",
-        &input,
-        &["/messages/*[author=companion]/content"],
-    )?;
     memory.rooms_speak(&input)
 }
 pub fn vault_projects_propose(
@@ -4208,6 +4539,120 @@ pub fn self_browser_library_run(
 ) -> Result<oneiron_browser::LibraryRunOutput, oneiron_browser::BrowserError> {
     driver.library_run(input)
 }
+pub fn self_desktop_open(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::OpenInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.open(input)
+}
+pub fn self_desktop_observe(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ObserveInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.observe(input)
+}
+pub fn self_desktop_find(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::FindInput,
+) -> Result<oneiron_browser::FindOutput, oneiron_browser::BrowserError> {
+    driver.find(input)
+}
+pub fn self_desktop_click(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ClickInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.click(input)
+}
+pub fn self_desktop_click_at(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::PointInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.click_at(input)
+}
+pub fn self_desktop_type(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::TypeInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.type_text(input)
+}
+pub fn self_desktop_select(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::SelectInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.select(input)
+}
+pub fn self_desktop_key(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::KeyInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.press_key(input)
+}
+pub fn self_desktop_hotkey(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::HotkeyInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.hotkey(input)
+}
+pub fn self_desktop_scroll(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ScrollInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.scroll(input)
+}
+pub fn self_desktop_wait_for(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::WaitForInput,
+) -> Result<oneiron_browser::WaitForOutput, oneiron_browser::BrowserError> {
+    driver.wait_for(input)
+}
+pub fn self_desktop_expect(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ExpectInput,
+) -> Result<oneiron_browser::ExpectOutput, oneiron_browser::BrowserError> {
+    driver.expect(input)
+}
+pub fn self_desktop_screenshot(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ScreenshotInput,
+) -> Result<oneiron_browser::ScreenshotOutput, oneiron_browser::BrowserError> {
+    driver.screenshot(input)
+}
+pub fn self_desktop_view(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ViewInput,
+) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
+    driver.view(input)
+}
+pub fn self_desktop_crop(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::CropInput,
+) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
+    driver.crop(input)
+}
+pub fn self_desktop_zoom(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::ZoomInput,
+) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
+    driver.zoom(input)
+}
+pub fn self_desktop_batch(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::BatchInput,
+) -> Result<oneiron_browser::BatchOutput, oneiron_browser::BrowserError> {
+    driver.batch(input)
+}
+pub fn self_desktop_windows(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::WindowsInput,
+) -> Result<oneiron_browser::WindowsOutput, oneiron_browser::BrowserError> {
+    driver.windows(input)
+}
+pub fn self_desktop_window(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::WindowInput,
+) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
+    driver.window(input)
+}
 pub fn vault_commit(
     memory: &Memory<'_>,
     input: CommitRequest,
@@ -4245,12 +4690,24 @@ pub fn vault_claims_retract(
     memory: &Memory<'_>,
     input: ClaimRefRequest,
 ) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.claims.retract",
+        &input,
+        &["/claim_ref"],
+    )?;
     memory.claim_retract(&input.claim_ref)
 }
 pub fn vault_forget(
     memory: &Memory<'_>,
     input: ForgetRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.forget",
+        &input,
+        &["/claim_ref"],
+    )?;
     memory_requests::forget_claims(memory, input)
 }
 pub fn vault_claims_list(
@@ -4402,6 +4859,12 @@ pub fn vault_notes_create(
     memory: &Memory<'_>,
     input: CreateNoteRequest,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "vault.notes.create",
+        &input,
+        &["/markdown"],
+    )?;
     memory.create_note(&input.kind, &input.markdown)
 }
 pub fn vault_notes_from_entity(
@@ -4420,5 +4883,17 @@ pub fn vault_notes_edit(
     memory: &Memory<'_>,
     input: EditNoteRequest,
 ) -> MemoryResult<crate::note::NoteProgramEditOutcome> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "vault.notes.edit",
+        &input,
+        &["/edit/text"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.edit",
+        &input,
+        &["/note_ref"],
+    )?;
     memory.edit_note(&input.note_ref, &input.edit)
 }

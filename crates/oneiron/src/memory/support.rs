@@ -426,6 +426,9 @@ pub struct Memory<'v> {
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
+    /// The off-record session the host's request named
+    /// (`in_off_record_session`): context, not authority.
+    pub(super) off_record_session: Option<String>,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -497,6 +500,7 @@ impl Vault {
             owner_authorship: None,
             invocation: None,
             task_host: None,
+            off_record_session: None,
         }
     }
 
@@ -531,6 +535,7 @@ impl Vault {
             owner_authorship: None,
             invocation: None,
             task_host: None,
+            off_record_session: None,
         }
     }
 }
@@ -574,6 +579,7 @@ impl<'v> Memory<'v> {
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
                 task_host: self.task_host.clone(),
+                off_record_session: self.off_record_session.clone(),
             },
         })
     }
@@ -625,6 +631,26 @@ impl Memory<'_> {
     pub fn with_invocation(mut self, invocation: crate::runtime_hooks::InvocationId) -> Self {
         self.invocation = Some(invocation);
         self
+    }
+
+    /// Binds the off-record session the host's request names (its
+    /// `x-oneiron-session`): context, not authority. Inside one the live
+    /// registry holds anonymous, a reference refusal or an unlinked prose
+    /// link is refused or unlinked as anywhere else but writes no receipt
+    /// (OF-063, Engine ruling 10-17, matching OF-538's call receipts).
+    #[must_use]
+    pub fn in_off_record_session(mut self, session_ref: &str) -> Self {
+        self.off_record_session = Some(session_ref.trim().to_owned());
+        self
+    }
+
+    /// Whether this surface's call sits in an anonymous off-record session,
+    /// which keeps no record: the one signal OF-538's call receipts read
+    /// ([`Vault::off_record_session_is_anonymous`]).
+    pub(crate) fn keeps_no_record(&self) -> bool {
+        self.off_record_session
+            .as_deref()
+            .is_some_and(|session| self.vault.off_record_session_is_anonymous(session))
     }
 
     /// The logical verb's id a host bound, if any.
@@ -868,13 +894,12 @@ impl Memory<'_> {
     }
 
     /// PRE-TRANSACTION variant of the hard-delete refusal, used ONLY where
-    /// the engine owns the write transaction internally (companion create,
+    /// the engine owns the write transaction internally (imported-claim
     /// ingest admission) and the marker check cannot ride it. Residual for
-    /// those two verbs: a hard delete landing between this check and the
-    /// engine's commit recreates at the purged id; closing it needs in-txn
-    /// engine seams (`create_companion_record_in_txn`, ingest). Every other
-    /// id-accepting verb checks the marker INSIDE its own write
-    /// transaction (A1).
+    /// that verb: a hard delete landing between this check and the engine's
+    /// commit recreates at the purged id; closing it needs an in-txn ingest
+    /// seam. Every other id-accepting verb checks the marker INSIDE its own
+    /// write transaction (A1).
     pub(super) fn refuse_hard_deleted_id(&self, id: &EntityId) -> MemoryResult<()> {
         let rtxn = self
             .vault

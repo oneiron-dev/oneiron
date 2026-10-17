@@ -344,7 +344,6 @@ const ENTITY_KINDS: &[(u8, Class)] = &[
     (ENTITY_TYPE_CODE_SYMBOL, CONTENT),
     (ENTITY_TYPE_BLOB_ARTIFACT, CONTENT),
     (ENTITY_TYPE_NOTE, NOTES),
-    (crate::companion::ENTITY_TYPE_COMPANION_REGISTER, CONTENT),
 ];
 
 /// How each database's canonical rows are classed.

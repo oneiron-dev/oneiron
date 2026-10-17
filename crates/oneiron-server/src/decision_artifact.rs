@@ -5,11 +5,13 @@
 //! Local-vision rung, and returns the full decision for the engine to land
 //! as a proposal held for Keep.
 use oneiron::edit_roundtrip::{UnitCall, UnitDecider};
-use oneiron::llm::decision::TypedDecision;
+use oneiron::llm::decision::{
+    DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, LocatedDecision, TypedDecision,
+};
 use oneiron::{EdgeActorClass, Result};
 
 use crate::ai_host::LocalVisionModel;
-use crate::decision_graph::{LadderCall, ladder_decide};
+use crate::decision_graph::{LadderCall, ladder_decide, ladder_located};
 use crate::server::SyncServer;
 
 /// The host's ladder answering artifact units for one asker class; each
@@ -36,22 +38,46 @@ impl UnitDecider for HostUnitDecider<'_> {
         LocalVisionModel::bound(&self.server.ai)
     }
 
+    /// Images ride to the Local-vision rung, when it is bound and the dial
+    /// spans it, as [`ladder_decide`] sends them.
+    fn first_taking(
+        &self,
+        _question: &DecisionQuestion,
+        dial: DecisionDial,
+        _images: &[DecisionImage],
+    ) -> Option<DecisionRung> {
+        (self.reads_images()
+            && dial.first <= DecisionRung::Local
+            && DecisionRung::Local <= dial.ceiling)
+            .then_some(DecisionRung::Local)
+    }
+
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {
-        ladder_decide(
-            self.server,
-            LadderCall {
-                principal: call.principal,
-                class: self.class,
-                question: call.question,
-                evidence: call.evidence,
-                images: call.images,
-                state: call.state,
-                dial: call.dial,
-                policy: call.policy,
-                reversibility: call.reversibility,
-                deadline: call.deadline,
-                label: self.label,
-            },
-        )
+        ladder_decide(self.server, self.ladder_call(call))
+    }
+
+    /// Presence first on the host's ladder, its images seated as
+    /// [`Self::decide_unit`] seats them.
+    fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
+        ladder_located(self.server, self.ladder_call(call))
+    }
+}
+
+impl HostUnitDecider<'_> {
+    /// `call` as the host's ladder takes it, asked as this decider's class.
+    fn ladder_call<'c>(&self, call: &'c UnitCall<'c>) -> LadderCall<'c> {
+        LadderCall {
+            principal: call.principal,
+            class: self.class,
+            question: call.question,
+            evidence: call.evidence,
+            images: call.images,
+            state: call.state,
+            dial: call.dial,
+            policy: call.policy,
+            reversibility: call.reversibility,
+            deadline: call.deadline,
+            label: self.label,
+        }
     }
 }

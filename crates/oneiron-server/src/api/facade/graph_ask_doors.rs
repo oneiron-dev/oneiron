@@ -6,9 +6,10 @@
 //! Each is asked for the caller, by `ai.verdict`'s rule: the slip's
 //! principal with its actor class, or the vault's own owner for an
 //! owner-grade credential that names none; any other credential is refused.
-//! No principal, actor or time comes from the request. The engine reads each
-//! unit under a lane it rebuilds from that principal, not under the
-//! credential's own lane, so every row refuses a narrowed record scope.
+//! No principal, actor or time comes from the request. `vault.graph.ask`
+//! reads every unit under the credential's own lane, so a narrowed slip asks
+//! inside its narrowing. The standing-question rows store a bare principal
+//! the pump answers for later, so they refuse a narrowed record scope.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,26 +47,20 @@ pub(crate) async fn vault_graph_ask(
     let asker = asker(auth, server, VERB)?;
     input.validate()?;
     let server = Arc::clone(server);
+    let auth = auth.clone();
     tokio::task::spawn_blocking(move || -> MemoryResult<GraphAskOutcome> {
-        let vault = server.vault();
-        let principal = asker.entity_ref();
+        let lane = asker_lane(server.vault(), &auth, asker.entity_ref(), VERB)?;
         let units = match input.select {
-            Some(select) => {
-                select_graph_units_by_type(vault, principal, select.entity_type, select.limit)?
-            }
+            Some(select) => select_graph_units_by_type(&lane, select.entity_type, select.limit)?,
             None => input.units,
         };
         let ceiling = input.ceiling.unwrap_or(DecisionRung::Big);
-        let budget = Duration::from_millis(
-            input
-                .unit_deadline_ms
-                .unwrap_or(GRAPH_ASK_UNIT_DEADLINE_MS),
-        );
+        let budget =
+            Duration::from_millis(input.unit_deadline_ms.unwrap_or(GRAPH_ASK_UNIT_DEADLINE_MS));
         let dial = server.decision_host().dial(ceiling);
         let mut answerer = LadderGraphAnswerer::new(&server, asker, dial, budget)?;
         match run_graph_ask_receipted(
-            vault,
-            principal,
+            &lane,
             asker,
             input.question,
             &units,
@@ -220,6 +215,31 @@ fn asker(auth: &CoreAuth, server: &SyncServer, verb: &str) -> MemoryResult<Write
         _ => EdgeActorClass::Human,
     };
     Ok(WriteActor::new(principal, class))
+}
+
+/// The caller's own read lane, the one `ai.verdict` reads an image under:
+/// its verified slip's key, or the key its principal reads under. An
+/// owner-grade credential that names no principal reads as `asker`, the
+/// owner the door resolved, with the same owner-grade key.
+fn asker_lane<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+    asker: EntityId,
+    verb: &str,
+) -> MemoryResult<oneiron::claim::ScopedRead<'a>> {
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} reads under the caller's scoped read"),
+            &["Present a credential that can read the units."],
+        )
+    };
+    if auth.verified_slip().is_none() && auth.principal_ref().is_none() {
+        let key = oneiron::claim::ScopedReadActorKey::with_actor_class(asker.to_hex(), "human")
+            .ok_or_else(refused)?;
+        return Ok(vault.scoped_read(key.at(auth.locality())));
+    }
+    crate::api::scoped_read_for_core_auth(vault, auth).map_err(|_| refused())
 }
 
 /// A standing question's dial, checked inside the host's own: the dial the

@@ -104,6 +104,9 @@ pub struct SyncServer {
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
+    /// The `[desktop]` guest each code run starts for its own desktop verbs.
+    /// `None` answers every desktop call `browser_unbound`.
+    pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
@@ -332,6 +335,7 @@ impl SyncServer {
             config.limits.queue_wait(),
         );
         let decisions = crate::decision_host::DecisionHost::new(&vault);
+        let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
         let feedback_flood = crate::api::FloodCap::new(
             config.feedback_inbox.notes_per_sender,
             config.feedback_inbox.notes_per_hour,
@@ -370,6 +374,7 @@ impl SyncServer {
             mcp_registry,
             mcp_code_host: None,
             browser_guest: None,
+            desktop_guest: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
@@ -381,7 +386,7 @@ impl SyncServer {
             decisions,
             hook_runtime: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
-            run_receipts: Arc::default(),
+            run_receipts,
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
             extraction_egress: None,
@@ -469,6 +474,17 @@ impl SyncServer {
 
     pub(crate) fn browser_guest(&self) -> Option<&oneiron_browser::BrowserGuest> {
         self.browser_guest.as_ref()
+    }
+
+    /// Gives code runs a desktop guest, from the `[desktop]` section.
+    #[must_use]
+    pub fn with_desktop_guest(mut self, guest: Option<oneiron_browser::DesktopGuest>) -> Self {
+        self.desktop_guest = guest;
+        self
+    }
+
+    pub(crate) fn desktop_guest(&self) -> Option<&oneiron_browser::DesktopGuest> {
+        self.desktop_guest.as_ref()
     }
 
     pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {

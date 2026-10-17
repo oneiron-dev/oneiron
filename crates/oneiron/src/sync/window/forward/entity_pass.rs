@@ -1,7 +1,6 @@
 //! Entity pass of forward rematerialization: every window entity blob through the shared
 //! ingest entry, one write transaction per entity.
 
-use super::super::bridge::{CompanionCrdtScrub, scrub_local_only_companions_from_crdt};
 use super::super::loro_support::map_for_each_value_bytes_deferring;
 #[cfg(any(test, feature = "test-hooks"))]
 use super::super::test_hooks;
@@ -15,8 +14,8 @@ use crate::sync::ingest::{
 };
 use loro::{LoroValue, ValueOrContainer};
 
-/// Run the entity pass: iterate the window `entities` map, ingest each value in its own write
-/// transaction, then scrub local-only companion carriers from the document.
+/// Run the entity pass: iterate the window `entities` map and ingest each value through the
+/// shared ingest entry in its own write transaction.
 ///
 /// Every LOCAL ingest failure aborts the pass and never reaches the ledger (Trap 1).
 pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
@@ -32,7 +31,6 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         trusted: ctx.trusted.is_some(),
     });
     let mut entity_error = None;
-    let mut companion_scrubs = Vec::new();
     let mut visit = |key: &str, value: Option<&[u8]>| {
         if entity_error.is_some() {
             return;
@@ -47,7 +45,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         let watched = EntityId::from_hex(key).ok().filter(|id| watches(vault, id));
         let step = match vault.with_write_txn_grouped(|wtxn| {
             let unborn = match &watched {
-                Some(id) => vault.store.entities.get(wtxn, id.as_bytes())?.is_none(),
+                Some(id) => crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, id)?
+                    .is_none(),
                 None => false,
             };
             let step = ingest_entity_in_savepoint(&ingest, wtxn, key, value)?;
@@ -80,9 +79,6 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         ledger.pending_entity_dependencies.insert(id);
                     }
                 }
-            }
-            EntityStep::LocalOnlyCompanion(id) => {
-                companion_scrubs.push(CompanionCrdtScrub::new(key, id));
             }
             // A marked delete-protected row already stored byte for byte: the admission
             // its marker waits for landed (observer B took a later carrier, or a pass
@@ -133,5 +129,5 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
     if let Some(err) = entity_error {
         return Err(err);
     }
-    scrub_local_only_companions_from_crdt(ctx.doc, &companion_scrubs)
+    Ok(())
 }

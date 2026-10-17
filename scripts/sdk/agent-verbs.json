@@ -2,6 +2,7 @@
   "verbs": [
     {
       "name": "report",
+      "description": "Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor.",
       "input": "crate::feedback::ReportRequest",
       "output": "crate::feedback::ReportReceipt",
       "call": "memory.report(input)?",
@@ -16,6 +17,7 @@
     },
     {
       "name": "self.focus.refresh",
+      "description": "Re-renders the run's context board as one frame, at the frame epoch the caller last saw.",
       "input": "BoardRefreshRequest",
       "output": "crate::board_verb::BoardVerbOutput",
       "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Refresh { frame_epoch: input.frame_epoch })?",
@@ -30,6 +32,7 @@
     },
     {
       "name": "self.focus.subscribe",
+      "description": "Subscribes the run's board stream to the named scopes.",
       "input": "BoardSubscriptionRequest",
       "output": "crate::board_verb::BoardVerbOutput",
       "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Subscribe { scopes: input.scopes })?",
@@ -46,6 +49,7 @@
     },
     {
       "name": "self.focus.unsubscribe",
+      "description": "Unsubscribes the run's board stream from the named scopes.",
       "input": "BoardSubscriptionRequest",
       "output": "crate::board_verb::BoardVerbOutput",
       "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Unsubscribe { scopes: input.scopes })?",
@@ -62,6 +66,7 @@
     },
     {
       "name": "self.memory.diary",
+      "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
       "prose_links": ["/content"],
       "input": "DiaryEntryRequest",
       "output": "crate::task_verb::sdk::DiaryEntryReceipt",
@@ -74,6 +79,7 @@
     },
     {
       "name": "self.memory.diary.reads",
+      "description": "This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds.",
       "input": "crate::memory::DiaryReadsRequest",
       "output": "crate::memory::DiaryReadsView",
       "call": "memory.diary_reads(&input)?",
@@ -83,6 +89,7 @@
     },
     {
       "name": "self.memory.diary.review",
+      "description": "This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers.",
       "input": "crate::memory::DiaryReviewAnswer",
       "output": "crate::memory::DiaryReadRequest",
       "call": "memory.answer_diary_read(&input)?",
@@ -92,6 +99,7 @@
     },
     {
       "name": "self.identity.answer",
+      "description": "A vault owner's tap on an identity choice card: who a person named in their conversations is.",
       "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest",
       "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
       "call": "memory.identity_answer(&input)?",
@@ -103,6 +111,7 @@
     },
     {
       "name": "self.identity.settle",
+      "description": "Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask.",
       "input": "crate::dreamer_runner::maintenance::identity::IdentityActNowRequest",
       "output": "crate::dreamer_runner::maintenance::identity::IdentityActNow",
       "call": "memory.identity_act_now(&input)?",
@@ -113,7 +122,35 @@
       "section": false
     },
     {
+      "name": "self.inbox.concern",
+      "input": "crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest",
+      "output": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView",
+      "call": "memory.concern_card(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.inbox.concern.outcome",
+      "input": "crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest",
+      "output": "crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary",
+      "call": "memory.concern_outcome(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.inbox.concern.move",
+      "input": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest",
+      "output": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome",
+      "call": "memory.concern_move(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.people.list",
+      "description": "One page of the people the caller reads, in handle order.",
       "input": "crate::memory::PeopleListRequest",
       "output": "crate::memory::PeoplePage",
       "call": "memory.people_list(&input)?",
@@ -123,6 +160,7 @@
     },
     {
       "name": "vault.people.get",
+      "description": "One person the vault knows, by their pr handle.",
       "input": "crate::memory::PersonRequest",
       "output": "crate::context_board::PersonRow",
       "call": "memory.people_get(&input)?",
@@ -132,6 +170,7 @@
     },
     {
       "name": "self.message",
+      "description": "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.",
       "input": "crate::memory::MessagePersonRequest",
       "output": "crate::memory::MessagePersonReceipt",
       "call": "memory.message_person(&input)?",
@@ -142,6 +181,7 @@
     },
     {
       "name": "self.grants.ask",
+      "description": "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it.",
       "input": "crate::memory::GrantAskRequest",
       "output": "crate::memory::GrantAskReceipt",
       "call": "memory.grants_ask(&input)?",
@@ -151,6 +191,7 @@
     },
     {
       "name": "self.memory.diary.query",
+      "description": "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log.",
       "input": "crate::task_verb::sdk::DiaryQueryRequest",
       "output": "crate::task_verb::sdk::DiaryQueryOutcome",
       "call": "crate::task_verb::sdk::self_memory_diary_query_embedded(memory, input)?",
@@ -164,6 +205,8 @@
     },
     {
       "name": "cancel",
+      "description": "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work.",
+      "refs": ["/task_ref"],
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
@@ -199,6 +242,7 @@
     },
     {
       "name": "steer",
+      "description": "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt.",
       "input": "SteerRequest",
       "output": "crate::task_verb::sdk::SteerReceipt",
       "call": "crate::task_verb::sdk::steer_child(memory, input)?",
@@ -210,6 +254,7 @@
     },
     {
       "name": "describe",
+      "description": "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named.",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
       "mcp_served": "input.task_ref.as_deref().and_then(|id| oneiron::EntityId::from_hex(id).ok())",
@@ -252,6 +297,7 @@
     },
     {
       "name": "tasks.create",
+      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal.",
       "prose_links": ["/label", "/spec"],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
@@ -260,7 +306,8 @@
       "proposes": true,
       "mcp_fields": {
         "spec": "spec",
-        "label": "label"
+        "label": "label",
+        "assignee": "assignee"
       },
       "mcp_required_fields": [
         "spec"
@@ -273,10 +320,12 @@
     },
     {
       "name": "tasks.update",
-      "input": "TaskRequest",
+      "description": "Records the owner's acknowledgement of a failed TASK; any other task stays as it was.",
+      "refs": ["/task_ref"],
+      "input": "TaskUpdateRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
-      "call": "memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "call": "memory.tasks_update_request(&input)?",
       "scope": "Write",
       "mcp_scope": "addressed",
       "mcp_fields": {
@@ -292,7 +341,7 @@
     },
     {
       "name": "vault.witness",
-      "prose_links": ["/messages/*[author=companion]/content"],
+      "description": "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch.",
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.witness(&input)?",
@@ -324,6 +373,7 @@
     },
     {
       "name": "vault.claims.upsert",
+      "description": "Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate.",
       "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
       "input": "crate::memory::ClaimInput",
       "output": "crate::memory::CommitReceipt",
@@ -357,6 +407,7 @@
     },
     {
       "name": "vault.recall",
+      "description": "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting.",
       "input": "RecallRequest",
       "output": "crate::memory::MemoryPack",
       "call": "crate::task_verb::sdk::recall_with_vector(memory, input, |_| None)?",
@@ -415,13 +466,15 @@
           "scope": "Option<RecallScope>",
           "limit": "u32",
           "format": "Option<String>",
-          "as_of": "Option<u64>"
+          "as_of": "Option<u64>",
+          "deadline_ms": "Option<u64>"
         },
         "output": "MemoryPack"
       }
     },
     {
       "name": "vault.export",
+      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only.",
       "input": "crate::memory::ExportOptions",
       "output": "crate::memory::MemoryExport",
       "call": "memory.export(&input)?",
@@ -450,6 +503,7 @@
     },
     {
       "name": "vault.receipts",
+      "description": "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds.",
       "input": "crate::task_verb::sdk::VaultReceiptsRequest",
       "output": "Vec<crate::memory::MemoryReceipt>",
       "mcp_served_output": "output.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
@@ -485,6 +539,7 @@
     },
     {
       "name": "vault.images.view",
+      "description": "The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull.",
       "input": "crate::memory::ImageViewRequest",
       "output": "crate::memory::PulledImage",
       "call": "memory.view_image(&input)?",
@@ -508,6 +563,7 @@
     },
     {
       "name": "vault.receipts.get",
+      "description": "One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none.",
       "input": "crate::receipt::CallReceiptRequest",
       "output": "Option<crate::receipt::CallReceipt>",
       "call": "memory.call_receipt(&input.receipt_ref)?",
@@ -519,6 +575,7 @@
     },
     {
       "name": "vault.kv.get",
+      "description": "Exact key lookup in the bound actor's worldless key-value namespace; never recall.",
       "input": "crate::memory::KeyValueAddress",
       "output": "Option<crate::memory::KeyValueItem>",
       "call": "memory.key_value_get(&input)?",
@@ -544,6 +601,8 @@
     },
     {
       "name": "vault.kv.put",
+      "description": "Synchronous gated write of one key; a write that needs review fails without changing the key.",
+      "prose_links": ["/value"],
       "input": "crate::memory::KeyValuePut",
       "output": "crate::memory::KeyValuePutReceipt",
       "call": "memory.key_value_put(&input)?",
@@ -575,6 +634,7 @@
     },
     {
       "name": "vault.kv.delete",
+      "description": "Withdraws only the caller's current key; absent is a no-op and claim history stays.",
       "input": "crate::memory::KeyValueAddress",
       "output": "crate::memory::KeyValueDeleteReceipt",
       "call": "memory.key_value_delete(&input)?",
@@ -602,6 +662,7 @@
     },
     {
       "name": "vault.kv.search",
+      "description": "Exact prefix and equality search over the caller's keys, ordered by namespace then key.",
       "input": "crate::memory::KeyValueSearch",
       "output": "Vec<crate::memory::KeyValueItem>",
       "call": "memory.key_value_search(&input)?",
@@ -633,6 +694,7 @@
     },
     {
       "name": "vault.kv.namespaces",
+      "description": "The caller's distinct live namespaces, with exact segment prefix and suffix matching.",
       "input": "crate::memory::KeyValueNamespaces",
       "output": "Vec<Vec<String>>",
       "call": "memory.key_value_namespaces(&input)?",
@@ -661,6 +723,7 @@
     },
     {
       "name": "vault.weave.report",
+      "description": "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role.",
       "input": "crate::claim::WeaveReportRequest",
       "output": "crate::claim::WeaveReportView",
       "call": "memory.weave_report(None, &input)?",
@@ -670,6 +733,7 @@
     },
     {
       "name": "vault.weave.digest",
+      "description": "One of the bound actor's saved weave digests, or the newest, under the current read policy.",
       "input": "crate::claim::WeaveDigestRequest",
       "output": "Option<crate::claim::WeaveDigestView>",
       "call": "memory.weave_digest(None, &input)?",
@@ -689,6 +753,7 @@
     },
     {
       "name": "vault.weave.link.wrong",
+      "description": "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays.",
       "input": "crate::claim::WeaveWrongLinkRequest",
       "output": "crate::claim::WeaveLinkCorrectionView",
       "call": "memory.weave_wrong_link(None, &memory.embedded_owner(\"vault.weave.link.wrong\")?, &input)?",
@@ -699,6 +764,7 @@
     },
     {
       "name": "vault.packs.put",
+      "description": "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
@@ -711,6 +777,7 @@
     },
     {
       "name": "vault.packs.setup.prepare",
+      "description": "The owner opens, or resumes, a pack's guided setup; opening grants nothing.",
       "input": "PackSetupRequest",
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)?",
@@ -723,6 +790,7 @@
     },
     {
       "name": "vault.packs.setup.get",
+      "description": "A pack's guided setup as it stands, for the owner.",
       "input": "PackSetupRequest",
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::pack_setup_embedded(memory, input)?",
@@ -735,6 +803,7 @@
     },
     {
       "name": "vault.packs.setup.answer",
+      "description": "The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here.",
       "input": "PackSetupAnswerRequest",
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)?",
@@ -747,6 +816,7 @@
     },
     {
       "name": "vault.packs.setup.verify",
+      "description": "Checks one pack connection with the engine's fixed read-only provider call for its declared check.",
       "input": "PackSetupVerifyRequest",
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)?",
@@ -759,6 +829,7 @@
     },
     {
       "name": "vault.authority.audit",
+      "description": "One page of the dated authority log audit: grants, revokes and confirms, for the owner.",
       "input": "crate::receipt::AuthorityAuditQuery",
       "output": "crate::receipt::AuthorityAuditPage",
       "call": "crate::receipt::authority_audit_embedded(memory, input)?",
@@ -769,6 +840,7 @@
     },
     {
       "name": "vault.inspection.resolve",
+      "description": "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item.",
       "input": "crate::lens::InspectionResolveRequest",
       "output": "crate::lens::InspectionResolved",
       "call": "memory.inspection_resolve(&input)?",
@@ -778,6 +850,7 @@
     },
     {
       "name": "vault.shared.propose_delete",
+      "description": "Starts a shared vault's delete_vault act, returned as a typed pending act.",
       "input": "crate::task_verb::sdk::SharedVaultRequest",
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_delete(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_delete\")?, input)?",
@@ -788,6 +861,7 @@
     },
     {
       "name": "vault.shared.propose_transfer",
+      "description": "Starts a shared vault's transfer_ownership act: a live Owner hands the vault to another person.",
       "input": "crate::task_verb::sdk::SharedTransferRequest",
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_transfer(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_transfer\")?, input)?",
@@ -798,6 +872,7 @@
     },
     {
       "name": "vault.shared.propose_remove_owner",
+      "description": "Starts a shared vault's remove_owner act, with its export-first answer.",
       "input": "crate::task_verb::sdk::SharedRemoveOwnerRequest",
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_remove_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_remove_owner\")?, input)?",
@@ -808,6 +883,7 @@
     },
     {
       "name": "vault.shared.execute",
+      "description": "A live Owner runs a matured shared-vault act and gets its receipt.",
       "input": "crate::task_verb::sdk::SharedActRequest",
       "output": "crate::task_verb::sdk::SharedActExecuted",
       "call": "crate::task_verb::sdk::execute_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.execute\")?, None, input)?",
@@ -818,6 +894,7 @@
     },
     {
       "name": "vault.shared.receipt",
+      "description": "One shared-act or membership receipt its reader was told about, by id.",
       "input": "crate::task_verb::sdk::SharedReceiptRequest",
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::read_shared_receipt(memory.vault(), &memory.embedded_owner(\"vault.shared.receipt\")?, input)?",
@@ -828,6 +905,7 @@
     },
     {
       "name": "vault.shared.outcomes",
+      "description": "The reader's own outcome notices for a shared vault.",
       "input": "crate::task_verb::sdk::SharedVaultRequest",
       "output": "Vec<crate::federation::SharedActOutcome>",
       "call": "crate::task_verb::sdk::read_shared_outcomes(memory.vault(), &memory.embedded_owner(\"vault.shared.outcomes\")?, input)?",
@@ -838,6 +916,7 @@
     },
     {
       "name": "vault.shared.deletion",
+      "description": "The executed delete-the-vault act, if any.",
       "input": "EmptyRequest",
       "output": "Option<crate::federation::SharedVaultDeletion>",
       "call": "crate::task_verb::sdk::read_shared_deletion(memory.vault())?",
@@ -849,6 +928,7 @@
     },
     {
       "name": "vault.members.add",
+      "description": "An Admin adds a live person to a shared vault at a non-root role.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
@@ -859,6 +939,7 @@
     },
     {
       "name": "vault.members.change",
+      "description": "An Admin assigns another non-root role to a member who is not an Owner.",
       "input": "crate::task_verb::sdk::SharedMemberRoleRequest",
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::change_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.change\")?, None, input)?",
@@ -869,6 +950,7 @@
     },
     {
       "name": "vault.members.remove",
+      "description": "An Admin removes one member from a shared vault.",
       "input": "crate::task_verb::sdk::SharedMemberRequest",
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::remove_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.remove\")?, None, input)?",
@@ -879,6 +961,7 @@
     },
     {
       "name": "vault.members.leave",
+      "description": "A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead.",
       "input": "crate::task_verb::sdk::SharedVaultRequest",
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::leave_shared_vault_as(memory.vault(), &memory.embedded_owner(\"vault.members.leave\")?, None, input)?",
@@ -888,7 +971,18 @@
       "section": false
     },
     {
+      "name": "vault.guests.revoke",
+      "input": "crate::task_verb::sdk::GuestRevokeRequest",
+      "output": "crate::receipt::GuestRevokeResponse",
+      "call": "crate::task_verb::sdk::revoke_guest_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.authority.handoff_alarms",
+      "description": "Every saved authority handoff fork alarm, for the owner.",
       "input": "EmptyRequest",
       "output": "Vec<crate::authority::AuthorityHandoffAlarm>",
       "call": "crate::task_verb::sdk::read_handoff_alarms(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms\")?)?",
@@ -900,6 +994,7 @@
     },
     {
       "name": "vault.authority.handoff_alarms.acknowledge",
+      "description": "The owner acknowledges one saved handoff fork alarm.",
       "input": "crate::task_verb::sdk::HandoffAlarmRequest",
       "output": "crate::authority::AuthorityHandoffAlarm",
       "call": "crate::task_verb::sdk::acknowledge_handoff_alarm(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms.acknowledge\")?, input)?",
@@ -910,6 +1005,7 @@
     },
     {
       "name": "vault.legal_holds.place",
+      "description": "The owner places a customer legal hold on the named records or gate partitions.",
       "input": "crate::task_verb::sdk::LegalHoldPlaceRequest",
       "output": "crate::deletion::LegalHold",
       "call": "crate::task_verb::sdk::place_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.place\")?, input)?",
@@ -920,6 +1016,7 @@
     },
     {
       "name": "vault.legal_holds.widen",
+      "description": "Adds targets to one of the owner's standing customer legal holds.",
       "input": "crate::task_verb::sdk::LegalHoldWidenRequest",
       "output": "crate::deletion::LegalHold",
       "call": "crate::task_verb::sdk::widen_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.widen\")?, input)?",
@@ -930,6 +1027,7 @@
     },
     {
       "name": "vault.legal_holds.list",
+      "description": "Every legal hold the owner may see.",
       "input": "EmptyRequest",
       "output": "Vec<crate::deletion::LegalHold>",
       "call": "crate::task_verb::sdk::read_legal_holds(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.list\")?)?",
@@ -941,6 +1039,7 @@
     },
     {
       "name": "vault.legal_holds.log",
+      "description": "The owner-visible legal hold log, oldest first.",
       "input": "EmptyRequest",
       "output": "Vec<crate::deletion::LegalHoldEvent>",
       "call": "crate::task_verb::sdk::read_legal_hold_log(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.log\")?)?",
@@ -952,6 +1051,7 @@
     },
     {
       "name": "vault.legal_holds.lift_and_erase",
+      "description": "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them.",
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
@@ -962,6 +1062,7 @@
     },
     {
       "name": "vault.lenses.propose",
+      "description": "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it.",
       "input": "crate::lens::LensProposeRequest",
       "output": "crate::receipt::LensProposalReceipt",
       "call": "memory.lenses_propose(input)?",
@@ -974,6 +1075,7 @@
     },
     {
       "name": "vault.lenses.activate",
+      "description": "The owner selects a proposed lens revision for its pack slot.",
       "input": "crate::lens::LensActivateRequest",
       "output": "crate::receipt::LensActivationReceipt",
       "call": "crate::lens::activate_lens_embedded(memory, input)?",
@@ -986,6 +1088,7 @@
     },
     {
       "name": "vault.lenses.deactivate",
+      "description": "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay.",
       "input": "crate::lens::LensDeactivateRequest",
       "output": "crate::receipt::LensActivationReceipt",
       "call": "crate::lens::deactivate_lens_embedded(memory, input)?",
@@ -998,6 +1101,7 @@
     },
     {
       "name": "vault.lenses.list",
+      "description": "One page of the vault's lens proposals, each with its slot state from the owner's current selection.",
       "input": "crate::lens::LensListRequest",
       "output": "crate::lens::LensListPage",
       "call": "memory.lenses_list(input)?",
@@ -1009,6 +1113,7 @@
     },
     {
       "name": "vault.lenses.default",
+      "description": "Composes the default vault lens from the named sources, read under the caller's own scope.",
       "input": "crate::lens::LensDefaultRequest",
       "output": "crate::claim::ScopedReadResult<crate::lens::GeneratedLens>",
       "call": "memory.lenses_default(input)?",
@@ -1020,6 +1125,7 @@
     },
     {
       "name": "vault.disclosure.offer",
+      "description": "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses.",
       "input": "crate::task_verb::sdk::DisclosureOfferRequest",
       "output": "crate::task_verb::sdk::DisclosureOffered",
       "call": "crate::task_verb::sdk::offer_contact_disclosure_as_caller(memory, input)?",
@@ -1032,6 +1138,7 @@
     },
     {
       "name": "vault.shares.create",
+      "description": "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels.",
       "input": "crate::task_verb::sdk::ShareCreateRequest",
       "output": "crate::task_verb::sdk::ShareCreated",
       "call": "crate::task_verb::sdk::create_share_as_caller(memory, input)?",
@@ -1067,6 +1174,7 @@
     },
     {
       "name": "vault.hooks.replay",
+      "description": "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands.",
       "input": "crate::task_verb::sdk::HooksReplayRequest",
       "output": "Vec<crate::task_verb::sdk::HookReplayRow>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.hooks.replay\", &input)?",
@@ -1080,6 +1188,7 @@
     },
     {
       "name": "vault.artifacts.view",
+      "description": "One artifact: its kind, name, type, head and every version with its made_by and born-from.",
       "input": "crate::blob_artifact::ArtifactRefRequest",
       "output": "Option<crate::blob_artifact::ArtifactView>",
       "call": "memory.artifacts_view(&input)?",
@@ -1105,6 +1214,7 @@
     },
     {
       "name": "vault.artifacts.export",
+      "description": "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it.",
       "input": "crate::blob_artifact::ArtifactExportRequest",
       "output": "Option<crate::blob_artifact::ArtifactExportFile>",
       "call": "memory.artifacts_export(&input)?",
@@ -1130,6 +1240,7 @@
     },
     {
       "name": "vault.artifacts.born_from",
+      "description": "What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made.",
       "input": "crate::blob_artifact::BornFromRequest",
       "output": "crate::blob_artifact::BornFromView",
       "call": "memory.artifacts_born_from(&input)?",
@@ -1155,6 +1266,7 @@
     },
     {
       "name": "vault.artifacts.proposals",
+      "description": "The proposals waiting beside one artifact.",
       "input": "crate::blob_artifact::ArtifactRefRequest",
       "output": "Vec<crate::edit_settle::PendingProposalView>",
       "call": "memory.artifacts_proposals(&input)?",
@@ -1180,6 +1292,7 @@
     },
     {
       "name": "vault.artifacts.waits",
+      "description": "The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits.",
       "input": "crate::blob_artifact::ArtifactRefRequest",
       "output": "Vec<crate::edit_settle::OrganWaitView>",
       "call": "memory.artifacts_waits(&input)?",
@@ -1203,6 +1316,7 @@
     },
     {
       "name": "vault.artifacts.release_wait",
+      "description": "Lets one held organ call go, by its run ref, under the consent a Discard needs.",
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::ReleasedWait",
       "call": "memory.artifacts_release_wait(&input)?",
@@ -1226,6 +1340,7 @@
     },
     {
       "name": "vault.artifacts.review_slides",
+      "description": "Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard.",
       "input": "crate::blob_artifact::SlideReviewSubmit",
       "output": "crate::blob_artifact::SlideReviewOutcome",
       "call": "memory.artifacts_review_slides(&input)?",
@@ -1250,6 +1365,7 @@
     },
     {
       "name": "vault.artifacts.propose_deck",
+      "description": "Runs one native deck transaction over an artifact's head and holds the proposal for Keep.",
       "refs": ["/context/thread", "/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::DeckProposeRequest",
       "output": "crate::blob_artifact::DeckProposeOutcome",
@@ -1274,6 +1390,7 @@
     },
     {
       "name": "vault.artifacts.propose_output",
+      "description": "Offers one native organ result to an artifact as its next version, held for Keep.",
       "refs": ["/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
       "input": "crate::blob_artifact::NativeOutputRequest",
       "output": "crate::edit_settle::PendingProposalView",
@@ -1298,6 +1415,8 @@
     },
     {
       "name": "vault.artifacts.keep",
+      "description": "Settles one waiting artifact proposal into a version.",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::KeptProposal",
       "call": "memory.artifacts_keep(&input)?",
@@ -1321,6 +1440,8 @@
     },
     {
       "name": "vault.artifacts.discard",
+      "description": "Drops one waiting artifact proposal, once.",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::DiscardedProposal",
       "call": "memory.artifacts_discard(&input)?",
@@ -1344,6 +1465,8 @@
     },
     {
       "name": "vault.artifacts.undo",
+      "description": "Undoes one Keep by appending a new version.",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::UndoneKeep",
       "call": "memory.artifacts_undo(&input)?",
@@ -1367,6 +1490,7 @@
     },
     {
       "name": "can",
+      "description": "Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything.",
       "input": "crate::task_verb::sdk::TaskCanAskRequest",
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
@@ -1392,6 +1516,7 @@
     },
     {
       "name": "peek",
+      "description": "An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask.",
       "input": "crate::task_verb::TaskAskHandle",
       "output": "Vec<crate::task_verb::TaskAskPersonEvidence>",
       "mcp_served": "[input.group_ref]",
@@ -1418,6 +1543,7 @@
     },
     {
       "name": "ask",
+      "description": "Asks people or an authority a typed question and returns at admission with the ask's handle.",
       "refs": ["/what/reference/claim", "/what/reference/turn", "/what/context_refs/*/claim", "/what/context_refs/*/turn"],
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
@@ -1431,6 +1557,7 @@
     },
     {
       "name": "wait",
+      "description": "Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode.",
       "input": "crate::task_verb::sdk::TaskWaitRequest",
       "output": "crate::task_verb::TaskAskWait",
       "mcp_served": "[input.handle.group_ref]",
@@ -1444,6 +1571,7 @@
     },
     {
       "name": "tasks.answer",
+      "description": "Admits one person's word on an ask; the word is evidence, never approval.",
       "refs": ["/word/provenance_refs/*/claim", "/word/provenance_refs/*/turn"],
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
@@ -1458,6 +1586,7 @@
     },
     {
       "name": "tasks.outcomes",
+      "description": "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to.",
       "input": "crate::task_verb::TaskAskHandle",
       "output": "Vec<crate::llm::decision::questions::CalibrationPair>",
       "mcp_served": "[input.group_ref]",
@@ -1475,6 +1604,7 @@
     },
     {
       "name": "vault.rooms.list",
+      "description": "The caller's rooms its own grants admit; inside a room turn, only that room.",
       "input": "EmptyRequest",
       "output": "Vec<crate::task_verb::sdk::RoomEntry>",
       "call": "memory.rooms_list()?.into_iter().map(|(id, room)| RoomEntry { id: id.to_hex(), room }).collect::<Vec<_>>()",
@@ -1485,6 +1615,7 @@
     },
     {
       "name": "vault.rooms.messages",
+      "description": "One page of the turns in a room this reader may read.",
       "input": "RoomRequest",
       "output": "crate::workspace_roster::RoomPage",
       "call": "memory.rooms_messages_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
@@ -1506,6 +1637,7 @@
     },
     {
       "name": "vault.rooms.participants",
+      "description": "One page of who took part in a room or one of its threads, each with its causes and whether it may take part now.",
       "input": "crate::workspace_roster::ParticipantsRequest",
       "output": "crate::workspace_roster::ParticipantsPage",
       "call": "memory.rooms_participants(&input)?",
@@ -1523,6 +1655,7 @@
     },
     {
       "name": "vault.rooms.render",
+      "description": "The standalone rendered view of a room's threads.",
       "input": "RoomRefRequest",
       "output": "Vec<String>",
       "call": "memory.rooms_render_threads(crate::EntityId::from_hex(&input.room_ref)?, crate::workspace_roster::RoomThreadPolicy::default())?",
@@ -1538,6 +1671,7 @@
     },
     {
       "name": "vault.rooms.find",
+      "description": "One page of a room's threads.",
       "input": "RoomRequest",
       "output": "crate::workspace_roster::RoomThreadPage",
       "call": "memory.rooms_find_threads_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
@@ -1562,6 +1696,7 @@
     },
     {
       "name": "vault.rooms.get",
+      "description": "One thread of a room by its turn, even when every list omits it.",
       "input": "RoomTurnRequest",
       "output": "Option<crate::workspace_roster::RoomThread>",
       "call": "memory.rooms_get_thread(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
@@ -1578,6 +1713,7 @@
     },
     {
       "name": "vault.rooms.trunk",
+      "description": "One trunk turn of a room, with the completed TASK result headers that hang under it.",
       "input": "RoomTurnRequest",
       "output": "crate::workspace_roster::RoomTrunk",
       "call": "memory.rooms_trunk(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
@@ -1594,6 +1730,7 @@
     },
     {
       "name": "vault.rooms.reply_strips",
+      "description": "One page of a thread's quote replies, grouped by the message they quote, in reply order.",
       "input": "crate::conversation_dag::ReplyStripsRequest",
       "output": "crate::conversation_dag::ReplyStripsPage",
       "call": "memory.rooms_reply_strips(&input)?",
@@ -1606,6 +1743,7 @@
     },
     {
       "name": "vault.rooms.claim",
+      "description": "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed.",
       "input": "RoomClaimRequest",
       "output": "crate::workspace_roster::RoomClaimOutcome",
       "call": "memory.rooms_claim(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?, crate::unix_seconds_now())?",
@@ -1619,7 +1757,7 @@
     },
     {
       "name": "vault.rooms.speak",
-      "prose_links": ["/messages/*[author=companion]/content"],
+      "description": "Speaks one turn into the current room turn's room, through the normal witness gate.",
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
@@ -1634,6 +1772,7 @@
     },
     {
       "name": "vault.projects.propose",
+      "description": "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority.",
       "input": "crate::workspace_roster::ProjectProposalRequest",
       "output": "crate::genui::ProjectProposalCard",
       "call": "memory.projects_propose(&input)?",
@@ -1644,6 +1783,7 @@
     },
     {
       "name": "vault.projects.proposals",
+      "description": "The project cards shown in a conversation, each with its state.",
       "input": "ProjectConversationRequest",
       "output": "Vec<crate::workspace_roster::ProjectCardRecord>",
       "call": "memory.projects_proposals(crate::EntityId::from_hex(&input.conversation_ref)?)?",
@@ -1654,6 +1794,7 @@
     },
     {
       "name": "vault.projects.dismiss_card",
+      "description": "The card's person dismisses a project card so it never mints; false when it was dismissed already.",
       "input": "ProjectCardRequest",
       "output": "crate::task_verb::sdk::ProjectCardDismissal",
       "call": "ProjectCardDismissal { dismissed: memory.projects_dismiss_card(&input.card_id)?, card_id: input.card_id }",
@@ -1664,6 +1805,7 @@
     },
     {
       "name": "vault.projects.confirm",
+      "description": "The owner's tap that confirms a host-held project card; only the host's own door can complete it.",
       "input": "crate::workspace_roster::ProjectCardConfirmRequest",
       "output": "crate::workspace_roster::ProjectMintReceipt",
       "call": "memory.projects_confirm(&input)?",
@@ -1674,6 +1816,7 @@
     },
     {
       "name": "vault.projects.goal.intake",
+      "description": "What a project's goal-intake interview starts from, for a member of its home room.",
       "input": "ProjectRefRequest",
       "output": "crate::workspace_roster::ProjectGoalInterviewContext",
       "call": "memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)?",
@@ -1684,6 +1827,7 @@
     },
     {
       "name": "vault.rooms.join",
+      "description": "Files and decides a request to take part in a room or one of its threads.",
       "input": "crate::workspace_roster::JoinRequest",
       "output": "crate::workspace_roster::JoinOutcome",
       "call": "memory.rooms_join(&input)?",
@@ -1697,6 +1841,7 @@
     },
     {
       "name": "vault.rooms.consent",
+      "description": "One party's answer to a join that waits on it, after which the join is decided again.",
       "input": "crate::workspace_roster::ConsentAnswer",
       "output": "crate::workspace_roster::JoinOutcome",
       "call": "memory.rooms_consent(&input)?",
@@ -1709,6 +1854,7 @@
     },
     {
       "name": "vault.rooms.offer",
+      "description": "Publishes an agent's offer card to join a room or one of its threads.",
       "input": "crate::workspace_roster::OfferDraft",
       "output": "crate::workspace_roster::OfferCard",
       "call": "memory.rooms_offer(&input)?",
@@ -1722,6 +1868,7 @@
     },
     {
       "name": "vault.rooms.offer.answer",
+      "description": "The room's host answers an offer card: join, or not now.",
       "input": "crate::workspace_roster::OfferAnswerRequest",
       "output": "crate::workspace_roster::OfferSettlement",
       "call": "memory.rooms_offer_answer(&input)?",
@@ -1735,6 +1882,7 @@
     },
     {
       "name": "vault.rooms.offers",
+      "description": "One page of the current offer cards in a room or one of its threads.",
       "input": "crate::workspace_roster::OffersRequest",
       "output": "crate::workspace_roster::OffersPage",
       "call": "memory.rooms_offers(&input)?",
@@ -1747,6 +1895,7 @@
     },
     {
       "name": "vault.projects.goal.revisions",
+      "description": "The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first.",
       "input": "ProjectRefRequest",
       "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
       "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
@@ -1758,6 +1907,7 @@
     },
     {
       "name": "vault.projects.goal.dismiss",
+      "description": "The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry.",
       "input": "ProjectGoalDismissRequest",
       "output": "crate::task_verb::sdk::ProjectGoalDismissReceipt",
       "call": "ProjectGoalDismissReceipt { dismissed: memory.projects_goal_dismiss(crate::EntityId::from_hex(&input.project_ref)?, crate::EntityId::from_hex(&input.expected_goal_ref)?, &input.question_digest)? }",
@@ -1768,6 +1918,7 @@
     },
     {
       "name": "vault.projects.route_tradeoff",
+      "description": "Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room.",
       "input": "ProjectTradeoffRouteRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_route_project_tradeoff(crate::EntityId::from_hex(&input.task_ref)?, crate::EntityId::from_hex(&input.proposal_ref)?)?",
@@ -1779,6 +1930,7 @@
     },
     {
       "name": "vault.conversations.turn.continue",
+      "description": "Queues generation that resumes an incomplete assistant reply from exactly its saved text.",
       "input": "crate::conversation::TurnActionRequest",
       "output": "crate::conversation::TurnActionReceipt",
       "call": "memory.conversations_turn_continue(&input)?",
@@ -1791,6 +1943,7 @@
     },
     {
       "name": "vault.conversations.turn.retry",
+      "description": "Queues a new answer to the user turn an assistant turn answered; the old reply stays.",
       "input": "crate::conversation::TurnActionRequest",
       "output": "crate::conversation::TurnActionReceipt",
       "call": "memory.conversations_turn_retry(&input)?",
@@ -1803,6 +1956,7 @@
     },
     {
       "name": "vault.rooms.host",
+      "description": "Who hosts a room now, and the caller's own speaking role there.",
       "input": "RoomHostRequest",
       "output": "crate::workspace_roster::RoomStanding",
       "call": "memory.rooms_host(crate::EntityId::from_hex(&input.room_ref)?, input.session_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
@@ -1818,6 +1972,7 @@
     },
     {
       "name": "vault.rooms.host.pin",
+      "description": "Pins an agent as a room's host, or clears the stored host, pin or handoff.",
       "input": "crate::workspace_roster::RoomHostPin",
       "output": "crate::workspace_roster::RoomStanding",
       "call": "memory.rooms_host_pin(&input)?",
@@ -1831,6 +1986,7 @@
     },
     {
       "name": "vault.rooms.host.hand",
+      "description": "The room's current host hands the hosting duty to another agent that may host.",
       "input": "crate::workspace_roster::RoomHostHand",
       "output": "crate::workspace_roster::RoomStanding",
       "call": "memory.rooms_host_hand(&input)?",
@@ -1844,6 +2000,7 @@
     },
     {
       "name": "vault.rooms.sharing",
+      "description": "A room's effective sharing scope and why it is clamped, for a member of the room.",
       "input": "RoomRefRequest",
       "output": "crate::workspace_roster::RoomSharingView",
       "call": "memory.rooms_sharing(crate::EntityId::from_hex(&input.room_ref)?)?",
@@ -1859,6 +2016,7 @@
     },
     {
       "name": "vault.companions.sharing.get",
+      "description": "One contact's clearance in a companion's source vault, for the principal who controls that vault.",
       "input": "CompanionSharingRequest",
       "output": "crate::workspace_roster::CompanionSharingView",
       "call": "memory.companion_sharing_get(&crate::workspace_roster::CompanionSharingTarget { companion: crate::EntityId::from_hex(&input.companion_ref)?, contact: crate::EntityId::from_hex(&input.contact_ref)? })?",
@@ -1874,6 +2032,7 @@
     },
     {
       "name": "vault.companions.sharing.set",
+      "description": "The owner's standing yes to one frozen clearance offer for a companion's contact.",
       "input": "CompanionSharingSetRequest",
       "output": "crate::workspace_roster::CompanionSharingView",
       "call": "memory.companion_sharing_set(&input.target()?, &input.proposal_ref, &input.delta()?)?",
@@ -1889,6 +2048,7 @@
     },
     {
       "name": "vault.workspace.work_companion.get",
+      "description": "A workspace's work_companion policy, readable by every member it governs.",
       "input": "WorkspaceRefRequest",
       "output": "crate::workspace_roster::WorkCompanionPolicy",
       "call": "memory.workspace_work_companion_get(&input.workspace_ref)?",
@@ -1904,6 +2064,7 @@
     },
     {
       "name": "vault.workspace.work_companion.set",
+      "description": "The owner sets a workspace's work_companion policy in person.",
       "input": "WorkCompanionSetRequest",
       "output": "crate::workspace_roster::WorkCompanionPolicy",
       "call": "memory.workspace_work_companion_set(&input.workspace_ref, input.policy)?",
@@ -1919,6 +2080,7 @@
     },
     {
       "name": "self.skills.save",
+      "description": "An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it.",
       "input": "crate::skill::helper::SkillSaveRequest",
       "output": "crate::memory::SkillAuthoringReceipt",
       "call": "{ let (id, record, files) = crate::skill::helper::skill_save_parts(&input)?; memory.skill_save_with_source(id, &record, files, input.expected_version.as_deref(), crate::unix_seconds_now())? }",
@@ -1931,6 +2093,7 @@
     },
     {
       "name": "self.skills.fork",
+      "description": "An agent forks a stored skill under its own identity, keeping its import ancestry.",
       "input": "crate::skill::helper::SkillForkRequest",
       "output": "crate::memory::SkillAuthoringReceipt",
       "call": "{ let (parent, id) = crate::skill::helper::fork_target(&input)?; memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())? }",
@@ -1943,6 +2106,7 @@
     },
     {
       "name": "self.skills.callables",
+      "description": "Every loadable callable helper skill and its call contract: what it takes and returns.",
       "input": "EmptyRequest",
       "output": "Vec<crate::skill::helper::CallableCardView>",
       "call": "memory.skill_callables()?",
@@ -1953,6 +2117,7 @@
     },
     {
       "name": "ai.options",
+      "description": "The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left.",
       "input": "AiOptionsRequest",
       "output": "crate::task_verb::sdk::AiOptions",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
@@ -1965,6 +2130,7 @@
     },
     {
       "name": "ai.image",
+      "description": "One image out of the host's image model; reference images make it an edit.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
@@ -1977,6 +2143,7 @@
     },
     {
       "name": "ai.speech",
+      "description": "Speech audio out of text, from the host's speech model.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
@@ -1989,6 +2156,7 @@
     },
     {
       "name": "ai.transcribe",
+      "description": "Text out of speech audio, from the host's transcription model.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
@@ -2001,6 +2169,7 @@
     },
     {
       "name": "ai.embed",
+      "description": "One embedding vector per input text, from the host's embedding model.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
@@ -2013,6 +2182,7 @@
     },
     {
       "name": "ai.video",
+      "description": "Starts a video render as a provider job and answers with its ticket.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiVideoTicket",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",
@@ -2025,6 +2195,7 @@
     },
     {
       "name": "ai.video.poll",
+      "description": "Where a video job stands; a finished one answers with its clip, once.",
       "input": "AiVideoJobRequest",
       "output": "crate::task_verb::sdk::AiVideoJob",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
@@ -2037,6 +2208,7 @@
     },
     {
       "name": "ai.video.cancel",
+      "description": "Stops a video job at its provider.",
       "input": "AiVideoJobRequest",
       "output": "crate::task_verb::sdk::AiVideoCancelled",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.cancel\", &input)?",
@@ -2049,6 +2221,7 @@
     },
     {
       "name": "ai.verdict",
+      "description": "The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt.",
       "input": "crate::task_verb::sdk::AiVerdictRequest",
       "output": "crate::task_verb::sdk::AiVerdict",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.verdict\", &input)?",
@@ -2069,7 +2242,6 @@
       "scope": "Write",
       "proposes": true,
       "admission": {
-        "unrestricted_record_scope": true,
         "validate": "input.validate()?;"
       },
       "section": false
@@ -2126,6 +2298,7 @@
     },
     {
       "name": "connector.list",
+      "description": "Every live catalogued connector whose name or summary matches the query.",
       "input": "ConnectorListRequest",
       "output": "Vec<crate::task_verb::sdk::ConnectorEntry>",
       "call": "crate::task_verb::sdk::connector_catalog(memory, input)?",
@@ -2137,6 +2310,7 @@
     },
     {
       "name": "connector.status",
+      "description": "One catalogued connector by name, removed ones included.",
       "input": "ConnectorNameRequest",
       "output": "Option<crate::task_verb::sdk::ConnectorView>",
       "call": "crate::task_verb::sdk::connector_description(memory, input)?",
@@ -2148,6 +2322,7 @@
     },
     {
       "name": "self.browser.open",
+      "description": "Opens a URL in the run's own browser session and observes the page.",
       "input": "oneiron_browser::OpenInput",
       "output": "oneiron_browser::Observation",
       "call": "driver.open(input)?",
@@ -2158,6 +2333,7 @@
     },
     {
       "name": "self.browser.observe",
+      "description": "Observes the current page of the run's browser session.",
       "input": "oneiron_browser::ObserveInput",
       "output": "oneiron_browser::Observation",
       "call": "driver.observe(input)?",
@@ -2168,6 +2344,7 @@
     },
     {
       "name": "self.browser.find",
+      "description": "Finds the page rows whose role and name match.",
       "input": "oneiron_browser::FindInput",
       "output": "oneiron_browser::FindOutput",
       "call": "driver.find(input)?",
@@ -2178,6 +2355,7 @@
     },
     {
       "name": "self.browser.click",
+      "description": "Clicks one page target and observes the result.",
       "input": "oneiron_browser::ClickInput",
       "output": "oneiron_browser::Observation",
       "call": "driver.click(input)?",
@@ -2188,6 +2366,7 @@
     },
     {
       "name": "self.browser.click_at",
+      "description": "Clicks a point of a held screenshot, mapped onto the viewport.",
       "input": "oneiron_browser::PointInput",
       "output": "oneiron_browser::Observation",
       "call": "driver.click_at(input)?",
@@ -2198,6 +2377,7 @@
     },
     {
       "name": "self.browser.type",
+      "description": "Types text into one page target and observes the result.",
       "input": "oneiron_browser::TypeInput",
       "output": "oneiron_browser::Observation",
       "call": "driver.type_text(input)?",
@@ -2208,6 +2388,7 @@
     },
     {
       "name": "self.browser.select",
+      "description": "Picks the option of a select element by its label, text or value.",
       "input": "oneiron_browser::SelectInput",
       "output": "oneiron_browser::Observation",
       "call": "driver.select(input)?",
@@ -2218,6 +2399,7 @@
     },
     {
       "name": "self.browser.wait_for",
+      "description": "Waits until some page row matches a role and name.",
       "input": "oneiron_browser::WaitForInput",
       "output": "oneiron_browser::WaitForOutput",
       "call": "driver.wait_for(input)?",
@@ -2228,6 +2410,7 @@
     },
     {
       "name": "self.browser.expect",
+      "description": "Checks that a page row is present or absent, and holds a given value.",
       "input": "oneiron_browser::ExpectInput",
       "output": "oneiron_browser::ExpectOutput",
       "call": "driver.expect(input)?",
@@ -2238,6 +2421,7 @@
     },
     {
       "name": "self.browser.screenshot",
+      "description": "Takes a screenshot the session holds, by image ref and never captioned.",
       "input": "oneiron_browser::ScreenshotInput",
       "output": "oneiron_browser::ScreenshotOutput",
       "call": "driver.screenshot(input)?",
@@ -2248,6 +2432,7 @@
     },
     {
       "name": "self.browser.view",
+      "description": "Reads back a held image by its ref.",
       "input": "oneiron_browser::ViewInput",
       "output": "oneiron_browser::ImageOutput",
       "call": "driver.view(input)?",
@@ -2258,6 +2443,7 @@
     },
     {
       "name": "self.browser.crop",
+      "description": "Crops a held image to a rectangle.",
       "input": "oneiron_browser::CropInput",
       "output": "oneiron_browser::ImageOutput",
       "call": "driver.crop(input)?",
@@ -2268,6 +2454,7 @@
     },
     {
       "name": "self.browser.zoom",
+      "description": "Zooms into a rectangle of a held image.",
       "input": "oneiron_browser::ZoomInput",
       "output": "oneiron_browser::ImageOutput",
       "call": "driver.zoom(input)?",
@@ -2278,6 +2465,7 @@
     },
     {
       "name": "self.browser.batch",
+      "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails.",
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::BatchOutput",
       "call": "driver.batch(input)?",
@@ -2288,6 +2476,7 @@
     },
     {
       "name": "self.browser.library.find",
+      "description": "The replay library's programs for a site, or for the open page's site.",
       "input": "oneiron_browser::LibraryFindInput",
       "output": "oneiron_browser::LibraryFindOutput",
       "call": "driver.library_find(input)?",
@@ -2298,6 +2487,7 @@
     },
     {
       "name": "self.browser.library.propose",
+      "description": "Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition.",
       "input": "oneiron_browser::ProposeInput",
       "output": "oneiron_browser::ProposeOutput",
       "call": "driver.library_propose(input)?",
@@ -2308,6 +2498,7 @@
     },
     {
       "name": "self.browser.library.run",
+      "description": "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner.",
       "input": "oneiron_browser::LibraryRunInput",
       "output": "oneiron_browser::LibraryRunOutput",
       "call": "driver.library_run(input)?",
@@ -2317,7 +2508,217 @@
       "section": false
     },
     {
+      "name": "self.desktop.open",
+      "description": "Opens an app of the run's own desktop guest by app:name and observes its window.",
+      "input": "oneiron_browser::OpenInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.open(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.observe",
+      "description": "Observes the current window of the run's desktop guest.",
+      "input": "oneiron_browser::ObserveInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.observe(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.find",
+      "description": "Finds the window rows whose role and name match.",
+      "input": "oneiron_browser::FindInput",
+      "output": "oneiron_browser::FindOutput",
+      "call": "driver.find(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.click",
+      "description": "Clicks one window target and observes the result.",
+      "input": "oneiron_browser::ClickInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.click_at",
+      "description": "Clicks a point of a held screenshot, mapped onto the window.",
+      "input": "oneiron_browser::PointInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click_at(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.type",
+      "description": "Types text into one window target and observes the result.",
+      "input": "oneiron_browser::TypeInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.type_text(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.select",
+      "description": "Sets the value of a combo box or list target by its option label.",
+      "input": "oneiron_browser::SelectInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.select(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.key",
+      "description": "Presses one key, with modifiers, on a window target or the window's focus.",
+      "input": "oneiron_browser::KeyInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.press_key(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.hotkey",
+      "description": "Presses a key combination in the current window.",
+      "input": "oneiron_browser::HotkeyInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.hotkey(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.scroll",
+      "description": "Scrolls a window target, or the window, by steps.",
+      "input": "oneiron_browser::ScrollInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.scroll(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.wait_for",
+      "description": "Waits until some window row matches a role and name.",
+      "input": "oneiron_browser::WaitForInput",
+      "output": "oneiron_browser::WaitForOutput",
+      "call": "driver.wait_for(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.expect",
+      "description": "Checks that a window row is present or absent, and holds a given value.",
+      "input": "oneiron_browser::ExpectInput",
+      "output": "oneiron_browser::ExpectOutput",
+      "call": "driver.expect(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.screenshot",
+      "description": "Takes a screenshot of the window the session holds, by image ref and never captioned.",
+      "input": "oneiron_browser::ScreenshotInput",
+      "output": "oneiron_browser::ScreenshotOutput",
+      "call": "driver.screenshot(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.view",
+      "description": "Reads back a held image by its ref.",
+      "input": "oneiron_browser::ViewInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.view(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.crop",
+      "description": "Crops a held image to a rectangle.",
+      "input": "oneiron_browser::CropInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.crop(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.zoom",
+      "description": "Zooms into a rectangle of a held image.",
+      "input": "oneiron_browser::ZoomInput",
+      "output": "oneiron_browser::ImageOutput",
+      "call": "driver.zoom(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.batch",
+      "description": "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails.",
+      "input": "oneiron_browser::BatchInput",
+      "output": "oneiron_browser::BatchOutput",
+      "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.windows",
+      "description": "Lists the desktop guest's windows, or one app's.",
+      "input": "oneiron_browser::WindowsInput",
+      "output": "oneiron_browser::WindowsOutput",
+      "call": "driver.windows(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.window",
+      "description": "Moves the session onto another desktop window and observes it.",
+      "input": "oneiron_browser::WindowInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.window(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "vault.commit",
+      "description": "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist.",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
@@ -2341,6 +2742,7 @@
     },
     {
       "name": "vault.remember",
+      "description": "Commits one claim through the gate, the same as vault.claims.upsert.",
       "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
       "uniffi": {
         "args": {
@@ -2364,6 +2766,8 @@
     },
     {
       "name": "vault.claims.retract",
+      "description": "Retracts one active claim: a deliberate withdrawal that preserves the record.",
+      "refs": ["/claim_ref"],
       "uniffi": {
         "args": {
           "claim_ref": "String"
@@ -2383,6 +2787,8 @@
     },
     {
       "name": "vault.forget",
+      "description": "Retracts claims by exact claim or by subject and predicate; never a hard delete.",
+      "refs": ["/claim_ref"],
       "uniffi": {
         "args": {
           "selector": "ForgetSelector"
@@ -2402,6 +2808,7 @@
     },
     {
       "name": "vault.claims.list",
+      "description": "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt.",
       "uniffi": {
         "args": {
           "filter": "ClaimListFilter"
@@ -2425,6 +2832,7 @@
     },
     {
       "name": "vault.claims.history",
+      "description": "The supersession timeline of one claim, oldest first, with the read's narrowing receipt.",
       "uniffi": {
         "args": {
           "claim_ref": "String"
@@ -2447,6 +2855,7 @@
     },
     {
       "name": "vault.delete",
+      "description": "Deletes one entity under a named reason; an owner verb that only a verified human may call.",
       "uniffi": {
         "args": {
           "entity_ref": "String",
@@ -2467,6 +2876,7 @@
     },
     {
       "name": "vault.writes.pending",
+      "description": "Gated writes parked for consent, newest first.",
       "uniffi": {
         "args": {
           "limit": "u32"
@@ -2489,6 +2899,7 @@
     },
     {
       "name": "vault.hydrate",
+      "description": "Hydrates short refs or hex ids to full entity views, with the read's receipt.",
       "uniffi": {
         "args": {
           "refs": "Vec<String>"
@@ -2512,6 +2923,7 @@
     },
     {
       "name": "vault.get",
+      "description": "Reads one entity as a typed view, or none when absent or withheld; the receipt says which.",
       "uniffi": {
         "args": {
           "entity_ref": "String"
@@ -2534,6 +2946,7 @@
     },
     {
       "name": "vault.refs.resolve",
+      "description": "The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same.",
       "input": "crate::lens::ResolveRecordRefRequest",
       "output": "crate::claim::ScopedReadResult<crate::lens::RecordRefPreview>",
       "call": "memory.resolve_record_ref(&input)?",
@@ -2546,6 +2959,7 @@
     },
     {
       "name": "vault.refs.links",
+      "description": "A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read.",
       "input": "crate::lens::RecordLinksRequest",
       "output": "crate::lens::RecordLinks",
       "call": "memory.record_links(&input)?",
@@ -2558,6 +2972,7 @@
     },
     {
       "name": "vault.search.bm25",
+      "description": "BM25 text search over the engine index; surfaceable claims only.",
       "uniffi": {
         "args": {
           "query": "String",
@@ -2582,6 +2997,7 @@
     },
     {
       "name": "vault.neighbors",
+      "description": "The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight.",
       "uniffi": {
         "args": {
           "entity_ref": "String",
@@ -2606,6 +3022,7 @@
     },
     {
       "name": "vault.structural.put",
+      "description": "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit.",
       "refs": ["/edges/*/target_ref"],
       "uniffi": {
         "args": {
@@ -2628,6 +3045,7 @@
     },
     {
       "name": "vault.habits.checkin",
+      "description": "Appends one immutable check-in under a Habit TASK.",
       "refs": ["/habit_ref"],
       "uniffi": {
         "args": {
@@ -2650,6 +3068,7 @@
     },
     {
       "name": "vault.claims.admit",
+      "description": "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides.",
       "refs": ["/subject_ref"],
       "uniffi": {
         "args": {
@@ -2673,6 +3092,7 @@
     },
     {
       "name": "vault.artifacts.put",
+      "description": "Registers one blob artifact; its bytes ride vault.artifacts.append.",
       "uniffi": {
         "args": {
           "input": "BlobArtifactInput"
@@ -2694,6 +3114,7 @@
     },
     {
       "name": "vault.artifacts.append",
+      "description": "Appends one version of bytes to a blob artifact's append-only chain.",
       "uniffi": {
         "args": {
           "artifact_ref": "String",
@@ -2723,6 +3144,7 @@
     },
     {
       "name": "vault.artifacts.read",
+      "description": "Reads one version of a blob artifact's bytes.",
       "uniffi": {
         "args": {
           "artifact_ref": "String",
@@ -2778,6 +3200,7 @@
     },
     {
       "name": "connector.outbound.schedule",
+      "description": "Schedules one send through a granted outbound connector, gated and held for delivery.",
       "refs": ["/content_ref"],
       "input": "OutboundScheduleRequest",
       "output": "crate::memory::OutboundIntentReceipt",
@@ -2824,6 +3247,8 @@
     },
     {
       "name": "vault.notes.create",
+      "description": "Creates a NOTE of a registered kind, its first authored text as its birth.",
+      "prose_links": ["/markdown"],
       "input": "CreateNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "memory.create_note(&input.kind, &input.markdown)?",
@@ -2839,6 +3264,7 @@
     },
     {
       "name": "vault.notes.from_entity",
+      "description": "Creates a NOTE of a registered kind from an existing entity.",
       "refs": ["/source_ref"],
       "input": "CreateNoteFromEntityRequest",
       "output": "crate::memory::EntityRefReceipt",
@@ -2858,6 +3284,9 @@
     },
     {
       "name": "vault.notes.edit",
+      "description": "Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending.",
+      "refs": ["/note_ref"],
+      "prose_links": ["/edit/text"],
       "input": "EditNoteRequest",
       "output": "crate::note::NoteProgramEditOutcome",
       "call": "memory.edit_note(&input.note_ref, &input.edit)?",
@@ -2915,6 +3344,20 @@
       "scope": "Write",
       "context": "run",
       "effect": "SkillsCall"
+    },
+    {
+      "name": "self.spawn",
+      "input": "crate::code_run::ReaderSpawnInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ReaderSpawn"
+    },
+    {
+      "name": "tasks.wait",
+      "input": "crate::code_run::TaskWaitSetRequest",
+      "scope": "Read",
+      "context": "run",
+      "effect": "TasksWaitSet"
     }
   ]
 }

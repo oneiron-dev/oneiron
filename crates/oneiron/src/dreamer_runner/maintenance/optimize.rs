@@ -2,7 +2,9 @@
 //! admission remain separate: this job asks the independent held-out gate and
 //! never activates or supersedes a skill itself.
 use crate::claim::ClaimApprovalStatus;
-use crate::dreamer_runner::{DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DreamerAdmittedAttempt};
+use crate::dreamer_runner::{
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
+};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
@@ -30,7 +32,8 @@ pub struct CoachSkillOptimizer<'a> {
 #[derive(Clone, Copy)]
 pub struct CoachLiveSlice<'a> {
     pub bandits: &'a (dyn GoalAxisBandits + Send + Sync),
-    /// Live pulls per online axis, across both arms.
+    /// Live pulls per online axis, across both arms; also the most live runs
+    /// one proposal's exploration trial routes to the proposal.
     pub pulls_per_axis: u32,
 }
 
@@ -62,11 +65,13 @@ pub(crate) fn execute(
     let Some(optimizer) = optimizer else {
         return Ok(DreamerAttemptExecution::Park {
             reason: "Coach skill optimizer has no host author and decision route".into(),
+            cause: DreamerParkCause::Other,
         });
     };
     if ctx.deadline.in_finalize_window() {
         return Ok(DreamerAttemptExecution::Park {
             reason: "Coach skill optimization deadline".into(),
+            cause: DreamerParkCause::Checkpoint,
         });
     }
     let resident = resident(&attempt.status.payload.input)?;
@@ -98,8 +103,20 @@ pub(crate) fn execute(
     if let Some(proposal) = proposal {
         // A project goal's gate rules on a live report bound to this exact
         // proposal: take the slice first unless a kept report still binds it.
+        // Its offline floors are judged on the held-out set first; only a
+        // passed preflight opens a trial on live work, bounded by the host's
+        // pull cap and funded by the goal's exploration slice, and the slice
+        // is measured once that trial closes. A failed preflight is the
+        // gate's evidence instead.
         if let Some(live) = optimizer.live
             && skill_edit_needs_goal_axis_report(ctx.vault, &proposal)?
+            && crate::skill::drive_exploration_trial(
+                ctx.vault,
+                &proposal,
+                optimizer.scorer,
+                live.pulls_per_axis,
+                at,
+            )? == crate::skill::ExplorationTrialStatus::Measurable
         {
             let bandit = live.bandits.for_proposal(&proposal)?;
             measure_skill_edit_goal_axes(

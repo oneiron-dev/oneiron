@@ -155,12 +155,20 @@ impl StalwartClient {
             body.valid_from = Some(report.observed_at);
         }
         let mut txn = vault.store.env.write_txn()?;
+        // Channel and mailbox are the identity's facts (OF-272); whether it
+        // is delegated is custody, on the local row.
         let identity = vault
             .get_channel_identity_in_txn(&txn, &identity_ref)?
             .ok_or(crate::Error::EntityNotFound)?;
-        if identity.channel() != "email"
+        let facts = crate::channel_identity::channel_identity_facts_in_txn(
+            &vault.store,
+            &txn,
+            &identity_ref,
+        )?
+        .ok_or(crate::Error::EntityNotFound)?;
+        if facts.channel != "email"
             || identity.is_delegated()
-            || identity.address_or_handle() != self.address_for_identity(identity_ref)
+            || facts.address_or_handle != self.address_for_identity(identity_ref)
         {
             return Err(invalid(
                 "native mail reputation names another instance's identity",

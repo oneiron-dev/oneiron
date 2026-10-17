@@ -71,9 +71,11 @@ fn same_version(a: &[u8], b: &[u8]) -> bool {
 impl SyncClient {
     /// Takes the home's new sealed packets in, then puts every private window
     /// this machine reads whose sealed copies may rest on the home and that
-    /// changed since its last put. The home is an unproved destination here,
-    /// so only a world whose sealed copies go to the cloud and my machines is
-    /// relayed. A vault with no such world opens no socket.
+    /// changed since its last put. The home is judged as the machine it
+    /// proved on the relay's own socket: one of the owner's machines takes
+    /// "my machines" worlds too, and a home that proved none only worlds
+    /// whose sealed copies go to the cloud and my machines. A vault with no
+    /// private world opens no socket.
     pub async fn relay_sealed_windows(&self) -> Result<SealedRelay, TransportError> {
         relay_sealed_windows(&self.manager, &self.config).await
     }
@@ -89,14 +91,24 @@ pub(crate) async fn relay_sealed_windows(
         vault: manager.vault(),
         manager,
     };
-    let sealable = relayer.sealable_worlds().map_err(storage)?;
-    if sealable.is_empty() {
+    let private = relayer.private_worlds().map_err(storage)?;
+    if private.is_empty() {
         return Ok(SealedRelay::default());
     }
     let budgets = residence_budgets(relayer.vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(relayer.vault, config, budgets).await? else {
         return Err(TransportError::Storage("home node offline".into()));
     };
+    let destination = match relayer.vault.peer_machine_stands(rpc.home) {
+        crate::authority::PeerMachine::Proven { machine, .. } => Destination::Machine(machine),
+        crate::authority::PeerMachine::Unknown => Destination::Unknown,
+    };
+    let sealable = relayer
+        .sealable_worlds(&private, destination)
+        .map_err(storage)?;
+    if sealable.is_empty() {
+        return Ok(SealedRelay::default());
+    }
     let mut relay = SealedRelay::default();
     let through = relayer.take_sealed_windows(&mut rpc, &mut relay).await?;
     relayer
@@ -111,19 +123,27 @@ struct Relayer<'a> {
 }
 
 impl Relayer<'_> {
-    /// The private worlds whose sealed copies may rest on the home, which
-    /// this machine cannot name: an unknown destination.
-    fn sealable_worlds(&self) -> crate::error::Result<BTreeSet<EntityId>> {
+    /// The private worlds: those an unknown destination may not read.
+    fn private_worlds(&self) -> crate::error::Result<BTreeSet<EntityId>> {
         let txn = self.vault.store.env.read_txn()?;
-        let private =
-            WorldPrivacyView::load_in(self.vault, &txn)?.withheld_for(Destination::Unknown)?;
+        WorldPrivacyView::load_in(self.vault, &txn)?.withheld_for(Destination::Unknown)
+    }
+
+    /// The worlds of `private` whose sealed copies may rest on the home,
+    /// judged as `destination`.
+    fn sealable_worlds(
+        &self,
+        private: &BTreeSet<EntityId>,
+        destination: Destination,
+    ) -> crate::error::Result<BTreeSet<EntityId>> {
+        let txn = self.vault.store.env.read_txn()?;
         let mut sealable = BTreeSet::new();
         for world in private {
             if self
                 .vault
-                .sealed_copy_may_rest_on_in(&txn, world, Destination::Unknown)?
+                .sealed_copy_may_rest_on_in(&txn, *world, destination)?
             {
-                sealable.insert(world);
+                sealable.insert(*world);
             }
         }
         Ok(sealable)

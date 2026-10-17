@@ -203,10 +203,6 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // strict op that still leaves a child with two parents, and must stay
         // classified remote so one such op cannot wedge the window.
         | ErrorKind::ChildOfCardinality
-        // A remote companion register row duplicating a local active
-        // `(scope, subject)` key is a rejection of that remote row, not a
-        // local storage failure. Quarantine it so remat can continue.
-        | ErrorKind::CompanionRecordAlreadyExists
         | ErrorKind::ChannelIdentityAlreadyExists
         | ErrorKind::CounterpartyContactAlreadyExists
         // ONE-1134: a remote REDACTION_AUDIT blob failing the pinned

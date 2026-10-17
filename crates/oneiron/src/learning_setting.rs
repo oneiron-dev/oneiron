@@ -161,6 +161,7 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     crate::dreamer_runner::maintenance::agent_health::HEALTH_WAIT_MINUTES,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_SILENT_MINUTES,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_WIDEN_DENIALS,
+    crate::dreamer_runner::maintenance::agent_health::HEALTH_COST_SPIKE,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_ESCALATE_TTL_HOURS,
 ];
 

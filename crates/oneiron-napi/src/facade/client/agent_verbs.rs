@@ -53,6 +53,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_inbox_concern(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.concern", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_concern_outcome(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.concern.outcome", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_concern_move(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.concern.move", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_people_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.people.list", input)
@@ -497,6 +521,12 @@ impl NativeClient {
     pub fn vault_members_leave(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.members.leave", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_guests_revoke(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.guests.revoke", input)
             .map_err(facade_error)
     }
     #[napi]

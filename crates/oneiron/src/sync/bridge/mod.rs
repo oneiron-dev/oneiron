@@ -42,9 +42,6 @@ mod tombstones;
 #[cfg(test)]
 pub(in crate::sync) use self::companion_identity::INJECT_LOCAL_ENDPOINT_FAILURE;
 pub(crate) use self::companion_identity::ingest_replicated_identity_topology_event_in_txn;
-pub(in crate::sync) use self::companion_identity::{
-    CompanionCrdtScrub, scrub_local_only_companions_from_crdt,
-};
 pub use self::companion_identity::{
     encode_edge_value_for_crdt, format_edge_key, parse_edge_key, parse_edge_value,
 };
@@ -57,7 +54,8 @@ pub use self::observers::{
 };
 pub(crate) use self::observers::{
     DELETION_TOMBSTONE_ORIGIN, persist_window_update, persist_window_update_in_txn,
-    register_custody_observer, with_deletion_tombstone_observer_a_suppressed,
+    register_custody_observer, register_room_turns_observer,
+    with_deletion_tombstone_observer_a_suppressed,
 };
 
 #[cfg(test)]

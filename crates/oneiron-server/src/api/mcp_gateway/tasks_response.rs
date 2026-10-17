@@ -594,6 +594,9 @@ fn mcp_agent_verb_input(
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
         "self.identity.answer" => a.spec.clone().ok_or_else(invalid),
         "self.identity.settle" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.concern" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.concern.outcome" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.concern.move" => a.spec.clone().ok_or_else(invalid),
         "vault.people.list" => a.spec.clone().ok_or_else(invalid),
         "vault.people.get" => a.spec.clone().ok_or_else(invalid),
         "self.message" => a.spec.clone().ok_or_else(invalid),
@@ -635,6 +638,9 @@ fn mcp_agent_verb_input(
             );
             if let Some(value) = &a.label {
                 map.insert("label".to_owned(), json!(value));
+            }
+            if let Some(value) = &a.assignee {
+                map.insert("assignee".to_owned(), json!(value));
             }
             Ok(Value::Object(map))
         }
@@ -680,6 +686,7 @@ fn mcp_agent_verb_input(
         "vault.members.change" => a.spec.clone().ok_or_else(invalid),
         "vault.members.remove" => a.spec.clone().ok_or_else(invalid),
         "vault.members.leave" => a.spec.clone().ok_or_else(invalid),
+        "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.authority.handoff_alarms" => Ok(Value::Object(serde_json::Map::new())),
         "vault.authority.handoff_alarms.acknowledge" => a.spec.clone().ok_or_else(invalid),
         "vault.legal_holds.place" => a.spec.clone().ok_or_else(invalid),
@@ -945,6 +952,15 @@ pub(crate) fn mcp_agent_verb_arguments(
         "self.identity.settle" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "self.inbox.concern" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.concern.outcome" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.concern.move" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.people.list" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -991,6 +1007,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("label") {
                 arguments.insert("label".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("assignee") {
+                arguments.insert("assignee".to_owned(), value.clone());
             }
         }
         "tasks.update" => {
@@ -1096,6 +1115,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.leave" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.guests.revoke" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.authority.handoff_alarms" => {}
@@ -1564,6 +1586,12 @@ async fn execute_agent_verb_listing(
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
     };
+    // OF-063: the off-record session the request named; inside an anonymous
+    // one a reference refusal writes no receipt (Engine ruling 10-17).
+    let memory = match actor.off_record_session.as_deref() {
+        Some(session) => memory.in_off_record_session(session),
+        None => memory,
+    };
     let hooks = crate::api::facade::row_hooks_pre(
         server,
         actor.actor_ref,
@@ -1696,6 +1724,30 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "self.inbox.concern" => {
+            let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernCardRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_concern(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.concern.outcome" => {
+            let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_concern_outcome(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.concern.move" => {
+            let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.people.list" => {
             let input: oneiron::memory::PeopleListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -1811,7 +1863,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "tasks.update" => {
-            let input: oneiron::task_verb::sdk::TaskRequest =
+            let input: oneiron::task_verb::sdk::TaskUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
             let output =
@@ -2231,6 +2283,18 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::vault_members_leave(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.guests.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.guests.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::GuestRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_guests_revoke(server, auth, input)
                 .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);

@@ -10,7 +10,7 @@ use oneiron::voice_cascade::{Brain, CascadeControl, TtsSeamClient};
 use tokio::net::UnixStream;
 use tokio::sync::oneshot;
 
-use super::{HostError, MediaTts, VoiceHost, VoiceMediaBindings, VoiceOutputs};
+use super::{HostError, VoiceHost, VoiceMediaBindings, VoiceOutputs, VoiceWireBindings};
 use crate::managed::ShutdownSignal;
 
 type ServeFuture = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
@@ -39,18 +39,19 @@ impl VoiceServeBindings {
 
     /// [`Self::new`] with the host's own speech and hearing on the media
     /// seats ([`VoiceMediaBindings`]): the connection's TTS seam is the
-    /// bridge's, and the returned [`MediaTts`] is the one the brain's stream
-    /// driver submits its sentences through. Heard utterances go to the
-    /// session as finals and on to `brain`; spoken audio goes to the
-    /// bindings' playout past the session's filter. A vault with no live
-    /// voice row for either lane, or a banked voice whose render consent
-    /// does not reach the TTS route, refuses here.
+    /// bridge's. Heard utterances go to the session as finals and on to
+    /// `brain`, which hands its events back on the bindings' `brain_out`;
+    /// its sentences are spoken past the session's safeguards, and spoken
+    /// audio goes to the bindings' playout past the session's filter. A
+    /// vault with no live voice row for either lane, a banked voice whose
+    /// render consent does not reach the TTS route, or an unusable cadence,
+    /// refuses here.
     pub fn with_media<B, C>(
         stream: UnixStream,
         brain: B,
         control: C,
         media: VoiceMediaBindings,
-    ) -> Result<(Self, MediaTts), HostError>
+    ) -> Result<Self, HostError>
     where
         B: Brain + Send + 'static,
         C: CascadeControl + Send + 'static,
@@ -58,7 +59,7 @@ impl VoiceServeBindings {
         let (tts, mut bridge, worker) = media.build()?;
         let mut outputs = VoiceOutputs {
             brain,
-            tts: tts.clone(),
+            tts,
             control,
         };
         let serve: Serve = Box::new(move |host, stop| {
@@ -73,7 +74,39 @@ impl VoiceServeBindings {
             })
         });
         let bindings = Self(Arc::new(Mutex::new(Some(VoiceServeConnection(serve)))));
-        Ok((bindings, tts))
+        Ok(bindings)
+    }
+
+    /// [`Self::with_media`] with the audio side on `stream` itself
+    /// ([`VoiceWireBindings`]): the sibling's microphone audio, cuts, VAD,
+    /// roster changes and drains arrive as wire ops, and spoken audio,
+    /// generation ends, flushes and controls leave as wire frames. The
+    /// connection's control seam is the wire's own.
+    pub fn with_wire<B>(
+        stream: UnixStream,
+        brain: B,
+        media: VoiceWireBindings,
+    ) -> Result<Self, HostError>
+    where
+        B: Brain + Send + 'static,
+    {
+        let (tts, mut bridge, worker, wire, control) = media.build()?;
+        let mut outputs = VoiceOutputs {
+            brain,
+            tts,
+            control,
+        };
+        let serve: Serve = Box::new(move |host, stop| {
+            Box::pin(async move {
+                let serving = host.serve_wire_until(stream, &mut outputs, &mut bridge, wire, stop);
+                tokio::select! {
+                    result = serving => result,
+                    () = worker.run() => Err(io::Error::other("voice media worker stopped")),
+                }
+            })
+        });
+        let bindings = Self(Arc::new(Mutex::new(Some(VoiceServeConnection(serve)))));
+        Ok(bindings)
     }
 
     /// Claims the owner connection once, including across config clones.

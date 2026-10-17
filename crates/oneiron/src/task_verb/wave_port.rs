@@ -406,9 +406,16 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
         {
             return Ok(Some(decode_statement(&raw)?));
         }
-        wave_statement_in(self.vault, &txn, self.actor, plan, self.origin.as_ref(), now)
-            .map(Some)
-            .map_err(engine_error)
+        wave_statement_in(
+            self.vault,
+            &txn,
+            self.actor,
+            plan,
+            self.origin.as_ref(),
+            now,
+        )
+        .map(Some)
+        .map_err(engine_error)
     }
 
     fn task_terminal_success(&self, task: EntityId) -> WaveResult<bool> {

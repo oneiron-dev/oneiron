@@ -1,15 +1,23 @@
 //! One private, pre-admitted UDS connection on the existing Tokio runtime.
-//! No accept loop or tasks are spawned. The owner enforces listener privacy and
-//! its connection budget before calling serve. Pipecat still schedules turns.
+//! No accept loop or tasks are spawned; sentence safeguards run beside the
+//! connection and end with it. The owner enforces listener privacy and its
+//! connection budget before calling serve. Pipecat still schedules turns.
+//! Over the wire's media ops (`wire`) the same stream also carries the
+//! sibling's audio side.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::time::Duration;
 
+use oneiron::policy_model::PolicyEnforcementAction;
 use oneiron::speculative::SpeculativeFireDecision;
+use oneiron::store::GateSystemNoticeRecord;
 use oneiron::voice_cascade::uds::MAX_FRAME_BYTES;
-use oneiron::voice_cascade::{AsrUpdate, Brain, CascadeControl, RetrievalContext, TtsSeamClient};
+use oneiron::voice_cascade::{
+    AsrUpdate, Brain, CascadeControl, ControlEvent, RetrievalContext, TtsSeamClient,
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -19,7 +27,8 @@ use tokio::time::{Instant, timeout, timeout_at};
 use oneiron::voice_cascade::media::VoiceMediaOutput;
 
 use super::media_bridge::{HEARD_REVISION, MediaBridge, MediaEvent};
-use super::{HostError, VoiceHost, VoiceOutputs};
+use super::wire::{self, ControlOut, WireMedia, WireOut};
+use super::{HostError, VoiceHost, VoiceMediaIn, VoiceOutputs, VoicePlayout};
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -39,6 +48,19 @@ enum Request {
     },
     Close {
         handle: String,
+    },
+    /// Microphone audio: STANDARD base64 of whole PCM16LE samples.
+    Pcm {
+        data: String,
+    },
+    Cut,
+    Speaking {
+        speaking: bool,
+    },
+    RosterChanged,
+    /// All of a generation's audio, up to its `generation_end`, played.
+    Drained {
+        generation: u64,
     },
 }
 
@@ -63,6 +85,34 @@ enum Response {
     Error {
         code: &'static str,
     },
+    /// Spoken mono PCM16LE, STANDARD base64.
+    Pcm {
+        generation: u64,
+        sample_rate: u32,
+        data: String,
+    },
+    GenerationEnd {
+        generation: u64,
+    },
+    /// Drop whatever of this generation's audio is still queued or playing.
+    Flush {
+        generation: u64,
+    },
+    PlayoutStop {
+        generation: u64,
+        reason: &'static str,
+    },
+    Safeguard {
+        generation: u64,
+        action: PolicyEnforcementAction,
+        receipt_ref: Option<String>,
+        custom_tier_skipped: bool,
+    },
+    Notice {
+        generation: u64,
+        notice: GateSystemNoticeRecord,
+    },
+    SessionEnded,
 }
 
 type Pending<'a> =
@@ -88,7 +138,7 @@ impl VoiceHost {
         outputs: &mut VoiceOutputs<B, T, C>,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
-        self.serve_with(stream, outputs, None, stop).await
+        self.serve_with(stream, outputs, None, None, stop).await
     }
 
     /// [`Self::serve_until`], hearing the owner's audio and speaking through
@@ -100,7 +150,21 @@ impl VoiceHost {
         bridge: &mut MediaBridge,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
-        self.serve_with(stream, outputs, Some(bridge), stop).await
+        self.serve_with(stream, outputs, Some(bridge), None, stop)
+            .await
+    }
+
+    /// [`Self::serve_media_until`] with the audio side on the stream itself.
+    pub(super) async fn serve_wire_until<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        stream: UnixStream,
+        outputs: &mut VoiceOutputs<B, T, C>,
+        bridge: &mut MediaBridge,
+        wire: WireMedia,
+        stop: impl Future<Output = ()>,
+    ) -> io::Result<()> {
+        self.serve_with(stream, outputs, Some(bridge), Some(wire), stop)
+            .await
     }
 
     async fn serve_with<B: Brain, T: TtsSeamClient, C: CascadeControl>(
@@ -108,10 +172,11 @@ impl VoiceHost {
         stream: UnixStream,
         outputs: &mut VoiceOutputs<B, T, C>,
         bridge: Option<&mut MediaBridge>,
+        wire: Option<WireMedia>,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
         let end_on_drop = EndOnDrop(self);
-        let result = self.serve_inner(stream, outputs, bridge, stop).await;
+        let result = self.serve_inner(stream, outputs, bridge, wire, stop).await;
         let stop = self
             .end()
             .map_err(|_| io::Error::other("voice teardown failed"))?;
@@ -129,6 +194,7 @@ impl VoiceHost {
         stream: UnixStream,
         outputs: &mut VoiceOutputs<B, T, C>,
         mut bridge: Option<&mut MediaBridge>,
+        mut wire: Option<WireMedia>,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
         tokio::pin!(stop);
@@ -136,107 +202,172 @@ impl VoiceHost {
         let mut reader = BufReader::new(read);
         let mut frame = FrameReader::new();
         let mut pending: Option<Pending<'_>> = None;
+        // Frames still to write; a sentence's audio goes out in several.
+        let mut outbox = VecDeque::new();
         let mut requests = 0;
         let mut errors = 0;
         let shutdown = self.shutdown.triggered();
         tokio::pin!(shutdown);
         loop {
-            let response = tokio::select! {
-                biased;
-                () = &mut shutdown => break,
-                () = &mut stop => break,
-                bytes = frame.read(&mut reader) => {
-                    let Some(bytes) = bytes? else { break };
-                    requests += 1;
-                    if requests > 4096 { break; }
-                    match serde_json::from_slice::<Request>(&bytes) {
-                        Ok(Request::Open { utterance_id }) => match self.open(utterance_id) {
-                            Ok(handle) => Response::Opened { handle },
-                            Err(error) => response_error(&error),
-                        },
-                        Ok(Request::Close { handle }) => match self.close(&handle) {
-                            Ok(()) => {
-                                pending = None;
-                                Response::Closed
+            let response = if let Some(queued) = outbox.pop_front() {
+                queued
+            } else {
+                tokio::select! {
+                    biased;
+                    () = &mut shutdown => break,
+                    () = &mut stop => break,
+                    // Output first: the loop also fills the wire's queue, and
+                    // steady microphone frames must not starve it.
+                    out = WireMedia::next(&mut wire) => match out {
+                        WireOut::Playout(Some(VoicePlayout::Pcm(spoken))) => {
+                            // Checked again at dequeue: a stopped generation's audio never goes out.
+                            let Some(spoken) = spoken.current() else { continue };
+                            let generation = spoken.generation.value();
+                            let mut chunks = wire::pcm_chunks(&spoken).into_iter().map(|data| Response::Pcm {
+                                generation,
+                                sample_rate: spoken.sample_rate,
+                                data,
+                            });
+                            let Some(first) = chunks.next() else { continue };
+                            outbox.extend(chunks);
+                            first
+                        }
+                        WireOut::Playout(Some(VoicePlayout::End(generation))) => {
+                            if let Some(wire) = wire.as_mut() {
+                                wire.ended(generation);
                             }
-                            Err(error) => response_error(&error),
-                        },
-                        Ok(Request::Partial { handle, revision, text }) => {
-                            match self.prepare(&handle, revision, text, false) {
-                                Ok(work) => {
-                                    // Prepare invalidates old work first. Dropping its
-                                    // future then releases only its own reservation.
-                                    pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
-                                    continue;
-                                }
+                            Response::GenerationEnd { generation: generation.value() }
+                        }
+                        WireOut::Control(Some(ControlOut::Flush(generation))) => {
+                            Response::Flush { generation: generation.value() }
+                        }
+                        WireOut::Control(Some(ControlOut::Event(event))) => control_response(event),
+                        WireOut::Playout(None) | WireOut::Control(None) => continue,
+                    },
+                    bytes = frame.read(&mut reader) => {
+                        let Some(bytes) = bytes? else { break };
+                        let request = serde_json::from_slice::<Request>(&bytes);
+                        // Media ops stream for the whole call; only transcript ops
+                        // spend the request budget.
+                        if !matches!(request, Ok(Request::Pcm { .. } | Request::Cut | Request::Speaking { .. } | Request::RosterChanged | Request::Drained { .. })) {
+                            requests += 1;
+                            if requests > 4096 { break; }
+                        }
+                        match request {
+                            Ok(Request::Open { utterance_id }) => match self.open(utterance_id) {
+                                Ok(handle) => Response::Opened { handle },
                                 Err(error) => response_error(&error),
-                            }
-                        }
-                        Ok(Request::Final { handle, revision, text }) => {
-                            match self.prepare(&handle, revision, text, true) {
-                                Ok(work) => {
-                                    pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
-                                    continue;
-                                }
-                                Err(error) => response_error(&error),
-                            }
-                        }
-                        Err(_) => Response::Error { code: "invalid_request" },
-                    }
-                }
-                event = async {
-                    match bridge.as_deref_mut() {
-                        Some(bridge) => bridge.next().await,
-                        None => std::future::pending().await,
-                    }
-                } => {
-                    let Some(bridge) = bridge.as_deref_mut() else { continue };
-                    match event {
-                        MediaEvent::Stopped => break,
-                        MediaEvent::In(input) => self.media_in(input, bridge, outputs),
-                        MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
-                            // Spoken audio plays only for the session's current generation.
-                            if let Some(frame) = self.filter_pcm(frame) {
-                                bridge.play(frame).await?;
-                            }
-                        }
-                        MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => {
-                            Self::speech_failed(generation, outputs);
-                        }
-                        MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
-                            // A heard final replaces any enrichment in flight, as a wire final does.
-                            if let Some((handle, work)) = self.heard(bridge, event) {
-                                pending = Some(Box::pin(async move { (handle, HEARD_REVISION, work.run().await) }));
-                            }
-                        }
-                    }
-                    continue;
-                }
-                result = async { pending.as_mut().expect("guarded pending work").await }, if pending.is_some() => {
-                    pending = None;
-                    let (handle, revision, result) = result;
-                    match result {
-                        Ok(AsrUpdate::Partial(partial)) => Response::Partial {
-                            handle,
-                            revision,
-                            decision: match partial.decision {
-                                SpeculativeFireDecision::Fired { .. } => "fired",
-                                SpeculativeFireDecision::SkippedUnchanged => "skipped_unchanged",
-                                SpeculativeFireDecision::SkippedEmptySignature => "skipped_empty_signature",
-                                SpeculativeFireDecision::SkippedCapExhausted => "skipped_cap_exhausted",
-                                SpeculativeFireDecision::MissedDeadline => "missed_deadline",
                             },
-                            context: partial.context,
-                        },
-                        Ok(AsrUpdate::Final(request)) => {
-                            // Refs remain non-authoritative. The existing brain must
-                            // use ordinary disclosure/tool gates when resolving them.
-                            // Submission is synchronous, outside the session lock.
-                            outputs.brain.start(&request).map_err(|_| io::Error::other("brain submission failed"))?;
-                            Response::Final { handle, revision, context: request.retrieval }
+                            Ok(Request::Close { handle }) => match self.close(&handle) {
+                                Ok(()) => {
+                                    pending = None;
+                                    Response::Closed
+                                }
+                                Err(error) => response_error(&error),
+                            },
+                            Ok(Request::Partial { handle, revision, text }) => {
+                                match self.prepare(&handle, revision, text, false) {
+                                    Ok(work) => {
+                                        // Prepare invalidates old work first. Dropping its
+                                        // future then releases only its own reservation.
+                                        pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
+                                        continue;
+                                    }
+                                    Err(error) => response_error(&error),
+                                }
+                            }
+                            Ok(Request::Final { handle, revision, text }) => {
+                                match self.prepare(&handle, revision, text, true) {
+                                    Ok(work) => {
+                                        pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
+                                        continue;
+                                    }
+                                    Err(error) => response_error(&error),
+                                }
+                            }
+                            // An early or stale acknowledgement changes nothing.
+                            Ok(Request::Drained { generation }) => {
+                                let generation = wire.as_ref().and_then(|wire| wire.drained(generation));
+                                if let (Some(bridge), Some(generation)) = (bridge.as_deref_mut(), generation) {
+                                    self.media_in(VoiceMediaIn::Drained(generation), bridge, outputs);
+                                }
+                                continue;
+                            }
+                            Ok(media) => match (bridge.as_deref_mut(), wire.is_some(), media_input(media)) {
+                                (Some(bridge), true, Some(input)) => {
+                                    self.media_in(input, bridge, outputs);
+                                    continue;
+                                }
+                                _ => Response::Error { code: "invalid_request" },
+                            },
+                            Err(_) => Response::Error { code: "invalid_request" },
                         }
-                        Ok(_) => Response::Error { code: "stale_request" },
-                        Err(error) => response_error(&error),
+                    }
+                    event = async {
+                        match bridge.as_deref_mut() {
+                            Some(bridge) => bridge.next().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        let Some(bridge) = bridge.as_deref_mut() else { continue };
+                        match event {
+                            MediaEvent::Stopped => break,
+                            MediaEvent::In(input) => self.media_in(input, bridge, outputs),
+                            MediaEvent::Brain(out) => self.brain_out(out, bridge, outputs).await?,
+                            MediaEvent::Verdict(verdict) => self.verdict(verdict, bridge, outputs),
+                            MediaEvent::Tick => self.speech_tick(bridge, outputs),
+                            // Spoken audio plays only for the session's current generation.
+                            MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
+                                self.spoken(frame, bridge).await?;
+                            }
+                            // A sentence that was not spoken stops its generation.
+                            MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => {
+                                tracing::warn!("voice media: a sentence was not spoken");
+                                self.output_failed(generation, bridge, outputs);
+                            }
+                            MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
+                                // A heard final replaces any enrichment in flight, as a wire final does.
+                                if let Some((handle, work)) = self.heard(bridge, event) {
+                                    pending = Some(Box::pin(async move { (handle, HEARD_REVISION, work.run().await) }));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    result = async { pending.as_mut().expect("guarded pending work").await }, if pending.is_some() => {
+                        pending = None;
+                        let (handle, revision, result) = result;
+                        match result {
+                            Ok(AsrUpdate::Partial(partial)) => Response::Partial {
+                                handle,
+                                revision,
+                                decision: match partial.decision {
+                                    SpeculativeFireDecision::Fired { .. } => "fired",
+                                    SpeculativeFireDecision::SkippedUnchanged => "skipped_unchanged",
+                                    SpeculativeFireDecision::SkippedEmptySignature => "skipped_empty_signature",
+                                    SpeculativeFireDecision::SkippedCapExhausted => "skipped_cap_exhausted",
+                                    SpeculativeFireDecision::MissedDeadline => "missed_deadline",
+                                },
+                                context: partial.context,
+                            },
+                            Ok(AsrUpdate::Final(request)) => {
+                                // With the media seats, speech opens before the brain starts.
+                                let speaking = bridge
+                                    .as_deref_mut()
+                                    .is_none_or(|bridge| self.start_speech(request.generation, bridge, outputs));
+                                if speaking {
+                                    // Refs remain non-authoritative. The existing brain must
+                                    // use ordinary disclosure/tool gates when resolving them.
+                                    // Submission is synchronous, outside the session lock.
+                                    outputs.brain.start(&request).map_err(|_| io::Error::other("brain submission failed"))?;
+                                    Response::Final { handle, revision, context: request.retrieval }
+                                } else {
+                                    Response::Error { code: "stopped" }
+                                }
+                            }
+                            Ok(_) => Response::Error { code: "stale_request" },
+                            Err(error) => response_error(&error),
+                        }
                     }
                 }
             };
@@ -261,6 +392,43 @@ impl VoiceHost {
             }
         }
         Ok(())
+    }
+}
+
+/// A media op as the bridge's input; `None` for bad audio or a
+/// transcript op.
+fn media_input(request: Request) -> Option<VoiceMediaIn> {
+    Some(match request {
+        Request::Pcm { data } => VoiceMediaIn::Pcm(wire::decode_pcm(&data)?),
+        Request::Cut => VoiceMediaIn::Cut,
+        Request::Speaking { speaking } => VoiceMediaIn::Speaking(speaking),
+        Request::RosterChanged => VoiceMediaIn::RosterChanged,
+        _ => return None,
+    })
+}
+
+fn control_response(event: ControlEvent) -> Response {
+    match event {
+        ControlEvent::PlayoutStop { generation, reason } => Response::PlayoutStop {
+            generation: generation.value(),
+            reason: wire::stop_reason(reason),
+        },
+        ControlEvent::SessionEnded => Response::SessionEnded,
+        ControlEvent::Safeguard {
+            generation,
+            action,
+            receipt_ref,
+            custom_tier_skipped,
+        } => Response::Safeguard {
+            generation: generation.value(),
+            action,
+            receipt_ref,
+            custom_tier_skipped,
+        },
+        ControlEvent::Notice { generation, notice } => Response::Notice {
+            generation: generation.value(),
+            notice,
+        },
     }
 }
 

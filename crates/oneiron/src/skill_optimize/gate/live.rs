@@ -159,7 +159,13 @@ pub fn measure_skill_edit_goal_axes(
         let bytes = rmp_serde::to_vec_named(&row)
             .map_err(|_| invalid("live goal-axis row encoding failed"))?;
         vault.store.vault_meta.put(txn, &key(proposal), &bytes)?;
-        Ok(())
+        // The live runs are measured: the trial routes no more of them.
+        crate::skill::close_exploration_trial_in_txn(
+            vault,
+            txn,
+            proposal,
+            crate::skill::ExplorationTrialClose::ReportStored,
+        )
     })?;
     Ok(report)
 }
@@ -256,10 +262,11 @@ fn cost_scores(minutes: AxisScores) -> (f32, f32) {
 /// The measured axes of a project-bound goal's vector, from the live report
 /// bound to this exact basis. The gate judges only the axes this leaves out,
 /// so nothing measured is judged again as a 0..1 score. Other goals measure
-/// nothing here and keep the replay.
+/// nothing here and keep the replay. A failed offline preflight bound to the
+/// basis stands in for the report: its floors and costs are the measured axes.
 /// # Errors
-/// The retryable outcome while no bound report exists, or a report naming an
-/// axis the goal lacks.
+/// The retryable outcome while neither a bound report nor a bound failed
+/// preflight exists, or a row naming an axis the goal lacks.
 pub(super) fn live_axes(
     vault: &Vault,
     proposal: &EntityId,
@@ -277,19 +284,21 @@ pub(super) fn live_axes(
     let txn = vault.store.env.read_txn()?;
     let row = load(vault, &txn, proposal)?;
     drop(txn);
-    let row = row
-        .filter(|row| {
-            binds(
-                row,
-                &plan,
-                &basis.proposal_digest,
-                &basis.target_digest,
-                &basis.evidence_digest,
-            )
-        })
-        .ok_or(retry(
-            "a project goal's primary axes need a live measurement of this proposal first",
-        ))?;
+    let Some(row) = row.filter(|row| {
+        binds(
+            row,
+            &plan,
+            &basis.proposal_digest,
+            &basis.target_digest,
+            &basis.evidence_digest,
+        )
+    }) else {
+        // A floor that regressed offline on this basis opened no trial: the
+        // failed preflight is the evidence, and the floor rejects.
+        return super::preflight::failed_preflight_axes(vault, proposal, basis, definition)?.ok_or(
+            retry("a project goal's primary axes need a live measurement of this proposal first"),
+        );
+    };
     let kind = |name: &str| {
         definition
             .axes

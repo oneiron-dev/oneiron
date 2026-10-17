@@ -8,6 +8,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.memory.diary.review", post(self_memory_diary_review))
         .route("/self.identity.answer", post(self_identity_answer))
         .route("/self.identity.settle", post(self_identity_settle))
+        .route("/self.inbox.concern", post(self_inbox_concern))
+        .route(
+            "/self.inbox.concern.outcome",
+            post(self_inbox_concern_outcome),
+        )
+        .route("/self.inbox.concern.move", post(self_inbox_concern_move))
         .route("/vault.people.list", post(vault_people_list))
         .route("/vault.people.get", post(vault_people_get))
         .route("/self.message", post(self_message))
@@ -64,6 +70,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.members.change", post(vault_members_change))
         .route("/vault.members.remove", post(vault_members_remove))
         .route("/vault.members.leave", post(vault_members_leave))
+        .route("/vault.guests.revoke", post(vault_guests_revoke))
         .route(
             "/vault.authority.handoff_alarms",
             post(vault_authority_handoff_alarms),
@@ -364,6 +371,66 @@ async fn self_identity_settle(
         actor,
         class,
         "self.identity.settle",
+        value,
+    )?))
+}
+async fn self_inbox_concern(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.inbox.concern",
+        value,
+    )?))
+}
+async fn self_inbox_concern_outcome(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.inbox.concern.outcome",
+        value,
+    )?))
+}
+async fn self_inbox_concern_move(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.inbox.concern.move",
         value,
     )?))
 }
@@ -1319,6 +1386,24 @@ async fn vault_members_leave(
     let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.members.leave", value).await?;
     let output = facade_output(
         super::host_doors::vault_members_leave(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_guests_revoke(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.guests.revoke")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.guests.revoke", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.guests.revoke", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_guests_revoke(&server, &auth, facade_input(hooks.args.clone())?)
             .await?,
     )?;
     Ok(Json(facade_hooks_post(&server, hooks, output).await?))
@@ -2923,7 +3008,7 @@ async fn vault_graph_ask(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_unnarrowed_facets()?;
     facade_outside_room_turn(&headers, "vault.graph.ask")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.graph.ask", &value)?;

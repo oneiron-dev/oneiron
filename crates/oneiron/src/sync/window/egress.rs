@@ -13,7 +13,6 @@ use super::reverse::{
     delete_edges_touching_entities, is_delegated_channel_identity_carrier,
     is_unsyncable_secret_custody, quarantine_outbound_protected_tombstones,
     remove_entity_crdt_carriers, reverse_remat_skip_redaction_receipt_mirror,
-    skip_companion_register_sync_mirror,
 };
 use super::types::WindowKey;
 use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityKey};
@@ -216,13 +215,16 @@ pub(super) fn scrub_local_claim_carriers(
         if failure.is_some() || !ids.contains(&id) {
             return;
         }
-        let deleted = vault
-            .store
-            .entities
-            .get(&rtxn, id.as_bytes())
-            .and_then(|raw| {
-                crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, raw.as_deref())
-            });
+        let deleted =
+            crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &rtxn, &id)
+                .and_then(|raw| {
+                    crate::deletion::row_deletion_marked(
+                        &vault.store,
+                        &rtxn,
+                        &id,
+                        raw.as_deref().map(Vec::as_slice),
+                    )
+                });
         match deleted {
             Ok(true) => deleted_carriers.push((id, carrier.to_vec())),
             Ok(false) => {}
@@ -240,7 +242,8 @@ pub(super) fn scrub_local_claim_carriers(
     if key.world().is_some() {
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         for id in &ids {
-            if let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())?
+            if let Some(raw) =
+                crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &rtxn, id)?
                 && crate::sync::types::retained_world_shell_belongs_to_window(
                     vault,
                     &rtxn,
@@ -336,12 +339,14 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
         if failure.is_some() {
             return;
         }
-        let marked = vault
-            .store
-            .entities
-            .get(rtxn, id.as_bytes())
+        let marked = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, rtxn, &id)
             .and_then(|raw| {
-                crate::deletion::row_deletion_marked(&vault.store, rtxn, &id, raw.as_deref())
+                crate::deletion::row_deletion_marked(
+                    &vault.store,
+                    rtxn,
+                    &id,
+                    raw.as_deref().map(Vec::as_slice),
+                )
             });
         match marked {
             Ok(true) => deleted.push((raw_key.to_owned(), id)),
@@ -618,7 +623,6 @@ fn replay_mirrors(
         if !claim_sync_allowed(&raw)
             || is_unsyncable_secret_custody(&raw)
             || is_delegated_channel_identity_carrier(&raw)
-            || skip_companion_register_sync_mirror(&raw)
         {
             let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if wrote_doc {

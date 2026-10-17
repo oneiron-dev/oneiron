@@ -183,8 +183,9 @@ fn validate_json(value: &Value, depth: usize) -> Result<()> {
 }
 
 fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
-    // The public companion projector redacts binary values. Compilation must
-    // instead reject them: redacting to null would turn data into a deletion.
+    // The generic MessagePack-to-JSON projection redacts binary values.
+    // Compilation must instead reject them: redacting to null would turn data
+    // into a deletion.
     validate_json(value, 0)?;
     serde_json::from_value(msgpack_value_to_json(value))
         .map_err(|_| invalid_companion("invalid persona value"))

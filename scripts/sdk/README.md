@@ -34,20 +34,49 @@ the row (HTTP facade, MCP, code mode, SDK) meets the check once. Declare citatio
 only: a write's own target and create-or-get ids are the engine's own lookup, and free
 text is never parsed for refs. Only a plain memory row takes `refs`.
 `prose_links` (OF-063 prose links: Engine ruling 10-17) lists a row's text slots, read for
-Markdown links `[label](oneiron://<ref>)` (code spans and fences skipped, bounded in count
-and length) by `gate::record_references::admit_prose_links` before the engine call. A
+Markdown links `[label](oneiron://<ref>)` (code spans, fences, indented code and raw HTML
+skipped, bounded in count and length) by `gate::record_references::admit_prose_links` before
+the engine call. A
 pointer may end at an opaque value, whose every string is read, and `*[key=value]` takes
 only the array items whose `key` is that string, which declares them AI-written (otherwise
 the writer's class decides). An AI-written link that does not resolve for its writer never
 refuses or rewrites the text: it writes the same `reference_refusal` receipt with outcome
-`unlinked`. Readers turn text into typed spans with `vault.refs.links`, each link resolved
+`unlinked`, before the engine call (an attempt receipt), and none inside an anonymous
+off-record session. Witnessed turns (`vault.witness`, `vault.rooms.speak` and every other
+witness door) declare no `prose_links`: the witness program reads each companion message
+once itself. Readers turn text into typed spans with `vault.refs.links`, each link resolved
 under their own read through `vault.refs.resolve`; one they cannot read is its plain label.
 Prose links are display only and never feed a grant, scope or authority path.
 `vault.witness` and `vault.claims.upsert` retain their size checks. `vault.recall`
 and `vault.receipts` need the scope restriction as well as query/limit validation. Their shared SDK
 request DTOs preserve the wire defaults. Language-specific DTO conversion stays
-in generator templates; only manifest rows select which methods are emitted. Language DTO declarations live in the generator;
-keep them aligned with the serde domain types when a domain shape changes.
+in generator templates; only manifest rows select which methods are emitted.
+
+`description` is a callable row's one line (printable ASCII, ending in a
+period). It is said once and read everywhere: the MCP tool description (through
+the generated `AgentVerb::description`), the JSDoc of each TypeScript method,
+the docstring of each Python method, and `FACADE_CATALOG` in `@oneiron/client`.
+A run row carries none.
+
+The wire types are not declared by hand. `facade_types.py` starts from each
+facade row's `input` and `output` and walks their Rust definitions across the
+engine crates' sources (structs, enums in each serde tagging, aliases, generics,
+`rename`/`rename_all`, `default`, `skip*`, `flatten`, `transparent`,
+`into`/`try_from`, id and hex codecs, handwritten serializers that write a
+string or a wire mirror), then emits one declaration per Rust type:
+`facade-types.ts` in both TypeScript packages and `oneiron/facade_types.pyi`
+for the Python stubs. A `serde_json::Value` is opaque by design (`unknown`,
+`Any`); a shape it cannot read is `unknown` too. Each run prints the census
+(rows fully typed, typed to an opaque leaf, or with an unread shape) and names
+every opaque leaf and every unread shape. The handwritten DTOs that remain are
+the camelCase shapes the N-API conversions return (`packages/oneiron/src/types.ts`)
+and the Python stub's top-level TypedDicts for the typed bindings; keep those
+aligned with the serde domain types when a domain shape changes.
+
+`@oneiron/client`'s `facade.ts` is the one client artifact (OF-246): the typed
+facade tree over an injected transport, its per-verb input and result maps and
+its row catalog, shared by the HTTP adapter, a native adapter and the code-mode
+inject.
 
 `mcp` selects `tool-first` or `none` for each SDK row. For projected rows,
 `mcp_fields` maps each MCP argument to a field path in the typed engine input.

@@ -61,11 +61,50 @@ pub struct StandingAnswer {
     pub source_frontier: [u8; 32],
 }
 
-struct Source {
+/// What one source row puts on an answer resting on it.
+pub(super) struct Source {
     kind: u8,
     claim: Option<ClaimBody>,
     position: (EntityId, EntityId, EntityId),
     sensitivity: u8,
+}
+
+impl Source {
+    /// The row `raw` of type `kind` under its record Scope `scope`: its one
+    /// facet, project and world, its sensitivity and, for a claim, its body.
+    /// A Scope with no single position bounds no answer.
+    pub(super) fn of_row(kind: u8, raw: &[u8], scope: &crate::federation::Scope) -> Result<Self> {
+        let position = (
+            singleton(&scope.facets)?,
+            singleton(&scope.audience)?,
+            singleton(&scope.worlds)?,
+        );
+        let sensitivity = match scope.sensitivity {
+            crate::federation::SensitivityCeiling::AtMost(level) => match level {
+                crate::federation::Sensitivity::Public => 0,
+                crate::federation::Sensitivity::Private => 1,
+                crate::federation::Sensitivity::Sensitive => 2,
+                crate::federation::Sensitivity::Restricted => 3,
+            },
+            crate::federation::SensitivityCeiling::Bottom => {
+                return Err(invalid("unrepresentable evidence sensitivity"));
+            }
+        };
+        let claim = if kind == crate::registry::ENTITY_TYPE_CLAIM {
+            Some(crate::claim::decode_claim_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )?)
+        } else {
+            None
+        };
+        Ok(Self {
+            kind,
+            claim,
+            position,
+            sensitivity,
+        })
+    }
 }
 
 fn singleton(axis: &crate::federation::ScopeAxis<crate::federation::ScopeId>) -> Result<EntityId> {
@@ -219,34 +258,7 @@ fn sources_in_txn(
         {
             return Err(Error::EntityNotFound);
         }
-        let position = (
-            singleton(&scope.facets)?,
-            singleton(&scope.audience)?,
-            singleton(&scope.worlds)?,
-        );
-        let sensitivity = match scope.sensitivity {
-            crate::federation::SensitivityCeiling::AtMost(level) => match level {
-                crate::federation::Sensitivity::Public => 0,
-                crate::federation::Sensitivity::Private => 1,
-                crate::federation::Sensitivity::Sensitive => 2,
-                crate::federation::Sensitivity::Restricted => 3,
-            },
-            crate::federation::SensitivityCeiling::Bottom => {
-                return Err(invalid("unrepresentable evidence sensitivity"));
-            }
-        };
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        let claim = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            Some(crate::claim::decode_claim_body(body, true)?)
-        } else {
-            None
-        };
-        sources.push(Source {
-            kind: header.entity_type,
-            claim,
-            position,
-            sensitivity,
-        });
+        sources.push(Source::of_row(header.entity_type, &raw, &scope)?);
     }
     Ok((*hasher.finalize().as_bytes(), sources))
 }
@@ -599,6 +611,7 @@ fn backfill_answer(
                     paired: input.paired,
                     person: Vec::new(),
                     time: None,
+                    images: Vec::new(),
                 },
                 human_ask: None,
             },
@@ -687,7 +700,10 @@ fn backfill_answer(
     })
 }
 
-fn constrain_sources(
+/// Bounds `candidate` by every source it rests on: their one position, the
+/// highest sensitivity, the claims' scope terms and relationship. Returns the
+/// sources' met taint.
+pub(super) fn constrain_sources(
     candidate: &mut ClaimCandidate,
     sources: &[Source],
     principal: EntityId,
