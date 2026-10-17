@@ -324,7 +324,13 @@ fn collect_with(
 ) -> Result<TurnText> {
     // A TURN whose words a deletion withdrew has none, inline or joined, as
     // `Vault::get_raw` reads it.
-    if crate::ports::withdrawn_in_txn(&vault.store, txn, turn)? {
+    if !crate::ports::body_readable_in_txn(
+        &vault.store,
+        txn,
+        turn,
+        turn_body,
+        crate::ports::BodyStale::Withdrawn,
+    )? {
         return Ok(TurnText {
             text: None,
             messages: None,

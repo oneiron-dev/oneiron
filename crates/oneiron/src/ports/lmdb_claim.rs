@@ -9,7 +9,7 @@ use crate::{EdgeKind, EntityId, TimeRange, Vault};
 use heed::{RoTxn, RwTxn};
 /// The most claims one predicate's list holds before it refuses. A reader
 /// that must see every such claim, however many a vault holds, walks them
-/// with `Vault::for_each_claim_with_predicate_in_txn` instead.
+/// with `Vault::for_each_readable_claim_with_predicate_in_txn` instead.
 #[cfg(not(test))]
 pub(crate) const MAX_PREDICATE_LIST_ROWS: usize = 100_000;
 #[cfg(test)]
@@ -18,11 +18,36 @@ pub(crate) const MAX_PREDICATE_LIST_ROWS: usize = 64;
 impl Vault {
     /// Hands each stored CLAIM carrying `predicate` to `visit`, one at a time
     /// in type-index order, reserved predicates included. Nothing is held
-    /// between claims, so the walk has no count past which it refuses.
+    /// between claims, so the walk has no count past which it refuses. This
+    /// walk is raw, for checkpoint and maintenance passes; a door that serves
+    /// claim bodies walks [`Self::for_each_readable_claim_with_predicate_in_txn`].
     pub(crate) fn for_each_claim_with_predicate_in_txn(
         &self,
         rtxn: &RoTxn<'_>,
         predicate: &str,
+        visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
+    ) -> Result<()> {
+        self.walk_claims_with_predicate_in_txn(rtxn, predicate, false, visit)
+    }
+
+    /// [`Self::for_each_claim_with_predicate_in_txn`] for a door that serves
+    /// claim bodies: a claim whose words are withdrawn, or whose recorded
+    /// sources no longer stand, is skipped before it is decoded. Every
+    /// lifecycle and Recorded status stays, as `port_claim_get` keeps it.
+    pub(crate) fn for_each_readable_claim_with_predicate_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        predicate: &str,
+        visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
+    ) -> Result<()> {
+        self.walk_claims_with_predicate_in_txn(rtxn, predicate, true, visit)
+    }
+
+    fn walk_claims_with_predicate_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        predicate: &str,
+        readable: bool,
         mut visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
     ) -> Result<()> {
         for entry in self
@@ -43,9 +68,19 @@ impl Vault {
                 return Err(Error::CorruptedIndex("claim type index"));
             }
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            // A soft-deleted claim keeps its header alone, and no predicate.
-            if body.is_empty() && TombstoneStoreRead::port_deletion_state(self, rtxn, &id)?.deleted
-            {
+            let skip = if readable {
+                !super::safe_read::body_readable_in_txn(
+                    &self.store,
+                    rtxn,
+                    &id,
+                    body,
+                    super::safe_read::BodyStale::ClaimStatus,
+                )?
+            } else {
+                // A soft-deleted claim keeps its header alone, and no predicate.
+                body.is_empty() && TombstoneStoreRead::port_deletion_state(self, rtxn, &id)?.deleted
+            };
+            if skip {
                 continue;
             }
             let body = decode_claim_body(body, true)?;
@@ -62,8 +97,9 @@ impl ClaimStore for Vault {
         let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        // History keeps every lifecycle status, never words a deletion withdrew.
-        if super::withdrawn_in_txn(&self.store, rtxn, id)? {
+        // History keeps every lifecycle status, never words a deletion withdrew
+        // or a source that no longer stands.
+        if !super::safe_read::raw_readable_in_txn(&self.store, rtxn, id, &raw)? {
             return Ok(None);
         }
         let header =
@@ -101,10 +137,7 @@ impl ClaimStore for Vault {
         predicate: &str,
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
         let mut rows = Vec::new();
-        self.for_each_claim_with_predicate_in_txn(rtxn, predicate, |id, body| {
-            if super::withdrawn_in_txn(&self.store, rtxn, &id)? {
-                return Ok(());
-            }
+        self.for_each_readable_claim_with_predicate_in_txn(rtxn, predicate, |id, body| {
             if rows.len() >= MAX_PREDICATE_LIST_ROWS {
                 return Err(Error::IndexOverflow("claim predicate"));
             }

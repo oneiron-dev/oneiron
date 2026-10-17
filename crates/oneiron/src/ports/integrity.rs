@@ -3,6 +3,7 @@ use super::SourceSpan;
 use super::dependent_walk::DependentWalkDoor;
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
+use crate::calendar::origin::survives_source_deletion;
 use crate::error::{Error, Result};
 use crate::settings::CarriedWorlds;
 use crate::store::ManifestDbs;
@@ -99,6 +100,43 @@ pub(crate) fn stale_in_txn(
 /// progress by this, never by what a pending walk says.
 fn marked_stale_in(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
+}
+/// Whether a source `dependent` is recorded as derived from no longer stands
+/// in this snapshot. It needs no mark from the deletion, so a failed or
+/// rolled-back mark still withdraws (I2). Only `dependent`'s own reverse rows
+/// are read (I4). An EVENT that outlives its source stays, as the walk
+/// leaves it.
+pub(super) fn source_withdrawn_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dependent: &EntityId,
+) -> Result<bool> {
+    for source in super::regeneration::sources_of(store, txn, dependent)? {
+        if source_stands_in(store, txn, &source.document)? {
+            continue;
+        }
+        let row = store.entities().get(txn, dependent.as_bytes())?;
+        let event = row
+            .and_then(|raw| EntityMetadataHeader::parse(&raw))
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_EVENT);
+        return Ok(!(event && survives_source_deletion(store, txn, *dependent)?));
+    }
+    Ok(false)
+}
+/// Whether `source` still stands for what was derived from it: present, not
+/// removed, not withdrawn, its body not flagged stale. An archive keeps the
+/// row whole and a CLAIM's `stale` is a status, so neither withdraws.
+fn source_stands_in(store: &impl ManifestDbs, txn: &RoTxn<'_>, source: &EntityId) -> Result<bool> {
+    let Some(raw) = store.entities().get(txn, source.as_bytes())? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("dependency source header"))?;
+    let flagged = header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+        && super::safe_read::body_is_stale(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+    Ok(!flagged
+        && !super::lmdb_visibility::removed_in_txn(store, txn, source)?
+        && !stale_in_txn(store, txn, source)?)
 }
 /// The worlds a deletion, or the loss of a source edge, withdrew epoch summary
 /// `id` for: where the words it took sat, which the summary can no longer

@@ -625,14 +625,22 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
             && vault
                 .store
                 .entity_deletion_present_in_txn(txn, id, header.learned_at)?)
-        // Words a deletion withdrew never serve, at any selected version.
-        || (raw.len() > ENTITY_METADATA_HEADER_LEN
-            && crate::ports::withdrawn_in_txn(store, txn, id)?)
+        // Words a deletion withdrew, or whose recorded sources no longer
+        // stand, never serve, at any selected version. A shell's current
+        // header carries none.
+        || ((raw.len() > ENTITY_METADATA_HEADER_LEN || mode != ReadMode::Live)
+            && !crate::ports::raw_readable_in_txn(store, txn, id, &raw)?)
     {
         return Ok(None);
     }
+    // The selected bytes answer for their own `stale` flag.
+    let stale = crate::ports::BodyStale::for_kind(header.entity_type);
+    let admit = |row: Vec<u8>| {
+        let body = row.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        stale.admits(body).then_some(row)
+    };
     if mode == ReadMode::Live {
-        return raw_for_revision(store, txn, id, &raw, None).map(Some);
+        return raw_for_revision(store, txn, id, &raw, None).map(admit);
     }
     let current = state(store, txn, id)?;
     let target = match mode {
@@ -660,7 +668,7 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
             ReadMode::Pinned(row),
         );
     }
-    raw_for_revision(store, txn, id, &raw, Some(target)).map(Some)
+    raw_for_revision(store, txn, id, &raw, Some(target)).map(admit)
 }
 
 pub(crate) fn ensure_document(
