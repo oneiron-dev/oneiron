@@ -79,7 +79,9 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             }
             let revoked_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            for action in live_pact_disconnects(&*self.authority_view_readonly_in_txn(txn)?, grant_ref)? {
+            for action in
+                live_pact_disconnects(&*self.authority_view_readonly_in_txn(txn)?, grant_ref)?
+            {
                 self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
             }
             apply_ops(
