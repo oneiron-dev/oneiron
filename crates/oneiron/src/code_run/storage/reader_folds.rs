@@ -8,7 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::records::{REPLAY_RECORDS, replay_generation_matches};
+use super::records::{
+    MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
+};
 use super::routing::SessionBinding;
 use crate::code_run::{
     CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ResultOccurrence,
@@ -190,15 +192,39 @@ impl Vault {
 
 impl SessionBinding<'_> {
     /// [`ExecutorStorage::put_code_run_replay_record_with_receipts_if_generation`]
-    /// on the room's route: the record compared and put, and every receipt
-    /// beside it, in one routed transaction. The room keeps no heal tally
-    /// for this turn.
+    /// on the room's route: the record compared and put, its heal tally when
+    /// the turn healed, and every receipt beside it, in one routed
+    /// transaction.
     fn put_replay_record_with_receipts(
         &self,
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
         receipts: &[ReaderFoldReceipt],
     ) -> Result<()> {
+        if let Some(model) = healed_model {
+            return self.answered(|| {
+                self.session
+                    .side_table_compare_and_put_with_counter_routed_and(
+                        &self.route,
+                        &REPLAY_RECORDS,
+                        &record.run_id,
+                        record,
+                        |current| replay_generation_matches(current, expected),
+                        &MODEL_HEAL_COUNTS,
+                        &model.as_str().to_owned(),
+                        next_additive_heal_count,
+                        |txn, write| {
+                            for receipt in receipts {
+                                let key = (receipt.folded.owner, receipt.folded.occurrence);
+                                FOLDS.put(&write, txn, &key, receipt)?;
+                            }
+                            Ok(())
+                        },
+                    )
+                    .map(drop)
+            });
+        }
         self.answered(|| {
             self.session
                 .routed_side_txn(&self.route, |txn, read, write| {
@@ -217,8 +243,7 @@ impl SessionBinding<'_> {
 
 impl ExecutorStorage<'_> {
     /// The checkpoint's commit with the fold receipts its step staged: the
-    /// replay append (and, on the canonical vault, its heal tally) and every
-    /// receipt in one transaction, so a receipt never exists without its
+    /// replay append, its heal tally and every receipt in one transaction, so a receipt never exists without its
     /// binding, nor a binding without its receipt.
     pub(crate) fn put_code_run_replay_record_with_receipts_if_generation(
         &self,
@@ -250,10 +275,25 @@ impl ExecutorStorage<'_> {
             Self::Session(binding) => {
                 REPLAY_RECORDS.encode_value(record)?;
                 let next = record.generation()?;
-                binding.put_replay_record_with_receipts(record, expected, receipts)?;
+                binding.put_replay_record_with_receipts(
+                    record,
+                    expected,
+                    healed_model,
+                    receipts,
+                )?;
                 Ok(next)
             }
         }
+    }
+
+    /// The fold receipt of `owner`'s result at `path`, if it is a fold's.
+    pub(crate) fn code_run_reader_fold(
+        &self,
+        owner: EntityId,
+        path: &str,
+    ) -> Result<Option<ReaderFoldReceipt>> {
+        let key = (owner, ResultOccurrence::owned(owner, path)?.id());
+        self.reader_read(|txn, dbs| FOLDS.get(&dbs, txn, &key))
     }
 
     /// The summary memo key `memo` names, if one was made.
