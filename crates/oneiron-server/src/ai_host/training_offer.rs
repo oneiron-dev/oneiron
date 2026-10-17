@@ -615,27 +615,18 @@ fn base_pin(run: &TrainingRun) -> Option<OfferModelPin> {
 /// Where a recipe ran before, and the rows that left with it.
 fn destination(run: &TrainingRun) -> Option<ComputeDestination> {
     let compute = &run.compute;
-    let destination = match compute.choice {
+    Some(match compute.choice {
         ComputeChoice::OwnerMachines if compute.locality == ModelLocality::OnDevice => {
             ComputeDestination::OnDevice
         }
         ComputeChoice::OwnerMachines => ComputeDestination::SelfHosted {
-            host: compute.origin.clone(),
+            host: bounded(&compute.origin, REF_BYTES).then(|| compute.origin.clone())?,
         },
         ComputeChoice::External => ComputeDestination::Hosted {
-            provider: compute.connector.clone(),
+            provider: bounded(&compute.connector, REF_BYTES).then(|| compute.connector.clone())?,
             rows_leaving: u64::try_from(run.corpus.rows.len()).ok()?,
         },
-    };
-    match &destination {
-        ComputeDestination::SelfHosted { host: name }
-        | ComputeDestination::Hosted { provider: name, .. }
-            if !bounded(name, REF_BYTES) =>
-        {
-            None
-        }
-        _ => Some(destination),
-    }
+    })
 }
 
 /// The licence a registry row names, if it names one.
@@ -671,7 +662,8 @@ fn monthly(row: &ModelRegistryRow, workload: &SeatWorkload) -> Option<f64> {
 /// unknown or nothing is saved.
 fn payback(before: Option<f64>, after: Option<f64>, one_off: Option<f64>) -> Option<f64> {
     let saving = before? - after?;
-    (saving > 0.0).then(|| one_off? / saving)
+    let one_off = one_off?;
+    (saving > 0.0).then(|| one_off / saving)
 }
 
 /// The model an offer proposes.
