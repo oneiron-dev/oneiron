@@ -43,6 +43,7 @@ declare namespace self {
     library: {
       find(input: { site?: string | null; subgoal?: string | null }): Promise<unknown>;
       propose(input: { args?: object; params?: string[]; postcondition: object[]; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal: string }): Promise<unknown>;
+      retire(input: { workflow: string }): Promise<unknown>;
       run(input: { args?: object; workflow: string }): Promise<unknown>;
     };
     observe(input: { since?: number | null }): Promise<unknown>;
@@ -341,6 +342,9 @@ declare const vault: {
     };
     proposals(input: { conversation_ref: string }): Promise<unknown>;
     propose(input: { card_id: string; goal: object; picks: object; source_message_ref: string }): Promise<unknown>;
+    roster: {
+      write(input: { project: string; record: unknown }): Promise<unknown>;
+    };
     route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
   };
   questions: {
@@ -365,7 +369,7 @@ declare const vault: {
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   rooms: {
     claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
-    consent(input: { grant: boolean; join_ref: string; part: "spend" | "membership" | "admission"; spend_scope?: string | null }): Promise<unknown>;
+    consent(input: { grant: boolean; join_ref: string; part: "subject" | "spend" | "membership" | "admission"; spend_scope?: string | null }): Promise<unknown>;
     find(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     get(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
     host: ((input: { room_ref: string; session_ref?: string | null }) => Promise<unknown>) & {

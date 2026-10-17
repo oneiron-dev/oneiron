@@ -817,6 +817,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.projects.roster.write",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ProjectRosterWriteRequest,
+                >(),
+            ),
+            (
                 "vault.projects.goal.intake",
                 crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
             ),
@@ -1100,6 +1106,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.browser.library.propose",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::ProposeInput>(),
+            ),
+            (
+                "self.browser.library.retire",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRetireInput>(
+                ),
             ),
             (
                 "self.browser.library.run",
@@ -2589,6 +2600,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.projects.roster.write" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.projects.goal.intake" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3763,6 +3781,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.projects.confirm" => {
             let _input: crate::workspace_roster::ProjectCardConfirmRequest = decode(value.clone())?;
         }
+        "vault.projects.roster.write" => {
+            let _input: crate::workspace_roster::ProjectRosterWriteRequest = decode(value.clone())?;
+        }
         "vault.projects.goal.intake" => {
             let _input: ProjectRefRequest = decode(value.clone())?;
         }
@@ -3954,6 +3975,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.browser.library.propose" => {
             let _input: oneiron_browser::ProposeInput = decode(value.clone())?;
+        }
+        "self.browser.library.retire" => {
+            let _input: oneiron_browser::LibraryRetireInput = decode(value.clone())?;
         }
         "self.browser.library.run" => {
             let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
@@ -4427,6 +4451,9 @@ pub fn invoke(
             encode(vault_projects_dismiss_card(memory, decode(value)?)?)
         }
         "vault.projects.confirm" => encode(vault_projects_confirm(memory, decode(value)?)?),
+        "vault.projects.roster.write" => {
+            encode(vault_projects_roster_write(memory, decode(value)?)?)
+        }
         "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
@@ -4638,6 +4665,10 @@ pub fn invoke_browser(
             serde_json::from_value(value).map_err(invalid)?,
         )?),
         "self.browser.library.propose" => serde_json::to_value(self_browser_library_propose(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.library.retire" => serde_json::to_value(self_browser_library_retire(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -6051,6 +6082,12 @@ pub fn vault_projects_confirm(
 ) -> MemoryResult<crate::workspace_roster::ProjectMintReceipt> {
     memory.projects_confirm(&input)
 }
+pub fn vault_projects_roster_write(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ProjectRosterWriteRequest,
+) -> MemoryResult<crate::workspace_roster::ProjectRosterWriteOutcome> {
+    memory.projects_write_roster(input.project, &input.record)
+}
 pub fn vault_projects_goal_intake(
     memory: &Memory<'_>,
     input: ProjectRefRequest,
@@ -6462,6 +6499,12 @@ pub fn self_browser_library_propose(
     input: oneiron_browser::ProposeInput,
 ) -> Result<oneiron_browser::ProposeOutput, oneiron_browser::BrowserError> {
     driver.library_propose(input)
+}
+pub fn self_browser_library_retire(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::LibraryRetireInput,
+) -> Result<oneiron_browser::LibraryRetireOutput, oneiron_browser::BrowserError> {
+    driver.library_retire(input)
 }
 pub fn self_browser_library_run(
     driver: &mut dyn oneiron_browser::BrowserDriver,
