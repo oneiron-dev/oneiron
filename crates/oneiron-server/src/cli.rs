@@ -8,7 +8,9 @@ use crate::config::ServeArgs;
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod hook_args;
+mod learning_setting_args;
 mod owner_args;
+mod recovery_kit_args;
 mod wake_args;
 pub use hook_args::{
     HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
@@ -22,11 +24,25 @@ pub use owner_args::{
     RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
     SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
+pub use owner_args::{
+    EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs,
+    EmbeddingSpaceDeclareArgs, EmbeddingSpaceMoveArgs, EmbeddingSpaceProbeDeleteArgs,
+    EmbeddingSpaceProbePutArgs, EmbeddingSpaceProbesCommand, EmbeddingSpacesCommand,
+    SecretAnchorSignArgs,
+};
 pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevokeArgs};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
     VaultKeyNamedArgs,
+};
+pub use learning_setting_args::{
+    LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg,
+    LearningSettingPutArgs, LearningSettingsCommand,
+};
+pub use recovery_kit_args::{
+    KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,
+    RecoveryKitRestoreArgs, RecoveryKitStatusArgs,
 };
 pub use wake_args::{WakeArgs, WakeCommand};
 
@@ -96,6 +112,10 @@ pub enum Command {
     /// device), this install's checkpoint signer and a passkey's PRF input.
     #[command(subcommand)]
     VaultKey(VaultKeyCommand),
+    /// A stopped vault's world recovery kit: issue it, confirm it by
+    /// re-entering its pieces, restore from it, and list its kits.
+    #[command(subcommand)]
+    RecoveryKit(RecoveryKitCommand),
     /// Import your own history into a stopped vault (ChatGPT and Claude.ai
     /// exports, Claude Code and Codex sessions, a Copilot or Cursor hook
     /// transcript, a folder of markdown notes), or preview, approve or decline
@@ -108,6 +128,10 @@ pub enum Command {
     /// Fork alarms a held root handoff left: list them, or acknowledge one.
     #[command(subcommand)]
     HandoffAlarms(HandoffAlarmsCommand),
+    /// Your learned settings: the catalog and your seed and pin rows at the
+    /// vault, a project or a task type; put or clear one.
+    #[command(subcommand)]
+    LearningSettings(LearningSettingsCommand),
     /// Your legal holds: place, widen, list, read the log, or lift one
     /// through the "Lift the hold and erase?" confirm.
     #[command(subcommand)]
@@ -115,6 +139,10 @@ pub enum Command {
     /// Your ask guests at this host: revoke one's access.
     #[command(subcommand)]
     Guests(GuestsCommand),
+    /// Your embedding spaces: declare, bind, retire, move a slot to a new
+    /// model version, and the probes a move's check runs.
+    #[command(subcommand)]
+    EmbeddingSpaces(EmbeddingSpacesCommand),
     /// Move a stopped vault to the configured embedding model: repin it and
     /// queue every record to be embedded again, which the next `serve` does.
     Reembed(Box<ReembedArgs>),
@@ -895,11 +923,14 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Secrets(SecretsCommand::Revoke(args)) => commands::revoke_secret(*args),
         Command::Secrets(command) => commands::secrets(command),
         Command::VaultKey(command) => commands::vault_key(command),
+        Command::RecoveryKit(command) => commands::recovery_kit(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
+        Command::LearningSettings(command) => commands::learning_settings(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
         Command::Guests(command) => commands::guests(command),
+        Command::EmbeddingSpaces(command) => commands::embedding_spaces(command),
         // Blocking: an endpoint's transform is read over blocking HTTP.
         Command::Reembed(args) => {
             crate::logging::off_runtime("reembed", move || commands::reembed(*args)).await?

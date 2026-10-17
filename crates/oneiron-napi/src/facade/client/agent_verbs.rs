@@ -638,6 +638,150 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_embedding_spaces_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_declare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.declare", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.bind", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_one_space(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.one_space", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_retire(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.retire", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_move(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.move", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_move_check(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.move_check", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_move_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.move_approve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_move_undo(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.move_undo", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_move_abandon(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.move_abandon", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_probes_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.probes.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_probes_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.probes.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_embedding_spaces_probes_delete(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.embedding_spaces.probes.delete", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_learning(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.learning", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_learning_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.learning.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_learning_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.learning.clear", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_lenses_propose(
         &self,
         input: serde_json::Value,

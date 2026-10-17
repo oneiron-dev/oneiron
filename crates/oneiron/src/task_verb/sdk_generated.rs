@@ -344,6 +344,98 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.embedding_spaces.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.embedding_spaces.declare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceDeclareRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceBindRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.one_space",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.retire",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.move",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceMoveRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.move_check",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceCandidateRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.move_approve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceCandidateRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.move_undo",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceCandidateRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.move_abandon",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceCandidateRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.probes.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.embedding_spaces.probes.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceProbePutRequest,
+                >(),
+            ),
+            (
+                "vault.embedding_spaces.probes.delete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest,
+                >(),
+            ),
+            (
+                "vault.settings.learning",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingsRequest,
+                >(),
+            ),
+            (
+                "vault.settings.learning.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingPut,
+                >(),
+            ),
+            (
+                "vault.settings.learning.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning_setting_doors::LearningSettingClear,
+                >(),
+            ),
+            (
                 "vault.lenses.propose",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
             ),
@@ -1536,6 +1628,106 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.embedding_spaces.list" => &[],
+        "vault.embedding_spaces.declare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.one_space" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.retire" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.move" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.move_check" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.move_approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.move_undo" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.move_abandon" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.probes.list" => &[],
+        "vault.embedding_spaces.probes.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.embedding_spaces.probes.delete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.learning" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.learning.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.learning.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.lenses.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2538,6 +2730,63 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 decode(value.clone())?;
         }
+        "vault.embedding_spaces.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.embedding_spaces.declare" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceDeclareRequest =
+                decode(value.clone())?;
+        }
+        "vault.embedding_spaces.bind" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceBindRequest = decode(value.clone())?;
+        }
+        "vault.embedding_spaces.one_space" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceRequest = decode(value.clone())?;
+        }
+        "vault.embedding_spaces.retire" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceRequest = decode(value.clone())?;
+        }
+        "vault.embedding_spaces.move" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceMoveRequest = decode(value.clone())?;
+        }
+        "vault.embedding_spaces.move_check" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceCandidateRequest =
+                decode(value.clone())?;
+        }
+        "vault.embedding_spaces.move_approve" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceCandidateRequest =
+                decode(value.clone())?;
+        }
+        "vault.embedding_spaces.move_undo" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceCandidateRequest =
+                decode(value.clone())?;
+        }
+        "vault.embedding_spaces.move_abandon" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceCandidateRequest =
+                decode(value.clone())?;
+        }
+        "vault.embedding_spaces.probes.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.embedding_spaces.probes.put" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceProbePutRequest =
+                decode(value.clone())?;
+        }
+        "vault.embedding_spaces.probes.delete" => {
+            let _input: crate::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest =
+                decode(value.clone())?;
+        }
+        "vault.settings.learning" => {
+            let _input: crate::learning_setting_doors::LearningSettingsRequest =
+                decode(value.clone())?;
+        }
+        "vault.settings.learning.put" => {
+            let _input: crate::learning_setting_doors::LearningSettingPut = decode(value.clone())?;
+        }
+        "vault.settings.learning.clear" => {
+            let _input: crate::learning_setting_doors::LearningSettingClear =
+                decode(value.clone())?;
+        }
         "vault.lenses.propose" => {
             let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
         }
@@ -3083,6 +3332,53 @@ pub fn invoke(
         "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.list" => {
+            encode(vault_embedding_spaces_list(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.declare" => {
+            encode(vault_embedding_spaces_declare(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.bind" => {
+            encode(vault_embedding_spaces_bind(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.one_space" => {
+            encode(vault_embedding_spaces_one_space(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.retire" => {
+            encode(vault_embedding_spaces_retire(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.move" => {
+            encode(vault_embedding_spaces_move(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.move_check" => {
+            encode(vault_embedding_spaces_move_check(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.move_approve" => {
+            encode(vault_embedding_spaces_move_approve(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.move_undo" => {
+            encode(vault_embedding_spaces_move_undo(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.move_abandon" => {
+            encode(vault_embedding_spaces_move_abandon(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.probes.list" => {
+            encode(vault_embedding_spaces_probes_list(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.probes.put" => {
+            encode(vault_embedding_spaces_probes_put(memory, decode(value)?)?)
+        }
+        "vault.embedding_spaces.probes.delete" => encode(vault_embedding_spaces_probes_delete(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
+        "vault.settings.learning.put" => {
+            encode(vault_settings_learning_put(memory, decode(value)?)?)
+        }
+        "vault.settings.learning.clear" => {
+            encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
@@ -3969,6 +4265,163 @@ pub fn vault_legal_holds_lift_and_erase(
         &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
         input,
     )
+}
+pub fn vault_embedding_spaces_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpacesView> {
+    crate::task_verb::sdk::read_embedding_spaces(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.list")?,
+    )
+}
+pub fn vault_embedding_spaces_declare(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceDeclareRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpacesView> {
+    crate::task_verb::sdk::declare_embedding_space_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.declare")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_bind(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceBindRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpacesView> {
+    crate::task_verb::sdk::bind_embedding_slot_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.bind")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_one_space(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpacesView> {
+    crate::task_verb::sdk::bind_one_embedding_space_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.one_space")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_retire(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpacesView> {
+    crate::task_verb::sdk::retire_embedding_space_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.retire")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_move(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceMoveRequest,
+) -> MemoryResult<crate::embed::SpaceMove> {
+    crate::task_verb::sdk::begin_embedding_space_move_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.move")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_move_check(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceCandidateRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpaceMoveChecked> {
+    crate::task_verb::sdk::host_only(memory, "vault.embedding_spaces.move_check", &input)
+}
+pub fn vault_embedding_spaces_move_approve(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceCandidateRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpacesView> {
+    crate::task_verb::sdk::approve_embedding_space_move_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.move_approve")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_move_undo(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceCandidateRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpacesView> {
+    crate::task_verb::sdk::undo_embedding_space_move_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.move_undo")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_move_abandon(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceCandidateRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpacesView> {
+    crate::task_verb::sdk::abandon_embedding_space_move_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.move_abandon")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_probes_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpaceProbes> {
+    crate::task_verb::sdk::read_embedding_space_probes(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.probes.list")?,
+    )
+}
+pub fn vault_embedding_spaces_probes_put(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceProbePutRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpaceProbe> {
+    crate::task_verb::sdk::put_embedding_space_probe_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.probes.put")?,
+        input,
+    )
+}
+pub fn vault_embedding_spaces_probes_delete(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest,
+) -> MemoryResult<crate::task_verb::sdk::EmbeddingSpaceProbeDeleted> {
+    crate::task_verb::sdk::delete_embedding_space_probe_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.embedding_spaces.probes.delete")?,
+        input,
+    )
+}
+pub fn vault_settings_learning(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingsRequest,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::learning_settings_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_settings_learning_put(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingPut,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::put_learning_setting_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning.put")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_settings_learning_clear(
+    memory: &Memory<'_>,
+    input: crate::learning_setting_doors::LearningSettingClear,
+) -> MemoryResult<crate::learning_setting_doors::LearningSettingsView> {
+    crate::learning_setting_doors::clear_learning_setting_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.settings.learning.clear")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_lenses_propose(
     memory: &Memory<'_>,

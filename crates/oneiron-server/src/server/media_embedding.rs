@@ -268,8 +268,9 @@ impl SyncServer {
     /// one-space preset included, and each open version move's candidate;
     /// then the moves' probes are topped up ([`Self::author_space_probes`])
     /// and each full candidate is checked ([`Self::check_space_moves`]).
-    /// First, each swapped-in incumbent past its undo window retires.
-    /// Blocking.
+    /// First, each swapped-in incumbent past its undo window retires, and each
+    /// open move past its fill deadline with no check closes kept
+    /// ([`oneiron::Vault::expire_unfilled_space_moves`]). Blocking.
     fn backfill_media_pass(
         &self,
         runtime: &tokio::runtime::Handle,
@@ -281,6 +282,14 @@ impl SyncServer {
                 }
             }
             Err(error) => tracing::warn!(%error, "swapped-in embedding spaces not retired"),
+        }
+        match self.vault.expire_unfilled_space_moves() {
+            Ok(expired) => {
+                for candidate in expired {
+                    tracing::info!(%candidate, "embedding space move closed: its candidate went unchecked past the fill deadline");
+                }
+            }
+            Err(error) => tracing::warn!(%error, "unfilled embedding space moves not closed"),
         }
         let (bindings, moves) = match (self.vault.kind_slot_bindings(), self.vault.space_moves()) {
             (Ok(bindings), Ok(moves)) => (bindings, moves),

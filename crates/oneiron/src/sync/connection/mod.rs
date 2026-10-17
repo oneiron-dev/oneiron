@@ -72,7 +72,19 @@ pub struct SyncConnection {
     /// The residence mode this machine runs now. A change closes the live
     /// socket; the next connect negotiates the new hello.
     mode: tokio::sync::watch::Sender<SyncResidenceMode>,
+    /// Whether this env's member left the shared vault it holds (OF-158): the
+    /// lane ends for good and never reconnects.
+    left: tokio::sync::watch::Sender<bool>,
+    /// Whether the run loop is going; a leave waits for it to stop.
+    running: tokio::sync::watch::Sender<bool>,
 }
+
+/// How long a confirmed leave waits for the run loop to stop and queue what
+/// it buffered before it discards the queue.
+const LEAVE_QUIESCE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The path a removed member asks its own leave notices on (OF-158).
+const LEFT_NOTICES_PATH: &str = "/v1/shared/left-notices";
 
 /// What switching this machine's residence mode did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,11 +116,14 @@ impl SyncConnection {
                 config.client_config.residence_mode,
             )?
         };
+        let left = crate::sync::shared_leave::has_left(manager.vault())?;
         Ok(Self {
             manager,
             queue,
             config,
             mode: tokio::sync::watch::channel(mode).0,
+            left: tokio::sync::watch::channel(left).0,
+            running: tokio::sync::watch::channel(false).0,
         })
     }
 
@@ -123,6 +138,101 @@ impl SyncConnection {
         crate::sync::SyncClient::new(Arc::clone(&self.manager), self.client_config())
             .map(|(client, _events)| client)
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
+    }
+
+    /// Leaves the shared vault this lane's env holds once `notice` confirms
+    /// that `member` left it or was removed (OF-158). The lane ends for good;
+    /// once its loop has stopped and queued what it buffered, every queued
+    /// edit is discarded and the counts recorded
+    /// ([`crate::sync::shared_leave::confirm_shared_leave`]). Only a notice
+    /// confirms a leave: a refused reconnect never does.
+    pub async fn confirm_shared_leave(
+        &self,
+        vault_id: u64,
+        member: &str,
+        notice: &crate::federation::SharedActOutcome,
+    ) -> Result<crate::sync::shared_leave::SharedLeaveReceipt, crate::sync::TransportError> {
+        if crate::sync::shared_leave::left_change(notice, vault_id, member).is_none() {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "the notice is not this member's leave of this shared vault",
+            ));
+        }
+        self.left.send_replace(true);
+        let mut running = self.running.subscribe();
+        // A loop that does not stop in time may queue its last buffer after
+        // the discard.
+        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        crate::sync::shared_leave::confirm_shared_leave(
+            self.manager.vault(),
+            vault_id,
+            member,
+            notice,
+        )
+        .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
+    }
+
+    /// Asks the sync server for this member's own leave notices with the
+    /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
+    /// confirms the first that ends `member`'s membership in `vault_id`
+    /// ([`Self::confirm_shared_leave`]). `None` while no notice says so. A
+    /// refused or failed request is an error, never a leave.
+    pub async fn check_shared_leave(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
+    {
+        use crate::sync::TransportError;
+
+        #[derive(serde::Deserialize)]
+        struct LeftNotices {
+            notices: Vec<crate::federation::SharedActOutcome>,
+        }
+
+        let Some(credential) = self.config.client_config.transport_credential.as_ref() else {
+            return Err(TransportError::InvalidPayload(
+                "a leave check needs the lane's slip",
+            ));
+        };
+        let base = self.config.client_config.server_url.as_str();
+        let http = if let Some(rest) = base.strip_prefix("wss://") {
+            format!("https://{rest}")
+        } else if let Some(rest) = base.strip_prefix("ws://") {
+            format!("http://{rest}")
+        } else {
+            base.to_owned()
+        };
+        let mut url = reqwest::Url::parse(&http)
+            .map_err(|_| TransportError::InvalidPayload("the sync server URL does not parse"))?;
+        url.set_path(LEFT_NOTICES_PATH);
+        url.set_query(None);
+        let headers = credential
+            .left_notice_headers(crate::unix_seconds_now())
+            .map_err(TransportError::InvalidPayload)?;
+        let mut request = reqwest::Client::new().post(url);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| TransportError::Storage(format!("leave notice request failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(TransportError::InvalidPayload(
+                "the home refused the leave notice request",
+            ));
+        }
+        let answer: LeftNotices = response.json().await.map_err(|_| {
+            TransportError::InvalidPayload("the leave notice answer does not decode")
+        })?;
+        let Some(notice) = answer.notices.iter().find(|notice| {
+            crate::sync::shared_leave::left_change(notice, vault_id, member).is_some()
+        }) else {
+            return Ok(None);
+        };
+        self.confirm_shared_leave(vault_id, member, notice)
+            .await
+            .map(Some)
     }
 
     /// The residence mode this machine runs now.
