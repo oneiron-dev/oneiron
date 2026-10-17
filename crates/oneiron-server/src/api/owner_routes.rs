@@ -41,6 +41,7 @@ mod budget_hold_routes;
 mod commitment_routes;
 mod concern_routes;
 mod conflict_routes;
+mod connector_admission_routes;
 mod connector_consent_routes;
 mod connector_subscription_routes;
 mod cooperative_deletion_routes;
@@ -107,6 +108,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(budget_hold_routes::routes())
         .merge(commitment_routes::routes())
         .merge(conflict_routes::routes())
+        .merge(connector_admission_routes::routes())
         .merge(connector_consent_routes::routes())
         .merge(connector_subscription_routes::routes())
         .merge(diary_routes::routes())

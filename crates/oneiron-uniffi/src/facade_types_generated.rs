@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 259 facade rows, 815 generated types.
+// UniFFI census: 259 facade rows, 822 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 219.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -964,6 +964,111 @@ pub enum ShapeCeiling {
     Proposed,
 }
 
+/// `oneiron::vault_shape::skill::ShapeSkillSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "from")]
+pub enum ShapeSkillSource {
+    #[serde(rename = "library")]
+    Library {
+        #[serde(rename = "subtree")]
+        subtree: String,
+    },
+    #[serde(rename = "hub")]
+    Hub {
+        #[serde(rename = "hub")]
+        hub: String,
+        #[serde(rename = "folder")]
+        folder: String,
+        #[serde(rename = "pin_type")]
+        pin_type: String,
+        #[serde(rename = "pin_value")]
+        pin_value: String,
+        #[serde(rename = "publisher")]
+        publisher: String,
+    },
+}
+
+/// `oneiron::vault_shape::channel::ShapeSelfHeld`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeSelfHeld {
+    #[serde(rename = "dedicated_address")]
+    DedicatedAddress,
+    #[serde(rename = "dedicated_handle")]
+    DedicatedHandle,
+    #[serde(rename = "shared_presence")]
+    SharedPresence,
+}
+
+/// `oneiron::vault_shape::channel::ShapeMailScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeMailScope {
+    #[serde(rename = "mail.read")]
+    MailRead,
+    #[serde(rename = "mail.metadata")]
+    MailMetadata,
+    #[serde(rename = "mail.send")]
+    MailSend,
+}
+
+/// `oneiron::vault_shape::channel::ShapeChannelCustody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "held")]
+pub enum ShapeChannelCustody {
+    #[serde(rename = "self_held")]
+    SelfHeld {
+        #[serde(rename = "shape")]
+        shape: ShapeSelfHeld,
+    },
+    #[serde(rename = "delegated")]
+    Delegated {
+        #[serde(rename = "custody_record_ref")]
+        custody_record_ref: String,
+        #[serde(rename = "scopes")]
+        scopes: Vec<ShapeMailScope>,
+    },
+}
+
+/// `oneiron::vault_shape::channel::ShapeChannelBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "to")]
+pub enum ShapeChannelBinding {
+    #[serde(rename = "actor")]
+    Actor {
+        #[serde(rename = "agent_id")]
+        agent_id: String,
+        #[serde(rename = "facet", default, skip_serializing_if = "Option::is_none")]
+        facet: Option<String>,
+    },
+    #[serde(rename = "vault")]
+    Vault {
+        #[serde(rename = "vault_id")]
+        vault_id: u64,
+    },
+}
+
+/// `oneiron::vault_shape::channel::ShapeChannelFulfillment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeChannelFulfillment {
+    #[serde(rename = "api")]
+    Api,
+    #[serde(rename = "manual")]
+    Manual,
+    #[serde(rename = "review")]
+    Review,
+}
+
+/// `oneiron::vault_shape::channel::ShapeChannelProvision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeChannelProvision {
+    #[serde(rename = "custody")]
+    pub custody: ShapeChannelCustody,
+    #[serde(rename = "binding")]
+    pub binding: ShapeChannelBinding,
+    #[serde(rename = "fulfillment")]
+    pub fulfillment: ShapeChannelFulfillment,
+}
+
 /// `oneiron::vault_shape::grant::ShapeGrantBound`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "domain")]
@@ -1099,6 +1204,8 @@ pub enum ShapeRow {
         skill_id: String,
         #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
         version: Option<String>,
+        #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+        source: Option<ShapeSkillSource>,
     },
     #[serde(rename = "channel")]
     Channel {
@@ -1106,6 +1213,8 @@ pub enum ShapeRow {
         channel: String,
         #[serde(rename = "address")]
         address: String,
+        #[serde(rename = "provision", default, skip_serializing_if = "Option::is_none")]
+        provision: Option<ShapeChannelProvision>,
     },
     #[serde(rename = "grant")]
     Grant {
