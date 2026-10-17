@@ -431,6 +431,9 @@ class Oneiron:
         def artifacts(self) -> "Oneiron._VaultArtifactsVerbs":
             return Oneiron._VaultArtifactsVerbs(self._client)
         @property
+        def code(self) -> "Oneiron._VaultCodeVerbs":
+            return Oneiron._VaultCodeVerbs(self._client)
+        @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
         @property
@@ -900,6 +903,15 @@ class Oneiron:
         def read(self, input: dict[str, Any]) -> Any:
             """Reads one version of a blob artifact's bytes."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_read(json.dumps(input, allow_nan=False))))
+    class _VaultCodeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """The semantic changes between two tested states of one code file, each with the operations that made it."""
+            return json.loads(_translate(lambda: self._client.vault_code_diff(json.dumps(request, allow_nan=False))))
+        def blame(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """Every unit of one tested code file state, blamed by the operations that wrote it."""
+            return json.loads(_translate(lambda: self._client.vault_code_blame(json.dumps(request, allow_nan=False))))
     class _VaultRoomsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

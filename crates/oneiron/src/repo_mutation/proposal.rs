@@ -193,7 +193,8 @@ impl RepoProposal {
         )
         .with_actor_id(self.actor)
         .with_session_id(self.session)
-        .with_provenance_claim_id(self.provenance_claim))
+        .with_provenance_claim_id(self.provenance_claim)
+        .with_op_provenance(self.op_provenance.clone()))
     }
     /// Scores are derived from the retained immutable evidence, not accepted from a caller.
     pub fn triage(&self) -> Result<CritiqueTriage> {
