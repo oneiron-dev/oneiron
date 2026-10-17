@@ -583,6 +583,7 @@ class Inventory:
         self.null_fields = set()
         self.closed = set()
         self.roots = {}       # rust text -> IR
+        self.preferred = {}   # item key -> the name a codec module gives its mirror
         crate, file = ROOT_CONTEXT
         file = file[len(CRATES[crate]) + 1:]
         self.root_context = (crate, file, tuple(file[:-3].split('/')))
@@ -607,7 +608,7 @@ class Inventory:
     # ---- naming
 
     def allocate(self, item):
-        name = item.name
+        name = self.preferred.get(item.key(), item.name)
         if name in self.names or name in RESERVED:
             for size in range(1, len(item.module) + 1):
                 prefix = ''.join(part.title().replace('_', '') for part in item.module[-size:])
@@ -685,11 +686,15 @@ class Inventory:
         return None
 
     def codec(self, ast, codec, context, params, where):
-        'A field under `with = codec`: id, hex, digest and base64 codecs put a string on the wire.'
+        'A field under `with = codec`: id, hex, digest, base64 and decimal codecs put a string on the wire.'
         leaf = codec.rsplit('::', 1)[-1]
         if re.search(r'limited|bounded|capped', codec): return self.ir(ast, context, params, where)
-        stringy = re.search(r'entit|ref|_id|id_|^id$|::id$|hex|digest|base64|b64|hash|blake|uuid|display', codec + '::' + leaf)
+        # `decimal`: a u64 the JSON wire carries as a decimal string, past
+        # JavaScript's safe integers (the shared vault id, OF-158).
+        stringy = re.search(r'entit|ref|_id|id_|^id$|::id$|hex|digest|base64|b64|hash|blake|uuid|display|decimal', codec + '::' + leaf)
         if not stringy:
+            mirror = self.codec_mirror(codec, context)
+            if mirror is not None: return self.ir(parse_type(mirror[0]), mirror[1], params, where)
             return self.fallback(where, codec, 'field codec')
         def walk(node):
             if node[0] == 'path':
@@ -701,6 +706,40 @@ class Inventory:
             if node[0] == 'ref': return walk(node[1])
             return STRING
         return walk(ast)
+
+    def codec_mirror(self, codec, context):
+        'The wire mirror a codec module reads in its `deserialize` (`Option::<Row>::deserialize(deserializer)`), with the context its names resolve in; None when it reads none.'
+        crate, file, module = context
+        segments = codec.split('::')
+        names, _ = self.index.uses(crate, file)
+        if segments[0] in names: segments = list(names[segments[0]]) + segments[1:]
+        place = self.index.absolute(segments, crate, module)
+        if place is None or not place[1]: return None
+        target, path = place[0], tuple(place[1])
+        own = self.index.modules.get((target, path))
+        if own is not None:
+            text, where = self.index.files[(target, own)], (target, own, path)
+        else:
+            parent = self.index.modules.get((target, path[:-1]))
+            if parent is None: return None
+            whole = self.index.files[(target, parent)]
+            inline = re.search(r'(?m)^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+' + re.escape(path[-1]) + r'\s*\{', whole)
+            if not inline: return None
+            text, where = whole[inline.end() - 1:close_of(whole, inline.end() - 1)], (target, parent, path[:-1])
+            # The mirror an inline codec module declares takes the module's
+            # name (`evidence_floors::Row` is `EvidenceFloors`).
+            declared = re.findall(r'\b(?:struct|enum)\s+([A-Za-z_]\w*)', text)
+            title = ''.join(part.title() for part in path[-1].split('_'))
+            for name in declared:
+                for item in self.index.items.get(name, ()):
+                    if item.crate == target and item.file == parent and not item.top:
+                        self.preferred.setdefault(item.key(), title if len(declared) == 1 else title + name)
+        fn = re.search(r'\bfn\s+deserialize\b', text)
+        if not fn: return None
+        body = text[fn.end():close_of(text, text.index('{', fn.end()))]
+        read = re.search(r'(?:<\s*)?((?:[A-Za-z_]\w*::)*[A-Za-z_]\w*(?:::<[^;{}()]*?>)?)(?:\s+as\s+[\w:]*Deserialize[^>]*>)?::deserialize\(\s*deserializer', body)
+        if not read or read.group(1) in ('Self',): return None
+        return read.group(1).replace('::<', '<'), where
 
     def field_ir(self, typ, attrs, context, params, where):
         schema = attr_args(attrs, 'schemars')
@@ -848,9 +887,19 @@ class Inventory:
             if written: return width(written.group(1))
             if re.search(r'serialize_f\d+', body): return FLOAT
             if re.search(r'serialize_bool', body): return BOOL
+            # `serialize_bytes`: serde_json writes the bytes as an array of numbers.
+            if re.search(r'serialize_bytes\(', body): return ('array', width('u8'))
             if item.shape == 'tuple' and re.search(r'self\.0\.serialize\(', body):
                 values = self.tuple_fields(item.body, context, params, where)
                 if values: return values[0]
+            # A struct that writes one of its fields as itself writes that field.
+            delegate = re.search(r'\bself\.([A-Za-z_]\w*)\.serialize\(\s*serializer\s*\)', body)
+            if item.shape == 'named' and delegate:
+                for chunk in split_top(item.body):
+                    attrs, rest = leading_attrs(chunk)
+                    match = re.match(r'(?:pub(?:\s*\([^)]*\))?\s+)?(?:r#)?(\w+)\s*:\s*(.+)$', rest, re.S)
+                    if match and match.group(1) == delegate.group(1):
+                        return self.field_ir(match.group(2).strip(), attrs, context, params, f'{where}.{match.group(1)}')
             # A handwritten pair that reads a wire mirror writes that mirror.
             for crate2, file2, position2 in self.index.de_impls.get(item.name, ()):
                 text2 = self.index.files[(crate2, file2)]

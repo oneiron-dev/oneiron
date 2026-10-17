@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 302 facade rows, 1166 declarations.
-Inputs: 256 of 302 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 250 of 302 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
-Opaque serde_json::Value leaves: 73; unread shapes: 2.
+Census: 302 facade rows, 1167 declarations.
+Inputs: 259 of 302 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 260 of 302 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -338,7 +338,7 @@ class ShapeChannelBindingActor(TypedDict):
     facet: NotRequired[str | None]
 class ShapeChannelBindingVault(TypedDict):
     to: Literal["vault"]
-    vault_id: int
+    vault_id: str
 ShapeChannelBinding = ShapeChannelBindingActor | ShapeChannelBindingVault
 ShapeChannelFulfillment = Literal["api", "manual", "review"]
 class ShapeChannelProvision(TypedDict):
@@ -385,7 +385,7 @@ class ShapeTargetSync(TypedDict):
 ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetFacet | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetManifest | ShapeTargetSync
 class ShapeRowShared(TypedDict):
     kind: Literal["shared"]
-    vault_id: int
+    vault_id: str
     preset: NotRequired[ShapePreset | None]
 class ShapeRowMember(TypedDict):
     kind: Literal["member"]
@@ -484,7 +484,7 @@ class ShapePresetMember(TypedDict):
     role: NotRequired[ShapeMemberRole | None]
 class ShapePresetPick(TypedDict):
     preset: ShapePreset
-    vault_id: int
+    vault_id: str
     members: NotRequired[list[ShapePresetMember]]
 class ShapePlanRequest(TypedDict):
     seed: NotRequired[ShapeSeed | None]
@@ -1863,7 +1863,20 @@ class GeneratedUiActionDeclaration(TypedDict):
     actionId: str
     tier: GeneratedUiActionTier
     action: SelfUiAction
-GeneratedUiStateSnapshot = Any
+class SelfUiStateValueBool(TypedDict):
+    type: Literal["bool"]
+    value: bool
+class SelfUiStateValueNumber(TypedDict):
+    type: Literal["number"]
+    value: FiniteF64
+class SelfUiStateValueText(TypedDict):
+    type: Literal["text"]
+    value: LensText
+class SelfUiStateValueToken(TypedDict):
+    type: Literal["token"]
+    value: str
+SelfUiStateValue = SelfUiStateValueBool | SelfUiStateValueNumber | SelfUiStateValueText | SelfUiStateValueToken
+GeneratedUiStateSnapshot = dict[str, SelfUiStateValue]
 GeneratedUiCardPhase = Literal["generating", "active", "responded", "archived"]
 GeneratedUiArchiveReason = Literal["completed", "expired", "dismissed", "superseded"]
 class GeneratedUiCardLifecycle(TypedDict):
@@ -2220,14 +2233,14 @@ class InspectionResolved(TypedDict):
     item: NotRequired[EntityView | None]
     narrowing: ScopedReadReceipt
 class SharedVaultRequest(TypedDict):
-    vault_id: int
+    vault_id: str
 FederationGrantRole = Literal["owner", "admin", "member", "viewer", "auditor", "delegate", "guest"]
 class ActExecution(TypedDict):
     request: str
     receipt: NotRequired[str | None]
 class PendingAuthorityAct(TypedDict):
     id: str
-    vault_id: int
+    vault_id: str
     act: str
     payload: list[int]
     starter: str
@@ -2240,11 +2253,11 @@ class PendingAuthorityAct(TypedDict):
     completed: bool
     execution: NotRequired[ActExecution | None]
 class SharedTransferRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     to: str
     from_keeps: NotRequired[FederationGrantRole | None]
 class SharedRemoveOwnerRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     target: str
     successor: NotRequired[str | None]
     target_keeps: NotRequired[FederationGrantRole | None]
@@ -2323,7 +2336,7 @@ class SharedActExport(TypedDict):
     diary_reads: list[ExportDiaryRead]
 class SharedActExecutionReceipt(TypedDict):
     id: str
-    vault_id: int
+    vault_id: str
     act_id: NotRequired[str | None]
     request_id: NotRequired[str | None]
     actor: str
@@ -2347,18 +2360,18 @@ class SharedReceiptRequest(TypedDict):
 class SharedActOutcome(TypedDict):
     receipt_id: str
     act_id: NotRequired[str | None]
-    vault_id: int
+    vault_id: str
     recipient: str
     change: SharedVaultChange
     completed_at: int
 class SharedVaultDeletion(TypedDict):
-    vault_id: int
+    vault_id: str
     act_id: str
     receipt_id: str
     deleted_at: int
     backup_retain_until: int
 class SharedMemberAddRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     member: str
     role: NotRequired[FederationGrantRole | None]
     holder_key: NotRequired[str | None]
@@ -2370,16 +2383,16 @@ class SharedMemberInvited(TypedDict):
     receipt: SharedActExecutionReceipt
     credential: NotRequired[InvitationSlip | None]
 class InvitationSlipRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     member: str
     invitation: str
     holder_key: str
 class SharedMemberRoleRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     member: str
     role: FederationGrantRole
 class SharedMemberRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     member: str
 class SharedInvitationStateAcceptedBody(TypedDict):
     at: int
@@ -2397,7 +2410,7 @@ class SharedInvitationStateWithdrawn(TypedDict):
 SharedInvitationState = Literal["pending"] | SharedInvitationStateAccepted | SharedInvitationStateDeclined | SharedInvitationStateWithdrawn
 class SharedInvitation(TypedDict):
     id: str
-    vault_id: int
+    vault_id: str
     inviter: str
     invitee: str
     role: FederationGrantRole
@@ -2406,27 +2419,27 @@ class SharedInvitation(TypedDict):
     state: SharedInvitationState
     founding: bool
 class SharedInvitationRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     invitation: str
 class SharedInvitationWithdrawRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     member: str
     invitation: str
 class PendingActStarted(TypedDict):
     act_id: str
-    vault_id: int
+    vault_id: str
     act: str
     recipient: str
     deadline: int
 class PendingActMatured(TypedDict):
     act_id: str
-    vault_id: int
+    vault_id: str
     act: str
     recipient: str
     deadline: int
     noticed_at: int
 class SharedEraseAskRequest(TypedDict):
-    vault_id: int
+    vault_id: str
     record: str
 EraseAskKind = Literal["request", "proposal"]
 class EraseAskStatusErasedBody(TypedDict):
@@ -2441,7 +2454,7 @@ class EraseAskStatusDeclined(TypedDict):
 EraseAskStatus = Literal["open"] | EraseAskStatusErased | EraseAskStatusDeclined
 class SharedEraseAsk(TypedDict):
     id: str
-    vault_id: int
+    vault_id: str
     kind: EraseAskKind
     asker: str
     record: str
@@ -3059,12 +3072,15 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
 InputKind = Literal["text", "image", "audio"]
+class EvidenceFloors(TypedDict):
+    floor: float
+    strong: float
 class EmbeddingSpace(TypedDict):
     id: str
     dimensions: int
     accepts: list[InputKind]
     query_towers: list[InputKind]
-    evidence: NotRequired[Any]
+    evidence: NotRequired[EvidenceFloors | None]
 class SpaceRefDeclared(TypedDict):
     declared: str
 SpaceRef = Literal["text_index"] | SpaceRefDeclared
@@ -4296,7 +4312,7 @@ class ProjectMintReceipt(TypedDict):
     grant_decision_id: GateDecisionId
     grant_ref: str
 ProjectRole = Literal["project", "corpus"]
-ProjectRevisionHash = Any
+ProjectRevisionHash = list[int]
 class ProjectParentWitness(TypedDict):
     project: EntityId
     head: ProjectRevisionHash
@@ -4380,7 +4396,7 @@ class ProjectRecord(TypedDict):
     wrapper_task: NotRequired[str | None]
 class ProjectRosterWriteRequest(TypedDict):
     project: EntityId
-    record: Any
+    record: ProjectRecord
 ConsentPart = Literal["subject", "spend", "membership", "admission"]
 class RequiredPartySubject(TypedDict):
     subject: JoinSubject
@@ -6187,19 +6203,6 @@ NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):
     status: NoteLifecycleStatus
     seal: NotRequired[NoteSeal | None]
-class SelfUiStateValueBool(TypedDict):
-    type: Literal["bool"]
-    value: bool
-class SelfUiStateValueNumber(TypedDict):
-    type: Literal["number"]
-    value: FiniteF64
-class SelfUiStateValueText(TypedDict):
-    type: Literal["text"]
-    value: LensText
-class SelfUiStateValueToken(TypedDict):
-    type: Literal["token"]
-    value: str
-SelfUiStateValue = SelfUiStateValueBool | SelfUiStateValueNumber | SelfUiStateValueText | SelfUiStateValueToken
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

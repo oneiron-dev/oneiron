@@ -302,14 +302,21 @@ impl Vault {
         self.store.authority_handoff_equivocations.records().dropped
     }
 
-    /// Every saved handoff alarm, acknowledged or not.
+    /// Every saved handoff alarm, acknowledged or not, by the time it was
+    /// raised and then its signer: the one order the SDK read and the owner
+    /// route both answer (OF-158).
     pub fn authority_handoff_alarms(&self) -> Result<Vec<AuthorityHandoffAlarm>> {
         let txn = self.store.env.read_txn()?;
-        let mut alarms = Vec::new();
+        let mut alarms: Vec<AuthorityHandoffAlarm> = Vec::new();
         for row in self.store.vault_meta.prefix_iter(&txn, ALARM_PREFIX)? {
             let (_, raw) = row?;
             alarms.push(serde_json::from_slice(&raw).map_err(|_| invalid_alarm())?);
         }
+        alarms.sort_by(|a, b| {
+            a.raised_at
+                .cmp(&b.raised_at)
+                .then_with(|| a.signer.cmp(&b.signer))
+        });
         Ok(alarms)
     }
 

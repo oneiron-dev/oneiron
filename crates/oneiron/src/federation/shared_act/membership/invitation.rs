@@ -48,6 +48,7 @@ pub enum SharedInvitationState {
 #[serde(deny_unknown_fields)]
 pub struct SharedInvitation {
     pub id: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     /// The PERSON whose `add_member` power issued it, hex.
     pub inviter: String,

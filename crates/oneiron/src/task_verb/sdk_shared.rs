@@ -21,6 +21,8 @@ use crate::{EntityId, Vault};
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedVaultRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
 }
 
@@ -29,6 +31,8 @@ pub struct SharedVaultRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedTransferRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     /// The new Owner's PERSON id, hex: a live person not yet an Owner.
     pub to: String,
@@ -44,6 +48,8 @@ pub struct SharedTransferRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedRemoveOwnerRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     /// The Owner removed, PERSON id hex.
     pub target: String,
@@ -76,6 +82,8 @@ pub struct SharedReceiptRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedMemberAddRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     /// PERSON id, hex.
     pub member: String,
@@ -126,6 +134,8 @@ pub struct InvitationSlip {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedMemberRoleRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     /// PERSON id, hex.
     pub member: String,
@@ -138,6 +148,8 @@ pub struct SharedMemberRoleRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedMemberRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     /// PERSON id, hex.
     pub member: String,

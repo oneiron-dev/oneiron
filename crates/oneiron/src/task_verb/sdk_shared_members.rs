@@ -23,6 +23,8 @@ use crate::{EntityId, Vault};
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedInvitationRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     pub invitation: String,
 }
@@ -32,6 +34,8 @@ pub struct SharedInvitationRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedInvitationWithdrawRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     pub member: String,
     pub invitation: String,
@@ -42,6 +46,8 @@ pub struct SharedInvitationWithdrawRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedEraseAskRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     pub record: String,
 }
@@ -103,6 +109,8 @@ pub fn withdraw_shared_invitation_as(
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InvitationSlipRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     pub member: String,
     pub invitation: String,

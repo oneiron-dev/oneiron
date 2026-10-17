@@ -20,6 +20,7 @@ type WaitingActs = Vec<(Vec<u8>, PendingAuthorityAct)>;
 #[serde(deny_unknown_fields)]
 pub struct PendingActMatured {
     pub act_id: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     pub act: String,
     pub recipient: String,

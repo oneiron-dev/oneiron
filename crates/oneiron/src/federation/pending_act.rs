@@ -229,6 +229,7 @@ impl SharedActPolicy {
 #[serde(deny_unknown_fields)]
 pub struct PendingAuthorityAct {
     pub id: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     pub act: String,
     pub payload: Vec<u8>,
@@ -260,6 +261,7 @@ pub struct ActExecution {
 #[serde(deny_unknown_fields)]
 pub struct PendingActStarted {
     pub act_id: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
     pub vault_id: u64,
     pub act: String,
     pub recipient: String,

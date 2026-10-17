@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 363 code-mode rows (343 host rows, 20 run rows), 1275 declarations.
-// Replies: 301 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 363 code-mode rows (343 host rows, 20 run rows), 1277 declarations.
+// Replies: 311 fully typed, 48 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
+// Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -99,12 +99,12 @@ declare namespace Sdk {
   type ShapeSelfHeld = "dedicated_address" | "dedicated_handle" | "shared_presence";
   type ShapeMailScope = "mail.read" | "mail.metadata" | "mail.send";
   type ShapeChannelCustody = { held: "self_held"; shape: ShapeSelfHeld } | { held: "delegated"; custody_record_ref: string; scopes: ShapeMailScope[] };
-  type ShapeChannelBinding = { to: "actor"; agent_id: string; facet?: string | null } | { to: "vault"; vault_id: number };
+  type ShapeChannelBinding = { to: "actor"; agent_id: string; facet?: string | null } | { to: "vault"; vault_id: string };
   type ShapeChannelFulfillment = "api" | "manual" | "review";
   type ShapeChannelProvision = { custody: ShapeChannelCustody; binding: ShapeChannelBinding; fulfillment: ShapeChannelFulfillment };
   type ShapeGrantBound = { domain: "action"; actor: string; actor_class?: string | null; class: string; selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean } | { domain: "disclosure"; audience: string[]; class: string; selectors: string[] };
   type ShapeTarget = { kind: "shared" } | { kind: "member"; member: string } | { kind: "world"; name: string } | { kind: "facet"; person: string; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "manifest"; manifest_ref: string } | { kind: "sync"; entity_kind: string };
-  type ShapeRow = { kind: "shared"; vault_id: number; preset?: ShapePreset | null } | { kind: "member"; member: string; role: ShapeMemberRole } | { kind: "world"; name: string } | { kind: "facet"; person: string; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null; source?: ShapeSkillSource | null } | { kind: "channel"; channel: string; address: string; provision?: ShapeChannelProvision | null } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "manifest"; manifest_ref: string; body: string } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
+  type ShapeRow = { kind: "shared"; vault_id: string; preset?: ShapePreset | null } | { kind: "member"; member: string; role: ShapeMemberRole } | { kind: "world"; name: string } | { kind: "facet"; person: string; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null; source?: ShapeSkillSource | null } | { kind: "channel"; channel: string; address: string; provision?: ShapeChannelProvision | null } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "manifest"; manifest_ref: string; body: string } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
   type ShapeSeed = { rows: ShapeRow[] };
   type StoredShapeSeed = { id: string; revision: number; parent?: string | null; author: string; written_at: number; seed: ShapeSeed };
   type ShapeChange = "create" | "update" | "retire";
@@ -115,7 +115,7 @@ declare namespace Sdk {
   type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
   type ShapePresetMember = { member: string; role?: ShapeMemberRole | null };
-  type ShapePresetPick = { preset: ShapePreset; vault_id: number; members?: ShapePresetMember[] };
+  type ShapePresetPick = { preset: ShapePreset; vault_id: string; members?: ShapePresetMember[] };
   type ShapePlanRequest = { seed?: ShapeSeed | null; preset?: ShapePresetPick | null };
   type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
   type ShapeReachVerdict = "can" | "asks";
@@ -372,7 +372,8 @@ declare namespace Sdk {
   type GeneratedUiNode = { id: string; parent?: string | null; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; childRefs?: string[] };
   type GeneratedUiActionTier = "local" | "deterministic_tool" | "model_round_trip";
   type GeneratedUiActionDeclaration = { elementId: string; actionId: string; tier: GeneratedUiActionTier; action: SelfUiAction };
-  type GeneratedUiStateSnapshot = unknown;
+  type SelfUiStateValue = { type: "bool"; value: boolean } | { type: "number"; value: FiniteF64 } | { type: "text"; value: LensText } | { type: "token"; value: string };
+  type GeneratedUiStateSnapshot = Record<string, SelfUiStateValue>;
   type GeneratedUiCardPhase = "generating" | "active" | "responded" | "archived";
   type GeneratedUiArchiveReason = "completed" | "expired" | "dismissed" | "superseded";
   type GeneratedUiCardLifecycle = { phase: GeneratedUiCardPhase; revision: number; archiveReason?: GeneratedUiArchiveReason | null };
@@ -448,38 +449,38 @@ declare namespace Sdk {
   type InspectionHandle = string;
   type EntityView = { id_hex: string; short_ref?: string | null; kind: string; occurred_start: number; occurred_end: number; learned_at: number; body?: unknown | null };
   type InspectionResolved = { state: InspectionState; handle: InspectionHandle; item?: EntityView | null; narrowing: ScopedReadReceipt };
-  type SharedVaultRequest = { vault_id: number };
+  type SharedVaultRequest = { vault_id: string };
   type FederationGrantRole = "owner" | "admin" | "member" | "viewer" | "auditor" | "delegate" | "guest";
   type ActExecution = { request: string; receipt?: string | null };
-  type PendingAuthorityAct = { id: string; vault_id: number; act: string; payload: number[]; starter: string; started_at: number; deadline: number; objector_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; objections: string[]; completed: boolean; execution?: ActExecution | null };
-  type SharedTransferRequest = { vault_id: number; to: string; from_keeps?: FederationGrantRole | null };
-  type SharedRemoveOwnerRequest = { vault_id: number; target: string; successor?: string | null; target_keeps?: FederationGrantRole | null; export_first: boolean };
+  type PendingAuthorityAct = { id: string; vault_id: string; act: string; payload: number[]; starter: string; started_at: number; deadline: number; objector_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; objections: string[]; completed: boolean; execution?: ActExecution | null };
+  type SharedTransferRequest = { vault_id: string; to: string; from_keeps?: FederationGrantRole | null };
+  type SharedRemoveOwnerRequest = { vault_id: string; target: string; successor?: string | null; target_keeps?: FederationGrantRole | null; export_first: boolean };
   type SharedActRequest = { act_id: string };
   type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
   type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] };
-  type SharedActExecutionReceipt = { id: string; vault_id: number; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; completed_at: number };
+  type SharedActExecutionReceipt = { id: string; vault_id: string; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; completed_at: number };
   type RemovalExportDelivery = { receipt_id: string; recipient: string; digest: string; delivered_at: number; expires_at: number };
   type SharedActExecuted = { receipt: SharedActExecutionReceipt; delivery?: RemovalExportDelivery | null };
   type SharedReceiptRequest = { receipt_id: string };
-  type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: number; recipient: string; change: SharedVaultChange; completed_at: number };
-  type SharedVaultDeletion = { vault_id: number; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number };
-  type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null; holder_key?: string | null };
+  type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: string; recipient: string; change: SharedVaultChange; completed_at: number };
+  type SharedVaultDeletion = { vault_id: string; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number };
+  type SharedMemberAddRequest = { vault_id: string; member: string; role?: FederationGrantRole | null; holder_key?: string | null };
   type InvitationSlip = { slip_id: string; slip: string; expires_at: number };
   type SharedMemberInvited = { receipt: SharedActExecutionReceipt; credential?: InvitationSlip | null };
-  type InvitationSlipRequest = { vault_id: number; member: string; invitation: string; holder_key: string };
-  type SharedMemberRoleRequest = { vault_id: number; member: string; role: FederationGrantRole };
-  type SharedMemberRequest = { vault_id: number; member: string };
+  type InvitationSlipRequest = { vault_id: string; member: string; invitation: string; holder_key: string };
+  type SharedMemberRoleRequest = { vault_id: string; member: string; role: FederationGrantRole };
+  type SharedMemberRequest = { vault_id: string; member: string };
   type SharedInvitationState = "pending" | { accepted: { at: number } } | { declined: { at: number } } | { withdrawn: { by: string; at: number } };
-  type SharedInvitation = { id: string; vault_id: number; inviter: string; invitee: string; role: FederationGrantRole; issued_at: number; expires_at: number; state: SharedInvitationState; founding: boolean };
-  type SharedInvitationRequest = { vault_id: number; invitation: string };
-  type SharedInvitationWithdrawRequest = { vault_id: number; member: string; invitation: string };
-  type PendingActStarted = { act_id: string; vault_id: number; act: string; recipient: string; deadline: number };
-  type PendingActMatured = { act_id: string; vault_id: number; act: string; recipient: string; deadline: number; noticed_at: number };
-  type SharedEraseAskRequest = { vault_id: number; record: string };
+  type SharedInvitation = { id: string; vault_id: string; inviter: string; invitee: string; role: FederationGrantRole; issued_at: number; expires_at: number; state: SharedInvitationState; founding: boolean };
+  type SharedInvitationRequest = { vault_id: string; invitation: string };
+  type SharedInvitationWithdrawRequest = { vault_id: string; member: string; invitation: string };
+  type PendingActStarted = { act_id: string; vault_id: string; act: string; recipient: string; deadline: number };
+  type PendingActMatured = { act_id: string; vault_id: string; act: string; recipient: string; deadline: number; noticed_at: number };
+  type SharedEraseAskRequest = { vault_id: string; record: string };
   type EraseAskKind = "request" | "proposal";
   type EraseAskStatus = "open" | { erased: { by: string; act?: string | null } } | { declined: { by: string } };
-  type SharedEraseAsk = { id: string; vault_id: number; kind: EraseAskKind; asker: string; record: string; asked_at: number; status: EraseAskStatus; closed_at?: number | null };
+  type SharedEraseAsk = { id: string; vault_id: string; kind: EraseAskKind; asker: string; record: string; asked_at: number; status: EraseAskStatus; closed_at?: number | null };
   type SharedEraseAskCloseRequest = { ask_id: string; erased: boolean; act_id?: string | null };
   type GuestRevokeRequest = { grant_ref: EntityId };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
@@ -602,7 +603,8 @@ declare namespace Sdk {
   type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null };
   type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null };
   type InputKind = "text" | "image" | "audio";
-  type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: unknown };
+  type EvidenceFloors = { floor: number; strong: number };
+  type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: EvidenceFloors | null };
   type SpaceRef = "text_index" | { declared: string };
   type SpaceMoveState = "open" | { swapped_in: { at: number; by_owner: boolean } } | { kept: { at: number; timed_out: boolean } } | { undone: { at: number } };
   type PairedInterval = { mean: number; low: number; high: number };
@@ -858,7 +860,7 @@ declare namespace Sdk {
   type GateDecisionId = { bytes: number[] };
   type ProjectMintReceipt = { project_id: string; card_id: string; grant_decision_id: GateDecisionId; grant_ref: string };
   type ProjectRole = "project" | "corpus";
-  type ProjectRevisionHash = unknown;
+  type ProjectRevisionHash = number[];
   type ProjectParentWitness = { project: EntityId; head: ProjectRevisionHash; leader: EntityId };
   type ScopeResource = { kind: "bucket"; key: string } | { kind: "document_version"; document: string; version: string } | { kind: "projection"; key: string };
   type ScopeScope = { world?: string | null; facet?: string | null; relationship?: string | null; project?: string | null; readable: ScopeResource[]; writable: ScopeResource[] };
@@ -869,7 +871,7 @@ declare namespace Sdk {
   type ProjectGoalRecord = { project_id: string; goal: string; why: string; axes: string[] };
   type ProjectBudgetShare = { project_id: string; parent_id: string; share_bps: number };
   type ProjectRecord = { role: ProjectRole; schema_version: number; depth?: number; parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice?: ScopeScope; depth_limit?: number; depth_remaining?: number; write_proof?: ProjectWriteProof | null; leader: string; board: string[]; roster: string[]; sessions: string[]; tasks: string[]; branches: string[]; skill_forks: string[]; goal?: string | null; goal_record?: ProjectGoalRecord | null; why?: string | null; born_from?: string | null; budget?: string | null; budget_share?: ProjectBudgetShare | null; asks: string[]; home_room: string; origin_room?: string | null; origin_thread?: string | null; origin_at?: number | null; wrapper_task?: string | null };
-  type ProjectRosterWriteRequest = { project: EntityId; record: unknown };
+  type ProjectRosterWriteRequest = { project: EntityId; record: ProjectRecord };
   type ConsentPart = "subject" | "spend" | "membership" | "admission";
   type RequiredParty = { subject: JoinSubject } | { payer: EntityId } | "payer_unknown" | { vault_admin: { vault: number } } | { room_host: { room: EntityId } };
   type ConsentNeed = { part: ConsentPart; party: RequiredParty };

@@ -19,9 +19,11 @@ serde validates it, and the engine output is written as its wire JSON and read
 as the record. Nested types need no conversion of their own.
 
 What UniFFI cannot express stays the crate's `WireJson` leaf, inside the
-record and not as the whole argument: a `serde_json::Value`, a recursive type
-(a record cannot hold itself), a tuple, a bare unit, an untyped union and a
-128-bit integer. A row whose input or output has a shape the inventory could
+record and not as the whole argument: a `serde_json::Value`, a type on a
+by-value cycle (a record cannot hold itself; one that reaches itself only
+through a sequence or a map, as a tree's `children: Vec<Self>` does, is an
+ordinary record), a tuple, a bare unit, an untyped union and a 128-bit
+integer. A row whose input or output has a shape the inventory could
 not read keeps that side on `WireJson` whole.
 """
 import json
@@ -34,7 +36,7 @@ WIRE = 'crate::WireJson'
 # A row whose type has a shape the inventory could not read (`unknown`) keeps
 # that whole side on WireJson: `UniffiTypes.root`.
 WIRE_LEAVES = {
-    'recursive': 'the recursive type {name}',   # a UniFFI record cannot hold itself
+    'recursive': 'the recursive type {name}',   # a UniFFI record cannot hold itself by value
     'wide': 'a 128-bit integer',                # UniFFI carries 8 to 64 bits
     'null': 'a unit value',
     'tuple': 'a tuple',
@@ -108,17 +110,26 @@ class UniffiTypes:
     # ---- the reference graph
 
     def cycles(self):
-        'Declarations on a reference cycle: a UniFFI record cannot hold itself.'
+        'Declarations on a by-value reference cycle: a UniFFI record cannot hold itself.'
+        # A sequence or a map holds its values behind a pointer in every
+        # binding (a Swift array, a Kotlin list), so a type that reaches
+        # itself only through one (`children: Vec<Self>`) is an ordinary
+        # record. Only a cycle of by-value edges (a field, an `Option`, a
+        # variant payload) has no finite layout; a generic argument counts
+        # as by value.
         edges = {key: set() for key in self.inv.decls}
         for key, decl in self.inv.decls.items():
-            stack = [decl['ir']]
+            stack = [(decl['ir'], False)]
             while stack:
-                node = stack.pop()
+                node, boxed = stack.pop()
                 kind = node[0]
-                if kind == 'ref': edges[key].add(node[1]); stack.extend(node[2])
-                elif kind in ('array', 'option', 'map', 'partial'): stack.append(node[1])
-                elif kind in ('tuple', 'union', 'and'): stack.extend(node[1])
-                elif kind == 'object': stack.extend(field[1] for field in node[1])
+                if kind == 'ref':
+                    if not boxed: edges[key].add(node[1])
+                    stack.extend((arg, boxed) for arg in node[2])
+                elif kind in ('array', 'map'): stack.append((node[1], True))
+                elif kind in ('option', 'partial'): stack.append((node[1], boxed))
+                elif kind in ('tuple', 'union', 'and'): stack.extend((member, boxed) for member in node[1])
+                elif kind == 'object': stack.extend((field[1], boxed) for field in node[1])
         index, low, stack, on, found, counter = {}, {}, [], set(), set(), [0]
 
         def visit(start):

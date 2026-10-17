@@ -11,12 +11,11 @@ use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::AuthorityHandoffAlarm;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
-use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
@@ -26,43 +25,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/authority/handoff-alarms/acknowledge", post(acknowledge))
 }
 
-#[derive(Debug, Serialize)]
-struct HandoffAlarm {
-    /// The retired key, `suite:hex`.
-    signer: String,
-    /// The refused row's hash, hex.
-    refused: String,
-    /// The held handoffs the key signed, hex.
-    handoffs: Vec<String>,
-    raised: String,
-    /// Who acknowledged it and when; none while it is open.
-    acknowledged: Option<HandoffAlarmAck>,
-    /// Refused rows the owner has acknowledged.
-    seen: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct HandoffAlarmAck {
-    by: String,
-    at: String,
-}
-
-impl From<AuthorityHandoffAlarm> for HandoffAlarm {
-    fn from(alarm: AuthorityHandoffAlarm) -> Self {
-        Self {
-            signer: alarm.signer,
-            refused: alarm.refused,
-            handoffs: alarm.handoffs,
-            raised: rfc3339_secs(alarm.raised_at),
-            acknowledged: alarm.acknowledged.map(|ack| HandoffAlarmAck {
-                by: ack.by,
-                at: rfc3339_secs(ack.at),
-            }),
-            seen: alarm.seen.into_iter().collect(),
-        }
-    }
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AcknowledgeAlarm {
@@ -70,17 +32,16 @@ struct AcknowledgeAlarm {
     signer: String,
 }
 
-/// `GET /v1/owner/authority/handoff-alarms`: every saved alarm, open ones
-/// first.
+/// `GET /v1/owner/authority/handoff-alarms`: every saved alarm in the
+/// shape and order `vault.authority.handoff_alarms` answers (OF-158): unix
+/// seconds, oldest raised first, then by signer.
 async fn list(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Vec<HandoffAlarm>> {
+) -> OwnerReply<Vec<AuthorityHandoffAlarm>> {
     owner(&auth, &server)?;
-    let alarms = blocking(move || -> OwnerResult<Vec<HandoffAlarm>> {
-        let mut alarms = server.vault().authority_handoff_alarms()?;
-        alarms.sort_by_key(|alarm| alarm.acknowledged.is_some());
-        Ok(alarms.into_iter().map(HandoffAlarm::from).collect())
+    let alarms = blocking(move || -> OwnerResult<Vec<AuthorityHandoffAlarm>> {
+        Ok(server.vault().authority_handoff_alarms()?)
     })
     .await?;
     Ok(Json(alarms))
@@ -93,15 +54,15 @@ async fn acknowledge(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<AcknowledgeAlarm>, JsonRejection>,
-) -> OwnerReply<HandoffAlarm> {
+) -> OwnerReply<AuthorityHandoffAlarm> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let alarm = blocking(move || -> OwnerResult<HandoffAlarm> {
+    let alarm = blocking(move || -> OwnerResult<AuthorityHandoffAlarm> {
         match server
             .vault()
             .acknowledge_authority_handoff_alarm(&owner, &request.signer)
         {
-            Ok(alarm) => Ok(alarm.into()),
+            Ok(alarm) => Ok(alarm),
             Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => {
                 Err(OwnerError::NotFound("handoff_alarm", request.signer))
             }
