@@ -5,6 +5,10 @@ mod wordlist;
 
 use heed::{RoTxn, RwTxn};
 
+pub(crate) use self::mask::admit::{
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
+    scan_document_in_txn,
+};
 pub(super) use self::mask::mask_batch_ops;
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
