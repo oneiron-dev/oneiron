@@ -95,6 +95,9 @@ pub enum AgentVerb {
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
+    VaultWidenProposals,
+    VaultWidenProposalsApprove,
+    VaultWidenProposalsDecline,
     VaultSettingsWakePolicySet,
     VaultSettingsInferenceDefaults,
     VaultSettingsInferenceDefaultsReplace,
@@ -342,6 +345,9 @@ impl AgentVerb {
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
+        Self::VaultWidenProposals,
+        Self::VaultWidenProposalsApprove,
+        Self::VaultWidenProposalsDecline,
         Self::VaultSettingsWakePolicySet,
         Self::VaultSettingsInferenceDefaults,
         Self::VaultSettingsInferenceDefaultsReplace,
@@ -594,6 +600,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
+            Self::VaultWidenProposals => "vault.widen_proposals",
+            Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
+            Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
             Self::VaultSettingsWakePolicySet => "vault.settings.wake_policy.set",
             Self::VaultSettingsInferenceDefaults => "vault.settings.inference_defaults",
             Self::VaultSettingsInferenceDefaultsReplace => {
@@ -842,6 +851,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1096,6 +1108,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1375,6 +1390,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1581,6 +1599,8 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesDelete
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
@@ -1775,6 +1795,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultWidenProposals => &["spec"],
+            Self::VaultWidenProposalsApprove => &["spec"],
+            Self::VaultWidenProposalsDecline => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -2023,6 +2046,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultWidenProposals => &["spec"],
+            Self::VaultWidenProposalsApprove => &["spec"],
+            Self::VaultWidenProposalsDecline => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -2429,6 +2455,15 @@ impl AgentVerb {
             }
             Self::VaultSettingsLearningClear => {
                 "The owner clears one learned-setting row of a key, mode and scope."
+            }
+            Self::VaultWidenProposals => {
+                "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."
+            }
+            Self::VaultWidenProposalsApprove => {
+                "The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued."
+            }
+            Self::VaultWidenProposalsDecline => {
+                "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
             }
             Self::VaultSettingsWakePolicySet => {
                 "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."
