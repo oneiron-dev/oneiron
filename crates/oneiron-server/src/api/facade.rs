@@ -30,6 +30,7 @@ mod call_context;
 mod connector_call_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
+mod critic_review_doors;
 mod decision_ask_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
@@ -93,8 +94,8 @@ use oneiron::memory::{
     MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::runtime_hooks::verb::{
-    HOOK_RESULT_NOT_RETAINED, InvocationClaim, InvocationEntry, InvocationOutcome,
-    VerbAskCredential, VerbAskDoor, VerbAskDrainPermit, VerbAskRefusal,
+    InvocationClaim, InvocationEntry, InvocationOutcome, VerbAskCredential, VerbAskDoor,
+    VerbAskDrainPermit, VerbAskRefusal,
 };
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbHookPre, VerbHookStop, hook_class};
 use oneiron::task_verb::verb_hook_boundary;
@@ -546,26 +547,6 @@ fn facade_invocation<'v>(
     })
 }
 
-/// The pre chain of row `verb` for `actor` over `args`, off the async
-/// runtime (ARCH-0080 §3): a hook may write, open an ask and run its
-/// sandbox. Every server door that runs a row itself, not through `invoke`,
-/// crosses it here. Its hooks read as `actor`; a door that holds its
-/// caller's key calls [`row_hooks_pre_with`].
-pub(crate) async fn row_hooks_pre(
-    server: &Arc<SyncServer>,
-    actor: EntityId,
-    class: EdgeActorClass,
-    invocation: Option<InvocationId>,
-    verb: &str,
-    args: serde_json::Value,
-) -> Result<VerbHookPre, MemoryError> {
-    let resume = RowHookResume::default();
-    row_hooks_pre_with(
-        server, None, None, actor, class, invocation, verb, args, resume,
-    )
-    .await
-}
-
 /// What a row's pre chain carries for settlement (ARCH-0080 §3 Ask): the
 /// credential a caller's call can run again on through its door, and the
 /// drain's permit when settlement runs it again. The default carries
@@ -576,15 +557,17 @@ pub(crate) struct RowHookResume {
     pub(crate) drain: Option<VerbAskDrainPermit>,
 }
 
-/// [`row_hooks_pre`] for a door that holds its caller's read key and its own
-/// admission of rewritten args. The hooks read under `reader`, capped by
-/// their grant, and as `actor` when it is `None`. A rewrite must pass the
-/// row's input check, then `check`, as if the caller sent it. An ask saves
-/// `resume`'s credential, and its drain permit marks the chain's thread as
-/// the drain's run of the call.
+/// The pre chain of row `verb` for `actor` over `args`, off the async
+/// runtime (ARCH-0080 §3): a hook may write, open an ask and run its
+/// sandbox. Every server door that runs a row itself, not through `invoke`,
+/// crosses it here. The hooks read under `reader`, capped by their grant,
+/// and as `actor` when it is `None`. A rewrite must pass the row's input
+/// check, then `check`, as if the caller sent it. An ask saves `resume`'s
+/// credential, and its drain permit marks the chain's thread as the drain's
+/// run of the call.
 #[expect(
     clippy::too_many_arguments,
-    reason = "row_hooks_pre's inputs plus the caller's key, rewrite admission and resume"
+    reason = "the row's call plus the caller's key, rewrite admission and resume"
 )]
 pub(crate) async fn row_hooks_pre_with(
     server: &Arc<SyncServer>,
@@ -1232,6 +1215,11 @@ impl FacadeApiError {
     }
 }
 
+/// The engine's code for a drained verb call that completed once its hook's
+/// ask was answered, but whose result was over what a retry keeps (OF-580):
+/// the call ran, and must not be sent again.
+const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
+
 /// The status a retry reads when its drained call completed but the result
 /// was not kept (OF-580): final, and not a server failure.
 const HOOK_RESULT_NOT_RETAINED_STATUS: StatusCode = StatusCode::GONE;
@@ -1304,6 +1292,8 @@ impl From<MemoryError> for FacadeApiError {
         };
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(code = %error.code, error = %error.message, "facade verb failed");
+        } else if error.code == HOOK_RESULT_NOT_RETAINED {
+            tracing::info!(code = %error.code, "facade verb ran; its result was not retained");
         }
         Self {
             status,

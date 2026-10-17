@@ -175,6 +175,7 @@ vaultArtifactsProposals(requestJson: string): string
 vaultArtifactsWaits(requestJson: string): string
 vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
+vaultCriticReview(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string

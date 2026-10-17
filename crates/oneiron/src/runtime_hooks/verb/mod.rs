@@ -26,7 +26,7 @@ use crate::memory::MemoryResult;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
-pub use ask::HOOK_RESULT_NOT_RETAINED;
+pub(crate) use ask::HOOK_RESULT_NOT_RETAINED;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope, VerbAskInstrument, VerbAskRefusal,

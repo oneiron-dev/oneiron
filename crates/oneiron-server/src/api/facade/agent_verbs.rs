@@ -154,6 +154,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.artifacts.waits", post(facade_route))
         .route("/vault.artifacts.release_wait", post(facade_route))
         .route("/vault.artifacts.review_slides", post(facade_route))
+        .route("/vault.critic.review", post(facade_route))
         .route("/vault.artifacts.propose_deck", post(facade_route))
         .route("/vault.artifacts.propose_output", post(facade_route))
         .route("/vault.artifacts.keep", post(facade_route))

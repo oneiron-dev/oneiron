@@ -39,7 +39,7 @@ pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
 /// The error a retry gets when the drained call completed but its result was
 /// over [`MAX_SAVED_VERB_RESULT_BYTES`]: the call ran, and must not be sent
 /// again.
-pub const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
+pub(crate) const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
 
 /// One stopped call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -340,8 +340,11 @@ fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHoo
 /// chain's own rows (`write`), in the ask's write. `write` runs first, so a
 /// resumed chain uses up its old answer before the new ask's row takes the
 /// key. `resume` is saved with the call; a credential call's witness, the
-/// one its pre chain carries on this thread, is pinned beside it. `Err(reason)`
-/// when the ask door refused: nothing was saved.
+/// one its pre chain carries on this thread, is pinned beside it. An ask the
+/// approval mode holds (ASK-3; never one to the owner alone) saves the same
+/// in its admission: a retry reads the hold's Pending, and the release mints
+/// the group the row names. `Err(reason)` when the ask door refused: nothing
+/// was saved.
 #[expect(
     clippy::too_many_arguments,
     reason = "the call, the hook, its place, the args, the label, the resume target and the chain's write"

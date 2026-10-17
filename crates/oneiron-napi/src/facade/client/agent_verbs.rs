@@ -1448,6 +1448,12 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_critic_review(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.critic.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_artifacts_propose_deck(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {

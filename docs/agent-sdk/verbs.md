@@ -152,6 +152,7 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.waits`
 - `vault.artifacts.release_wait`
 - `vault.artifacts.review_slides`
+- `vault.critic.review`
 - `vault.artifacts.propose_deck`
 - `vault.artifacts.propose_output`
 - `vault.artifacts.keep`

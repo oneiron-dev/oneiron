@@ -539,6 +539,9 @@ class Oneiron:
         def code(self) -> "Oneiron._VaultCodeVerbs":
             return Oneiron._VaultCodeVerbs(self._client)
         @property
+        def critic(self) -> "Oneiron._VaultCriticVerbs":
+            return Oneiron._VaultCriticVerbs(self._client)
+        @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
         @property
@@ -1243,6 +1246,12 @@ class Oneiron:
         def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
             return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
+    class _VaultCriticVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def review(self, spec):
+            """Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."""
+            return json.loads(_translate(lambda: self._client.vault_critic_review(json.dumps(spec))))
     class _VaultRoomsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
