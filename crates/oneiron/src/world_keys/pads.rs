@@ -21,12 +21,15 @@
 //!
 //! Deleting a world destroys nothing: its keys, pads and sealed copies stay, so
 //! the world restores from old bundles until they age out (DEC-0006). Its
-//! content stays hidden by the ordinary delete marker.
+//! content stays hidden by the ordinary delete marker. The delete also records
+//! when it happened, and for [`DELETED_WORLD_KEEP_SECS`] after that a pin change
+//! still rewraps the world's keys to the new root (`repin`), so the new kit
+//! restores it too.
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{WorldKeyId, os_fill, refused};
+use super::{SEALED_BUNDLE_KEEP, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, WorldKeyId, os_fill, refused};
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::deletion::{TombstoneReason, TombstoneValueV2, stage_engine_row_hard_erasure_in_txn};
@@ -34,7 +37,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD, ENTITY_TYPE_WORLD_KEY_PAD};
-use crate::side_table::{self, HexId, Named, SideTable};
+use crate::side_table::{self, HexId, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -46,6 +49,14 @@ const PAD_BODY_LEN: usize = PAD_LABEL.len() + 16 + 8 + 16 + 32;
 
 const DESTROYED: SideTable<HexId, WorldKeyDestruction, Named> =
     SideTable::new(&side_table::WORLD_KEY_DESTROYED);
+/// When a world was soft-deleted here, in vault seconds.
+const DELETED: SideTable<HexId, u64, Raw> = SideTable::new(&side_table::WORLD_KEY_DELETED);
+
+/// How long after a soft delete a pin change still rewraps the world's keys:
+/// while the bundles that hold the world are kept, 90 daily generations
+/// (DEC-0006; the Engine's call, 10-18).
+pub(crate) const DELETED_WORLD_KEEP_SECS: u64 =
+    SEALED_BUNDLE_KEEP as u64 * SEALED_BUNDLE_UPLOAD_INTERVAL_SECS;
 
 /// One key's pad. It has no `Clone` and no `Serialize`, its `Debug` prints
 /// nothing, and its bytes are wiped on drop.
@@ -196,6 +207,45 @@ pub(crate) fn world_keys_destroyed_in_txn(
     let id = HexId(world);
     Ok(DESTROYED.contains(store, txn, &id)?
         || store.port_deletion_marked(txn, DeletionMarker::HardDelete, &world)?)
+}
+
+/// Records when `world` was soft-deleted, in the delete's own transaction, so a
+/// pin change keeps its keys restorable for [`DELETED_WORLD_KEEP_SECS`]. A row
+/// that is not a WORLD is skipped, and the first record stands.
+pub(crate) fn note_world_deleted_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    world: EntityId,
+    deleted_at: u64,
+) -> Result<()> {
+    let is_world = store
+        .port_entity_with_raw(wtxn, &world, |raw| {
+            Ok(EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD))
+        })?
+        .unwrap_or(false);
+    let key = HexId(world);
+    if is_world && !DELETED.contains(store, wtxn, &key)? {
+        DELETED.put(store, wtxn, &key, &deleted_at)?;
+    }
+    Ok(())
+}
+
+/// Whether `world` was soft-deleted here less than [`DELETED_WORLD_KEEP_SECS`]
+/// before `now`, and its keys were not destroyed since: a pin change still
+/// rewraps them, so the new kit restores the world from old bundles. An erased
+/// world stays shredded.
+pub(crate) fn deleted_world_keys_kept_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+    now: u64,
+) -> Result<bool> {
+    let Some(deleted_at) = DELETED.get(store, txn, &HexId(world))? else {
+        return Ok(false);
+    };
+    Ok(now < deleted_at.saturating_add(DELETED_WORLD_KEEP_SECS)
+        && !world_keys_destroyed_in_txn(store, txn, world)?)
 }
 
 /// The world whose key a pad row `raw` splits: `None` for a row that is not
