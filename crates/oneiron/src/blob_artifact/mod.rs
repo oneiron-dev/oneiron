@@ -25,6 +25,7 @@
 
 mod body;
 mod born_from;
+mod create;
 mod family;
 mod holders;
 mod lifecycle;
@@ -43,6 +44,7 @@ pub use self::body::{
     encode_blob_artifact_body,
 };
 pub use self::born_from::{BornFromArtifact, BornFromSource};
+pub use self::create::ArtifactCreateRequest;
 pub(crate) use self::family::hash_hex;
 pub use self::family::{ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView};
 pub(crate) use self::holders::{

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 208 facade rows, 708 declarations.
-Inputs: 181 of 208 fully typed, 26 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 168 of 208 fully typed, 32 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 46; unread shapes: 1.
+Census: 210 facade rows, 712 declarations.
+Inputs: 182 of 210 fully typed, 27 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 170 of 210 fully typed, 32 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 47; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2859,6 +2859,20 @@ class TurnActionReceipt(TypedDict):
     turn_id: str
     message_id: str
     attempt_id: str
+class MessageReactionExternal(TypedDict):
+    connector: str
+    id: str
+    origin: NotRequired[str | None]
+class MessageReactionRequest(TypedDict):
+    message: str
+    by: str
+    glyph: str
+    occurred_at: NotRequired[int | None]
+    remove: NotRequired[bool]
+    external: NotRequired[MessageReactionExternal | None]
+class MessageReactionReceipt(TypedDict):
+    id: str
+    event: str
 class RoomHostRequest(TypedDict):
     room_ref: str
     session_ref: NotRequired[str | None]
@@ -3459,6 +3473,12 @@ class AdmitImportedClaimInput(TypedDict):
     value: Any
     occurred_at: int
     learned_at: NotRequired[int | None]
+class ArtifactCreateRequest(TypedDict):
+    name: str
+    media_type: str
+    content_base64: str
+    run_ref: NotRequired[str | None]
+    made_by: NotRequired[Any | None]
 class BlobArtifactInput(TypedDict):
     id: NotRequired[str | None]
     name: str
