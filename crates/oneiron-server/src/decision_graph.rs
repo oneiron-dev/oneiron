@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::questions::{
     GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionCriteria,
-    refresh_due_questions_by_role,
+    refresh_due_artifact_questions, refresh_due_questions_by_role,
 };
 use oneiron::llm::decision::{
     AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
@@ -31,6 +31,7 @@ use oneiron::{
 };
 
 use crate::ai_host::LocalVisionModel;
+use crate::decision_artifact::HostUnitDecider;
 use crate::decision_verdict::vision_rung;
 use crate::server::SyncServer;
 
@@ -131,13 +132,10 @@ impl<'s> LadderGraphAnswerer<'s> {
         self
     }
 
-    /// The answerer under the question's own `posture` where it is stricter
-    /// than the vault's; `None` holds the vault's, which its rungs keep.
+    /// The answerer under the question's own `posture`
+    /// ([`question_posture`]).
     pub(crate) fn with_posture(mut self, posture: Option<HostingPrivacyPosture>) -> Self {
-        let vault = self.server.vault().privacy_posture();
-        self.posture = posture
-            .map(|posture| stricter(vault, posture))
-            .filter(|posture| *posture != vault);
+        self.posture = question_posture(self.server, posture);
         self
     }
 
@@ -151,6 +149,37 @@ impl<'s> LadderGraphAnswerer<'s> {
             None => ladder,
         }
     }
+}
+
+/// A question's `posture` where it is stricter than the vault's; `None`
+/// holds the vault's, which the rungs keep themselves.
+pub(crate) fn question_posture(
+    server: &SyncServer,
+    posture: Option<HostingPrivacyPosture>,
+) -> Option<HostingPrivacyPosture> {
+    let vault = server.vault().privacy_posture();
+    posture
+        .map(|posture| stricter(vault, posture))
+        .filter(|posture| *posture != vault)
+}
+
+/// `ladder` without the rungs a question's stricter `posture` keeps unit
+/// text from, and `dial` starting at the first rung it leaves in the dial,
+/// when there is one.
+fn under_question_posture<'l>(
+    server: &SyncServer,
+    ladder: DecisionLadder<'l>,
+    posture: Option<HostingPrivacyPosture>,
+    dial: &mut DecisionDial,
+) -> DecisionLadder<'l> {
+    let Some(posture) = posture else {
+        return ladder;
+    };
+    let ladder = ladder.under_posture(posture, server.decision_host().remote_opt_in());
+    if let Some(first) = ladder.first_media_reader(dial.first, dial.ceiling, false, false) {
+        dial.first = first;
+    }
+    ladder
 }
 
 /// The stricter of two postures: RELAY keeps unit text on the host,
@@ -302,6 +331,9 @@ pub(crate) struct LadderCall<'a> {
     pub(crate) label: &'a str,
     /// Where a person ask goes; none is the vault's owners.
     pub(crate) ask_to: Option<&'a AskTo>,
+    /// The question's posture where it is stricter than the vault's
+    /// ([`question_posture`]).
+    pub(crate) posture: Option<HostingPrivacyPosture>,
 }
 
 /// The call through the host's ladder. A call with images starts at the
@@ -330,6 +362,7 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
     ladder.ask_to = call.ask_to;
+    let ladder = under_question_posture(server, ladder, call.posture, &mut dial);
     ladder.run_images(
         call.question,
         call.principal,
@@ -368,6 +401,7 @@ pub(crate) fn ladder_located(server: &SyncServer, call: LadderCall<'_>) -> Resul
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
     ladder.ask_to = call.ask_to;
+    let ladder = under_question_posture(server, ladder, call.posture, &mut dial);
     ladder.run_located(
         call.question,
         call.principal,
@@ -455,6 +489,22 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             question = %failure.question.to_hex(),
             kind = ?failure.error.kind(),
             "a standing question was not refreshed; it is held, then runs again"
+        );
+    }
+    let host = server.decision_host();
+    let artifacts =
+        refresh_due_artifact_questions(server.vault(), now, &host.bands(), |record, actor| {
+            Ok(
+                HostUnitDecider::new(server, actor.actor_class(), "vault.artifacts.ask")
+                    .with_question(&record.definition),
+            )
+        })?;
+    for failure in &artifacts.failures {
+        tracing::warn!(
+            question = %failure.question.to_hex(),
+            artifact = ?failure.artifact.map(|artifact| artifact.to_hex()),
+            kind = ?failure.error.kind(),
+            "a standing artifact question was not asked; it is held, then runs again"
         );
     }
     match server.vault().climb_unheld_decision_asks() {

@@ -545,6 +545,9 @@ side_tables! {
     /// An entity's typed body: its schema tag, birth and head frontiers and commit count. Key:
     /// id16 (entity).
     TYPED_BODY_HEAD: VaultMeta b"typed_body:head:v1:" Named;
+    /// A standing artifact question's last ask of one artifact: the head versions it read and
+    /// the proposal its answers wait under. Key: id16(question) + id16(artifact).
+    TYPED_QUESTION_ARTIFACT_ASKED: VaultMeta b"typed_question:artifact_asked:v1:" Named;
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;
