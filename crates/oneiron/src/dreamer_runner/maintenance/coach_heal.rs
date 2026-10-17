@@ -6,7 +6,8 @@
 //! lands as a proposed heal in the owner's run tray, counted by the oversight
 //! receipts. The Coach is propose-only: nothing here edits a skill, injects a
 //! prompt, resumes a run or touches an environment, and a case the ladder
-//! does not answer goes to a person.
+//! does not answer goes to a person. A filed case heal wakes the Coach's
+//! code-fix run for it (OF-380) on a deployment that exports.
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
@@ -72,7 +73,7 @@ impl HealRoute {
         }
     }
 
-    fn parse(raw: &str) -> Option<Self> {
+    pub(super) fn parse(raw: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|route| route.as_str() == raw)
     }
 }
@@ -262,6 +263,16 @@ impl Vault {
             )?;
             crate::failure_ladder::oversight::proposed_in_txn(self, txn, &case_ref, now)?;
             blocked_reports::settle_in_txn(self, txn, &key, proposal, now)?;
+            super::code_fix::wake_in_txn(
+                self,
+                txn,
+                &case_ref,
+                key,
+                proposal,
+                route,
+                attempt.status.attempt.id,
+                now,
+            )?;
             Ok(proposal)
         })
     }
@@ -345,7 +356,7 @@ impl Vault {
 }
 
 /// The case's blocked reports that still decode, by receipt.
-fn case_reports(
+pub(super) fn case_reports(
     vault: &Vault,
     reports: &[crate::failure_ladder::BlockedReportRef],
 ) -> Result<Vec<(EntityId, BlockedReceipt)>> {

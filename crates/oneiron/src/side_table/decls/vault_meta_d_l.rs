@@ -374,6 +374,10 @@ side_tables! {
     /// One sealed FIX6 code-fix export (an invented example or a candidate fix's result) waiting
     /// for the host to drain it, with the worlds it touched; never real chat text. Key: id16.
     FAILURE_SIGNALS_CODE_FIX: VaultMeta b"failure_signals:code_fix:v1:" Named;
+    /// The Coach's code-fix work on one failure case and its local verdicts: the invented
+    /// example's and the candidate fix's, kept after the export queue drains. Never real chat
+    /// text. Key: id16(case key).
+    FAILURE_SIGNALS_CODE_FIX_WORK: VaultMeta b"failure_signals:code_fix_work:v1:" Named;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
     /// The owner's confidence scale for claims one federation peer sends, this device's local

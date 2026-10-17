@@ -32,6 +32,7 @@ pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
 mod harness;
 pub(crate) mod coach_heal;
+mod code_fix;
 pub(crate) mod identity;
 mod local_vision;
 mod policy;
