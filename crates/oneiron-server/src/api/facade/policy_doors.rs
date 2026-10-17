@@ -70,6 +70,7 @@ async fn run_action(
                 verb_door: None,
                 owner: owner.as_ref(),
                 live_run: None,
+                planner: None,
             },
         )?;
         PolicyActionOutcome::from_dispatch(&dispatch)

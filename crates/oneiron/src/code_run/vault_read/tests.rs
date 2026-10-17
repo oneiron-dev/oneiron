@@ -176,6 +176,8 @@ fn query_request(query: &str) -> CoreQueryRequest {
     CoreQueryRequest {
         query: Some(query.to_owned()),
         query_vector: None,
+        media: None,
+        query_affect: None,
         limit: default_limit(),
         view: None,
         count_mode: CountMode::default_estimate(),

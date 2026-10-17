@@ -570,7 +570,10 @@ impl Vault {
         Ok(())
     }
 
-    /// Owner-only: stop one reader's digests. Its saved digests stay.
+    /// Owner-only: stop one reader's digests. Its saved digests stay, and
+    /// its newest rendered period settles on the weave-report skill's axes
+    /// now, since no next period will render to settle it (CALLS: OF-499
+    /// stopped digest settles at stop).
     pub fn clear_weave_digest_schedule(
         &self,
         owner: &AuthenticatedOwner,
@@ -584,6 +587,19 @@ impl Vault {
                 .delete(txn, &reader.key(SCHEDULE_PREFIX))?)
         })?;
         self.store.notify_proactivity_changes();
+        if cleared && let Some((at, report, last)) = self.previous_weave_lens(reader, u64::MAX)? {
+            // Evidence about the skill, never a gate on the stop.
+            if let Err(error) = settle_weave_lens_axes(
+                self,
+                reader,
+                at,
+                &report,
+                &last,
+                self.store.clock.now_recorded_at(),
+            ) {
+                tracing::warn!(?error, "the stopped weave digest's last period did not settle");
+            }
+        }
         Ok(cleared)
     }
 
