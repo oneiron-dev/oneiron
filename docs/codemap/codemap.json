@@ -11194,7 +11194,7 @@
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {

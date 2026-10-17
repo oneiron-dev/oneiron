@@ -908,7 +908,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
 | `src/code_run/storage/folds.rs` | src | s | 3 crate-vis | — | One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's… |
 | `src/code_run/storage/mod.rs` | src | s | 3 re-export · 12 crate-vis | — | Canonical code-run persistence rows and the executor's storage routing |
-| `src/code_run/storage/reader_folds.rs` | src | m | 17 crate-vis | — | A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where… |
+| `src/code_run/storage/reader_folds.rs` | src | m | 18 crate-vis | — | A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where… |
 | `src/code_run/storage/reader_jobs.rs` | src | L | 2 struct · 1 enum · 11 fn · 28 crate-vis | ReaderJobs, SummaryMember, SummaryRead | One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record… |
 | `src/code_run/storage/records.rs` | src | L | 2 struct · 11 fn · 28 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/routing.rs` | src | L | 31 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
