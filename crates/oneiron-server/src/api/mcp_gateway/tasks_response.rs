@@ -889,6 +889,10 @@ fn mcp_agent_verb_input(
         "vault.shared.close_erase_ask" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.mint_slip" => a.spec.clone().ok_or_else(invalid),
+        "vault.residence.mode" => a.spec.clone().ok_or_else(invalid),
+        "vault.residence.open" => a.spec.clone().ok_or_else(invalid),
+        "vault.residence.index" => a.spec.clone().ok_or_else(invalid),
+        "vault.residence.prune" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_preview" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.research.bind" => a.spec.clone().ok_or_else(invalid),
@@ -1145,6 +1149,7 @@ fn mcp_agent_verb_input(
         "connector.status" => a.spec.clone().ok_or_else(invalid),
         "connector.call" => a.spec.clone().ok_or_else(invalid),
         "connector.schema" => a.spec.clone().ok_or_else(invalid),
+        "connector.call_status" => a.spec.clone().ok_or_else(invalid),
         "vault.commit" => a.spec.clone().ok_or_else(invalid),
         "vault.remember" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.retract" => a.spec.clone().ok_or_else(invalid),
@@ -1561,6 +1566,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.guests.mint_slip" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.residence.mode" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.residence.open" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.residence.index" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.residence.prune" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.records.erase_preview" => {
@@ -2047,6 +2064,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "connector.schema" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "connector.call_status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.commit" => {
@@ -3591,6 +3611,54 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_guests_mint_slip(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.residence.mode" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.residence.mode", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ResidenceModeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_residence_mode(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.residence.open" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.residence.open", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ResidenceOpenRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_residence_open(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.residence.index" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.residence.index", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ResidenceMachineRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_residence_index(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.residence.prune" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.residence.prune", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ResidencePruneRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_residence_prune(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -5292,6 +5360,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::ConnectorSchemaRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::connector_schema(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "connector.call_status" => {
+            let input: oneiron::task_verb::sdk::ConnectorCallStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::connector_call_status(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -52,6 +52,8 @@ pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::guest_doors::*;
+// The owner's residence doors (OF-534), likewise.
+pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
@@ -739,6 +741,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.legal_holds.list"
         | "vault.legal_holds.log"
         | "vault.legal_holds.lift_and_erase"
+        | "vault.residence.mode"
+        | "vault.residence.open"
+        | "vault.residence.index"
+        | "vault.residence.prune"
         | "vault.courtesy_delete.send"
         | "vault.courtesy_delete.sent"
         | "vault.courtesy_delete.incoming"

@@ -5,17 +5,20 @@
 //!
 //! The Kotlin object's field holds one `Arc` of the engine. Each call clones
 //! it out and releases the field before it blocks, so no lock and no Kotlin
-//! monitor is held while the engine calls back into the app's `AppHost`.
+//! monitor is held while the engine calls back into the app's `AppHost`. A
+//! Kotlin `EngineConnection` holds its connection the same way, with a share
+//! of the engine it belongs to.
 
 use std::path::Path;
 use std::sync::{Arc, MutexGuard};
 use std::time::SystemTime;
 
 use jni::objects::{GlobalRef, JByteArray, JObject, JObjectArray, JString, JValue};
-use jni::sys::{jint, jlong, jobject, jsize};
+use jni::sys::{jbyteArray, jint, jlong, jobject, jsize};
 use jni::{JNIEnv, JavaVM};
 use oneiron_server::embedded::{
-    BlockingEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config, host_limits, unix_millis,
+    BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config,
+    host_limits, unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -24,6 +27,16 @@ use super::{NativeVault, display, run};
 
 /// What a Kotlin `EmbeddedEngine`'s field holds.
 type NativeEngine = Arc<BlockingEngine<JniAppHost>>;
+
+/// One connection the app holds, and the engine it belongs to, kept until
+/// the connection goes.
+struct HeldConnection {
+    connection: BlockingConnection,
+    _engine: NativeEngine,
+}
+
+/// What a Kotlin `EngineConnection`'s field holds.
+type NativeConnection = Arc<HeldConnection>;
 
 /// The Kotlin `AppHost` and the JVM to call it on.
 struct JavaHost {
@@ -302,5 +315,85 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_shareNative(
         // SAFETY: Kotlin owns the private long field, initialized to zero.
         // All native hooks execute under that instance's synchronized monitor.
         unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(display)
+    });
+}
+
+/// The connection `object` owns, cloned out of its field, whose lock is
+/// released before this returns.
+fn connection_of(env: &mut JNIEnv<'_>, object: &JObject<'_>) -> Result<NativeConnection, String> {
+    // SAFETY: the Kotlin `EngineConnection` alone owns this private field:
+    // openNative sets it once and closeNative takes it once.
+    let connection: MutexGuard<'_, NativeConnection> =
+        unsafe { env.get_rust_field(object, "nativeHandle") }.map_err(display)?;
+    Ok(Arc::clone(&connection))
+}
+
+/// JNI implementation of the Kotlin `EngineConnection` constructor over an
+/// engine: one fresh connection to its server.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_oneiron_EngineConnection_openNative(
+    mut env: JNIEnv<'_>,
+    object: JObject<'_>,
+    engine: JObject<'_>,
+) {
+    run(&mut env, |env| {
+        let engine = engine_of(env, &engine)?;
+        let connection: NativeConnection = Arc::new(HeldConnection {
+            connection: engine.connect().map_err(chain)?,
+            _engine: engine,
+        });
+        // SAFETY: Kotlin owns the private long field, zero until this sets it
+        // once, before the constructor returns.
+        unsafe { env.set_rust_field(&object, "nativeHandle", connection) }.map_err(display)
+    });
+}
+
+/// JNI implementation of the connection send.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_oneiron_EngineConnection_sendNative(
+    mut env: JNIEnv<'_>,
+    object: JObject<'_>,
+    bytes: JByteArray<'_>,
+) {
+    run(&mut env, |env| {
+        let bytes = env.convert_byte_array(&bytes).map_err(display)?;
+        connection_of(env, &object)?
+            .connection
+            .send(&bytes)
+            .map_err(chain)
+    });
+}
+
+/// JNI implementation of the connection receive: the next bytes, empty once
+/// the connection has ended.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_oneiron_EngineConnection_receiveNative(
+    mut env: JNIEnv<'_>,
+    object: JObject<'_>,
+) -> jbyteArray {
+    run(&mut env, |env| {
+        let bytes = connection_of(env, &object)?
+            .connection
+            .receive()
+            .map_err(chain)?;
+        env.byte_array_from_slice(&bytes)
+            .map(JByteArray::into_raw)
+            .map_err(display)
+    })
+}
+
+/// JNI close ends the app's side of the connection and releases this
+/// object's share of it; a receive blocked on another thread returns empty.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_oneiron_EngineConnection_closeNative(
+    mut env: JNIEnv<'_>,
+    object: JObject<'_>,
+) {
+    run(&mut env, |env| {
+        // SAFETY: Kotlin's close runs this once; take_rust_field clears the
+        // field, so later native calls fail closed.
+        let connection: NativeConnection =
+            unsafe { env.take_rust_field(&object, "nativeHandle") }.map_err(display)?;
+        connection.connection.close().map_err(chain)
     });
 }
