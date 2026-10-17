@@ -38,6 +38,7 @@ both bindings and their export-census tests in one change.
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`
 - `tasks.update`
+- `tasks.accept`
 - `vault.witness`
 - `vault.claims.upsert`
 - `vault.recall`
