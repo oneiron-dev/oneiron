@@ -444,6 +444,9 @@ side_tables! {
     /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
     /// (check).
     SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
+    /// The owner's final pick between a blind preference pair's two responses (preferred side,
+    /// picker, time). Key: string (pair reference).
+    SKILL_OPTIMIZE_RESPONSE_PAIR: VaultMeta b"skill_optimize:response_pair:v1:" Named;
     /// The amendment verdict replacing one attempt's outcome row (MessagePack map: amendment
     /// receipt, `skill_defect` share, event time). Key: the outcome row's full stored key, table
     /// prefix included.
