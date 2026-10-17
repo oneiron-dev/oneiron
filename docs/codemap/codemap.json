@@ -18469,7 +18469,7 @@
      "surface": {
       "const": 18,
       "crate-vis": 8,
-      "fn": 9,
+      "fn": 10,
       "trait": 1
      }
     },
@@ -63534,6 +63534,16 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_offer.rs",
+     "purpose": "The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -70773,14 +70783,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SeatUsage",
       "UsageLedger"
      ],
      "path": "src/usage/ledger.rs",
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -71419,7 +71431,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71813,7 +71825,7 @@
    },
    "over_bar": 44,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 583,
+   "source_files": 584,
    "test_files": 182
   },
   "oneiron-spawn": {
