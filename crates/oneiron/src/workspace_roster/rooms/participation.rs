@@ -10,8 +10,10 @@
 //! and a companion's, which stands on her principal, both count. An agent
 //! never takes a room seat and never joins by writing: it stands on an
 //! OF-531 Ready receipt, and takes part when it is named on a turn or holds
-//! the thread's open TASK. Naming enrolls no one, a TASK is never minted to
-//! let an agent in, and nothing here counts or caps participants.
+//! the thread's open TASK. It speaks, claims or appends only then, or by an
+//! accepted offer card (ARCH-0006a, ruled 2026-09-23). Naming enrolls no
+//! one, a TASK is never minted to let an agent in, and nothing here counts
+//! or caps participants.
 //!
 //! # One stream, folded on read
 //!
@@ -453,11 +455,13 @@ impl Admitted {
 /// on; a held join refuses the write with the parties it waits on, and a
 /// refused one refuses it. An agent never joins by writing: its write
 /// records nothing here, and its speech, claims and reads stand on
-/// [`agent_standing_in_txn`]. For any other cause an agent must stand there
-/// now.
+/// [`agent_standing_in_txn`]. A write is no authority for an agent either
+/// (ARCH-0006a, ruled 2026-09-23): it must stand there now and be spoken to
+/// for the turn the write `answers`, by [`agent_spoken_to_in_txn`]. For any
+/// other cause an agent must stand there now.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the place, the writer, its cause and paid scope, and the decision time"
+    reason = "the place, the writer, its cause, what it answers and paid scope, and the decision time"
 )]
 pub(crate) fn admit_participation_in_txn(
     vault: &Vault,
@@ -466,6 +470,7 @@ pub(crate) fn admit_participation_in_txn(
     branch: Option<EntityId>,
     actor: WriteActor,
     cause: JoinCause,
+    answers: Option<EntityId>,
     scope: Option<&SpendScopeId>,
     now: u64,
 ) -> Result<Admitted> {
@@ -481,10 +486,18 @@ pub(crate) fn admit_participation_in_txn(
     };
     let writes = matches!(admitted.cause, JoinCause::Wrote { .. });
     match subject {
-        JoinSubject::Agent(_) if writes => return Ok(admitted),
         JoinSubject::Agent(agent) => {
             let standing = agent_standing_in_txn(vault, txn, room, branch, agent, scope)?
                 .ok_or_else(|| lacks("the agent has no Ready join in this room or thread"))?;
+            if let JoinCause::Wrote { turn } = &admitted.cause {
+                if !agent_spoken_to_in_txn(vault, txn, room, branch, agent, *turn, answers)? {
+                    return Err(lacks(
+                        "an agent speaks only when it is addressed, holds a task there, or lands an accepted offer",
+                    ));
+                }
+                // Its write is no join, so it records no fact.
+                return Ok(admitted);
+            }
             admitted.join_ref = standing.receipt().cloned();
         }
         JoinSubject::Person(person) => {
@@ -506,6 +519,38 @@ pub(crate) fn admit_participation_in_txn(
     }
     admitted.subject = Some(subject);
     Ok(admitted)
+}
+
+/// Whether `agent` is spoken to for the turn `record` it writes in `room`,
+/// or its thread `branch` (ARCH-0006a, ruled 2026-09-23: an agent speaks
+/// only when it is addressed or holds a task there, and asks in by an offer
+/// card): it is named on the room turn `answers`, holds that turn's open
+/// thread TASK, or `record` is the turn an accepted offer bound to it.
+/// Standing alone never lets an agent speak, and none of these grants a
+/// seat or mints a task.
+fn agent_spoken_to_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    branch: Option<EntityId>,
+    agent: EntityId,
+    record: EntityId,
+    answers: Option<EntityId>,
+) -> Result<bool> {
+    if super::offers::accepts_offer_in_txn(vault, txn, room, branch, agent, record)? {
+        return Ok(true);
+    }
+    let Some(answered) = answers else {
+        return Ok(false);
+    };
+    let Some(turn) = super::TURNS.get(&vault.store, txn, &answered)? else {
+        return Ok(false);
+    };
+    if turn.room_id != room.to_hex() {
+        return Ok(false);
+    }
+    Ok(turn.addressed_agents.contains(&agent.to_hex())
+        || held_thread_task_in_txn(vault, txn, &turn, agent)?.is_some())
 }
 
 /// Files the room join a person's first write in a room needs, in the
@@ -820,6 +865,12 @@ impl Claimant {
         admit_speech_in(vault, txn, self.room, self.actor, self.agent.as_ref())
     }
 
+    /// Whether the claimant takes part as an agent, which claims only a
+    /// turn it is named on or whose thread task it holds.
+    pub(super) const fn is_agent(&self) -> bool {
+        self.agent.is_some()
+    }
+
     /// The open TASK of the claimed turn's thread this agent holds now: the
     /// task's stored assignee, re-read at every claim, so a reassigned or
     /// terminal task authorizes nothing new. No signed room rule allows an
@@ -833,19 +884,7 @@ impl Claimant {
         if self.agent.is_none() {
             return Ok(None);
         }
-        for task in thread_tasks_in_txn(vault, txn, turn)? {
-            match crate::task_verb::open_thread_task_holder_in(
-                vault,
-                txn,
-                task,
-                crate::gate::TaskHolderFallback::AssigneeOnly,
-            ) {
-                Ok(Some(holder)) if holder == self.actor => return Ok(Some(task)),
-                Ok(_) | Err(Error::EntityNotFound) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(None)
+        held_thread_task_in_txn(vault, txn, turn, self.actor)
     }
 
     /// Records the agent's participation once its claim passes: named on the
@@ -881,6 +920,30 @@ impl Claimant {
         }
         Ok(())
     }
+}
+
+/// The open TASK of `turn`'s thread that `holder` holds now: the task's
+/// stored assignee, re-read at every call, so a reassigned or terminal task
+/// authorizes nothing new.
+fn held_thread_task_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &RoomTurn,
+    holder: EntityId,
+) -> Result<Option<EntityId>> {
+    for task in thread_tasks_in_txn(vault, txn, turn)? {
+        match crate::task_verb::open_thread_task_holder_in(
+            vault,
+            txn,
+            task,
+            crate::gate::TaskHolderFallback::AssigneeOnly,
+        ) {
+            Ok(Some(held)) if held == holder => return Ok(Some(task)),
+            Ok(_) | Err(Error::EntityNotFound) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
 }
 
 /// The TASK ids bound along `turn`'s thread chain, from the turn up to its

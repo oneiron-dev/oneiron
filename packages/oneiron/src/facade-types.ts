@@ -362,6 +362,7 @@ export type WitnessMessage = {
 export type WitnessTurn = {
   conversation_ref: string
   turn_ref?: string | null
+  quote?: unknown | null
   messages: (WitnessMessage)[]
   occurred_at: number
 }

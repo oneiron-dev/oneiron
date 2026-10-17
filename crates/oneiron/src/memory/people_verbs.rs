@@ -230,6 +230,7 @@ impl Memory<'_> {
         let receipt = self.witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
+            quote: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author,
