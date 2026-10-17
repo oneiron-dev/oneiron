@@ -16051,7 +16051,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 5
      }
     },
@@ -30739,7 +30739,7 @@
      "purpose": "One conversation's transcript, read as the bound actor: its turns in order, each with the messages it holds…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 3
      }
@@ -30812,8 +30812,8 @@
      "path": "src/memory/witness/stream/admission.rs",
      "purpose": "Begin, append and flush",
      "surface": {
-      "crate-vis": 6,
-      "fn": 5
+      "crate-vis": 7,
+      "fn": 6
      }
     },
     {
