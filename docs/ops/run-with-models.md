@@ -979,8 +979,8 @@ How a call runs:
   summarizer route, which must name a model that `[models]` serves.
 - The enrichment and the safeguard model run on the call's own line.
 
-A full media queue makes heard audio wait for the next cut; a sentence past
-it is not spoken.
+A full media queue makes heard audio wait for the next cut and a sentence
+wait for room. A queue that takes nothing for 30 seconds stops the reply.
 
 ### Lazy images and `ask_image`
 

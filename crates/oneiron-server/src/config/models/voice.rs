@@ -37,7 +37,7 @@ pub struct VoiceSettings {
     /// The voice the assistant speaks in.
     pub render: Option<VoiceRender>,
     /// Calls the media queue holds. Past it, heard audio waits for the
-    /// next cut and a sentence is not spoken.
+    /// next cut and a sentence waits for room.
     pub queue_capacity: usize,
     /// Each call's line for the host's own model calls: partial
     /// enrichment and the sentence safeguard's model.
