@@ -352,6 +352,8 @@ fn compact_window_with(
     crate::sync::room_turns::scrub_deleted_room_turns(vault, &doc, None)?;
     // FIX 1794: and their side rows, with an erased thread's facts.
     crate::sync::room_facts::scrub_room_facts(vault, &doc, None)?;
+    // FIX 853: and the document quote pins of an erased message or reply.
+    crate::sync::document_pins::scrub_document_pins(vault, &doc, None)?;
     // A removed session's epoch floor leaves the window too.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, &doc, None)?;
 

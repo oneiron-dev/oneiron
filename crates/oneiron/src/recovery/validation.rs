@@ -93,6 +93,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     strict(snapshot.custody_transitions.iter().map(|row| row.id))?;
     strict(snapshot.room_turns.iter().map(|row| row.id))?;
     strict(snapshot.room_facts.iter().map(|row| row.key.as_str()))?;
+    strict(snapshot.document_pins.iter().map(|row| row.key.as_str()))?;
     // Custody transitions ride base windows only (OF-422).
     if snapshot.window.contains('@') && !snapshot.custody_transitions.is_empty() {
         return Err(invalid("custody transition in a world window"));
@@ -104,6 +105,10 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     // Room side rows too (FIX 1794).
     if snapshot.window.contains('@') && !snapshot.room_facts.is_empty() {
         return Err(invalid("room side row in a world window"));
+    }
+    // And document quote pins (FIX 853).
+    if snapshot.window.contains('@') && !snapshot.document_pins.is_empty() {
+        return Err(invalid("document pin in a world window"));
     }
     strict(
         snapshot

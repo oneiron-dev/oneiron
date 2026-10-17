@@ -616,6 +616,9 @@ fn scrub_for_export(
     let rooms_scrubbed = crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
     // FIX 1794: and their side rows, with an erased thread's facts.
     let room_facts_scrubbed = crate::sync::room_facts::scrub_room_facts(vault, doc, Some(key))?;
+    // FIX 853: and the document quote pins of an erased message or reply.
+    let document_pins_scrubbed =
+        crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -628,6 +631,7 @@ fn scrub_for_export(
         || generations_scrubbed
         || rooms_scrubbed
         || room_facts_scrubbed
+        || document_pins_scrubbed
         || history_free_window_required(vault, key)?
     {
         Some(HistoryCheck::read(vault, key, doc)?)

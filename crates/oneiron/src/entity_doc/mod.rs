@@ -42,6 +42,8 @@ pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
+#[cfg(feature = "sync")]
+pub(crate) use pins::PinMerge;
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
