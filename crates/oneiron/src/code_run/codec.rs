@@ -32,13 +32,14 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 9] = [
     "live_run",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
-pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 6] = [
+pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 7] = [
     "seq",
     "effect",
     "request",
     "outcome",
     "started_at_ms",
     "finished_at_ms",
+    "action_digest",
 ];
 pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
     ["seq", "label", "state_hash", "created_at_ms"];
@@ -86,6 +87,7 @@ const KEY_REQUEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[2];
 const KEY_OUTCOME: &str = CODE_RUN_BRIDGE_CALL_KEYS[3];
 const KEY_STARTED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[4];
 const KEY_FINISHED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[5];
+const KEY_ACTION_DIGEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[6];
 
 const KEY_LABEL: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[1];
 const KEY_STATE_HASH: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[2];
@@ -255,6 +257,12 @@ fn encode_bridge_call(call: &CodeRunBridgeCall) -> Value {
             Value::from(KEY_FINISHED_AT_MS),
             Value::from(call.finished_at_ms),
         ),
+        (
+            Value::from(KEY_ACTION_DIGEST),
+            call.action_digest
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
     ])
 }
 
@@ -267,6 +275,10 @@ fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
         outcome: required(fields[3], "missing bridge outcome")?.clone(),
         started_at_ms: u64_value(required(fields[4], "missing bridge started_at_ms")?)?,
         finished_at_ms: u64_value(required(fields[5], "missing bridge finished_at_ms")?)?,
+        action_digest: match required(fields[6], "missing bridge action_digest")? {
+            Value::Nil => None,
+            digest => Some(str_value(digest)?.to_owned()),
+        },
     })
 }
 

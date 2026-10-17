@@ -161,6 +161,48 @@ impl NativeClient {
             .retry::<serde_json::Value>(&pending, &verb, &input)
             .map_err(facade_error)
     }
+
+    /// Sends one event on a lens card the connected server rendered
+    /// (OF-181): `request` is the route's `{event, idempotencyKey}` body, and
+    /// the reply is its wire JSON, `{$state}` or `{outcome, readReceipt}`.
+    /// The route, the credential and the embedded refusal all stay in
+    /// `oneiron_remote::OneironClient::lens_frame_event`.
+    #[napi]
+    pub fn lens_frame_event(
+        &self,
+        card_id: String,
+        request: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        let request: oneiron_remote::LensFrameEventRequest = serde_json::from_value(request)
+            .map_err(|error| {
+                facade_error(oneiron::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                    format!("the lens frame event is not the documented shape: {error}"),
+                    &["Send {event, idempotencyKey}, the event as the rendered card names it."],
+                ))
+            })?;
+        let reply = self
+            .inner
+            .lens_frame_event(&card_id, &request)
+            .map_err(facade_error)?;
+        serde_json::to_value(reply).map_err(lens_frame_unencoded)
+    }
+
+    /// Closes a lens card the connected server rendered and frees its frame
+    /// (OF-181); the reply is the route's `{closed}`.
+    #[napi]
+    pub fn close_lens_frame(&self, card_id: String) -> napi::Result<serde_json::Value> {
+        let reply = self
+            .inner
+            .close_lens_frame(&card_id)
+            .map_err(facade_error)?;
+        serde_json::to_value(reply).map_err(lens_frame_unencoded)
+    }
+}
+
+/// A lens-frame reply that would not encode back to its wire JSON.
+fn lens_frame_unencoded(error: serde_json::Error) -> napi::Error {
+    boundary_error(format!("could not encode the lens frame reply: {error}"))
 }
 
 mod agent_verbs;
