@@ -32,6 +32,7 @@ use super::{
 };
 use crate::Vault;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
+use crate::edit_roundtrip::VaultAssets;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, LiveDeckRefusal, Result};
 use crate::provenance::made_by::MadeBy;
@@ -44,9 +45,9 @@ use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
 use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
-    ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate, Landing,
-    LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt, PreflightReport, StampedOp,
-    attach_evidence, land, preflight, project,
+    ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
+    HeldAssets, Landing, LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt,
+    PreflightReport, StampedOp, attach_evidence, land, preflight, project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
@@ -236,13 +237,23 @@ impl Vault {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let ((head, body), work) = {
+        // The live-born pictures' assets of the head and the candidate are read
+        // in the same transaction as the head.
+        let ((head, body), work, mut report, assets) = {
             let txn = self.store.env.read_txn()?;
-            let held = self.deck_head(&txn, artifact)?;
+            let (head, body) = self.deck_head(&txn, artifact)?;
             open_record(&self.store, &txn, artifact, fork)?;
-            (held, load_fork(&self.store, &txn, fork)?)
+            let work = load_fork(&self.store, &txn, fork)?;
+            let report = preflight(&body.deck, &work).map_err(live)?;
+            let assets = HeldAssets::resolve(
+                &VaultAssets {
+                    vault: self,
+                    txn: &txn,
+                },
+                &[&body.deck, &report.candidate],
+            );
+            ((head, body), work, report, assets)
         };
-        let mut report = preflight(&body.deck, &work).map_err(live)?;
         let package = Package::open(
             &self.deck_source(artifact, &source, body.retained)?,
             self.docedit_package_limits()?,
@@ -254,6 +265,7 @@ impl Vault {
             &package,
             &artifact.to_hex(),
             &ExportProfile::default(),
+            &assets,
         )
         .err()
         .map(|error| error.to_string());
@@ -377,17 +389,30 @@ impl Vault {
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
         let profile = ExportProfile::default();
-        let (head, body, gate) = {
+        let (head, body, gate, assets) = {
             let txn = self.store.env.read_txn()?;
             let (head, body) = self.deck_head(&txn, artifact)?;
-            (head, body, export_gate(&self.store, &txn, &profile.name)?)
+            let assets = HeldAssets::resolve(
+                &VaultAssets {
+                    vault: self,
+                    txn: &txn,
+                },
+                &[&body.deck],
+            );
+            (
+                head,
+                body,
+                export_gate(&self.store, &txn, &profile.name)?,
+                assets,
+            )
         };
         let package = Package::open(
             &self.deck_source(artifact, &source, body.retained)?,
             self.docedit_package_limits()?,
         )
         .map_err(|_| invalid("the PPTX package could not be read"))?;
-        let outcome = project(&body.deck, &package, &artifact.to_hex(), &profile).map_err(live)?;
+        let outcome =
+            project(&body.deck, &package, &artifact.to_hex(), &profile, &assets).map_err(live)?;
         Ok(PptxExport {
             frontier: head.frontier,
             authoritative: gate.is_open(),
@@ -639,7 +664,7 @@ pub(crate) fn live_refused(error: LiveError) -> Error {
     let refusal = match &error {
         LiveError::Deck(_) => LiveDeckRefusal::Deck,
         LiveError::Package(_) => LiveDeckRefusal::Package,
-        LiveError::Edit(_) => LiveDeckRefusal::Edit,
+        LiveError::Edit(_) | LiveError::Native(_) => LiveDeckRefusal::Edit,
         LiveError::Invalid(_) => LiveDeckRefusal::Invalid,
         LiveError::UnknownNode => LiveDeckRefusal::UnknownNode,
         LiveError::TreeShape(_) => LiveDeckRefusal::TreeShape,
