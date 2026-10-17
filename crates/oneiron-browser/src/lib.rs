@@ -21,16 +21,15 @@ mod outline;
 #[cfg(feature = "driver")]
 mod session;
 
+pub use library::{
+    LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRunInput, LibraryRunOutput,
+    ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES,
+    WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, site_of,
+};
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserSession};
-pub use library::{
-    LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRunInput, LibraryRunOutput,
-    ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS,
-    WORKFLOW_SUBGOAL_BYTES, WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof,
-    site_of,
-};
 
 /// One element a program can read or act on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,13 +515,20 @@ pub struct RoutineAsk<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum RoutineAnswer {
     /// Act on this candidate.
-    Act { candidate: String },
+    Act {
+        candidate: String,
+    },
     /// Act at this point of the step's screenshot, in fractions of it.
-    Point { x: f64, y: f64 },
+    Point {
+        x: f64,
+        y: f64,
+    },
     None,
     Reobserve,
     /// The step goes back to the planner, with the ladder's reason.
-    AskUp { reason: Option<String> },
+    AskUp {
+        reason: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -621,20 +627,29 @@ pub trait BrowserDriver: Send {
 
     /// The replay library's programs for a site. A driver with no library
     /// refuses the library verbs.
-    fn library_find(&mut self, _input: LibraryFindInput) -> Result<LibraryFindOutput, BrowserError> {
-        Err(BrowserError::Library("this browser host keeps no library".to_owned()))
+    fn library_find(
+        &mut self,
+        _input: LibraryFindInput,
+    ) -> Result<LibraryFindOutput, BrowserError> {
+        Err(BrowserError::Library(
+            "this browser host keeps no library".to_owned(),
+        ))
     }
 
     /// Offers a solved run's program to the library: it joins only once the
     /// solved page and a no-model replay both meet its postcondition.
     fn library_propose(&mut self, _input: ProposeInput) -> Result<ProposeOutput, BrowserError> {
-        Err(BrowserError::Library("this browser host keeps no library".to_owned()))
+        Err(BrowserError::Library(
+            "this browser host keeps no library".to_owned(),
+        ))
     }
 
     /// Runs a library program live; a missed postcondition goes back to the
     /// planner.
     fn library_run(&mut self, _input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {
-        Err(BrowserError::Library("this browser host keeps no library".to_owned()))
+        Err(BrowserError::Library(
+            "this browser host keeps no library".to_owned(),
+        ))
     }
 
     /// Runs one batched program for a subgoal; a routine step has no

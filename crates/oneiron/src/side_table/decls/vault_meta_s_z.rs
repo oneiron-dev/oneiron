@@ -37,6 +37,10 @@ side_tables! {
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw;
+    /// The latest owner-signed custody transition this vault signed of one portable credential
+    /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
+    /// hex32(entity id).
+    SECRET_CUSTODY_TRANSITION: VaultMeta b"secret_custody:transition:v1:" Raw;
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;
