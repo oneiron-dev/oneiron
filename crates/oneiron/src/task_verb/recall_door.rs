@@ -2,6 +2,7 @@
 //! door stops waiting, and how it serves high, xhigh and max.
 use super::sdk::{RecallRequest, VAULT_RECALL_LIMIT_DEFAULT};
 use crate::memory::{Memory, MemoryResult};
+use crate::retrieval_depth::RecallQueryVectors;
 
 /// When a recall's clock started and what its door does if it stops waiting.
 /// A door that can stop waiting at the deadline (an async server door) starts
@@ -61,8 +62,29 @@ pub fn recall_with_vector(
 /// included, says so in `retrieval_meta.limit_clamped`.
 pub fn recall_at_door(
     memory: &Memory<'_>,
-    mut input: RecallRequest,
+    input: RecallRequest,
     embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+    door: &RecallDoor<'_>,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    recall_at_door_seeded(
+        memory,
+        input,
+        |query| RecallQueryVectors {
+            text_index: embed(query),
+            media: Vec::new(),
+        },
+        door,
+    )
+}
+
+/// [`recall_at_door`] whose host may also embed the query into declared
+/// embedding spaces: on the one-space preset the text slot's space, whose
+/// list recall then searches for every kind of item it holds (OF-370).
+/// `embed` runs only once the request is admitted, as there.
+pub fn recall_at_door_seeded(
+    memory: &Memory<'_>,
+    mut input: RecallRequest,
+    embed: impl FnOnce(&str) -> RecallQueryVectors,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
     let (limit, clamped) =
@@ -92,7 +114,7 @@ pub fn recall_at_door(
 fn recall_within_ceiling(
     memory: &Memory<'_>,
     input: RecallRequest,
-    embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+    embed: impl FnOnce(&str) -> RecallQueryVectors,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
     use crate::memory::{RecallRerank, RecallRerankHost, RerankReport, RerankSkip};
@@ -149,7 +171,9 @@ fn recall_within_ceiling(
             Ok::<_, crate::memory::MemoryError>(pack)
         })
         .transpose()?;
-    let embedding = embed(&input.query);
+    let vectors = embed(&input.query);
+    let embedding = vectors.text_index.as_deref();
+    let media = vectors.media_seeds();
     if let Some(host) = host {
         return memory.recall_reranked_at_door(
             &input,
@@ -157,7 +181,8 @@ fn recall_within_ceiling(
             &scope,
             limit,
             budget,
-            embedding.as_deref(),
+            embedding,
+            &media,
             door,
             fallback.as_ref(),
             host,
@@ -185,7 +210,8 @@ fn recall_within_ceiling(
         None,
         &crate::retrieval_depth::RecallExecution {
             deadline: deadline.as_ref(),
-            embedding: embedding.as_deref(),
+            embedding,
+            media: &media,
             as_of: input.as_of,
             on_cut: on_cut
                 .as_ref()

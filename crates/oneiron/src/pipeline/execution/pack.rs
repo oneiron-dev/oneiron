@@ -239,10 +239,7 @@ impl PipelineBuilder<'_> {
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
-                vector_completed: attempt
-                    .diagnostics
-                    .succeeded
-                    .contains(&RetrievalSignal::Vector),
+                vector_completed: dense_completed(&attempt.diagnostics),
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
@@ -555,7 +552,7 @@ impl PipelineBuilder<'_> {
         };
 
         Ok(PipelineOutput {
-            vector_completed: diagnostics.succeeded.contains(&RetrievalSignal::Vector),
+            vector_completed: dense_completed(&diagnostics),
             revisions,
             words_bound,
             retrieval_quality,
@@ -760,4 +757,11 @@ fn validate_access_factor_overrides(overrides: Option<&HashMap<EntityId, f32>>) 
     }
 
     Ok(())
+}
+
+/// Whether a dense list answered: the text index's, or a declared space's (the
+/// one-space preset's text slot reads only the latter), so the pack is not sparse.
+fn dense_completed(diagnostics: &RetrievalDiagnostics) -> bool {
+    diagnostics.succeeded.contains(&RetrievalSignal::Vector)
+        || diagnostics.succeeded.contains(&RetrievalSignal::MediaVector)
 }

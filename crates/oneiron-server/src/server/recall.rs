@@ -6,7 +6,9 @@
 //! the caller's `as_of` rides along. Both doors read as the bound principal
 //! under the slip it presented (ONE-1187-D6).
 //! A vault with no embedder, or one still loading its model, recalls on its
-//! sparse signals and says so (`sparse: true`).
+//! sparse signals and says so (`sparse: true`). On the one-space preset the
+//! text kind slot binds a declared space, and the query embeds through that
+//! space's `ai.embed` rung instead of the vault's own text index (OF-370).
 //!
 //! A request with a deadline (call mode, or its own `deadline_ms`) is a hard
 //! cut here: the async door stops waiting when the answer is due and answers
@@ -22,10 +24,12 @@ use std::time::Instant;
 
 use oneiron::authority::VerifiedSlip;
 use oneiron::claim::CallerLocality;
+use oneiron::embed::InputKind;
 use oneiron::memory::{
     Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult, ProducerRows,
     RecallEffort,
 };
+use oneiron::retrieval_depth::RecallQueryVectors;
 use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -52,18 +56,71 @@ impl SyncServer {
             rerank: rerank.engine(),
             ..RecallDoor::now()
         };
-        oneiron::task_verb::sdk::recall_at_door(memory, input, embed, &door)
+        oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door)
     }
 
     /// The query embedder recall runs with. Light is pure retrieval with no
-    /// model call (ARCH-0044 S6); every other effort embeds the query when
-    /// the vault's embedder serves.
+    /// model call (ARCH-0044 S6); every other effort embeds the query. When
+    /// the text kind slot binds a declared space (the one-space preset), the
+    /// query goes through that space's text tower, and the vault's own text
+    /// index, which no text search reads then, gets no vector. Otherwise it
+    /// embeds on the vault's embedder when that serves.
     fn recall_embed(
         &self,
         effort: Option<RecallEffort>,
-    ) -> impl FnOnce(&str) -> Option<Vec<f32>> + '_ {
+    ) -> impl FnOnce(&str) -> RecallQueryVectors + '_ {
         let embeds = effort.map_or(Effort::Medium, RecallEffort::level) != Effort::Light;
-        move |query| embeds.then(|| self.recall_query_vector(query)).flatten()
+        move |query| {
+            if !embeds {
+                return RecallQueryVectors::default();
+            }
+            match self.vault.kind_slot_bindings() {
+                Ok(bindings) => {
+                    if let Some(space) = bindings.text {
+                        let vector = self.recall_slot_vector(&space, query);
+                        return RecallQueryVectors {
+                            text_index: None,
+                            media: vector
+                                .map(|vector| (space, InputKind::Text, vector))
+                                .into_iter()
+                                .collect(),
+                        };
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(%error, "recall reads the text index: the kind slots did not read");
+                }
+            }
+            RecallQueryVectors {
+                text_index: self.recall_query_vector(query),
+                media: Vec::new(),
+            }
+        }
+    }
+
+    /// The query's vector in declared space `space`, through the text tower
+    /// of the `ai.embed` rung its id names, driven on the runtime this
+    /// blocking thread belongs to; `None` when it does not embed, so recall
+    /// runs sparse.
+    fn recall_slot_vector(&self, space: &str, query: &str) -> Option<Vec<f32>> {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::debug!(%space, "recall runs sparse: no runtime drives the text slot's embedder");
+            return None;
+        };
+        let embedded = self.media_embedder(space).and_then(|embedder| {
+            runtime.block_on(embedder.embed_query(
+                InputKind::Text,
+                "text/plain",
+                query.as_bytes().to_vec(),
+            ))
+        });
+        match embedded {
+            Ok(vector) => Some(vector),
+            Err(refusal) => {
+                tracing::debug!(%space, %refusal, "recall runs sparse: the query did not embed into the text slot's space");
+                None
+            }
+        }
     }
 
     /// [`Self::recall`] for `actor` under the slip it presented, from where
@@ -130,8 +187,10 @@ impl SyncServer {
                 match room {
                     Some(room) => memory
                         .for_room_turn(room)?
-                        .recall_at_door(input, embed, &door),
-                    None => oneiron::task_verb::sdk::recall_at_door(&memory, input, embed, &door),
+                        .recall_at_door_seeded(input, embed, &door),
+                    None => {
+                        oneiron::task_verb::sdk::recall_at_door_seeded(&memory, input, embed, &door)
+                    }
                 }
             });
             let joined = match budget {

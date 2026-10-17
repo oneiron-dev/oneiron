@@ -42,7 +42,7 @@ use crate::memory::{
 };
 use crate::rerank::crossencoder::PreparedCrossEncoder;
 use crate::rerank::{RerankCandidate, Reranker};
-use crate::retrieval_depth::{RecallExecution, RetrievalDeadline};
+use crate::retrieval_depth::{RecallExecution, RecallMediaSeed, RetrievalDeadline};
 use crate::task_verb::sdk::{RecallDoor, RecallRequest};
 
 /// How many times a door scores a block that changed while it was scored
@@ -317,7 +317,7 @@ impl Memory<'_> {
     /// words score both alike, and the one query vector.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the door's resolved request: its dial, deadline and query vector beside it"
+        reason = "the door's resolved request: its dial, deadline and query vectors beside it"
     )]
     pub(crate) fn recall_reranked_at_door(
         &self,
@@ -327,6 +327,7 @@ impl Memory<'_> {
         limit: usize,
         budget: Option<Duration>,
         embedding: Option<&[f32]>,
+        media: &[RecallMediaSeed<'_>],
         door: &RecallDoor<'_>,
         fallback: Option<&MemoryPack>,
         host: &dyn RecallRerankHost,
@@ -363,6 +364,7 @@ impl Memory<'_> {
                 &RecallExecution {
                     deadline,
                     embedding,
+                    media,
                     as_of: Some(as_of),
                     on_cut: cut_first
                         .as_ref()
@@ -387,6 +389,7 @@ impl Memory<'_> {
                     deadline: deadline.as_ref(),
                     reranker: Some(&capture),
                     embedding,
+                    media,
                     as_of: Some(as_of),
                     on_cut: cut_first
                         .as_ref()
@@ -513,6 +516,7 @@ impl Memory<'_> {
                     deadline: deadline.as_ref(),
                     reranker: Some(&prepared),
                     embedding,
+                    media,
                     as_of: Some(as_of),
                     on_cut: on_cut
                         .as_ref()

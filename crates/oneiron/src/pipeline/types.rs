@@ -283,6 +283,7 @@ pub(super) struct ClaimStatusGateCache {
 }
 
 pub(crate) struct PipelineOutput {
+    /// A dense list answered: the text index's or a declared space's.
     pub(crate) vector_completed: bool,
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     /// The ids whose words a reranker scored at their pin in `revisions`.

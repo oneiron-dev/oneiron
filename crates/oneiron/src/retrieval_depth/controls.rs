@@ -1,5 +1,6 @@
 //! Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and
 //! the share of the budget the answer keeps.
+use crate::embed::InputKind;
 use crate::error::{Error, Result};
 use crate::rerank::Reranker;
 use crate::store::RetrievalSignal;
@@ -275,6 +276,41 @@ impl crate::Vault {
     }
 }
 
+/// One query vector in a declared embedding space: recall searches that
+/// space's list with it, for every kind of item the space holds (OF-370; on
+/// the one-space preset the text query enters the text slot's space here).
+#[derive(Debug, Clone, Copy)]
+pub struct RecallMediaSeed<'a> {
+    pub space: &'a str,
+    /// The kind of query the vector encodes.
+    pub kind: InputKind,
+    pub vector: &'a [f32],
+}
+
+/// What a recall door's host embedded the query into: the vault's own text
+/// index, and declared spaces.
+#[derive(Debug, Clone, Default)]
+pub struct RecallQueryVectors {
+    pub text_index: Option<Vec<f32>>,
+    /// Space id, query kind and vector.
+    pub media: Vec<(String, InputKind, Vec<f32>)>,
+}
+
+impl RecallQueryVectors {
+    /// The declared-space vectors as [`RecallExecution::media`] seeds.
+    #[must_use]
+    pub fn media_seeds(&self) -> Vec<RecallMediaSeed<'_>> {
+        self.media
+            .iter()
+            .map(|(space, kind, vector)| RecallMediaSeed {
+                space,
+                kind: *kind,
+                vector,
+            })
+            .collect()
+    }
+}
+
 /// Additional execution inputs for the regular memory recall pipeline.
 /// No implicit embedding or model is invented when a host supplies neither.
 #[derive(Default)]
@@ -282,6 +318,9 @@ pub struct RecallExecution<'a> {
     pub deadline: Option<&'a RetrievalDeadline>,
     pub reranker: Option<&'a dyn Reranker>,
     pub embedding: Option<&'a [f32]>,
+    /// Query vectors in declared embedding spaces, each searched as its
+    /// space's list beside the text index's.
+    pub media: &'a [RecallMediaSeed<'a>],
     pub phonetic_codes: &'a [&'a str],
     /// Unix seconds the query's time words resolve against (`yesterday`
     /// is the day before it), and the clock recency ages from. `None` is now.

@@ -103,6 +103,17 @@ impl<'v> RoomTurnHandle<'v> {
         crate::task_verb::sdk::recall_at_door(&self.memory, input, embed, door)
     }
 
+    /// [`Self::recall_at_door`] whose host may also embed the query into
+    /// declared spaces; see [`crate::task_verb::sdk::recall_at_door_seeded`].
+    pub fn recall_at_door_seeded(
+        &self,
+        input: crate::task_verb::sdk::RecallRequest,
+        embed: impl FnOnce(&str) -> crate::retrieval_depth::RecallQueryVectors,
+        door: &crate::task_verb::sdk::RecallDoor<'_>,
+    ) -> MemoryResult<MemoryPack> {
+        crate::task_verb::sdk::recall_at_door_seeded(&self.memory, input, embed, door)
+    }
+
     pub fn get_entity(
         &self,
         entity_ref: &str,
