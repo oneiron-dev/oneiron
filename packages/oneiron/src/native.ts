@@ -266,6 +266,11 @@ vaultArtifactsBodyForkMerge(requestJson: string): string
 vaultArtifactsBodyForkDiscard(requestJson: string): string
 vaultArtifactsBodyExport(requestJson: string): string
 vaultArtifactsBodyPreview(requestJson: string): string
+vaultArtifactsBodyDeckReview(requestJson: string): string
+vaultArtifactsBodyDeckMerge(requestJson: string): string
+vaultArtifactsBodyDeckExport(requestJson: string): string
+vaultArtifactsBodyDeckGate(requestJson: string): string
+vaultArtifactsBodyDeckOracle(requestJson: string): string
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
