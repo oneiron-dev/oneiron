@@ -38,9 +38,9 @@ pub use self::authority_audit::{
     AuthorityAuditRow, authority_audit_embedded,
 };
 pub use self::call::{
-    CALL_RECEIPT_REF_PREFIX, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,
-    CallTransport, MAX_CALL_RECEIPT_SERVED, call_bytes_digest, call_json_digest,
-    call_refusal_digest,
+    ActionInputs, CALL_RECEIPT_REF_PREFIX, CallOutcome, CallReceipt, CallReceiptInput,
+    CallReceiptRequest, CallTransport, MAX_ACTION_INPUT_ENTITIES, MAX_CALL_RECEIPT_SERVED,
+    call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
 };
 pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};

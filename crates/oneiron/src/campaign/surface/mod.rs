@@ -37,9 +37,9 @@ mod tests;
 mod verbs;
 
 pub use self::campaign::{
-    CAMPAIGN_NAME_MAX_BYTES, CAMPAIGN_SCHEMA_VERSION, CampaignDefinition, CampaignLifecycle,
-    CampaignRecord, CreateCampaignRequest, UpdateCampaignRequest, archive_campaign,
-    create_campaign, read_campaign, update_campaign,
+    CAMPAIGN_SCHEMA_VERSION, CampaignDefinition, CampaignLifecycle, CampaignRecord,
+    CreateCampaignRequest, UpdateCampaignRequest, archive_campaign, create_campaign, read_campaign,
+    update_campaign,
 };
 pub(crate) use self::campaign::{campaign_type_byte, load_campaign_in_txn, owned_campaign_in_txn};
 pub use self::codec_json::{campaign_record_to_json, saved_query_record_to_json};

@@ -14,11 +14,13 @@ use crate::error::Result;
 pub(crate) enum IndexRows {
     Vectors,
     HnswNeighbors,
+    HnswMeta,
     TextPostings,
     TextMeta,
     TextForward,
     TextBm25FieldStats,
     TextDocFieldLengths,
+    PhoneticIndex,
     PhoneticForward,
 }
 

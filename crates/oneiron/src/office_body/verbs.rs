@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use super::{
     BodyBlockKind, BodyCell, BodyName, DeckBodyView, DocxBody, DocxBodyOp, OfficeBodyDiff,
     OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork,
-    OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, ProposalSettleRequest, ReviewedFork,
-    SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
+    OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, OfficeRecalcZone, ProposalSettleRequest,
+    ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -25,11 +25,57 @@ use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::{ApproveScope, DeckOp};
 
-/// `vault.artifacts.body.head`, `.commits` and `.preview`: the artifact.
+/// `vault.artifacts.body.head`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyArtifactRequest {
     pub artifact_ref: String,
+}
+
+/// `vault.artifacts.body.commits`: the artifact, and the one actor whose
+/// commits are wanted, when only theirs are.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyCommitsRequest {
+    pub artifact_ref: String,
+    #[serde(default)]
+    pub actor_ref: Option<String>,
+}
+
+/// One commit of a live body, in commit order: who made it and its receipt,
+/// or why it names no one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeBodyCommitView {
+    /// The actor whose receipt it carries; `None` when it carries none.
+    pub actor: Option<String>,
+    pub receipt: Option<TextCommitReceipt>,
+    /// Why `actor` is `None`.
+    pub reason: Option<OfficeBodyCommitGap>,
+}
+
+/// Why a body commit names no actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfficeBodyCommitGap {
+    /// It carries no receipt the engine honours.
+    ReceiptMissing,
+}
+
+impl OfficeBodyCommitView {
+    pub(super) fn of(receipt: Option<TextCommitReceipt>) -> Self {
+        match receipt {
+            Some(receipt) => Self {
+                actor: Some(receipt.made_by.process.actor.to_hex()),
+                receipt: Some(receipt),
+                reason: None,
+            },
+            None => Self {
+                actor: None,
+                receipt: None,
+                reason: Some(OfficeBodyCommitGap::ReceiptMissing),
+            },
+        }
+    }
 }
 
 /// `vault.artifacts.body.import`: one DOCX, XLSX or PPTX version (the head
@@ -168,6 +214,25 @@ pub struct OfficeBodyExportVerbRequest {
     pub author: Option<String>,
     #[serde(default)]
     pub made_by: Option<serde_json::Value>,
+    /// The caller's offset east of UTC now: a workbook's TODAY() and NOW()
+    /// read local time there. Absent, UTC.
+    #[serde(default)]
+    pub utc_offset_minutes: Option<i16>,
+    /// The IANA zone that offset was read from, kept as a label.
+    #[serde(default)]
+    pub iana_timezone: Option<String>,
+}
+
+/// `vault.artifacts.body.preview`: the artifact, and the caller's local
+/// time, as an export takes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyPreviewRequest {
+    pub artifact_ref: String,
+    #[serde(default)]
+    pub utc_offset_minutes: Option<i16>,
+    #[serde(default)]
+    pub iana_timezone: Option<String>,
 }
 
 /// One DOCX table cell's text.
@@ -366,14 +431,22 @@ impl Memory<'_> {
         })
     }
 
-    /// `vault.artifacts.body.commits`: every commit receipt, in commit order,
-    /// each naming its actor and its MadeBy.
+    /// `vault.artifacts.body.commits`: every commit, in commit order, with
+    /// its actor and receipt, or why it has none; with `actor_ref`, that
+    /// actor's alone.
     pub fn artifacts_body_commits(
         &self,
-        input: &OfficeBodyArtifactRequest,
-    ) -> MemoryResult<Vec<TextCommitReceipt>> {
+        input: &OfficeBodyCommitsRequest,
+    ) -> MemoryResult<Vec<OfficeBodyCommitView>> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        Ok(self.vault().office_body_commits(&artifact)?)
+        let actor = input
+            .actor_ref
+            .as_deref()
+            .map(|actor| self.body_ref(actor))
+            .transpose()?;
+        Ok(self
+            .vault()
+            .office_body_commits(&artifact, actor.as_ref())?)
     }
 
     /// `vault.artifacts.body.edit`: a person's live edit.
@@ -547,6 +620,8 @@ impl Memory<'_> {
             Some(author) => author.clone(),
             None => actor.entity_ref().to_hex(),
         };
+        let zone =
+            OfficeRecalcZone::from_caller(input.utc_offset_minutes, input.iana_timezone.clone())?;
         let export = self.vault().export_office_body(
             &artifact,
             &OfficeBodyExportRequest {
@@ -554,6 +629,7 @@ impl Memory<'_> {
                 author: &author,
                 run_ref: &input.run_ref,
                 made_by: made_by.as_ref(),
+                zone: &zone,
             },
         )?;
         Ok(OfficeBodyExportView {
@@ -566,9 +642,11 @@ impl Memory<'_> {
     /// recalculated; nothing lands.
     pub fn artifacts_body_preview(
         &self,
-        input: &OfficeBodyArtifactRequest,
+        input: &OfficeBodyPreviewRequest,
     ) -> MemoryResult<XlsxPreview> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        Ok(self.vault().preview_xlsx_body(&artifact)?)
+        let zone =
+            OfficeRecalcZone::from_caller(input.utc_offset_minutes, input.iana_timezone.clone())?;
+        Ok(self.vault().preview_xlsx_body(&artifact, &zone)?)
     }
 }
