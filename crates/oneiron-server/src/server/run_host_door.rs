@@ -526,9 +526,13 @@ fn host_row(
         // The run's own speech, on the line its entry spends on (FIX 3194).
         AgentVerb::AiSpeech => {
             let line = line.ok_or_else(|| internal(verb))?;
-            encode(tokio::runtime::Handle::current().block_on(
-                crate::api::ai_speech_for_run(server, line, decode(input)?),
-            )?)
+            encode(
+                tokio::runtime::Handle::current().block_on(crate::api::ai_speech_for_run(
+                    server,
+                    line,
+                    decode(input)?,
+                ))?,
+            )
         }
         // The run's own wave: planned for its agent and queued on its own
         // surface, whose bound lease is the wave's creator (OF-532).
