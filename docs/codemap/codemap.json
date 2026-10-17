@@ -849,7 +849,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 6,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -908,6 +908,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectConversationSkills"
+     ],
+     "path": "src/agent_dispatch/project_conversation.rs",
+     "purpose": "The skill a project conversation's run loads before it starts (OF-501, ARCH-0067)",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -917,6 +930,7 @@
      "path": "src/agent_dispatch/project_proposal.rs",
      "purpose": "The house mind's one typed question on a conversation (OF-501, ARCH-0067): does this sound like a project?",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -1102,10 +1116,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/widen.rs",
-     "purpose": "Fail-closed propose-widen and owner-authenticated, TASK-bound board approval",
+     "purpose": "Fail-closed propose-widen and owner-authenticated, TASK-bound board approval or decline",
      "surface": {
       "crate-vis": 4,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -1117,7 +1131,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 22,
       "struct": 1
      }
     },
@@ -47631,7 +47645,7 @@
      "path": "src/workspace_roster/project/proposal.rs",
      "purpose": "The project card a conversation proposes (OF-501, ARCH-0067)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 6,
       "struct": 3
@@ -49371,7 +49385,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50843,7 +50857,7 @@
    },
    "over_bar": 136,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3070,
+   "source_files": 3071,
    "test_files": 903
   },
   "oneiron-android": {
@@ -61325,7 +61339,7 @@
      "path": "src/ai_host/workflows.rs",
      "purpose": "The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
