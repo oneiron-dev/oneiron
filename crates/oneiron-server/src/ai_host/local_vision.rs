@@ -20,6 +20,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DECISION_IMAGE_EDGE, DecisionAnswer, DecisionCall, DecisionImage,
     DecisionModel, DecisionRung, ImageBox, ModelDecisionProvider, ProviderCapability,
@@ -125,6 +126,12 @@ impl LocalVisionModel {
                 image: ImageContent::Base64 {
                     data: DecisionImage::base64(&fitted),
                 },
+            });
+        }
+        // A yes/no question's criteria triple, as the rubric it is judged by.
+        if let Some(criteria) = QuestionCriteria::for_call(call) {
+            content.push(ContentPart::Text {
+                text: criteria.rubric(),
             });
         }
         content.push(ContentPart::Text {
