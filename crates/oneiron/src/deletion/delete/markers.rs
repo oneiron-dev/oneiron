@@ -3,7 +3,9 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
+use crate::registry::{
+    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+};
 use crate::side_table::HexId;
 use crate::store::GateDecisionRecord;
 
@@ -31,7 +33,7 @@ impl Vault {
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let eligible = matches!(
             header.entity_type,
-            ENTITY_TYPE_PERSON | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TASK
+            ENTITY_TYPE_PERSON | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TASK | ENTITY_TYPE_NOTE
         );
         if !eligible || tombstone.reason != TombstoneReason::ArchivedByCleanup {
             return Ok(false);

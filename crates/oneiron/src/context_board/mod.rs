@@ -66,6 +66,7 @@ mod plugin;
 mod scratchpad;
 mod stream;
 
+pub(crate) use scratchpad::sealed_pad_review_text;
 pub use scratchpad::{
     SCRATCHPAD_LINE_MAX_BYTES, ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark,
 };
