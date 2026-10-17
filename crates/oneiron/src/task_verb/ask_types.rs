@@ -565,6 +565,25 @@ pub struct TaskAskReceipt {
     /// which does not carry it yet.
     pub statement: Option<crate::agent_dispatch::FanoutStatement>,
 }
+impl TaskAskReceipt {
+    /// A receipt from today's fields. Build receipts here rather than by
+    /// struct literal, so a field the receipt gains lands in one place.
+    pub fn new(
+        handle: TaskAskHandle,
+        task_refs: Vec<EntityId>,
+        hold: Option<TaskAskHoldReason>,
+        idempotent_replay: bool,
+        statement: Option<crate::agent_dispatch::FanoutStatement>,
+    ) -> Self {
+        Self {
+            handle,
+            task_refs,
+            hold,
+            idempotent_replay,
+            statement,
+        }
+    }
+}
 
 /// One admitted word's durable identity. This is evidence, never approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
