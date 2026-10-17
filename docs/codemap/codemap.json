@@ -34505,7 +34505,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 18,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -34628,6 +34628,21 @@
      "surface": {
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShareRevokeReceipt",
+      "SharedBriefCitation",
+      "SharedBriefView"
+     ],
+     "path": "src/receipt/share_doors.rs",
+     "purpose": "OF-491: what `vault.shares.revoke` and `vault.shares.view` answer",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -44205,7 +44220,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 185
+      "fn": 187
      }
     },
     {
@@ -44315,13 +44330,16 @@
      "kind": "src",
      "notable": [
       "ShareCreateRequest",
-      "ShareCreated"
+      "ShareCreated",
+      "ShareRevokeRequest",
+      "ShareViewNarrowing",
+      "ShareViewRequest"
      ],
      "path": "src/task_verb/sdk_share.rs",
      "purpose": "`vault.shares.create`: the caller shares one stored brief with one recipient and chooses which born-with…",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -49615,7 +49633,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50079,7 +50097,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3024,
+   "source_files": 3025,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57787,13 +57805,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 159
+      "fn": 161
      }
     },
     {
@@ -58015,7 +58033,7 @@
     "facade": {
      "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade"
     },
@@ -58807,7 +58825,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 160
+      "fn": 162
      }
     },
     {
@@ -61296,7 +61314,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -61317,6 +61335,16 @@
      "purpose": "OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/share_doors.rs",
+     "purpose": "The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -67215,7 +67243,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 255,
+     "files": 256,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67525,7 +67553,7 @@
    },
    "over_bar": 29,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 485,
+   "source_files": 486,
    "test_files": 182
   },
   "oneiron-spawn": {
