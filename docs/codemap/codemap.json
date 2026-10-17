@@ -41994,7 +41994,7 @@
      "path": "src/skill_optimize/eval_set/sufficiency.rs",
      "purpose": "The sufficiency card and the sparse owner-label ask (ARCH-0053; NOT-WORSE = A, EVAL-COLDSTART = C)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 5,
       "struct": 4
@@ -42048,7 +42048,7 @@
      "path": "src/skill_optimize/gate/decision.rs",
      "purpose": "The gate itself: the entry points, and the transaction that rules",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -42269,7 +42269,7 @@
      "path": "src/skill_optimize/labels.rs",
      "purpose": "Human-calibrated judge asks and the append-only label anchor",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 6,
       "struct": 2
@@ -58460,14 +58460,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SheetFate"
+      "SheetFate",
+      "XlsxAxis",
+      "XlsxAxisEdit"
      ],
      "path": "src/xlsx_shift.rs",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 1
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
      }
     },
     {
@@ -60410,9 +60413,24 @@
      "path": "src/lib.rs",
      "purpose": "Own-server LlmBackend",
      "surface": {
-      "fn": 1,
+      "fn": 3,
       "mod": 1,
       "re-export": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CatalogRefresh"
+     ],
+     "path": "src/mesh/catalog.rs",
+     "purpose": "Which models a node offers the owner's other nodes, and the row a node writes for each one it hears of (FIX…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -60427,7 +60445,7 @@
      "path": "src/mesh/client.rs",
      "purpose": "The asking side: the first of the owner's nodes that takes the call runs it; with none, the call waits and…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 2,
       "trait": 1
      }
@@ -60440,7 +60458,7 @@
      "purpose": "Models on the owner's other nodes (OF-575, owner ruling MESH: \"a phone uses the MacBook's model\")",
      "surface": {
       "const": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -60477,7 +60495,7 @@
    ],
    "modules": {
     "mesh": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60493,7 +60511,7 @@
    },
    "over_bar": 0,
    "purpose": "Own-server LlmBackend",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 2
   },
   "oneiron-llm-systemone": {
@@ -63937,7 +63955,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
       "crate-vis": 24,
-      "fn": 20,
+      "fn": 21,
       "re-export": 1,
       "struct": 2
      }
@@ -70332,8 +70350,8 @@
      "path": "src/models/router.rs",
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
-      "crate-vis": 4,
-      "fn": 5,
+      "crate-vis": 5,
+      "fn": 6,
       "struct": 1
      }
     },

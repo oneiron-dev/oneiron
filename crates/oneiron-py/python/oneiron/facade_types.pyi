@@ -4864,7 +4864,27 @@ class XlsxBodyOpMoveSheet(TypedDict):
 class XlsxBodyOpDeleteSheet(TypedDict):
     op: Literal["delete_sheet"]
     sheet: str
-XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet
+class XlsxBodyOpInsertRows(TypedDict):
+    op: Literal["insert_rows"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpDeleteRows(TypedDict):
+    op: Literal["delete_rows"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpInsertColumns(TypedDict):
+    op: Literal["insert_columns"]
+    sheet: str
+    at: int
+    count: int
+class XlsxBodyOpDeleteColumns(TypedDict):
+    op: Literal["delete_columns"]
+    sheet: str
+    at: int
+    count: int
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
