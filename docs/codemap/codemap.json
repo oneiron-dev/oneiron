@@ -15575,7 +15575,7 @@
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2
      }
     },
