@@ -244,6 +244,9 @@ export class Oneiron {
       remove: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersRemove(input) as unknown),
       leave: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultMembersLeave(input) as unknown),
     },
+    guests: {
+      revoke: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultGuestsRevoke(input) as unknown),
+    },
     legal_holds: {
       place: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as unknown),
       widen: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLegalHoldsWiden(input) as unknown),

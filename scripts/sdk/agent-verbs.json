@@ -878,6 +878,16 @@
       "section": false
     },
     {
+      "name": "vault.guests.revoke",
+      "input": "crate::task_verb::sdk::GuestRevokeRequest",
+      "output": "crate::receipt::GuestRevokeResponse",
+      "call": "crate::task_verb::sdk::revoke_guest_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.authority.handoff_alarms",
       "input": "EmptyRequest",
       "output": "Vec<crate::authority::AuthorityHandoffAlarm>",

@@ -63,6 +63,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.members.change", post(vault_members_change))
         .route("/vault.members.remove", post(vault_members_remove))
         .route("/vault.members.leave", post(vault_members_leave))
+        .route("/vault.guests.revoke", post(vault_guests_revoke))
         .route(
             "/vault.authority.handoff_alarms",
             post(vault_authority_handoff_alarms),
@@ -1292,6 +1293,24 @@ async fn vault_members_leave(
     let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.members.leave", value).await?;
     let output = facade_output(
         super::host_doors::vault_members_leave(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_guests_revoke(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.guests.revoke")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.guests.revoke", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.guests.revoke", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_guests_revoke(&server, &auth, facade_input(hooks.args.clone())?)
             .await?,
     )?;
     Ok(Json(facade_hooks_post(&server, hooks, output).await?))

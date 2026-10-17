@@ -205,6 +205,9 @@ pub enum SecretsCommand {
     /// Replace a secret's value. Each lease picks the new value up when it
     /// next materializes.
     Rotate(Box<SecretRotateArgs>),
+    /// Revoke a secret: the record goes terminal and every lease over it is
+    /// revoked. Reads nothing from stdin.
+    Revoke(Box<SecretRevokeArgs>),
 }
 
 /// A secret's custody class (ARCH-0069 S1).
@@ -257,6 +260,16 @@ pub struct SecretRegisterArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct SecretRotateArgs {
+    /// The secret's custody name.
+    #[arg(long)]
+    pub name: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SecretRevokeArgs {
     /// The secret's custody name.
     #[arg(long)]
     pub name: String,
@@ -515,6 +528,23 @@ pub struct LegalHoldLiftArgs {
     /// You have read the prompt and confirm it.
     #[arg(long)]
     pub yes: bool,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum GuestsCommand {
+    /// Withdraw one ask guest's access at this host: its grant is deleted
+    /// and each live pact it governs is disconnected, signed with the
+    /// config's host key. What the guest already synced stays the guest's.
+    Revoke(Box<GuestRevokeArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct GuestRevokeArgs {
+    /// The guest's grant, 32 hex.
+    pub grant_ref: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

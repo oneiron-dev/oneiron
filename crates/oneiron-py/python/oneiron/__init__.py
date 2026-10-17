@@ -346,6 +346,9 @@ class Oneiron:
         def members(self) -> "Oneiron._VaultMembersVerbs":
             return Oneiron._VaultMembersVerbs(self._client)
         @property
+        def guests(self) -> "Oneiron._VaultGuestsVerbs":
+            return Oneiron._VaultGuestsVerbs(self._client)
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
@@ -545,6 +548,11 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_members_remove(json.dumps(spec))))
         def leave(self, spec):
             return json.loads(_translate(lambda: self._client.vault_members_leave(json.dumps(spec))))
+    class _VaultGuestsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def revoke(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_guests_revoke(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
