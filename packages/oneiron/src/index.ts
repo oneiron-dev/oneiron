@@ -144,6 +144,12 @@ export class Oneiron {
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
   readonly self = {
+    focus: {
+      scratchpad: {
+        /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
+        recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
+      },
+    },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
       diary: Object.assign((input: Facade.DiaryEntryRequest): Facade.DiaryEntryReceipt => this.#call(() => this.#client.selfMemoryDiary(input) as Facade.DiaryEntryReceipt), {
@@ -599,7 +605,7 @@ export class Oneiron {
       edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
-      answers: (input: Facade.QuestionAnswersRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.AnswerRecord[]),
+      answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
     },
     decisions: {
       asks: {

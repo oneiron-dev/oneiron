@@ -11367,7 +11367,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -27309,6 +27309,8 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArtifactAskRecord",
+      "ArtifactAskStanding",
       "ArtifactRefreshBatch",
       "ArtifactRefreshFailure"
      ],
@@ -27316,8 +27318,9 @@
      "purpose": "Standing artifact questions (ARCH-0076, OF-506): a question whose adapter is [`ARTIFACT_ADAPTER`] asks each…",
      "surface": {
       "crate-vis": 1,
-      "fn": 1,
-      "struct": 2
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -27375,7 +27378,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 5,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -35581,13 +35584,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GraphAskDeclined",
       "GraphAskOutcome",
       "GraphAskRequest",
       "GraphAskSelection",
+      "QuestionAnswer",
       "QuestionAnswersRequest",
       "QuestionCreateRequest",
       "QuestionEditRequest",
@@ -35599,8 +35603,8 @@
      "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
      "surface": {
       "const": 2,
-      "enum": 1,
-      "fn": 2,
+      "enum": 2,
+      "fn": 3,
       "struct": 9
      }
     },
@@ -41292,7 +41296,7 @@
      "purpose": "Skill reliability reads use learning cells, never SkillRecord confidence",
      "surface": {
       "crate-vis": 11,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -45489,7 +45493,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 15,
+      "re-export": 16,
       "struct": 35
      }
     },
@@ -45587,7 +45591,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 268
+      "fn": 269
      }
     },
     {
@@ -45709,6 +45713,23 @@
      "surface": {
       "fn": 3,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScratchpadRecallMark",
+      "ScratchpadRecallReply",
+      "ScratchpadRecallReplyLine",
+      "ScratchpadRecallRequest"
+     ],
+     "path": "src/task_verb/sdk_scratchpad.rs",
+     "purpose": "The door of `self.focus.scratchpad.recall` (OF-548, ARCH-0032 `#scratchpad-marks`: \"a recall searches the…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -51589,7 +51610,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51752,7 +51773,7 @@
    },
    "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3128,
+   "source_files": 3129,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54514,6 +54535,7 @@
       "ContextPackDepthControls",
       "ContextPackMediaQuery",
       "ContextPackRetrievalBudgetControls",
+      "ContextPackTypeRef",
       "CoreContextPackRequest",
       "MediaQueryKind"
      ],
@@ -54522,7 +54544,7 @@
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -59624,7 +59646,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 223
+      "fn": 224
      }
     },
     {
@@ -60640,7 +60662,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 224
+      "fn": 225
      }
     },
     {
@@ -62901,7 +62923,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
@@ -70421,6 +70443,8 @@
       "AiVideoTicket",
       "AnswerContract",
       "AnswerRecord",
+      "ArtifactAskRecord",
+      "ArtifactAskStanding",
       "ArtifactAskUnits",
       "ArtifactCreateRequest",
       "ArtifactExportFile",
@@ -70779,6 +70803,7 @@
       "ProviderPin",
       "PulledImage",
       "QuestionActivation",
+      "QuestionAnswer",
       "QuestionAnswersRequest",
       "QuestionAudience",
       "QuestionCreateRequest",
@@ -70861,6 +70886,10 @@
       "ScopedReadResultGeneratedLens",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
+      "ScratchpadRecallMark",
+      "ScratchpadRecallReply",
+      "ScratchpadRecallReplyLine",
+      "ScratchpadRecallRequest",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
@@ -71028,8 +71057,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 179,
-      "struct": 456
+      "enum": 182,
+      "struct": 460
      }
     },
     {
