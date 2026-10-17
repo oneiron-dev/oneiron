@@ -1047,6 +1047,10 @@ pub fn mcp_arguments_schema_from_input(
                 "label".to_owned(),
                 schema.pointer("/properties/label")?.clone(),
             );
+            properties.insert(
+                "assignee".to_owned(),
+                schema.pointer("/properties/assignee")?.clone(),
+            );
             &["spec"]
         }
         "tasks.update" => {

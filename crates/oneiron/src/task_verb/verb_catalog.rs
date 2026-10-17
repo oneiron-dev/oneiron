@@ -1303,7 +1303,7 @@ impl AgentVerb {
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
-            Self::TasksCreate => &["spec", "label"],
+            Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksUpdate => &["task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],

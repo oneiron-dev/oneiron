@@ -636,6 +636,9 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.label {
                 map.insert("label".to_owned(), json!(value));
             }
+            if let Some(value) = &a.assignee {
+                map.insert("assignee".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.update" => {
@@ -992,6 +995,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("label") {
                 arguments.insert("label".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("assignee") {
+                arguments.insert("assignee".to_owned(), value.clone());
             }
         }
         "tasks.update" => {
