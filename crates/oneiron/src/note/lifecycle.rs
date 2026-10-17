@@ -161,7 +161,7 @@ impl Vault {
                     let (_, core) = super::verbs::note_core(self, txn, note)?;
                     if SYNC_DS_E.contains(&self.store, txn, &HexId(note))? {
                         return Err(
-                            invalid("replica NOTE seals require authenticated authority").into()
+                            invalid("replica NOTE seals require authenticated authority").into(),
                         );
                     }
                     self.authorize_shared_note_write_in_txn(txn, note, &actor)?;

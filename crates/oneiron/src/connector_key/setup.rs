@@ -381,6 +381,43 @@ impl Vault {
         ))
     }
 
+    /// Whether every connection the installed `pack` declares is checked,
+    /// read as [`Self::require_pack_connection_verified`] reads one, in the
+    /// caller's snapshot: the built-in channel gate's test (OF-378). A pack
+    /// without setup has nothing to check.
+    pub(crate) fn pack_connections_checked_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pack: &str,
+    ) -> Result<bool> {
+        let Some(receipt) = self.installed_pack_in_txn(txn, pack)? else {
+            return Ok(false);
+        };
+        let source = self
+            .pack_source_in_txn(txn, &EntityId::from_hex(&receipt.source_id)?)?
+            .ok_or_else(|| invalid("installed source unavailable"))?;
+        let Some(setup) = source.manifest().setup.as_ref() else {
+            return Ok(true);
+        };
+        let sessions = self.pack_setup_sessions_in_txn(txn, pack, &receipt.content_hash)?;
+        for connection in &setup.connections {
+            let mut ready = false;
+            for session in &sessions {
+                if self
+                    .connection_state_in_txn(txn, connection, session)?
+                    .ready
+                {
+                    ready = true;
+                    break;
+                }
+            }
+            if !ready {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// The same check over one exact source, Candidate or installed: a
     /// built-in qualifies on it before it is Active. Some owner's session
     /// over that source holds a check that still matches its live grants,

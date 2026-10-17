@@ -7,7 +7,9 @@ use super::docx::{BodyBlock, DocxBody, increasing};
 use std::collections::{BTreeMap, HashMap};
 
 /// What a side did to one block, relative to base.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeKind {
     Added,
