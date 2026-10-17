@@ -153,13 +153,10 @@ pub(super) async fn serve_with_config(
         config.limits.connections(),
     )
     .await?;
-    // A machine that is not the elected home dials its home on that mesh.
-    let device_sync = crate::device_sync::DeviceSyncHost::start(
-        &mesh_server,
-        config.device_sync.as_ref(),
-        mesh.as_ref(),
-    )
-    .await;
+    // A machine that is not the elected home dials its home, on that mesh
+    // when the home has a paired address there.
+    let device_sync =
+        crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
     host.ready()?;
     // Ready and bound: a client on this host can find it now. The file goes
     // when this returns, a clean stop or a late startup error alike.
