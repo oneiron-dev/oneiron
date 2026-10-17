@@ -116,9 +116,9 @@ pub fn mint_guest_slip_as(
     let key = holder_key(&input.holder_key)?;
     let slip = vault.mint_guest_slip(owner, issuer, input.grant_ref, key, input.expires_at)?;
     Ok(GuestSlipMinted {
-        slip_id: crate::entity_id::bytes_to_hex_lower(&slip.claims().slip_id),
+        slip_id: crate::entity_id::bytes_to_hex_lower(&slip.claims.slip_id),
         slip: slip.to_token()?,
-        expires_at: slip.claims().expires_at,
+        expires_at: slip.claims.expires_at,
     })
 }
 
