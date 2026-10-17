@@ -2754,7 +2754,7 @@
     },
     {
       "name": "vault.rooms.speak",
-      "description": "Speaks one turn into the current room turn's room, through the normal witness gate.",
+      "description": "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later.",
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",

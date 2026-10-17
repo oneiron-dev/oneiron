@@ -35,6 +35,8 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
+    # A new project room thread root's audience; fixed once set.
+    thread_audience: NotRequired[list[str] | None]
 
 class WitnessReceipt(TypedDict):
     turn_short_id: str
@@ -863,7 +865,7 @@ class Oneiron:
         def claim(self, room_ref: str, turn_ref: str) -> Facade.RoomClaimOutcome:
             """Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."""
         def speak(self, spec: Facade.WitnessTurn) -> Facade.WitnessReceipt:
-            """Speaks one turn into the current room turn's room, through the normal witness gate."""
+            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
         def join(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
             """Files and decides a request to take part in a room or one of its threads."""
         def consent(self, spec: Facade.ConsentAnswer) -> Facade.JoinOutcome:
