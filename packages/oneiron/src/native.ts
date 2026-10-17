@@ -85,6 +85,7 @@ vaultMembersAccept(input: unknown): unknown
 vaultMembersDecline(input: unknown): unknown
 vaultMembersWithdrawInvitation(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
+vaultGuestsMintSlip(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown

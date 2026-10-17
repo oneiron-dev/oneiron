@@ -62,6 +62,7 @@ pub enum AgentVerb {
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultGuestsRevoke,
+    VaultGuestsMintSlip,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -277,6 +278,7 @@ impl AgentVerb {
         Self::VaultMembersDecline,
         Self::VaultMembersWithdrawInvitation,
         Self::VaultGuestsRevoke,
+        Self::VaultGuestsMintSlip,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -495,6 +497,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => "vault.members.decline",
             Self::VaultMembersWithdrawInvitation => "vault.members.withdraw_invitation",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
+            Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -711,6 +714,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -933,6 +937,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1174,6 +1179,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1358,6 +1364,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -1518,6 +1525,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
+            Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1734,6 +1742,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
+            Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2049,6 +2058,9 @@ impl AgentVerb {
                 "An Admin with the add_member power takes back a pending invitation."
             }
             Self::VaultGuestsRevoke => "",
+            Self::VaultGuestsMintSlip => {
+                "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."
             }

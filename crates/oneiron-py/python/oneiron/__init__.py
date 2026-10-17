@@ -646,6 +646,9 @@ class Oneiron:
             self._client = client
         def revoke(self, spec):
             return json.loads(_translate(lambda: self._client.vault_guests_revoke(json.dumps(spec))))
+        def mint_slip(self, spec):
+            """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+            return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
