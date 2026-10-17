@@ -76,6 +76,7 @@ impl WitnessTurnInput {
         Ok(WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
+            quote: None,
             messages,
             occurred_at,
         })

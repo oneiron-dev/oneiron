@@ -94,7 +94,11 @@ pub(crate) async fn vault_artifacts_review_slides(
         let host = server.decision_host();
         memory.artifacts_review_slides_through(
             &input,
-            &server.decision_ladder().ladder(),
+            &crate::decision_artifact::HostUnitDecider::new(
+                &server,
+                class,
+                "vault.artifacts.review_slides",
+            ),
             host.dial(oneiron::llm::decision::DecisionRung::Big),
             &host.bands(),
         )

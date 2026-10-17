@@ -53,7 +53,12 @@ pub enum AddressMode {
 /// UTF-16 units) in the message's current text. The append turns it into an
 /// engine-issued anchor: cursors on the message's document or, for an atomic
 /// message, the span bound to its text's hash. Bare offsets are never kept.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A room speak carries it on the wire as `{ message, start, end }`, never
+/// with a caller's cursors, hash or pin.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
 pub struct QuoteSpan {
     /// The quoted MESSAGE (not the TURN that holds it).
     pub message: EntityId,
