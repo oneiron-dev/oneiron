@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/boundary.rs` | src | s | 13 crate-vis | — | JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling |
 | `src/facade/bridge.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
 | `src/facade/client.rs` | src | s | 3 struct · 6 fn | NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
-| `src/facade/client/agent_verbs.rs` | src | XL | 212 fn | — | — |
+| `src/facade/client/agent_verbs.rs` | src | XL | 215 fn | — | — |
 | `src/facade/convert.rs` | src | m | 17 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
 | `src/facade/dtos.rs` | src | L | 54 struct | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +46 | All napi(object) DTO structs for the actor-scoped surface |
 | `src/facade/input_error.rs` | src | s | 1 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |

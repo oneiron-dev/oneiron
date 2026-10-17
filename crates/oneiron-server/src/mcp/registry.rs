@@ -557,6 +557,29 @@ impl McpConnectorActorRegistry {
         &mut self.streams
     }
 
+    /// Attaches a pumped run's own board connection under its agent, once
+    /// (OF-533). The run holds no credential: the connection is the run's,
+    /// minted by the host, and the agent's ceiling is the vault-wide one.
+    pub(crate) fn attach_run_board(&mut self, connection: &StreamConnectionId, actor_ref: &str) {
+        if self.streams.connection_state(connection).is_none() {
+            self.streams.attach_connection(
+                connection.clone(),
+                BoardRenderMode::Stream,
+                actor_ref.to_owned(),
+                oneiron::context_board::SubscriptionScope::ALL
+                    .into_iter()
+                    .collect(),
+                0,
+            );
+        }
+    }
+
+    /// A run's board connection and snapshot go when the run's door does.
+    pub(crate) fn drop_run_board(&mut self, connection: &StreamConnectionId) {
+        self.streams.detach(connection);
+        self.board_epochs.remove(connection);
+    }
+
     /// Records the reader a connection's call resolved, replacing the one
     /// before: the latest credential is the one events are read under.
     pub fn bind_stream_reader(&mut self, reader: &McpResolvedActor) {

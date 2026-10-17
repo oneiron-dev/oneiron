@@ -159,6 +159,11 @@ pub(crate) struct ContextBoardResponse {
     /// session, or a session with no live pad.
     #[serde(skip_serializing_if = "Option::is_none")]
     scratchpad: Option<Vec<String>>,
+    /// The full-view rows of the frame's READERS section: who may read an
+    /// agent's diary and sealed scratchpads, and who did and why. Absent for
+    /// any caller but an agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    readers: Option<Vec<String>>,
     /// What recording the named TURN's board wrote; absent without `turn`.
     #[serde(skip_serializing_if = "Option::is_none")]
     board_turn: Option<ContextBoardTurnRecord>,
@@ -450,6 +455,11 @@ pub(crate) async fn context_board_hydrate(
         parts.sections.push(served.section);
         served.rows
     });
+    // An agent's reader list joins it as its READERS section.
+    let readers = served_readers(&server, &auth).map(|(section, rows)| {
+        parts.sections.push(section);
+        rows
+    });
     let board_render = oneiron::context_board::render_board_block(
         &oneiron::context_board::BoardFrame {
             header: &oneiron::context_board::BoardBlockHeader {
@@ -534,6 +544,7 @@ pub(crate) async fn context_board_hydrate(
         changed,
         skills: parts.skills,
         scratchpad,
+        readers,
         self_brief,
         board_turn: None,
     };
