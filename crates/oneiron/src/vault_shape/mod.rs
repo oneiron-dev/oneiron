@@ -43,7 +43,9 @@ pub const SHAPE_NAME_MAX_BYTES: usize = 256;
 
 /// An actor's approval ceiling as a seed states it: `auto` lands its writes,
 /// `proposed` holds them for review.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeCeiling {
     Auto,
@@ -88,7 +90,10 @@ pub enum ShapeRow {
     /// A member of the shared vault, by person (entity id hex), at a role.
     /// A new member is invited and joins on acceptance; an Owner's role
     /// moves only through the ownership ceremony.
-    Member { member: String, role: ShapeMemberRole },
+    Member {
+        member: String,
+        role: ShapeMemberRole,
+    },
     /// A world (ARCH-0022), by name. A missing world is created.
     World { name: String },
     /// An installed pack, by name, optionally pinned to a version.

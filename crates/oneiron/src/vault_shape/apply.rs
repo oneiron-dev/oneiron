@@ -59,7 +59,10 @@ pub enum ShapeItemState {
     /// A new grant an actor's apply filed to the owner's widen inbox, where
     /// accepting `proposal_ref` mints it. Until the owner answers, it waits
     /// as [`Self::Proposed`] does, and an owner's apply may land it.
-    Filed { proposal_ref: String, expires_at: u64 },
+    Filed {
+        proposal_ref: String,
+        expires_at: u64,
+    },
     /// An authority operation, for its AUTHORITY_LOG ceremony.
     Ceremony,
     /// The vault has no door for it yet; nothing landed.
@@ -295,7 +298,8 @@ impl Vault {
                 // Sharing the vault invites, in its own writer, each new
                 // member this apply approves: the founding members.
                 ShapeItemState::Proposed if item.target == ShapeTarget::Shared => {
-                    let founding = founding_members(&journal.items, &item, &request.approve, author);
+                    let founding =
+                        founding_members(&journal.items, &item, &request.approve, author);
                     match self.share_vault(owner, &item, &founding, now) {
                         Ok(receipt) => {
                             for (at, _) in &founding {
@@ -394,7 +398,9 @@ impl Vault {
         let (ShapeChange::Create, Some(ShapeRow::Shared { vault_id, preset })) =
             (item.change, &item.after)
         else {
-            return Err(invalid("a shared vault is shared once; no seed reshares it"));
+            return Err(invalid(
+                "a shared vault is shared once; no seed reshares it",
+            ));
         };
         let members: Vec<InitialSharedMember> =
             founding.iter().map(|(_, member)| member.clone()).collect();
@@ -417,7 +423,11 @@ impl Vault {
         now: u64,
     ) -> Result<String> {
         let current = live.get(&item.target);
-        let already = |row: &ShapeRow| item.after.as_ref().is_some_and(|after| after.satisfied_by(row));
+        let already = |row: &ShapeRow| {
+            item.after
+                .as_ref()
+                .is_some_and(|after| after.satisfied_by(row))
+        };
         let stale = || invalid("the structure changed since the plan read it");
         let entity = match (item.change, current) {
             (ShapeChange::Create, None) => None,
@@ -539,9 +549,9 @@ impl Vault {
                     .ok_or_else(|| invalid("no staged source of that pack and version"))?;
                 match self.put_pack(owner, source.files().to_vec())? {
                     PackInstallDisposition::Installed(receipt) => Ok(receipt.content_hash),
-                    PackInstallDisposition::Candidate(_) => Err(invalid(
-                        "the pack is held a candidate until it qualifies",
-                    )),
+                    PackInstallDisposition::Candidate(_) => {
+                        Err(invalid("the pack is held a candidate until it qualifies"))
+                    }
                     PackInstallDisposition::Blocked { reason } => Err(invalid(reason)),
                 }
             }
@@ -573,7 +583,12 @@ impl Vault {
     ///
     /// A blank or taken name, an owner proof that no longer holds, or a
     /// store failure.
-    pub fn create_world(&self, owner: &AuthenticatedOwner, name: &str, now: u64) -> Result<EntityId> {
+    pub fn create_world(
+        &self,
+        owner: &AuthenticatedOwner,
+        name: &str,
+        now: u64,
+    ) -> Result<EntityId> {
         #[derive(Serialize)]
         struct WorldBody<'a> {
             name: &'a str,

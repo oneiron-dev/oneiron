@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 
 /// A member's role, as a seed states it. A delegate's expiring grant and
 /// an ask guest are not membership, so no row names them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeMemberRole {
     Owner,

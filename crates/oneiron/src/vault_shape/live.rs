@@ -53,7 +53,8 @@ impl Vault {
             if self.store.off_record_sessions.contains_entity(&id)? {
                 continue;
             }
-            if let LiveEntityRow::Live { body, .. } = live_entity_row_in_txn(&self.store, txn, &id)? {
+            if let LiveEntityRow::Live { body, .. } = live_entity_row_in_txn(&self.store, txn, &id)?
+            {
                 rows.push((id, body));
             }
         }

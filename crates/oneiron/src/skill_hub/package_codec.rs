@@ -266,7 +266,7 @@ impl Vault {
         let carrier_dirty =
             crate::batch::secret_scan::scan_file_content("", &encoded_carrier).is_some();
         if !carrier_dirty
-            && crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &carrier)?.is_none()
+            && !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &carrier)?
         {
             self.batch_in()
                 .put(

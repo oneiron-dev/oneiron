@@ -325,7 +325,7 @@ fn beam_search_graph(
 
     let walks = check_existence && crate::ports::any_pending_walk(store, txn)?;
     if !check_existence
-        || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &entry_point)?.is_some()
+        || crate::ports::EntityStoreRead::port_entity_present(store, txn, &entry_point)?
     {
         results.push(entry);
         if check_existence && is_match(store, txn, &entry_point, walks, admission)? {
@@ -367,8 +367,7 @@ fn beam_search_graph(
 
             *ops += 1;
             if check_existence
-                && crate::ports::EntityStoreRead::port_entity_raw(store, txn, &neighbor_id)?
-                    .is_none()
+                && !crate::ports::EntityStoreRead::port_entity_present(store, txn, &neighbor_id)?
             {
                 continue;
             }
