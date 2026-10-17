@@ -14,6 +14,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 WIT = ROOT / "crates/oneiron/wit/code-run.wit"
 OUT = WIT.parent / "generated"
+# Roots the code-mode verb table declares as consts (catalog_fragment.d.ts).
+# A namespace of the same name would redeclare them (TS2451), so their host
+# verbs go on `Sdk.<Root>Host`, an interface the table's const takes on.
+CATALOG_CONST_ROOTS = ("vault",)
 
 
 def camel(name):
@@ -123,6 +127,26 @@ def generate(source):
             node = node.setdefault(namespace, {})
         node[function] = row
 
+    def signature(value):
+        args = ", ".join(f"{arg['name']}: {'unknown' if arg['json'] else ts(arg['type'])}" for arg in value['params'])
+        result = ts(value['result'])
+        if value['async']:
+            result = f"Promise<{result}>"
+        return f"({args}): {result}"
+
+    def members(node):
+        return " ".join(
+            f"{name}{signature(value)};" if 'wit' in value else f"{name}: {{ {members(value)} }};"
+            for name, value in node.items())
+
+    hosted = {root: tree.pop(root) for root in CATALOG_CONST_ROOTS if root in tree}
+    if hosted:
+        dts.append("declare namespace Sdk {")
+        for root, node in hosted.items():
+            dts.append(f"  /** Host verbs on the global `{root}`. */")
+            dts.append(f"  interface {pascal(root)}Host {{ {members(node)} }}")
+        dts.append("}")
+
     def emit(node, indent=0):
         for name, value in node.items():
             prefix = "  " * indent
@@ -131,11 +155,7 @@ def generate(source):
                 emit(value, indent + 1)
                 dts.append(prefix + "}")
             else:
-                args = ", ".join(f"{arg['name']}: {'unknown' if arg['json'] else ts(arg['type'])}" for arg in value['params'])
-                result = ts(value['result'])
-                if value['async']:
-                    result = f"Promise<{result}>"
-                dts.append(prefix + ("declare " if indent == 0 else "") + f"function {name}({args}): {result};")
+                dts.append(prefix + ("declare " if indent == 0 else "") + f"function {name}{signature(value)};")
     emit(tree)
     metadata = json.dumps({"records": records, "imports": imports}, separators=(',', ':'))
     js = '// Generated from code-run.wit; do not edit.\nconst schema = ' + metadata + ';\n' + SDK_RUNTIME
