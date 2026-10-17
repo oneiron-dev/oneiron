@@ -6,6 +6,7 @@ pub mod desktop;
 pub mod embedder;
 mod embedder_shape;
 mod embedder_space;
+mod failure_signals;
 mod feedback;
 pub mod import;
 mod keystore;
@@ -29,6 +30,7 @@ pub use embedder::{
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
 };
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
+pub use failure_signals::{CLOUD_FAILURE_SIGNALS_ENDPOINT, FailureSignalsConfig};
 pub use feedback::{CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig};

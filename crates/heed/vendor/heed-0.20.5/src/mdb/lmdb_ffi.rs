@@ -10,7 +10,9 @@ pub use ffi::{
     MDB_cursor, MDB_dbi, MDB_env, MDB_stat, MDB_txn, MDB_val, MDB_CP_COMPACT, MDB_CURRENT,
     MDB_RDONLY, MDB_RESERVE,
 };
-use lmdb_master_sys as ffi;
+// ONEIRON FORK (OF-570): mdb.master3, whose page hook seals a sealed env's pages.
+pub use ffi::{mdb_env_set_encrypt, MDB_ENCRYPT, MDB_REMAP_CHUNKS};
+use lmdb_master3_sys as ffi;
 
 pub mod cursor_op {
     use super::ffi::{self, MDB_cursor_op};
