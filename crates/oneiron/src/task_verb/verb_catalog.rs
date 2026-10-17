@@ -316,6 +316,7 @@ pub enum AgentVerb {
     VaultHabitsCheckin,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
+    VaultEsignCreate,
     VaultConversationsCreate,
     VaultConversationsTurnsCreate,
     VaultConversationsRecordsAppend,
@@ -670,6 +671,7 @@ impl AgentVerb {
         Self::VaultHabitsCheckin,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
+        Self::VaultEsignCreate,
         Self::VaultConversationsCreate,
         Self::VaultConversationsTurnsCreate,
         Self::VaultConversationsRecordsAppend,
@@ -1031,6 +1033,7 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
+            Self::VaultEsignCreate => "vault.esign.create",
             Self::VaultConversationsCreate => "vault.conversations.create",
             Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
             Self::VaultConversationsRecordsAppend => "vault.conversations.records.append",
@@ -1344,6 +1347,7 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultEsignCreate
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -1705,6 +1709,7 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultEsignCreate
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2124,6 +2129,7 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultEsignCreate
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2355,6 +2361,7 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultEsignCreate
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2726,6 +2733,7 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
+            Self::VaultEsignCreate => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -3081,6 +3089,7 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
+            Self::VaultEsignCreate => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -3319,7 +3328,7 @@ impl AgentVerb {
                 "Checks one pack connection with the engine's fixed read-only provider call for its declared check."
             }
             Self::VaultAuthorityAudit => {
-                "One page of the dated authority log audit: grants, revokes and confirms, for the owner."
+                "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
@@ -3906,7 +3915,7 @@ impl AgentVerb {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
             }
             Self::VaultCommit => {
-                "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."
+                "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
             }
             Self::VaultRemember => {
                 "Commits one claim through the gate, the same as vault.claims.upsert."
@@ -3954,6 +3963,9 @@ impl AgentVerb {
             }
             Self::VaultArtifactsCreate => {
                 "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run."
+            }
+            Self::VaultEsignCreate => {
+                "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."
             }
             Self::VaultConversationsCreate => {
                 "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."
@@ -4041,7 +4053,7 @@ impl AgentVerb {
                 "Reads the status of one consolidation attempt by its durable job reference."
             }
             Self::VaultClaimsSeed => {
-                "Seeds claims through their individual gates, forced proposed, returning one receipt per claim."
+                "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
             }
             Self::ConnectorOutboundSchedule => {
                 "Schedules one send through a granted outbound connector, gated and held for delivery."

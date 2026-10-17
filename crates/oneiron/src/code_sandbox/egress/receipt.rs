@@ -78,6 +78,21 @@ impl Vault {
         let hash = *blake3::hash(body.as_bytes()).as_bytes();
         self.append_sandbox_gate_receipt(run_id, "desktop_takeover", "returned", body, hash)
     }
+    /// A run desktop's takeover (CUA-001) still asked or held when the
+    /// desktop went away: its record so far, inputs included, is the
+    /// takeover's receipt, outcome `abandoned`.
+    pub fn append_desktop_takeover_abandoned_receipt(
+        &self,
+        run_id: EntityId,
+        record: &serde_json::Value,
+    ) -> Result<String> {
+        let body = serde_json::to_string(
+            &serde_json::json!({"run_id": run_id.to_hex(), "takeover": record}),
+        )
+        .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?;
+        let hash = *blake3::hash(body.as_bytes()).as_bytes();
+        self.append_sandbox_gate_receipt(run_id, "desktop_takeover", "abandoned", body, hash)
+    }
     /// A run browser's takeover (CUA-001), returned to its agent: the record
     /// of who held it, for how long and how many inputs they sent is the
     /// takeover's receipt, as a desktop's is.
@@ -92,6 +107,21 @@ impl Vault {
         .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?;
         let hash = *blake3::hash(body.as_bytes()).as_bytes();
         self.append_sandbox_gate_receipt(run_id, "browser_takeover", "returned", body, hash)
+    }
+    /// A run browser's takeover (CUA-001) still asked or held when the
+    /// browser went away with its door: its record so far is the takeover's
+    /// receipt, outcome `abandoned`.
+    pub fn append_browser_takeover_abandoned_receipt(
+        &self,
+        run_id: EntityId,
+        record: &serde_json::Value,
+    ) -> Result<String> {
+        let body = serde_json::to_string(
+            &serde_json::json!({"run_id": run_id.to_hex(), "takeover": record}),
+        )
+        .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?;
+        let hash = *blake3::hash(body.as_bytes()).as_bytes();
+        self.append_sandbox_gate_receipt(run_id, "browser_takeover", "abandoned", body, hash)
     }
     pub fn append_egress_receipt(&self, receipt: &EgressReceipt) -> Result<String> {
         let body = serde_json::to_string(receipt)

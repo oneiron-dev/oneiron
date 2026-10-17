@@ -35,16 +35,16 @@
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::{
-    BatchInput, BatchOutput, BrowserDriver, BrowserError, BrowserPersonInput, ClickInput,
-    CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND,
-    EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HandoverInput,
-    HandoverOutput, ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput,
-    LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput,
-    LibraryRunOutput, NoDecider, Observation, ObservationPage, ObserveInput, OpenInput, PointInput,
-    PressMode, ProposeInput, ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row,
-    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SelectInput, SendPolicy, Takeover,
-    TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput,
-    site_of,
+    AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserError, BrowserPersonInput,
+    ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH,
+    EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput,
+    HandoverInput, HandoverOutput, ImageOutput, LibraryFindInput, LibraryFindOutput,
+    LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
+    LibraryRunInput, LibraryRunOutput, NoDecider, Observation, ObservationPage, ObserveInput,
+    OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput, ReceiptEvidenceSink,
+    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SelectInput,
+    SendPolicy, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -343,6 +343,18 @@ impl BrowserSession {
     /// The takeover that ended since the agent's last answer, once.
     pub fn take_returned(&mut self) -> Option<TakeoverRecord> {
         self.returned.take()
+    }
+
+    /// Ends a takeover still asked or held as the browser goes away, with
+    /// what it held so far; `None` while the agent has the browser.
+    pub fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
+        match std::mem::replace(&mut self.takeover, Takeover::Agent) {
+            Takeover::Agent => None,
+            state => Some(AbandonedTakeover {
+                state,
+                ended_at_ms: now_ms(),
+            }),
+        }
     }
 
     /// An agent verb's first check: the agent has the browser. While it

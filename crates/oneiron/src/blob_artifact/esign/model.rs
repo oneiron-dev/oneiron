@@ -3,13 +3,13 @@ use crate::{EntityId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentKind {
     Document,
     Template,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentStatus {
     Draft,
@@ -19,7 +19,7 @@ pub enum DocumentStatus {
     Voided,
     Expired,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RecipientRole {
     Signer,
@@ -48,13 +48,13 @@ pub enum AccessStatus {
     Unverified,
     Verified,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignItem {
     pub artifact_ref: String,
     pub original_version: u64,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignRecipient {
     pub id: String,
@@ -72,7 +72,7 @@ pub struct EsignRecipient {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub natural_person: Option<String>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FieldGeometry {
     pub page: u32,
@@ -81,7 +81,7 @@ pub struct FieldGeometry {
     pub width_percent: f64,
     pub height_percent: f64,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FieldMeta {
     Signature,
@@ -93,7 +93,7 @@ pub enum FieldMeta {
     Checkbox,
     Select { options: Vec<String> },
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignField {
     pub id: String,
@@ -103,7 +103,7 @@ pub struct EsignField {
     pub geometry: FieldGeometry,
     pub meta: FieldMeta,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignDocument {
     pub schema_version: u8,
@@ -325,7 +325,9 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
             return Err(invalid("invalid field geometry or owner"));
         }
         match &f.meta {
-            FieldMeta::Text { max_bytes } if *max_bytes == 0 || *max_bytes > 65536 => {
+            // The author's declared max_bytes is the form's contract; the
+            // engine adds no outer cap on it (Rule 5).
+            FieldMeta::Text { max_bytes } if *max_bytes == 0 => {
                 return Err(invalid("invalid text field"));
             }
             FieldMeta::Select { options }

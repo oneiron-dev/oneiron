@@ -6,7 +6,8 @@
 //! and drives the same page through its driver. Handing it back writes the
 //! takeover's record to the run's sandbox receipts, and the agent's next
 //! browser answer carries it. Each act re-proves the owner, and each waits
-//! for the agent's call in flight to end.
+//! for the agent's call in flight to end. The agent's ask raises the
+//! owners' inbox Ask, and the owner's take or return clears it.
 
 use std::sync::Arc;
 
@@ -118,9 +119,13 @@ async fn take(
     let request = json_payload(payload)?;
     let state = blocking(move || -> OwnerResult<Takeover> {
         let by = owner.revalidate_principal_ref(server.vault())?;
-        on_browser(&server, &request.run, |session| {
+        let state = on_browser(&server, &request.run, |session| {
             session.take_over(by).cloned()
-        })
+        })?;
+        server
+            .browser_seats
+            .answered(server.vault(), run_of(&request.run)?);
+        Ok(state)
     })
     .await?;
     Ok(Json(state))
@@ -186,6 +191,7 @@ async fn hand_back(
         let by = owner.revalidate_principal_ref(server.vault())?;
         let run = run_of(&request.run)?;
         let record = on_browser(&server, &request.run, |session| session.hand_back(by))?;
+        server.browser_seats.answered(server.vault(), run);
         let body = serde_json::to_value(&record).map_err(|e| OwnerError::Host(e.into()))?;
         let receipt = server.vault().append_browser_takeover_receipt(run, &body)?;
         Ok(ReturnReply { record, receipt })

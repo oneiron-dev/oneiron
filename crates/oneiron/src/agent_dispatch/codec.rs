@@ -17,10 +17,64 @@ use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
     KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
-    KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
-    KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
+    KEY_OBJECTIVES, KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF,
+    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_REF, KEY_TEAM,
+    TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
+
+/// OF-544: the most objectives one dispatch carries, the confession seal's
+/// own count bound.
+const OBJECTIVES_MAX: usize = 256;
+
+/// OF-544: the most UTF-8 bytes in one objective, the confession seal's own
+/// per-objective bound.
+const OBJECTIVE_MAX_BYTES: usize = 256;
+
+fn objectives_invalid() -> Error {
+    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+        "objectives must be 1..=256 distinct non-empty lines of at most 256 bytes",
+    ))
+}
+
+/// The caller's objectives as the seal will take them: 1..=256 entries,
+/// each 1..=256 bytes with no control characters, no duplicates. The order
+/// is the caller's, kept verbatim.
+fn validate_objectives(rows: &[String]) -> Result<()> {
+    if rows.is_empty() || rows.len() > OBJECTIVES_MAX {
+        return Err(objectives_invalid());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for row in rows {
+        if row.is_empty()
+            || row.len() > OBJECTIVE_MAX_BYTES
+            || row.chars().any(char::is_control)
+            || !seen.insert(row.as_str())
+        {
+            return Err(objectives_invalid());
+        }
+    }
+    Ok(())
+}
+
+fn decode_objectives(value: &Value) -> Result<Vec<String>> {
+    let values = value.as_array().ok_or_else(objectives_invalid)?;
+    if values.is_empty() || values.len() > OBJECTIVES_MAX {
+        return Err(objectives_invalid());
+    }
+    let rows = values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|text| text.len() <= OBJECTIVE_MAX_BYTES)
+                .map(str::to_owned)
+                .ok_or_else(objectives_invalid)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    validate_objectives(&rows)?;
+    Ok(rows)
+}
 
 /// Encodes a dispatch input into its pinned-key MessagePack `Value` map.
 pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> {
@@ -137,6 +191,13 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         })?;
         entries.push((Value::from(KEY_PLAN), Value::from(json)));
     }
+    if let Some(rows) = &input.objectives {
+        validate_objectives(rows)?;
+        entries.push((
+            Value::from(KEY_OBJECTIVES),
+            Value::Array(rows.iter().map(|row| Value::from(row.as_str())).collect()),
+        ));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -187,6 +248,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut join = None;
     let mut team = None;
     let mut plan = None;
+    let mut objectives = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -424,6 +486,9 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                 receipt.validate()?;
                 plan = Some(receipt);
             }
+            KEY_OBJECTIVES => {
+                objectives = Some(decode_objectives(value)?);
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -493,6 +558,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         join,
         team,
         plan,
+        objectives,
     })
 }
 

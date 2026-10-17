@@ -4551,9 +4551,13 @@ async fn vault_projects_confirm(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.projects.confirm", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.projects.confirm", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_projects_confirm(server, auth, facade_input(hooks.args.clone())?)
-            .await;
+    let (output, listed) = super::host_doors::vault_projects_confirm(
+        server,
+        auth,
+        call.session()?,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -6038,6 +6042,28 @@ async fn vault_artifacts_create(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_esign_create(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.create",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_conversations_create(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7319,6 +7345,7 @@ pub(crate) async fn call_verb(
         "vault.habits.checkin" => vault_habits_checkin(server, call, input).await,
         "vault.claims.admit" => vault_claims_admit(server, call, input).await,
         "vault.artifacts.create" => vault_artifacts_create(server, call, input).await,
+        "vault.esign.create" => vault_esign_create(server, call, input).await,
         "vault.conversations.create" => vault_conversations_create(server, call, input).await,
         "vault.conversations.turns.create" => {
             vault_conversations_turns_create(server, call, input).await

@@ -1575,6 +1575,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.esign.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignCreateRequest,
+                >(),
+            ),
+            (
                 "vault.conversations.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::core_write::ConversationCreateInput,
@@ -3807,6 +3813,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.esign.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.conversations.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5072,6 +5085,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.create" => {
             let _input: crate::blob_artifact::ArtifactCreateRequest = decode(value.clone())?;
         }
+        "vault.esign.create" => {
+            let _input: crate::blob_artifact::esign::EsignCreateRequest = decode(value.clone())?;
+        }
         "vault.conversations.create" => {
             let _input: crate::core_write::ConversationCreateInput = decode(value.clone())?;
         }
@@ -5619,6 +5635,7 @@ pub fn invoke(
         "vault.habits.checkin" => encode(vault_habits_checkin(memory, decode(value)?)?),
         "vault.claims.admit" => encode(vault_claims_admit(memory, decode(value)?)?),
         "vault.artifacts.create" => encode(vault_artifacts_create(memory, decode(value)?)?),
+        "vault.esign.create" => encode(vault_esign_create(memory, decode(value)?)?),
         "vault.conversations.create" => encode(vault_conversations_create(memory, decode(value)?)?),
         "vault.conversations.turns.create" => {
             encode(vault_conversations_turns_create(memory, decode(value)?)?)
@@ -8112,7 +8129,7 @@ pub fn self_desktop_handover(
 pub fn vault_commit(
     memory: &Memory<'_>,
     input: CommitRequest,
-) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     for claim in &input.claims {
         crate::memory::caps::check_claim_input(claim)?;
@@ -8287,6 +8304,18 @@ pub fn vault_artifacts_create(
     input: crate::blob_artifact::ArtifactCreateRequest,
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
     memory.artifacts_create(&input)
+}
+pub fn vault_esign_create(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignCreateRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignDraftView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.create",
+        &input,
+        &["/document_ref", "/draft/items/*/artifact_ref"],
+    )?;
+    memory.esign_create(&input)
 }
 pub fn vault_conversations_create(
     memory: &Memory<'_>,
@@ -8597,7 +8626,7 @@ pub fn vault_consolidation_status(
 pub fn vault_claims_seed(
     memory: &Memory<'_>,
     input: CommitRequest,
-) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     for claim in &input.claims {
         crate::memory::caps::check_claim_input(claim)?;

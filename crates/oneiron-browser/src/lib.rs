@@ -32,7 +32,9 @@ mod receipt_evidence;
 mod session;
 
 #[cfg(feature = "driver")]
-pub use desktop::{DesktopGuest, DesktopSession, PersonInput, Takeover, TakeoverRecord};
+pub use desktop::{
+    AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover, TakeoverRecord,
+};
 pub use library::{
     LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, ProposeInput,

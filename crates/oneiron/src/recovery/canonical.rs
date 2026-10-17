@@ -303,6 +303,16 @@ pub struct CanonicalRoomFact {
     pub row: Vec<u8>,
 }
 
+/// One document quote pin a base window carries (FIX 853), under its map
+/// key, kept as the window holds it. A pin on a document the snapshot
+/// captures rides in that document's history instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalPinCarrier {
+    pub key: String,
+    pub row: Vec<u8>,
+}
+
 /// One owner-signed custody transition a base window carries (OF-422): opaque
 /// signed and sealed bytes, kept as the window holds them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -368,6 +378,10 @@ pub struct CanonicalSnapshot {
     /// empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub room_facts: Vec<CanonicalRoomFact>,
+    /// The base window's document quote pins (FIX 853) on documents it does
+    /// not capture, by map key. Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub document_pins: Vec<CanonicalPinCarrier>,
 }
 
 impl CanonicalSnapshot {
@@ -434,6 +448,7 @@ impl CanonicalSnapshot {
             "custody",
             "room_turns",
             "room_facts",
+            "document_pins",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
@@ -565,6 +580,7 @@ pub(crate) fn capture_canonical_window_within(
             "custody",
             "room_turns",
             "room_facts",
+            "document_pins",
             "withdrawn_cutoffs",
         ]
         .contains(&name.as_str())
@@ -602,6 +618,7 @@ pub(crate) fn capture_canonical_window_within(
         custody_transitions: Vec::new(),
         room_turns: Vec::new(),
         room_facts: Vec::new(),
+        document_pins: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
@@ -850,6 +867,23 @@ pub(crate) fn capture_canonical_window_within(
         }
     }
     snapshot.entity_documents.sort_by_key(|row| row.entity_id);
+    // FIX 853: the pins the window carries on documents not captured above.
+    #[cfg(feature = "sync")]
+    {
+        let documents = snapshot
+            .entity_documents
+            .iter()
+            .map(|row| id(row.entity_id))
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let rows = binary_rows_within(doc, "document_pins", budget)?;
+        for (key, row) in
+            crate::sync::document_pins::canonical_pin_rows(vault, &txn, rows, &documents)?
+        {
+            snapshot
+                .document_pins
+                .push(CanonicalPinCarrier { key, row });
+        }
+    }
     snapshot.entity_blobs.sort_by_key(|row| row.id);
     // Only a TASK row carries a refusal: a forged fact may name any id as its
     // task, and the artifact's validation refuses a mark on anything else.
@@ -954,6 +988,9 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     }
     for row in &snapshot.room_facts {
         insert(&doc, "room_facts", &row.key, &row.row)?;
+    }
+    for row in &snapshot.document_pins {
+        insert(&doc, "document_pins", &row.key, &row.row)?;
     }
     for tombstone in &snapshot.tombstones {
         insert(
