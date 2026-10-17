@@ -754,7 +754,7 @@ fn rematerialize_subject_contacts_in_txn(
     )?);
     let mut party_keys = BTreeSet::new();
     for party in parties {
-        party_keys.extend(active_comm_party_key_in_txn(vault, &*wtxn, party)?);
+        party_keys.extend(active_comm_party_key_in_txn(&vault.store, &*wtxn, party)?);
     }
     let channel_class = normalize_channel_class(channel_class);
     for party_key in party_keys {

@@ -3,9 +3,14 @@
 //! the objection window and stays effect-free; this module validates each
 //! act's typed plan, claims the matured act in the writer that applies its
 //! effect, and records one receipt that every affected holder is told about.
-//! Erase keeps its own executor (`Memory::execute_completed_entity_erase`).
+//! Erase keeps its own executor (`Memory::execute_completed_entity_erase`);
+//! a Member's or Admin's ask for one is `erase_ask`.
+mod erase_ask;
 mod membership;
 
+pub use erase_ask::{
+    EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
+};
 pub use membership::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
 
 use super::FederationGrantRole as Role;
@@ -684,6 +689,44 @@ impl Vault {
             let (_, bytes) = entry?;
             let outcome: SharedActOutcome = decode(&bytes)?;
             if outcome.vault_id == vault_id {
+                outcomes.push(outcome);
+            }
+        }
+        Ok(outcomes)
+    }
+
+    /// `person`'s own notices of losing the vault: their leave, their
+    /// removal, and an ownership change that left them no role. Read for a
+    /// removed person whose slips no longer authenticate
+    /// (`Vault::removed_member_notices`).
+    pub(crate) fn removal_outcomes_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<Vec<SharedActOutcome>> {
+        let person = person.to_hex();
+        let prefix = key(OUTCOME_PREFIX, &format!("{person}:"));
+        let mut outcomes = Vec::new();
+        for entry in self.store.vault_meta.prefix_iter(txn, &prefix)? {
+            let (_, bytes) = entry?;
+            let outcome: SharedActOutcome = decode(&bytes)?;
+            let lost = match &outcome.change {
+                SharedVaultChange::MemberLeft { member }
+                | SharedVaultChange::MemberRemoved { member } => *member == person,
+                SharedVaultChange::OwnerRemoved {
+                    target,
+                    target_keeps: None,
+                    ..
+                } => *target == person,
+                SharedVaultChange::OwnershipTransferred {
+                    from,
+                    from_keeps: None,
+                    ..
+                }
+                | SharedVaultChange::OwnerRecovered { from, .. } => *from == person,
+                _ => false,
+            };
+            if lost {
                 outcomes.push(outcome);
             }
         }

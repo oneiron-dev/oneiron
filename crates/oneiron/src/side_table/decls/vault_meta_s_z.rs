@@ -66,6 +66,9 @@ side_tables! {
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
+    /// When a host detector graded one telemetry window under one wording. Key: bytes32
+    /// (blake3 of the tier, the detector policy and the window's run ids).
+    SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
     /// Owner-reviewed T3 finding by family string, colon and diagnostic id16.
     SELF_HEAL_DISTILL: VaultMeta b"self_heal:distill:" Named;
     /// Immutable attempt confession, audit draw and independently checked findings. Key: id16.
@@ -170,8 +173,14 @@ side_tables! {
     SHARE_EXPORT_TRAVEL: VaultMeta b"share:export:travel:v1:" Named;
     /// One-time record of the initial membership/policy defaults applied when a shared vault was
     /// created. Key: ().
+    /// One Member's request or Admin's proposal to erase a record of a shared vault. Key: hex32
+    /// (ask id).
+    SHARED_ACT_ERASE_ASK: VaultMeta b"shared-act:erase-ask:v1:" Raw;
     /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).
     SHARED_ACT_EVENT: VaultMeta b"shared-act:event:v1:" Raw;
+    /// One Owner's notice that a waiting shared act matured. Key: hex32 (owner id) ":" hex32 (act
+    /// id).
+    SHARED_ACT_MATURED: VaultMeta b"shared-act:matured:v1:" Raw;
     /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
     /// id) ":" hex32 (receipt id).
     SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
@@ -482,6 +491,9 @@ side_tables! {
     /// The home-room TURN one skill tradeoff question was witnessed as, ids reserved before the
     /// speak. Key: id16 (proposal) + id16 (project) + question digest (64 hex).
     TASK_PROJECT_TRADEOFF_TURN: VaultMeta b"tasks.project_tradeoff.turn.v1/" Named;
+    /// One try's journaled report: the request and the receipt it was first answered with.
+    /// Key: id16 (attempt) + u64 (attempt count) + bytes32 (reporter, TASK and report key).
+    TASK_REPORT_JOURNAL: VaultMeta b"tasks.report.journal.v1/" Named;
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
     /// Registered external ask wait. Key: id16 + bytes32.
@@ -536,6 +548,13 @@ side_tables! {
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;
+    /// What a standing answer rests on beyond its unit, as a source-to-root refresh watcher (an
+    /// edit to a neighbour queues the root's arrival). Key: id16(source) + id16(question) +
+    /// id16(unit).
+    TYPED_QUESTION_RESTS_ON: VaultMeta b"typed_question:rests_on:v1:" Raw;
+    /// The sources a unit's latest standing answer rests on, so the next answer replaces their
+    /// watchers. Key: id16(question) + id16(unit).
+    TYPED_QUESTION_ROOT_SOURCES: VaultMeta b"typed_question:root_sources:v1:" Named;
     /// Unit-to-question refresh watcher. Key: id16(unit) + id16(question).
     TYPED_QUESTION_UNIT_WATCH: VaultMeta b"typed_question:unit:v1:" Raw;
     TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;

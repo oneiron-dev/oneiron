@@ -49,11 +49,13 @@ mod guest_routes;
 mod handoff_alarm_routes;
 mod history_routes;
 mod inbox_routes;
+mod learning_setting_routes;
 mod legal_hold_routes;
 mod pack_routes;
 mod pad_routes;
 mod peer_confidence_routes;
 mod proactivity_routes;
+mod recovery_kit_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
 mod vault_key_routes;
@@ -103,6 +105,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(history_routes::routes())
         .merge(inbox_routes::routes())
         .merge(concern_routes::routes())
+        .merge(learning_setting_routes::routes())
         .merge(pad_routes::routes())
         .merge(legal_hold_routes::routes())
         .merge(guest_routes::routes())
@@ -117,6 +120,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(handoff_alarm_routes::routes())
         .merge(space_posting_routes::routes())
         .merge(vault_key_routes::routes())
+        .merge(recovery_kit_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }

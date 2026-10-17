@@ -86,6 +86,10 @@ pub enum SelfCall {
     Team(crate::team::SelfTeamCall),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
+    /// `self.leader.advice` and `self.leader.pattern` (OF-389): the bound
+    /// leader's top shapes, and the pattern she picked from them, on the
+    /// host's planner binding. The lease and the skills are the host's.
+    Leader(SelfLeaderCall),
 }
 
 impl SelfCall {
@@ -120,6 +124,7 @@ impl SelfCall {
             Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
+            Self::Leader(_) => SelfEffect::Leader,
             Self::Team(_) => SelfEffect::Team,
         }
     }
@@ -195,6 +200,8 @@ pub enum SelfEffect {
     ReaderReport,
     /// A wait over the run's reader children.
     TasksWaitSet,
+    /// The bound leader's advice or pattern load (OF-389).
+    Leader,
     /// A team run the bound agent leads: its start or its receipt.
     Team,
 }
@@ -232,6 +239,7 @@ impl SelfEffect {
             Self::ReaderSpawn => "self.spawn",
             Self::ReaderReport => "tasks.update",
             Self::TasksWaitSet => "tasks.wait_set",
+            Self::Leader => "self.leader",
             Self::Team => "self.team",
         }
     }
@@ -268,7 +276,7 @@ impl SelfEffect {
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
             Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
-            Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet => None,
+            Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Leader => None,
             Self::Team => None,
         }
     }
@@ -619,6 +627,8 @@ pub enum SelfDispatchOutcome {
     ReaderReport(super::reader::ReaderReportReceipt),
     /// One reduction of a wait over the run's reader children.
     TaskWaitSet(super::reader::TaskWaitSetResult),
+    /// The leader's advice or loaded pattern, as JSON.
+    Leader(String),
     /// A team run's start or receipt (OF-540).
     Team(crate::team::TeamRunAnswer),
 }
@@ -799,9 +809,68 @@ pub struct SelfAgentDefinitionPutResult {
 /// No parent/run/actor fields are accepted from guest code.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfAgentSpawnCall {
-    pub target: crate::agent_dispatch::AgentDispatchTarget,
+    /// The agent or workflow to run. Unset, the spawn needs the host's
+    /// planner to pick its seat.
+    pub target: Option<crate::agent_dispatch::AgentDispatchTarget>,
     pub context: crate::agent_dispatch::AgentSpawnContext,
     pub intent_key: String,
+    /// OF-541: what the spawner asks the planner for. With the host's
+    /// planner and the agent's lease, the host places the spawn's type and
+    /// plans its seat, which replaces `target`. Otherwise `target` runs.
+    pub ask: Option<SelfSpawnAsk>,
+}
+
+/// A spawn's ask in the spawner's words (ARCH-0079 #spawn): the need and
+/// the knobs she seeds or pins. The host places the type, so this is a
+/// [`crate::agent_dispatch::SpawnNeed`] without its stamp.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SelfSpawnAsk {
+    pub need: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub care: Option<crate::agent_dispatch::CareLevel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<crate::agent_dispatch::SpawnOverride<crate::llm::ModelId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<crate::agent_dispatch::SpawnOverride<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern:
+        Option<crate::agent_dispatch::SpawnOverride<crate::agent_dispatch::CoordinationPattern>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_cap_units: Option<crate::agent_dispatch::SpawnOverride<u64>>,
+}
+
+impl SelfSpawnAsk {
+    /// The planner's need: this ask at the type the host placed.
+    #[must_use]
+    pub fn into_need(
+        self,
+        type_ref: crate::task_type::TaskTypeRef,
+    ) -> crate::agent_dispatch::SpawnNeed {
+        crate::agent_dispatch::SpawnNeed {
+            need: self.need,
+            care: self.care,
+            notes: self.notes,
+            type_ref,
+            model: self.model,
+            width: self.width,
+            pattern: self.pattern,
+            budget_cap_units: self.budget_cap_units,
+        }
+    }
+}
+
+/// The bound leader's calls (OF-389). Guest text selects; it never names a
+/// lease, a task or a principal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelfLeaderCall {
+    /// Her top `top` team shapes, the host's count when unset. Advice
+    /// only: no work starts.
+    Advice { top: Option<u32> },
+    /// Load the pattern workflow she picked from the advice. Selecting a
+    /// pattern is not a spawn.
+    Pattern { skill: EntityId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

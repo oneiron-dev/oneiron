@@ -186,7 +186,8 @@ impl SavedQueryEvaluator<'_> {
             .admits(&collected.evidence.scope_membership)
         {
             if evaluate_filter(&definition.filter, &collected.evidence) {
-                self.run_stage_two(&definition, &collected).await?
+                self.run_stage_two(request.query_ref, &definition, &collected)
+                    .await?
             } else {
                 (no_match("stage-1 filter did not match"), false)
             }
@@ -240,6 +241,7 @@ impl SavedQueryEvaluator<'_> {
     /// Stage 2. Only ever called from the stage-1 success branch.
     async fn run_stage_two(
         &self,
+        query_ref: EntityId,
         definition: &SavedQueryDefinition,
         collected: &CollectedEvidence,
     ) -> Result<(MatchDecision, bool)> {
@@ -275,10 +277,11 @@ impl SavedQueryEvaluator<'_> {
                 let decision = judge(
                     binding,
                     definition.owner_actor,
+                    query_ref,
                     shell,
                     rubric,
                     rubric_version,
-                    evidence.entity_ref,
+                    evidence,
                 )
                 .await?;
                 Ok((decision, true))

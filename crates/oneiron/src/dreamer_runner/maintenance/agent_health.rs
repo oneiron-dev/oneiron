@@ -411,11 +411,7 @@ impl DialBook {
     /// One dispatch's dials; the vault's for none.
     fn of(&self, dispatch: Option<&Dispatched>) -> &Dials {
         dispatch
-            .and_then(|dispatch| {
-                self.scoped
-                    .get(&dispatch.project)?
-                    .get(&dispatch.type_node)
-            })
+            .and_then(|dispatch| self.scoped.get(&dispatch.project)?.get(&dispatch.type_node))
             .unwrap_or(&self.vault)
     }
 
@@ -532,9 +528,27 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         now,
     )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(widen_denial_findings(vault, &dispatched, &attempts, &book, since)?);
-    findings.extend(unsupported_done_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(cost_spike_findings(vault, &dispatched, &attempts, &book, since, now)?);
+    findings.extend(widen_denial_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        &book,
+        since,
+    )?);
+    findings.extend(unsupported_done_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        since,
+    )?);
+    findings.extend(cost_spike_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        &book,
+        since,
+        now,
+    )?);
     // A project or task type whose review is off keeps its findings unsaid.
     findings.retain(|finding| book.for_attempt(&dispatched, finding.attempt).review);
     // What each agent said itself, for its card.
@@ -585,7 +599,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
                 && !card.owner_copy
                 && now
                     >= card.opened_at.saturating_add(
-                        book.of(card.attempt.and_then(|attempt| dispatched.get(attempt.as_bytes())))
+                        book.of(card
+                            .attempt
+                            .and_then(|attempt| dispatched.get(attempt.as_bytes())))
                             .ttl_secs,
                     )
             {
@@ -1266,7 +1282,10 @@ fn widen_denial_findings(
             task: task_of(record),
             attempt: Some(record.id),
             evidence: vec![attempt],
-            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
+            window: (
+                record.claimed_at.unwrap_or(record.created_at),
+                record.updated_at,
+            ),
             actual: count,
             dial: dials.widen_denials as i64,
             measured: count,
@@ -1318,7 +1337,10 @@ fn unsupported_done_findings(
             task: Some(task),
             attempt: Some(record.id),
             evidence: vec![attempt, task],
-            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
+            window: (
+                record.claimed_at.unwrap_or(record.created_at),
+                record.updated_at,
+            ),
             actual: count,
             dial: 0,
             measured: count,
@@ -1618,6 +1640,41 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
         });
     }
     Ok(items)
+}
+
+/// Every card in `txn`, concern first and newest first within a tone, as
+/// [`Vault::agent_health_cards_between`] orders them: the weave report reads
+/// them in its own snapshot (OF-568).
+pub(crate) fn agent_health_cards_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AgentHealthCard>> {
+    let mut cards: Vec<AgentHealthCard> = CARDS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, card)| card)
+        .collect();
+    cards.sort_by(|left, right| {
+        right
+            .tone
+            .impact()
+            .cmp(&left.tone.impact())
+            .then(right.updated_at.cmp(&left.updated_at))
+    });
+    Ok(cards)
+}
+
+/// One card by its `health:` handle in `txn`: a saved weave period rechecks
+/// the card it carries against the current one (OF-568).
+pub(crate) fn agent_health_card_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    card: &str,
+) -> Result<Option<AgentHealthCard>> {
+    let Some(key) = parse_card_ref(card) else {
+        return Ok(None);
+    };
+    CARDS.get(&vault.store, txn, &key)
 }
 
 /// What a card now says: the answer to a settle.

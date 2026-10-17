@@ -128,7 +128,11 @@ impl fmt::Debug for PageKey {
 
 impl PartialEq for PageKey {
     fn eq(&self, other: &Self) -> bool {
-        let diff = self.0.iter().zip(other.0.iter()).fold(0, |acc, (a, b)| acc | (a ^ b));
+        let diff = self
+            .0
+            .iter()
+            .zip(other.0.iter())
+            .fold(0, |acc, (a, b)| acc | (a ^ b));
         diff == 0
     }
 }
@@ -399,7 +403,9 @@ impl EnvOpenOptions {
                 let path_str = CString::new(open_path.as_os_str().as_bytes()).unwrap();
 
                 if self.page_key.is_some()
-                    && self.flags.intersects(EnvFlags::WRITE_MAP | EnvFlags::FIXEDMAP)
+                    && self
+                        .flags
+                        .intersects(EnvFlags::WRITE_MAP | EnvFlags::FIXEDMAP)
                 {
                     return Err(Error::Io(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -521,11 +527,22 @@ unsafe fn check_page_key(
 ) -> std::result::Result<(), crate::mdb::lmdb_error::Error> {
     let mut txn: *mut ffi::MDB_txn = ptr::null_mut();
     unsafe {
-        mdb_result(ffi::mdb_txn_begin(env, ptr::null_mut(), ffi::MDB_RDONLY, &mut txn))?;
+        mdb_result(ffi::mdb_txn_begin(
+            env,
+            ptr::null_mut(),
+            ffi::MDB_RDONLY,
+            &mut txn,
+        ))?;
         let mut dbi = 0;
         let mut cursor: *mut ffi::MDB_cursor = ptr::null_mut();
-        let mut key = ffi::MDB_val { mv_size: 0, mv_data: ptr::null_mut() };
-        let mut data = ffi::MDB_val { mv_size: 0, mv_data: ptr::null_mut() };
+        let mut key = ffi::MDB_val {
+            mv_size: 0,
+            mv_data: ptr::null_mut(),
+        };
+        let mut data = ffi::MDB_val {
+            mv_size: 0,
+            mv_data: ptr::null_mut(),
+        };
         let read = mdb_result(ffi::mdb_dbi_open(txn, ptr::null(), 0, &mut dbi))
             .and_then(|()| mdb_result(ffi::mdb_cursor_open(txn, dbi, &mut cursor)))
             .and_then(|()| {
@@ -559,7 +576,11 @@ pub struct Env(Arc<EnvInner>);
 
 impl fmt::Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let EnvInner { env: _, path, sealed } = self.0.as_ref();
+        let EnvInner {
+            env: _,
+            path,
+            sealed,
+        } = self.0.as_ref();
         f.debug_struct("Env")
             .field("path", &path.display())
             .field("sealed", sealed)
@@ -745,7 +766,8 @@ impl Env {
         // ONEIRON FORK (OF-570): a sealed env also carries mdb.master3's
         // encryption and chunk-remap bits, which no `EnvFlags` names.
         let internal = ffi::MDB_ENCRYPT | ffi::MDB_REMAP_CHUNKS;
-        self.get_flags().map(|flags| EnvFlags::from_bits(flags & !internal))
+        self.get_flags()
+            .map(|flags| EnvFlags::from_bits(flags & !internal))
     }
 
     /// Enable or disable the environment's currently active [`EnvFlags`].
@@ -849,6 +871,9 @@ impl Env {
         let mut cursor = RoCursor::new(&rtxn, dbi)?;
 
         while let Some((key, _value)) = cursor.move_on_next(MoveOperation::NoDup)? {
+            // ONEIRON FORK (OF-570): mdb.master3 keys a database by its name
+            // and the terminating NUL.
+            let key = key.strip_suffix(&[0]).unwrap_or(key);
             if key.contains(&0) {
                 continue;
             }
