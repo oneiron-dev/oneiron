@@ -837,13 +837,16 @@ fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> R
         )));
     }
     let rtxn = vault.store.env.read_txn()?;
+    let evidence = crate::authority::adopted_evidence_in_txn(&vault.store, &rtxn)?;
     if !crate::authority::authority_row_resident(&vault.store, &rtxn, &entry)?
         && crate::authority::door_refuses_retired_standing(
             &vault.store,
             &local,
             &authority_entry_hash(&entry)?,
             &entry,
-            &mut |hash| crate::authority::stored_authority_row(&vault.store, &rtxn, hash),
+            &mut |hash| {
+                crate::authority::door_ancestor_row(&vault.store, &rtxn, evidence.as_deref(), hash)
+            },
         )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(

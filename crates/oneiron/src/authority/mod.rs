@@ -32,6 +32,7 @@
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+mod adopted_evidence;
 mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
@@ -193,6 +194,7 @@ pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
+pub(crate) use adopted_evidence::adopted_evidence_in_txn;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
@@ -217,7 +219,7 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
-pub(crate) use retired_signers::{authority_row_resident, stored_authority_row};
+pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.
