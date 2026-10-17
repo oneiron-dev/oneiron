@@ -263,6 +263,24 @@ impl Vault {
         }
         Ok(None)
     }
+    /// Removes the stored row for `row`'s model while it still holds `row`,
+    /// for the source that wrote it and has withdrawn it (a mesh node that
+    /// stopped offering the model). `Ok(false)` when the stored row is gone
+    /// or changed since.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn remove_model_registry_row(&self, row: &ModelRegistryRow) -> Result<bool> {
+        let key = row.catalog.model.as_str().to_owned();
+        let mut txn = self.store.env.write_txn()?;
+        if REGISTRY_ROW.get(&self.store, &txn, &key)?.as_ref() != Some(row) {
+            return Ok(false);
+        }
+        REGISTRY_ROW.delete(&self.store, &mut txn, &key)?;
+        txn.commit()?;
+        Ok(true)
+    }
     pub fn model_registry_rows(&self) -> Result<Vec<ModelRegistryRow>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
