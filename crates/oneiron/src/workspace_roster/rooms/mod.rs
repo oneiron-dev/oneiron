@@ -31,6 +31,8 @@ pub(crate) use audience::{
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
 pub(crate) use history::erase_room_side_rows;
+pub(in crate::workspace_roster) use history::index_task_bindings;
+pub(crate) use history::task_binding_turns_in;
 pub(in crate::workspace_roster) use history::thread_turns_in;
 pub(in crate::workspace_roster) use hosting::room_host_in;
 pub(crate) use hosting::room_project_in;
@@ -64,6 +66,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
+pub(crate) use upkeep::{room_upkeep_host, upkeep_rooms};
 pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16

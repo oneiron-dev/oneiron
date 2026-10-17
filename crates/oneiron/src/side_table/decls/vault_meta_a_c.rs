@@ -86,6 +86,17 @@ side_tables! {
     AUTOREASON_BEAM_DEFAULT: VaultMeta b"authoring/default-beam-winner" LegacyJson;
     /// The id of the newest checkpoint v2 image of this vault's local chain (OF-469). Key: ().
     AUTHORITY_CHECKPOINT_V2_HEAD: VaultMeta b"authority.checkpoint.head.v2" Raw;
+    /// The checkpoint v2 head this install kept, the authority totals it accounts for, the local
+    /// second it was kept at and the root policy this install built it under (OF-469 cutoffs).
+    /// Runtime-tier: no checkpoint image carries it. Key: ().
+    AUTHORITY_CHECKPOINT_PROGRESS: VaultMeta b"authority.checkpoint.local.progress.v1" Named;
+    /// This install's cumulative count of authority rows first stored here and their canonical
+    /// signed body bytes (OF-469 cutoffs). Runtime-tier. Key: ().
+    AUTHORITY_CHECKPOINT_TOTALS: VaultMeta b"authority.checkpoint.local.totals.v1" Named;
+    /// One row the adopted checkpoint v2 image covers that this vault did not hold when it
+    /// adopted it (OF-469 cutoffs): its arrival is hydration, not growth. Runtime-tier. Key:
+    /// hash32.
+    AUTHORITY_CHECKPOINT_UNHELD: VaultMeta b"authority.checkpoint.local.unheld.v1:" Raw;
     /// One checkpoint v2 image's canonical bytes (domain, then named MessagePack), keyed by its
     /// unsigned id (OF-469). Key: hash32.
     AUTHORITY_CHECKPOINT_V2_IMAGE: VaultMeta b"authority.checkpoint.v2." Raw;
@@ -330,6 +341,9 @@ side_tables! {
     /// When the Coach's person-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
+    /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
+    /// unchanged room is not declared again. Key: id16 of the room.
+    COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw;
     /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
     /// rung per reminder window. Key: id16 of the ask's proposal.
     COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;

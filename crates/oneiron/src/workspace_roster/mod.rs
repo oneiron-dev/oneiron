@@ -193,10 +193,12 @@ pub use rooms::{
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
+pub(crate) use rooms::{room_upkeep_host, upkeep_rooms};
 
 pub(crate) use rooms::erase_room_side_rows;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
+pub(crate) use rooms::task_binding_turns_in;
 pub(crate) use rooms::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
     merge_replicated_responses_in_txn, merge_replicated_side_row_in_txn,

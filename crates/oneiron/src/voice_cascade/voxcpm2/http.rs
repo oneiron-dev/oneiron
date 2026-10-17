@@ -1,5 +1,7 @@
 //! Loopback wire to a separately deployed, always-warm CUDA worker.
-//! A bounded FIFO sender never runs HTTP inside `TtsSeamClient::submit`.
+//! A FIFO sender never runs HTTP inside `TtsSeamClient::submit`. Neither
+//! queue refuses work for room (Rule 5); the adapter paces its renders to
+//! the serving policy's `max_queued_renders`.
 //! Each render is one `ai.speech` call on the host's [`WireSeat`]: admitted
 //! on its own permit, started at the rung's media gate before the reference
 //! leaves for the worker, and settled on the characters it spoke.
@@ -13,7 +15,7 @@ use std::{
     io::Read,
     sync::{
         Arc,
-        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
+        mpsc::{self, Receiver, Sender, TryRecvError},
     },
     thread,
     time::Duration,
@@ -60,7 +62,7 @@ impl VoxCpm2Event {
 /// Only loopback HTTP is accepted: a remote host needs a separately secured
 /// tunnel/proxy, never a public raw reference-upload endpoint.
 pub struct VoxCpm2HttpQueue {
-    sender: SyncSender<VoxCpm2Work>,
+    sender: Sender<VoxCpm2Work>,
     responses: Receiver<VoxCpm2Event>,
     warm: WarmTarget,
 }
@@ -116,9 +118,8 @@ impl VoxCpm2HttpQueue {
         if !vault_limits.within(warm.limits) {
             return Err(invalid("worker policy narrower than vault limits"));
         }
-        let capacity = vault_limits.max_queued_renders as usize;
-        let (sender, work) = mpsc::sync_channel(capacity);
-        let (results, responses) = mpsc::sync_channel(capacity);
+        let (sender, work) = mpsc::channel();
+        let (results, responses) = mpsc::channel();
         let credential = bearer.to_owned();
         let render_url = base.join("render").map_err(|_| invalid("render URL"))?;
         thread::Builder::new()
@@ -147,10 +148,9 @@ impl VoxCpm2Queue for VoxCpm2HttpQueue {
         Ok(self.warm.clone())
     }
     fn try_submit(&mut self, work: VoxCpm2Work) -> Result<()> {
-        self.sender.try_send(work).map_err(|e| match e {
-            TrySendError::Full(_) => invalid("worker queue full"),
-            TrySendError::Disconnected(_) => invalid("worker disconnected"),
-        })
+        self.sender
+            .send(work)
+            .map_err(|_| invalid("worker disconnected"))
     }
 }
 
@@ -281,7 +281,7 @@ fn run_worker(
     url: Url,
     credential: String,
     work: Receiver<VoxCpm2Work>,
-    results: SyncSender<VoxCpm2Event>,
+    results: Sender<VoxCpm2Event>,
 ) {
     let mut active: Option<(GenerationEpoch, RenderTarget)> = None;
     let mut chunk_index = 0;
@@ -333,8 +333,8 @@ fn run_worker(
                         submission: item.sequence,
                     },
                 };
-                // A stopped/unobserved session must not hold this worker indefinitely.
-                if results.try_send(event).is_err() {
+                // A stopped session (its queue dropped) must not hold this worker.
+                if results.send(event).is_err() {
                     active = None;
                 }
             }

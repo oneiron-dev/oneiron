@@ -16,6 +16,7 @@ pub enum RunVerb {
     SelfAgentsSpawn,
     SelfLeaderAdvice,
     SelfLeaderPattern,
+    SelfLeaderSplit,
     SelfSkillsCall,
     SelfTeamStart,
     SelfTeamRecord,
@@ -38,6 +39,7 @@ impl RunVerb {
         Self::SelfAgentsSpawn,
         Self::SelfLeaderAdvice,
         Self::SelfLeaderPattern,
+        Self::SelfLeaderSplit,
         Self::SelfSkillsCall,
         Self::SelfTeamStart,
         Self::SelfTeamRecord,
@@ -63,6 +65,7 @@ impl RunVerb {
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderAdvice => "self.leader.advice",
             Self::SelfLeaderPattern => "self.leader.pattern",
+            Self::SelfLeaderSplit => "self.leader.split",
             Self::SelfSkillsCall => "self.skills.call",
             Self::SelfTeamStart => "self.team.start",
             Self::SelfTeamRecord => "self.team.record",
@@ -83,6 +86,7 @@ impl RunVerb {
                 | Self::SelfUnfold
                 | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
                 | Self::SelfTeamStart
                 | Self::SelfTeamRecord
@@ -105,6 +109,7 @@ impl RunVerb {
             Self::SelfAgentsSpawn => crate::code_run::SelfEffect::AgentsSpawn,
             Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,
+            Self::SelfLeaderSplit => crate::code_run::SelfEffect::LeaderSplit,
             Self::SelfSkillsCall => crate::code_run::SelfEffect::SkillsCall,
             Self::SelfTeamStart => crate::code_run::SelfEffect::Team,
             Self::SelfTeamRecord => crate::code_run::SelfEffect::Team,

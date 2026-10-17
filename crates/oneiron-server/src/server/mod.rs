@@ -4,6 +4,7 @@ mod connector_events;
 mod connector_sends;
 mod cooperative_deletion;
 mod core;
+mod desktop_seats;
 mod embedding;
 mod housekeeping;
 mod leases;
@@ -29,6 +30,7 @@ mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::{SyncServer, TaskWorkTurn};
+pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
 pub(crate) use self::lifecycle::LifecycleScheduler;
 pub(crate) use self::live_runs::{

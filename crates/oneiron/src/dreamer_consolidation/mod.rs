@@ -78,8 +78,10 @@ pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub(crate) use persistence::conflict_close_candidate;
-pub(crate) use person_about::enqueue_person_about_on_wake;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
+pub(crate) use person_about::{
+    enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_moved_in_txn,
+};
 pub use provenance::*;
 pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,

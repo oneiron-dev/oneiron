@@ -2,8 +2,8 @@
 
 use super::birth::{RowBirth, stamp_row_birth_in_txn};
 use super::imported;
-use super::made_by::MadeByClass;
 use super::lifecycle::{closed_claim_put_payload, provenance_materialization_op};
+use super::made_by::MadeByClass;
 use super::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence,
     StoredProvenanceClaim, close_record_for_supersession, decode_model_entity_body,
@@ -193,7 +193,7 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
     }
 
-    pub(super) fn retract_edge_provenance_in_txn(
+    pub(crate) fn retract_edge_provenance_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
