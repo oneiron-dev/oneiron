@@ -463,15 +463,18 @@ impl Used<'_> {
                 }
                 .into(),
                 reason_codes: vec![SECRET_USE_REASON.into()],
-                receipt_reasons: vec![
-                    format!("use:{}", self.operation),
-                    format!("handle:{}", self.handle),
-                    format!("generation:{}", self.generation),
-                    format!("effector:{}", self.effector),
-                    format!("decision:{}", decision.as_str()),
-                    format!("send:{}", send.as_str()),
-                ],
-                system_notices: Vec::new(),
+                receipt_reasons: Vec::new(),
+                system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+                    SECRET_USE_CONTENT_KIND,
+                    vec![
+                        format!("use:{}", self.operation),
+                        format!("handle:{}", self.handle),
+                        format!("generation:{}", self.generation),
+                        format!("effector:{}", self.effector),
+                        format!("decision:{}", decision.as_str()),
+                        format!("send:{}", send.as_str()),
+                    ],
+                ),
                 actor_class: self.user.actor_class.gate_actor_class().into(),
                 actor_ref: Some(self.user.actor.to_hex()),
                 content_kind: SECRET_USE_CONTENT_KIND.into(),
