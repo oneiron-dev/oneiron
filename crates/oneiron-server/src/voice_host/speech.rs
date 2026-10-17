@@ -27,7 +27,7 @@ use oneiron::llm::{BudgetGuard, LlmBackend, LlmStreamEvent, VoiceChunkPolicy, Vo
 use oneiron::policy_model::PolicyModelConfig;
 use oneiron::voice_cascade::{
     Brain, BrainEvent, CascadeControl, ControlEvent, GenerationEpoch, OutputStop, PcmFrame,
-    Safeguard, SafeguardRequest, SentenceEnforcement, TtsCommand, TtsSeamClient,
+    Safeguard, SafeguardRequest, SentenceEnforcement, TtsCommand, TtsSeamClient, TurnMemories,
 };
 
 use super::media_bridge::MediaBridge;
