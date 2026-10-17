@@ -594,8 +594,8 @@ impl Memory<'_> {
         )? {
             Ok(diff) => diff,
             Err(proposal) => {
-                self.ask_office_holders(&artifact, &proposal);
-                return Err(super::fork_waits(&proposal).into());
+                let refused = self.ask_office_holders(&artifact, &proposal);
+                return Err(super::fork_waits(&proposal, refused.as_deref()).into());
             }
         };
         self.lifted_body_view(&artifact, diff)
@@ -616,7 +616,8 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.body.proposal.settle`: the proposal after the answer.
-    /// An accept that leaves members waiting asks their holders.
+    /// An accept that leaves members waiting asks their holders; a refused
+    /// ask shows as the proposal's `ask_refused`.
     pub fn artifacts_body_proposal_settle(
         &self,
         input: &OfficeBodyProposalSettleRequest,
