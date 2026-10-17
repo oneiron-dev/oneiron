@@ -2460,7 +2460,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 28
      }
     },
@@ -2702,6 +2702,16 @@
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/task_actor.rs",
+     "purpose": "Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -49315,7 +49325,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 127,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50731,7 +50741,7 @@
    },
    "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3063,
+   "source_files": 3064,
    "test_files": 903
   },
   "oneiron-android": {
