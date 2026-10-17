@@ -34,6 +34,8 @@
 //! continuation its appended text ([`admit_prose_text`]). No grant, scope or
 //! authority path reads a prose link.
 
+mod blocks;
+
 use std::collections::BTreeSet;
 
 use serde_json::Value;
@@ -216,73 +218,56 @@ pub(crate) struct ProseLink {
 /// [`MAX_PROSE_LINKS`], read from its first [`MAX_PROSE_SCAN_BYTES`] bytes.
 ///
 /// Fenced code blocks (```` ``` ```` or `~~~`, indented at most three
-/// spaces), indented code blocks (four columns in, after a blank line), raw
-/// HTML blocks and inline raw HTML (a tag, comment, processing instruction,
-/// declaration or CDATA section) and inline code spans are skipped, as are an
-/// escaped `[` and an image (`![...](...)`). An indented line inside a list
-/// item is read as code too: a link there stays plain text, never the
-/// reverse. Reference-style links and autolinks are not links here. A label
-/// holds no bracket or line break; a ref is 1 to 256 printable ASCII bytes
-/// with no parenthesis, angle bracket, quote or backslash. The parse is
-/// display data only: nothing it finds is ever authority.
+/// spaces), indented code blocks (four columns in, where no paragraph
+/// continues), raw HTML blocks and inline raw HTML (a tag, comment,
+/// processing instruction, declaration or CDATA section) and inline code
+/// spans are skipped, as are an escaped `[` and an image (`![...](...)`).
+/// Every indentation is measured from the content column of the list item a
+/// line sits in, so a line indented under a list item is that item's text
+/// and only one four columns past its content is code. A code span closes
+/// within its paragraph: it never crosses a blank line or a line that opens
+/// another block, and an unclosed backtick run is plain text.
+/// Reference-style links and autolinks are not links here. A label holds no
+/// bracket or line break; a ref is 1 to 256 printable ASCII bytes with no
+/// parenthesis, angle bracket, quote or backslash. The parse is display data
+/// only: nothing it finds is ever authority.
 pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
     let bytes = text.as_bytes();
     let scan_end = bytes.len().min(MAX_PROSE_SCAN_BYTES);
     let mut links = Vec::new();
-    // Backtick run lengths with no closing run after a point already tried.
+    let mut blocks = blocks::Blocks::default();
+    // Where the current paragraph ends, found at its first backtick run, and
+    // the run lengths with no closing run before it after a point already
+    // tried.
+    let mut paragraph_end: Option<usize> = None;
     let mut unclosed = BTreeSet::new();
-    let mut fence: Option<(u8, usize)> = None;
-    // The open raw HTML block, by what ends it.
-    let mut html: Option<HtmlBlockEnd> = None;
-    // The last line was indented code, or a blank line inside it.
-    let mut in_code = false;
-    // The last line was blank (the text's start counts as one).
-    let mut after_blank = true;
+    // The current line opens with a block quote marker.
+    let mut quoted = false;
     let mut line_start = true;
     let mut at = 0;
     while at < scan_end && links.len() < MAX_PROSE_LINKS {
         if line_start {
             line_start = false;
             let line_end = line_end_at(bytes, at, scan_end);
-            let line = &bytes[at..line_end];
-            let indent = line.iter().take_while(|&&byte| byte == b' ').count();
-            let blank = line.iter().all(u8::is_ascii_whitespace);
-            let follows_blank = std::mem::replace(&mut after_blank, blank);
-            if fence.is_some() {
-                if let Some(next) = fence_line(fence, indent, &line[indent..]) {
-                    fence = next;
+            match blocks.line(&bytes[at..line_end]) {
+                blocks::Line::Skip => {
+                    at = line_end;
+                    continue;
                 }
-                at = line_end;
-                continue;
-            }
-            if let Some(end) = html {
-                if end.ends_at(line) {
-                    html = None;
+                blocks::Line::Inline {
+                    from,
+                    starts_paragraph,
+                    heading,
+                    quoted: line_quoted,
+                } => {
+                    if starts_paragraph {
+                        paragraph_end = heading.then_some(line_end);
+                        unclosed.clear();
+                    }
+                    quoted = line_quoted;
+                    at += from;
+                    continue;
                 }
-                at = line_end;
-                continue;
-            }
-            if !blank && indent_columns(line) >= 4 && (follows_blank || in_code) {
-                in_code = true;
-                at = line_end;
-                continue;
-            }
-            if !blank {
-                in_code = false;
-            }
-            if let Some(next) = fence_line(fence, indent, &line[indent..]) {
-                fence = next;
-                at = line_end;
-                continue;
-            }
-            if indent <= 3
-                && let Some(end) = html_block_start(&line[indent..], follows_blank)
-            {
-                if !end.ends_at(&line[indent..]) {
-                    html = Some(end);
-                }
-                at = line_end;
-                continue;
             }
         }
         match bytes[at] {
@@ -303,10 +288,22 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
                     .take_while(|&&byte| byte == b'`')
                     .count();
                 let open_end = at + run;
+                let end = match paragraph_end {
+                    Some(end) if end > at => end,
+                    _ => {
+                        unclosed.clear();
+                        let end = blocks.paragraph_end(
+                            &bytes[..scan_end],
+                            line_end_at(bytes, at, scan_end),
+                            quoted,
+                        );
+                        paragraph_end = Some(end);
+                        end
+                    }
+                };
                 at = if unclosed.contains(&run) {
                     open_end
-                } else if let Some(close_end) = closing_backticks(&bytes[..scan_end], open_end, run)
-                {
+                } else if let Some(close_end) = closing_backticks(&bytes[..end], open_end, run) {
                     close_end
                 } else {
                     unclosed.insert(run);

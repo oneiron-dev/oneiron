@@ -560,7 +560,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.lenses.propose": { description: "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.lenses.activate": { description: "The owner selects a proposed lens revision for its pack slot.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.deactivate": { description: "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.lenses.list": { description: "One page of the vault's lens proposals, each with its slot state from the owner's current selection.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.lenses.list": { description: "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.lenses.default": { description: "Composes the default vault lens from the named sources, read under the caller's own scope.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.disclosure.offer": { description: "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.shares.create": { description: "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -999,7 +999,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         activate: (input: Facade.LensActivateRequest, options?: O): FacadeReturns<"vault.lenses.activate">[K] => invoke("vault.lenses.activate", input, options, newInvocation()),
         /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
         deactivate: (input: Facade.LensDeactivateRequest, options?: O): FacadeReturns<"vault.lenses.deactivate">[K] => invoke("vault.lenses.deactivate", input, options, newInvocation()),
-        /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. */
+        /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
         list: (input: Facade.LensListRequest, options?: O): FacadeReturns<"vault.lenses.list">[K] => invoke("vault.lenses.list", input, options, newInvocation()),
         /** Composes the default vault lens from the named sources, read under the caller's own scope. */
         default: (input: Facade.LensDefaultRequest, options?: O): FacadeReturns<"vault.lenses.default">[K] => invoke("vault.lenses.default", input, options, newInvocation()),

@@ -962,6 +962,14 @@ def facade_dispatch(facade_rows):
             return 'let position = facade_landing(server, call)?;'
         if admission.get('lane_record_scope'):
             return 'auth.require_lane_record_scope()?;'
+        # A read whose engine door filters its projection row by row through
+        # the credential's own scoped read carries the credential's worlds
+        # and facets (OF-250); any other narrowing, and any record or channel
+        # caveat, still fails closed.
+        if admission.get('projection_record_scope'):
+            return ('{ let (worlds, facets) = auth.verified_slip().map_or((oneiron::federation::ScopeAxis::All, oneiron::federation::ScopeAxis::All), '
+                    '|proof| (proof.scope().worlds.clone(), proof.scope().facets.clone())); '
+                    'auth.require_record_scope_carried(worlds, facets)?; }')
         if admission.get('unrestricted_record_scope'):
             return 'auth.require_unrestricted_record_scope()?;'
         # Any other door reads or writes around the lane, so it refuses a facet
@@ -1395,9 +1403,9 @@ def uniffi_export(row, types, census):
     name, method = json.dumps(row['name']), row['name'].replace('.', '_')
     signature = row.get('uniffi')
     if 'call' not in row:
-        declaration = ', '.join(arg + ': ' + typ for arg, typ in signature['args'].items())
-        unused = ', '.join('&' + arg for arg in signature['args'])
-        return f'{name} => fn {method}(&self, {declaration}) -> {signature["output"]} = |_client| {{\n    let _ = ({unused},);\n    definition_only({name})\n}};\n'
+        # Every UniFFI row is callable (the last definition rows took calls in
+        # #2049), so the binding keeps no fail-closed stub for one.
+        raise ValueError(f'{row["name"]}: a definition row has no UniFFI export until it takes a call')
     binding = row.get('binding') or {}
     typed_args = binding['args'] if binding.get('args') and binding.get('wire') != 'json' else None
     engine_input = rust_type(row['input'])
@@ -1463,7 +1471,7 @@ def uniffi_export(row, types, census):
     return f'{name} => fn {method}({receiver}) -> {output} = |client| {{\n{body}}};\n'
 
 def uniffi_facade(facade_rows):
-    'The UniFFI verb surface (every facade row, then the definition rows it still names) and its generated types.'
+    'The UniFFI verb surface (every facade row; a definition row is refused) and its generated types.'
     rows = facade_rows + [row for row in DEFINITIONS if 'uniffi' in row]
     if any('uniffi' in row for row in ROWS if row not in facade_rows):
         raise ValueError('only a facade row carries a uniffi signature')

@@ -24,6 +24,17 @@ pub(crate) struct OffRecordSessionRegistry {
     published: ArcSwap<BTreeMap<String, Arc<OffRecordSessionEntry>>>,
 }
 
+/// Who started a stretch, as its record keeps it.
+#[derive(Clone, Copy)]
+pub(super) enum SessionStart {
+    /// A participant started it in a room: `(room, started_by)`. The room's
+    /// roster decides who is in it.
+    InRoom(EntityId, EntityId),
+    /// Entered alone (a 1:1), by this actor when the door that entered it
+    /// named one.
+    Alone(Option<EntityId>),
+}
+
 pub(super) struct OffRecordSessionEntry {
     pub(super) overlay: Arc<SessionOverlay>,
     pub(super) state: Mutex<OffRecordSessionEntryState>,
@@ -129,17 +140,21 @@ impl OffRecordSessionRegistry {
             .map_err(|_| Error::InvariantViolation("off-record session registry mutex poisoned"))
     }
 
-    /// `room` is `(room, started_by)` for a stretch a participant started in
-    /// a room, and `None` for one the owner entered alone.
+    /// `start` is [`SessionStart::InRoom`] for a stretch a participant
+    /// started in a room, and [`SessionStart::Alone`] for one entered alone.
     pub(super) fn enter(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
         budget_bytes: usize,
         mode: OffRecordMode,
-        room: Option<(EntityId, EntityId)>,
+        start: SessionStart,
         clock: &crate::ports::StoreClock,
     ) -> Result<Arc<OffRecordSessionEntry>> {
+        let (room, entered_by) = match start {
+            SessionStart::InRoom(room, by) => (Some((room, by)), None),
+            SessionStart::Alone(actor) => (None, actor),
+        };
         let mut sessions = self.sessions()?;
         if sessions.contains_key(session_ref) {
             return Err(Error::OffRecord(
@@ -158,6 +173,7 @@ impl OffRecordSessionRegistry {
             closing: false,
             room: room.map(|(room, _)| *room.as_bytes()),
             started_by: room.map(|(_, by)| *by.as_bytes()),
+            entered_by: entered_by.map(|actor| *actor.as_bytes()),
             notices: Vec::new(),
             suggestions: Vec::new(),
         };

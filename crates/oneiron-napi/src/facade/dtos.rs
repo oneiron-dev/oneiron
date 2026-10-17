@@ -461,6 +461,23 @@ pub struct NapiCitedMessage {
     pub short_id: String,
     /// The message's text.
     pub value_text: String,
+    /// The message as a typed record ref, the one the reader's read of it
+    /// admitted (OF-063). It carries no revision pin.
+    pub record: Option<NapiRecordRef>,
+}
+
+/// A typed record ref (OF-063): a record a reader's own read admitted, with
+/// its display label. Display data only, never authority.
+#[napi(object)]
+pub struct NapiRecordRef {
+    /// Registry kind string (`CLAIM`, `MESSAGE`, `PERSON`, ...).
+    pub kind: String,
+    /// 32-hex entity id.
+    pub id: String,
+    /// The vault's short id, when one is assigned; never revision-pinned.
+    pub short_id: Option<String>,
+    /// A bounded, single-line display label.
+    pub label: String,
 }
 
 /// Scope honesty (S6).

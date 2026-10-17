@@ -8,9 +8,9 @@
 //! key, from the config's auth secret `serve` signs with, signs the
 //! `OwnerHandover`.
 //!
-//! The engine keeps no proof note. Stdout is the engine's receipt alone;
-//! stderr names the note's BLAKE3 beside the receipt id, for the operator's
-//! own record.
+//! The engine keeps the note's BLAKE3 with the signed `OwnerHandover`, never
+//! the note. Stdout is the engine's receipt alone; stderr names the same
+//! BLAKE3 beside the receipt id, for the operator's own record.
 
 use std::io::{self, Write};
 
@@ -60,13 +60,21 @@ pub fn host_recover_shared_owner(args: HostRecoverSharedOwnerArgs) -> anyhow::Re
         super::owner::vault_config(&config),
         "or ask it under the host's root credential: `oneiron api raw POST /v1/operator/shared/recover-owner --data -`",
     )?;
-    let receipt = vault.recover_shared_owner(&issuer, args.vault_id, from, claimant)?;
+    // A blank note was refused above, so the handover always keeps a digest.
+    let digest = blake3::hash(args.proof_note.as_bytes());
+    let receipt = vault.recover_shared_owner_with_proof(
+        &issuer,
+        args.vault_id,
+        from,
+        claimant,
+        Some(*digest.as_bytes()),
+    )?;
     super::owner::emit(&receipt)?;
     writeln!(
         io::stderr().lock(),
-        "receipt {}: the engine keeps no proof note; keep yours with this receipt (BLAKE3 {})",
+        "receipt {}: the signed handover keeps the proof note's BLAKE3 {}, not the note; keep yours with this receipt",
         receipt.id,
-        blake3::hash(args.proof_note.as_bytes()).to_hex()
+        digest.to_hex()
     )?;
     Ok(())
 }

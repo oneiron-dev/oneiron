@@ -849,7 +849,7 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
             return json.loads(_translate(lambda: self._client.vault_lenses_deactivate(json.dumps(spec))))
         def list(self, spec):
-            """One page of the vault's lens proposals, each with its slot state from the owner's current selection."""
+            """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def default(self, spec):
             """Composes the default vault lens from the named sources, read under the caller's own scope."""

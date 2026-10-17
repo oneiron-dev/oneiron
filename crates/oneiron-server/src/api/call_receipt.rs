@@ -93,14 +93,36 @@ pub(crate) async fn no_record_reply(mut response: Response) -> Response {
     response
 }
 
-/// Whether a request runs inside an anonymous off-record session: the
-/// session its `x-oneiron-session` header names is one the live registry
-/// holds in `OffRecordMode::Anonymous`. A session the registry cannot be
-/// asked about counts as anonymous, so a call that might be one records
-/// nothing.
-pub(crate) fn in_anonymous_session(server: &SyncServer, headers: &HeaderMap) -> bool {
-    request_session_ref(headers)
-        .is_some_and(|session_ref| server.vault().off_record_session_is_anonymous(session_ref))
+/// Whether a request made for `principal` runs inside an anonymous
+/// off-record session that principal is verified in: the session its
+/// `x-oneiron-session` header names is one the live registry holds in
+/// `OffRecordMode::Anonymous`, and the principal the request's credential
+/// names (its holder, whichever class acts under it) is on its room's
+/// roster or is the actor who entered it alone
+/// (`Vault::off_record_session_is_anonymous_for`, OF-063). Only a request
+/// whose principal provably differs records as anywhere else: one with no
+/// principal (the host root, an OAuth relay, the legacy shared secret)
+/// keeps the unchecked rule, as a session the registry cannot be asked
+/// about does. Each transport asks when the call arrives and again when its
+/// receipt would be written: a caller verified at either time writes none,
+/// so a session closed mid-call keeps its call's exception.
+pub(crate) fn in_anonymous_session(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    principal: Option<oneiron::EntityId>,
+) -> bool {
+    request_session_ref(headers).is_some_and(|session_ref| {
+        server
+            .vault()
+            .off_record_session_is_anonymous_for(session_ref, principal)
+    })
+}
+
+/// The principal a request's credential names, as an entity: its holder
+/// (`principal_ref`). `None` for a credential that names none.
+pub(crate) fn request_principal(auth: &CoreAuth) -> Option<oneiron::EntityId> {
+    auth.principal_ref()
+        .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
 }
 
 /// The session ref a request's `x-oneiron-session` header names, as text;

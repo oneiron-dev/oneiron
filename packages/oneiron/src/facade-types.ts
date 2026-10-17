@@ -229,7 +229,7 @@ export type RecallRequest = { query: string; effort?: RecallEffort | null; scope
 /** `oneiron::memory::recall::MemoryProvenance` */
 export type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] }
 /** `oneiron::memory::recall::CitedMessage` */
-export type CitedMessage = { short_id: string; value_text: string }
+export type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null }
 /** `oneiron::memory::recall::MemoryItem` */
 export type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null }
 /** `oneiron::memory::recall::ScopeHonesty` */

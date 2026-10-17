@@ -2549,7 +2549,7 @@ impl AgentVerb {
                 "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."
             }
             Self::VaultLensesList => {
-                "One page of the vault's lens proposals, each with its slot state from the owner's current selection."
+                "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
             Self::VaultLensesDefault => {
                 "Composes the default vault lens from the named sources, read under the caller's own scope."

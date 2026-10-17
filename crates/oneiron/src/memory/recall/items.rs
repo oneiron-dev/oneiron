@@ -260,6 +260,7 @@ impl Memory<'_> {
                     cited_messages.push(CitedMessage {
                         short_id: item.short_id,
                         value_text: truncate_text(text, DEFAULT_MAX_FIELD_CHARS),
+                        record: item.record,
                     });
                 }
             }

@@ -44,8 +44,8 @@ pub use activation::{
     LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
 };
 pub use proposal::{
-    LENS_LIST_MAX_PAGE, LENS_PROPOSAL_MAX_BYTES, LensListPage, LensListRequest, LensListRow,
-    LensProposalState, LensProposeRequest, LensSlot,
+    LENS_LIST_MAX_PAGE, LENS_LIST_NARROWED_CARRIES_COMPILED, LENS_PROPOSAL_MAX_BYTES, LensListPage,
+    LensListRequest, LensListRow, LensProposalState, LensProposeRequest, LensSlot,
 };
 mod sdk;
 pub use sdk::{LENS_DEFAULT_MAX_SOURCES, LensDefaultRequest, LensDossierSource};

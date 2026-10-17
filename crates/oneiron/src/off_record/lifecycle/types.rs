@@ -72,6 +72,13 @@ pub struct OffRecordSessionRecord {
     /// The person who started the stretch in its room.
     #[serde(default)]
     pub started_by: Option<[u8; 16]>,
+    /// The actor who entered a stretch alone, when the door that entered it
+    /// named one (`OffRecordSessionVault::enter_anonymous_as`): the one
+    /// caller an anonymous 1:1's no-record exception serves
+    /// (`Vault::off_record_session_is_anonymous_for`). `None` on a stretch
+    /// in a room, whose roster decides, and on one entered with no actor.
+    #[serde(default)]
+    pub entered_by: Option<[u8; 16]>,
     /// The room's timeline of saves, exports and save suggestions (ARCH-0052
     /// D5, the notice model), oldest first. Only a stretch in a room has
     /// one: a 1:1 posts no notice. It names who and what, never the content,
