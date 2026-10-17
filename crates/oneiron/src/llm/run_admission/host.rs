@@ -45,6 +45,9 @@ pub struct PayerPerson {
 pub enum PayerAccount {
     /// The PERSON's own billing account, as the host resolved it.
     Person { account: String },
+    /// The vault's own account, the one owner spend bills: the PERSON is one
+    /// of the vault's live Owners, so it is that PERSON's own account.
+    VaultOwner,
     /// The vault owner's, which the owners approved on payer-needed ask
     /// `ask` because the PERSON's own account could not be resolved.
     VaultApproved { ask: u64 },
@@ -56,6 +59,7 @@ impl PayerAccount {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Person { .. } => "person",
+            Self::VaultOwner => "vault_owner",
             Self::VaultApproved { .. } => "vault_approved",
         }
     }

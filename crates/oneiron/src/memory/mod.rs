@@ -98,8 +98,8 @@ pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
 pub use claims::{
-    ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
-    PendingWrite, SafeDeleteReason,
+    ClaimInput, CommitOutcome, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES,
+    MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diary_read::{
