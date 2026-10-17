@@ -41,6 +41,7 @@ mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
 mod planner_live;
+mod project_conversation;
 mod project_proposal;
 mod resident;
 mod room_join;
@@ -70,6 +71,7 @@ pub(crate) use self::widen_record::{unlanded_widens_by_parent, unlanded_widens_b
 pub use self::fanout_statement::{
     ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass,
 };
+pub use self::project_conversation::ProjectConversationSkills;
 pub use self::project_proposal::{ProjectDetection, ProjectDetectionRun};
 
 pub use self::launch::{
