@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/authority/confirm.rs` | src | s | 3 struct · 3 enum · 6 fn · 2 const | AuthorityConfirmAction, AuthorityConfirmKind, CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState | Owner-confirm and critical-write-confirm action and state types |
-| `src/authority/constants.rs` | src | s | 1 type · 78 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
+| `src/authority/constants.rs` | src | s | 1 type · 79 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
 | `src/authority/crypto.rs` | src | s | 2 struct · 3 enum · 12 fn | AuthorityAttestation, AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier | Authority key material and signature verification |
 | `src/authority/device.rs` | src | s | 2 struct · 6 fn | DeviceAuthority, FoldedDevice | Device authority material and the folded-device consent predicates |
 | `src/authority/federation_pact.rs` | src | s | 3 struct · 4 enum · 6 fn | FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus | Federation lifecycle and pact types |
