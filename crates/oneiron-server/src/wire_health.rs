@@ -77,6 +77,8 @@ pub enum CrossingSource {
     /// One signing document's, or one recipient's, ceremony calls past
     /// their window's threshold.
     Esign,
+    /// One caller's `ai.verdict` spend past its window's check (FIX 1123).
+    Spend,
 }
 
 /// Who answered a check.
@@ -276,6 +278,37 @@ fn esign_crossing(key: String, check: &EsignRateCheck) -> Crossing {
         }),
         read: Some((CURSOR_ESIGN.to_owned(), key)),
     }
+}
+
+/// A caller's `ai.verdict` spend past its window's check (FIX 1123, Engine
+/// ruling 10-18), kept now as a held check the next sweep asks: "is
+/// everything okay". It names its caller apart from the grant rule's
+/// `actors`, so a known caller is not cleared by its grant alone. A check,
+/// never a cap: every verdict it counts has answered.
+pub(crate) fn raise_verdict_spend(
+    vault: &Vault,
+    caller: EntityId,
+    spent_units: u64,
+    threshold: u64,
+    window_started_at: u64,
+    raised_at: u64,
+) -> Result<()> {
+    fold(
+        vault,
+        Crossing {
+            subject: format!("spend:ai.verdict:{}", caller.to_hex()),
+            source: CrossingSource::Spend,
+            raised_at,
+            summary: json!({
+                "kind": "ai.verdict.spend",
+                "caller": caller.to_hex(),
+                "spent_units": spent_units,
+                "threshold": threshold,
+                "window_started_at": window_started_at,
+            }),
+            read: None,
+        },
+    )
 }
 
 /// The kept crossings past each cursor. A scan check is sticky, so one with

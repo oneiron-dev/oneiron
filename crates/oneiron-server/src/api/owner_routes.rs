@@ -72,6 +72,7 @@ mod secret_reveal_routes;
 mod secret_use_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
+mod steer_routes;
 mod vault_key_routes;
 mod weave_routes;
 mod widen_proposal_routes;
@@ -154,6 +155,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(secret_reveal_routes::routes())
         .merge(secret_found_routes::routes())
         .merge(secret_lift_routes::routes())
+        .merge(steer_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }

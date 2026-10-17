@@ -180,12 +180,18 @@ pub(crate) async fn serve_with_pool(
         });
         let routes = TowerToHyperService::new(app.clone());
         let body_idle = limits.body_idle_timeout;
+        // The id a reply no credential attributed names this socket by
+        // (FIX 811): minted here, never derived from the peer's address.
+        let socket_id = crate::api::call_receipt::mint_connection_id();
         let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
             let mut request = request.map(|body| Body::new(IdleBody::new(body, body_idle)));
             request.extensions_mut().insert(ConnectInfo(peer));
             CONNECTION.scope(
                 Arc::clone(&connection),
-                hyper::service::Service::call(&routes, request),
+                crate::api::call_receipt::on_connection(
+                    socket_id,
+                    hyper::service::Service::call(&routes, request),
+                ),
             )
         });
         let mut stop = stop.clone();

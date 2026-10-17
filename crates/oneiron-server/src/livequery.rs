@@ -44,8 +44,13 @@ pub(crate) fn decode_sub(payload: &[u8]) -> Result<SubRequest, ProtocolError> {
     wire::sub(payload)
 }
 
-pub(crate) fn ping_result(id: u64, payload: Value) -> Result<Vec<u8>, ProtocolError> {
-    wire::frame(TAG_RPC, "ping", id, 0, true, payload)
+/// A `ping` reply, stating the connection's receipt for it (FIX 811).
+pub(crate) fn stamped_ping_result(
+    id: u64,
+    payload: Value,
+    stamp: &CallStamp,
+) -> Result<Vec<u8>, ProtocolError> {
+    wire::stamped_frame(TAG_RPC, "ping", id, 0, true, payload, stamp)
 }
 
 pub(crate) fn bind_token(params: &Value) -> Result<String, ProtocolError> {
@@ -66,6 +71,15 @@ pub(crate) fn bind_token(params: &Value) -> Result<String, ProtocolError> {
 /// Results are a bounded, sequenced MessagePack byte stream, including empty values.
 pub(crate) fn rpc_result(request_id: u64, result: Value) -> Result<Vec<Vec<u8>>, ProtocolError> {
     wire::result(request_id, &result)
+}
+
+/// [`rpc_result`] stating the call's receipt on each chunk (FIX 811).
+pub(crate) fn stamped_rpc_result(
+    request_id: u64,
+    result: &Value,
+    stamp: &CallStamp,
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    wire::result_chunks(request_id, &wire::packed(result)?, stamp)
 }
 
 fn rpc_error(

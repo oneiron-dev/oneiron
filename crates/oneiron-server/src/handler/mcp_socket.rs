@@ -133,8 +133,12 @@ fn mcp_routes(server: Arc<SyncServer>) -> Router {
         ))
         .with_state(server.clone())
         .layer(axum::middleware::from_fn_with_state(
-            server,
+            server.clone(),
             crate::auth::admit_http_binding,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            crate::api::call_receipt::connection_receipt,
         ))
 }
 
@@ -179,12 +183,20 @@ pub(super) fn upgrade(
     };
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new MCP socket");
+    // FIX 811: the socket's unattributed replies name the connection its
+    // upgrade arrived on.
+    let connection = crate::api::call_receipt::connection_id();
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
-        .on_upgrade(move |socket| serve(socket, server, conn_id, session_jti, caller))
+        .on_upgrade(move |socket| {
+            crate::api::call_receipt::on_connection(
+                connection,
+                serve(socket, server, conn_id, session_jti, caller),
+            )
+        })
         .into_response())
 }
 
@@ -284,7 +296,17 @@ async fn serve(
             break;
         };
         if request.method == "ping" {
-            let Ok(frame) = crate::livequery::ping_result(request.request_id, request.params)
+            // FIX 811: a ping is the connection's reply, echoing its params.
+            let digest = oneiron::receipt::call_json_digest(&request.params);
+            let stamp = crate::api::call_receipt::record_socket_reply(
+                &server,
+                request.method,
+                oneiron::receipt::CallOutcome::Ok,
+                digest.clone(),
+                Some(digest),
+            );
+            let Ok(frame) =
+                crate::livequery::stamped_ping_result(request.request_id, request.params, &stamp)
             else {
                 break;
             };
@@ -313,7 +335,10 @@ async fn serve(
         let id = request.request_id;
         let routes = routes.clone();
         let caller = Arc::clone(&caller);
-        calls.spawn(async move { answer(id, call, &routes, &caller).await });
+        calls.spawn(crate::api::call_receipt::on_connection(
+            crate::api::call_receipt::connection_id(),
+            async move { answer(id, call, &routes, &caller).await },
+        ));
     }
 }
 
