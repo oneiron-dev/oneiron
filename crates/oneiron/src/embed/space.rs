@@ -12,6 +12,10 @@
 //! Media vectors live per space: every row is keyed by its space and carries its input kind, so
 //! a search reads exactly one space and two spaces' vectors are never compared. Each space's
 //! search is its own ranked list; fusion z-scores every list on its own scale.
+//!
+//! Declarations and bindings reach this vault's other devices as EMBEDDING_SETUP rows
+//! ([`EmbeddingSetup`]), which every writer here publishes in its own write; each device then
+//! embeds its own ASSETs with the pinned space's model. Vectors never travel.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,17 +23,24 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
 use crate::config::VectorEvidenceFloors;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::pipeline::ScoredEntity;
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_EMBEDDING_SETUP;
 use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable, SideTableDbs};
 use crate::store::{decode_vector_row, encode_vector_row_v1};
+use crate::temporal::TimeRange;
 
 /// Longest declared space id.
 pub const EMBEDDING_SPACE_ID_MAX_LEN: usize = 256;
 /// Widest declared space.
 pub const EMBEDDING_SPACE_MAX_DIMENSIONS: usize = 8192;
+/// The learned (and occurred) time of every EMBEDDING_SETUP row: one fixed instant, so each row
+/// lives in one window, `1970-01`, whenever it was last written.
+pub const EMBEDDING_SETUP_LEARNED_AT: u64 = 0;
 
 /// One input modality a kind slot names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -219,6 +230,156 @@ impl KindSlotBindings {
     }
 }
 
+/// One EMBEDDING_SETUP row (OF-370): a piece of this vault's embedding setup its other devices
+/// need to embed the same inputs into the same spaces. A row's id derives from what it names,
+/// so every device writes one row per space and one per kind slot. A retirement and a slot's
+/// return to its default are rows too, never a missing one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EmbeddingSetup {
+    /// A declared space.
+    Space(EmbeddingSpace),
+    /// A space retired here: its declaration and rows went.
+    Retired { id: String },
+    /// A kind slot's binding; `None` is the slot's default.
+    Slot {
+        kind: InputKind,
+        space: Option<String>,
+    },
+}
+
+impl EmbeddingSetup {
+    fn id(&self) -> Result<EntityId> {
+        let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
+        match self {
+            Self::Space(EmbeddingSpace { id, .. }) | Self::Retired { id } => {
+                EntityId::derive(domain, &[b"space".as_slice(), id.as_bytes()])
+            }
+            Self::Slot { kind, .. } => {
+                EntityId::derive(domain, &[b"slot".as_slice(), &[kind.byte()]])
+            }
+        }
+    }
+
+    fn encode(&self) -> Result<Vec<u8>> {
+        rmp_serde::to_vec_named(self)
+            .map_err(|_| Error::InvariantViolation("embedding setup row encode"))
+    }
+
+    /// The row `data` holds, refused unless it is exactly the bytes its writer encodes.
+    fn decode(data: &[u8]) -> Result<Self> {
+        let setup: Self = rmp_serde::from_slice(data)
+            .map_err(|_| refused_setup("the row does not decode".into()))?;
+        if setup.encode()? != data {
+            return Err(refused_setup(
+                "the row is not in its canonical encoding".into(),
+            ));
+        }
+        Ok(setup)
+    }
+}
+
+fn refused_setup(reason: String) -> Error {
+    Error::Artifact(ArtifactError::InvalidEmbeddingSetupBody(reason))
+}
+
+#[cfg(feature = "sync")]
+fn setup_waits(reason: String) -> Error {
+    Error::Artifact(ArtifactError::EmbeddingSetupDependencyPending(reason))
+}
+
+/// Whether a replicated EMBEDDING_SETUP body rests on another row of its window: a binding or a
+/// retirement lands after the declarations beside it.
+#[cfg(feature = "sync")]
+pub(crate) fn embedding_setup_rests_on_sibling(data: &[u8]) -> bool {
+    !matches!(EmbeddingSetup::decode(data), Ok(EmbeddingSetup::Space(_)))
+}
+
+/// Installs one replicated EMBEDDING_SETUP row of this vault into the side tables in `wtxn`,
+/// under the checks its local writer makes. `id` must be the row's own derived id. A binding of
+/// a space not declared here yet, a retirement of a space a slot here still binds, and a row
+/// naming a slot a move here carries wait
+/// ([`ArtifactError::EmbeddingSetupDependencyPending`]); anything else that fails a check is
+/// refused ([`ArtifactError::InvalidEmbeddingSetupBody`]). Nothing is written then.
+#[cfg(feature = "sync")]
+pub(crate) fn install_replicated_embedding_setup_in_txn(
+    store: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+) -> Result<()> {
+    let setup = EmbeddingSetup::decode(data)?;
+    if setup.id()? != *id {
+        return Err(refused_setup(format!(
+            "row {} is not the row its contents name",
+            id.to_hex()
+        )));
+    }
+    let moving = |wtxn: &RwTxn<'_>, kind: InputKind| -> Result<()> {
+        match super::space_move::moving_kind_in_txn(store, wtxn, kind)? {
+            Some(candidate) => Err(setup_waits(format!(
+                "the {kind:?} slot is moving to {candidate} here"
+            ))),
+            None => Ok(()),
+        }
+    };
+    match setup {
+        EmbeddingSetup::Space(space) => {
+            space
+                .validate()
+                .map_err(|error| refused_setup(error.to_string()))?;
+            if let Some(existing) = embedding_space_in_txn(store, wtxn, &space.id)?
+                && existing.dimensions != space.dimensions
+            {
+                return Err(refused_setup(format!(
+                    "embedding space {} is declared here at width {}",
+                    space.id, existing.dimensions
+                )));
+            }
+            EMBEDDING_SPACE.put(store, wtxn, &space.id.clone(), &space)?;
+        }
+        EmbeddingSetup::Retired { id: space_id } => {
+            validate_space_id(&space_id).map_err(|error| refused_setup(error.to_string()))?;
+            let bindings = kind_slot_bindings_in_txn(store, wtxn)?;
+            if let Some(kind) = InputKind::ALL
+                .into_iter()
+                .find(|kind| bindings.space_for(*kind) == Some(space_id.as_str()))
+            {
+                return Err(setup_waits(format!(
+                    "the {kind:?} slot here still binds {space_id}"
+                )));
+            }
+            if super::space_move::open_move_names_in_txn(store, wtxn, &space_id)? {
+                return Err(setup_waits(format!("an open move here names {space_id}")));
+            }
+            let key = space_key(&space_id);
+            MEDIA_VECTOR.delete_from(store, wtxn, &key)?;
+            MEDIA_REFUSED.delete_from(store, wtxn, &key)?;
+            EMBEDDING_SPACE.delete(store, wtxn, &space_id)?;
+        }
+        EmbeddingSetup::Slot {
+            kind,
+            space: Some(space_id),
+        } => {
+            let Some(space) = embedding_space_in_txn(store, wtxn, &space_id)? else {
+                return Err(setup_waits(format!(
+                    "embedding space {space_id} is not declared here yet"
+                )));
+            };
+            space
+                .admit_binding(kind)
+                .map_err(|error| refused_setup(error.to_string()))?;
+            moving(wtxn, kind)?;
+            EMBEDDING_SLOT.put(store, wtxn, &[kind.byte()], &space.id)?;
+        }
+        EmbeddingSetup::Slot { kind, space: None } => {
+            moving(wtxn, kind)?;
+            EMBEDDING_SLOT.delete(store, wtxn, &[kind.byte()])?;
+        }
+    }
+    Ok(())
+}
+
 /// Declared spaces. Key: space id string.
 const EMBEDDING_SPACE: SideTable<String, EmbeddingSpace, Named> =
     SideTable::new(&side_table::EMBEDDING_SPACE);
@@ -298,7 +459,7 @@ pub(super) fn clear_media_refusal_in_txn(
 }
 
 /// Width of a text row's text hash.
-const TEXT_HASH_LEN: usize = 32;
+pub(crate) const TEXT_HASH_LEN: usize = 32;
 
 /// A stored media vector: its input kind byte, for a text row the hash of the text it embeds,
 /// then the v1 vector row.
@@ -346,6 +507,29 @@ impl RawValue for MediaVectorRow {
 /// The hash a text row keeps of the text it embeds.
 pub(crate) fn text_hash(text: &str) -> [u8; TEXT_HASH_LEN] {
     *blake3::hash(text.as_bytes()).as_bytes()
+}
+
+/// The text hash a `kind` vector of record `id` carries: for a text vector the hash of the text
+/// the text slot embeds for it, as `store` holds it (base, or a room's view over it); `None`
+/// for a media kind.
+pub(crate) fn media_text_hash_of(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    kind: InputKind,
+) -> Result<Option<[u8; TEXT_HASH_LEN]>> {
+    match kind {
+        InputKind::Text => {
+            let Some(text) = super::media::text_document_in(vault, store, txn, id)? else {
+                return Err(Error::InvalidConfig(
+                    "the record holds no text the text slot embeds".into(),
+                ));
+            };
+            Ok(Some(text_hash(&text)))
+        }
+        InputKind::Image | InputKind::Audio => Ok(None),
+    }
 }
 
 fn validate_space_id(id: &str) -> Result<()> {
@@ -477,6 +661,54 @@ pub(crate) fn put_media_vector_in_txn(
         row: encode_vector_row_v1(vector)?,
     };
     MEDIA_VECTOR.put(store, txn, &(space.key(), *id), &row)
+}
+
+/// Stages one media vector into declared space `space_id`, as [`put_media_vector_in_txn`] admits
+/// it there. The session apply's `MediaVector` arm, so a room's vector meets the same space,
+/// slot and width rules a base one does.
+pub(crate) fn stage_media_vector_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space_id: &str,
+    id: &EntityId,
+    kind: InputKind,
+    text_hash: Option<[u8; TEXT_HASH_LEN]>,
+    vector: &[f32],
+) -> Result<()> {
+    if let Some(error) = Error::invalid_vector_component(vector) {
+        return Err(error);
+    }
+    let Some(space) = embedding_space_in_txn(store, txn, space_id)? else {
+        return Err(Error::InvalidConfig(format!(
+            "embedding space {space_id} is not declared"
+        )));
+    };
+    let fills = super::space_move::space_fill_kinds_in_txn(store, txn, &space)?;
+    put_media_vector_in_txn(store, txn, &space, &fills, id, kind, text_hash, vector)
+}
+
+/// Promotion's replay of a media vector a room staged (OF-370): it lands in base when the space
+/// still takes it as the room staged it. A space retired, unbound or of another width since
+/// leaves the row to the backfill, which embeds what base's slots bind; a promotion does not
+/// fail on a binding the room no longer has. A text row whose text changed since keeps the
+/// room's hash, so the backfill finds it stale and embeds the text again.
+pub(crate) fn replay_media_vector_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space_id: &str,
+    id: &EntityId,
+    kind: InputKind,
+    text_hash: Option<[u8; TEXT_HASH_LEN]>,
+    vector: &[f32],
+) -> Result<()> {
+    let Some(space) = embedding_space_in_txn(store, txn, space_id)? else {
+        return Ok(());
+    };
+    let fills = super::space_move::space_fill_kinds_in_txn(store, txn, &space)?;
+    if !fills.contains(&kind) || vector.len() != space.dimensions {
+        return Ok(());
+    }
+    put_media_vector_in_txn(store, txn, &space, &fills, id, kind, text_hash, vector)
 }
 
 /// Binds `kind`'s slot to `space_id`, or returns it to its default when `None`: the vault's
@@ -612,6 +844,106 @@ fn norm(vector: &[f32]) -> f32 {
 }
 
 impl Vault {
+    /// Writes, in `wtxn`, each EMBEDDING_SETUP row the side tables no longer match: one per
+    /// declared space, a retirement of each space a row declares and the tables no longer do,
+    /// and one per kind slot that is bound or has a row. Every writer of a declaration or a
+    /// binding calls it last, and hands what it returns to
+    /// [`Self::embedding_setup_committed`] once `wtxn` commits.
+    pub(super) fn publish_embedding_setup_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let mut held = BTreeMap::new();
+        let ids = self
+            .store
+            .port_entity_ids_by_type(wtxn, ENTITY_TYPE_EMBEDDING_SETUP, None)?
+            .collect::<Result<Vec<_>>>()?;
+        for id in ids {
+            if let Some(raw) = self.store.port_entity_raw(wtxn, &id)?
+                && let Some(data) = raw.get(ENTITY_METADATA_HEADER_LEN..)
+                && let Ok(setup) = EmbeddingSetup::decode(data)
+            {
+                held.insert(id, setup);
+            }
+        }
+        let mut wanted = BTreeMap::new();
+        for (_, space) in EMBEDDING_SPACE.scan(&self.store, wtxn)? {
+            let setup = EmbeddingSetup::Space(space);
+            wanted.insert(setup.id()?, setup);
+        }
+        for (id, setup) in &held {
+            if let EmbeddingSetup::Space(space) = setup
+                && !wanted.contains_key(id)
+            {
+                wanted.insert(
+                    *id,
+                    EmbeddingSetup::Retired {
+                        id: space.id.clone(),
+                    },
+                );
+            }
+        }
+        let bindings = kind_slot_bindings_in_txn(&self.store, wtxn)?;
+        for kind in InputKind::ALL {
+            let space = bindings.space_for(kind).map(str::to_owned);
+            let bound = space.is_some();
+            let setup = EmbeddingSetup::Slot { kind, space };
+            let id = setup.id()?;
+            if bound || held.contains_key(&id) {
+                wanted.insert(id, setup);
+            }
+        }
+        let mut written = BTreeSet::new();
+        let mut ops = Vec::new();
+        for (id, setup) in wanted {
+            if held.get(&id) == Some(&setup) {
+                continue;
+            }
+            ops.push(BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_EMBEDDING_SETUP,
+                occurred: TimeRange {
+                    start: EMBEDDING_SETUP_LEARNED_AT,
+                    end: EMBEDDING_SETUP_LEARNED_AT,
+                },
+                learned_at: EMBEDDING_SETUP_LEARNED_AT,
+                data: setup.encode()?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            });
+            written.insert(id);
+        }
+        if !ops.is_empty() {
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                ops,
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )?;
+        }
+        Ok(written)
+    }
+
+    /// Hands the EMBEDDING_SETUP rows a committed write published to the live mirror, so they
+    /// reach this vault's other devices, and wakes the media backfill: a space or a binding
+    /// may have changed.
+    pub(super) fn embedding_setup_committed(&self, rows: BTreeSet<EntityId>) {
+        if rows.is_empty() {
+            return;
+        }
+        self.store.notify_attempt_observers();
+        #[cfg(feature = "sync")]
+        self.note_committed_rows(rows);
+        #[cfg(not(feature = "sync"))]
+        drop(rows);
+    }
+
     /// Declares (or re-declares) an embedding space. A re-declaration may widen its accepted
     /// inputs or towers but never change its width: a new width is a new space.
     pub fn declare_embedding_space(&self, space: EmbeddingSpace) -> Result<()> {
@@ -626,7 +958,9 @@ impl Vault {
             )));
         }
         EMBEDDING_SPACE.put(&self.store, &mut wtxn, &space.id.clone(), &space)?;
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         Ok(())
     }
 
@@ -673,7 +1007,9 @@ impl Vault {
         space.admit_binding(kind)?;
         refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
         EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         Ok(())
     }
 
@@ -704,7 +1040,9 @@ impl Vault {
                 EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
             }
         }
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         Ok(())
     }
 
@@ -714,7 +1052,9 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
         EMBEDDING_SLOT.delete(&self.store, &mut wtxn, &[kind.byte()])?;
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         Ok(())
     }
 
@@ -727,42 +1067,26 @@ impl Vault {
         kind: InputKind,
         vector: &[f32],
     ) -> Result<()> {
-        if let Some(error) = Error::invalid_vector_component(vector) {
-            return Err(error);
-        }
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
-            return Err(Error::InvalidConfig(format!(
-                "embedding space {space_id} is not declared"
-            )));
-        };
-        if crate::ports::EntityStoreRead::port_entity_record(&self.store, &wtxn, id)?.is_none() {
-            return Err(Error::EntityNotFound);
-        }
-        let text_hash = match kind {
-            InputKind::Text => {
-                let Some(text) = super::media::text_document_in_txn(self, &wtxn, id)? else {
-                    return Err(Error::InvalidConfig(
-                        "the record holds no text the text slot embeds".into(),
-                    ));
-                };
-                Some(text_hash(&text))
-            }
-            InputKind::Image | InputKind::Audio => None,
-        };
-        let fills = super::space_move::space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
-        put_media_vector_in_txn(
-            &self.store,
-            &mut wtxn,
-            &space,
-            &fills,
-            id,
-            kind,
-            text_hash,
-            vector,
-        )?;
+        self.put_base_media_vector_in_txn(&mut wtxn, space_id, id, kind, vector)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// [`Self::put_media_vector`] in the caller's base transaction.
+    pub(crate) fn put_base_media_vector_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        space_id: &str,
+        id: &EntityId,
+        kind: InputKind,
+        vector: &[f32],
+    ) -> Result<()> {
+        if crate::ports::EntityStoreRead::port_entity_record(&self.store, wtxn, id)?.is_none() {
+            return Err(Error::EntityNotFound);
+        }
+        let text_hash = media_text_hash_of(self, &self.store, wtxn, id, kind)?;
+        stage_media_vector_in_txn(&self.store, wtxn, space_id, id, kind, text_hash, vector)
     }
 
     /// Retires a declared space no slot binds and no open version move names: its rows and its
@@ -786,7 +1110,9 @@ impl Vault {
         MEDIA_VECTOR.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
         MEDIA_REFUSED.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
         EMBEDDING_SPACE.delete(&self.store, &mut wtxn, &space_id.to_owned())?;
+        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup);
         Ok(())
     }
 

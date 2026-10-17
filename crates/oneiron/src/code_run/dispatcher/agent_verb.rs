@@ -8,12 +8,13 @@ use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunRepl
 use crate::code_run::storage::{ExecutorStorage, derived_executor_id};
 use crate::code_run::types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbRefusal, RunCall,
-    SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
+    SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait,
+    SelfDurableWaitReason, SelfEffect,
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
 use crate::runtime_hooks::VerbHookStop;
-use crate::task_verb::sdk::AgentVerb;
+use crate::task_verb::sdk::{AgentVerb, ConnectorCallReply};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
@@ -80,7 +81,11 @@ impl HostSelfDispatcher<'_> {
         // stop goes back to the dispatcher as `Error::VerbHook`.
         let invocation = self.verb_invocation(&SelfCall::AgentVerb(call.clone()), site)?;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
-            return Ok(answered(door.call(&call, &origin, invocation)?));
+            let answer = door.call(&call, &origin, invocation)?;
+            return Ok(connector_call_answer(
+                call.verb,
+                answered(self.keep_no_secret_value(call.verb, answer)),
+            ));
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
@@ -139,7 +144,9 @@ impl HostSelfDispatcher<'_> {
             .storage
             .put_code_run_replay_record_if_generation_with_heal(&receipt, stopped, None)?;
         let outcome = match door.call(&call, &origin, invocation) {
-            Ok(answer) => answered(answer),
+            // A held connector call parks before its receipt keeps it, so a
+            // resumed step parks on the same call again.
+            Ok(answer) => connector_call_answer(call.verb, answered(answer)),
             Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
                 answered(Err(AgentVerbRefusal {
                     code: VERB_HOOK_HIDDEN.to_owned(),
@@ -176,6 +183,27 @@ impl HostSelfDispatcher<'_> {
         self.storage
             .put_code_run_replay_record_if_generation_with_heal(&receipt, Some(generation), None)?;
         Ok(outcome)
+    }
+
+    /// A `reveal.wait` answer carries a secret's value (OF-560): the guest
+    /// reads it through this call's view, and the run's record keeps the
+    /// answer without it, so a step row holds the handle, never the value.
+    fn keep_no_secret_value(
+        &self,
+        verb: AgentVerb,
+        answer: std::result::Result<AgentVerbAnswer, AgentVerbRefusal>,
+    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
+        match answer {
+            Ok(mut answer) if verb == AgentVerb::RevealWait => {
+                let kept = crate::task_verb::sdk::kept_reveal_answer(&answer.output);
+                if kept != answer.output {
+                    let output = std::mem::replace(&mut answer.output, kept);
+                    *self.hook_view.borrow_mut() = Some(serde_json::json!({ "output": output }));
+                }
+                Ok(answer)
+            }
+            other => other,
+        }
     }
 
     /// A step past a write that did not meet its receipt can no longer close,
@@ -379,6 +407,31 @@ fn answered(
     )
 }
 
+/// `connector.call`'s answer as the run takes it (ONE-2510): a call held for
+/// consent or governance, or a delivery the same send retries, parks the run
+/// on the call's ref as an outbound-effect wait, which the connector settler
+/// answers with the call's settled reply. Any other answer, and any other
+/// verb's, stands.
+fn connector_call_answer(verb: AgentVerb, outcome: SelfDispatchOutcome) -> SelfDispatchOutcome {
+    let wait_id = match &outcome {
+        SelfDispatchOutcome::AgentVerb(answer) if verb == AgentVerb::ConnectorCall => {
+            serde_json::from_value::<ConnectorCallReply>(answer.output.clone())
+                .ok()
+                .and_then(|reply| reply.wait_ref())
+        }
+        _ => None,
+    };
+    let Some(wait_id) = wait_id else {
+        return outcome;
+    };
+    SelfDispatchOutcome::DurableWait(SelfDurableWait {
+        wait_id,
+        effect: SelfEffect::AgentVerb,
+        reason: SelfDurableWaitReason::OutboundEffect,
+        prompt: Some(format!("connector_call:{}", wait_id.to_hex())),
+    })
+}
+
 /// A verb call's identity: the verb and its input with object keys sorted, so
 /// a re-run that writes the same fields in another order makes the same call.
 fn call_identity(verb: &str, input: &Value) -> Vec<u8> {
@@ -425,6 +478,11 @@ fn answered_as_kept(kept: &CodeRunBridgeCall, made: &CodeRunBridgeCall) -> bool 
         (Ok(SelfDispatchOutcome::Denied(kept)), Ok(SelfDispatchOutcome::Denied(made))) => {
             kept == made
         }
+        // A held connector call's park (ONE-2510).
+        (
+            Ok(SelfDispatchOutcome::DurableWait(kept)),
+            Ok(SelfDispatchOutcome::DurableWait(made)),
+        ) => kept == made,
         _ => false,
     }
 }

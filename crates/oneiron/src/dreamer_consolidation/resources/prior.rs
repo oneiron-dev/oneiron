@@ -106,6 +106,7 @@ impl BranchResources<'_> {
                     entity_type: kind,
                     learned_at,
                     project: Some(prior.body.scope_project),
+                    body_hash: *blake3::hash(&bytes).as_bytes(),
                     #[cfg(test)]
                     trust_class: Some(crate::dreamer_consolidation::provenance::source_meet(
                         prior.body.source.unwrap_or(crate::ClaimSource::Imported),
@@ -274,6 +275,7 @@ fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateK
             evidence_meet: crate::ClaimSource::Generated,
             occurred: crate::TimeRange { start: 0, end: 0 },
             learned_at: 0,
+            decisions: Vec::new(),
         },
         rules,
     )?;

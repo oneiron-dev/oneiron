@@ -32,15 +32,20 @@ impl Memory<'_> {
     pub fn shape_apply(&self, input: &ShapeApplyRequest) -> MemoryResult<ShapeApplyReceipt> {
         let now = crate::unix_seconds_now();
         if let Ok(owner) = self.embedded_owner("vault.shape.apply") {
-            return Ok(self
-                .vault
-                .apply_shape(ShapeApplier::Owner(&owner), input, now, &mut |_| Ok(true))?);
+            return Ok(self.vault.apply_shape(
+                ShapeApplier::Owner(&owner),
+                input,
+                now,
+                &mut |_| Ok(true),
+            )?);
         }
         self.shape_apply_as_principal(input)
     }
 
     /// `vault.shape.apply` as this handle's principal, never the owner: the
-    /// seed is stored and every item waits for the owner's word.
+    /// seed is stored and every item waits for the owner's word. A new grant
+    /// is also filed to the owner's widen inbox under the credential this
+    /// handle reads with, when it has one.
     pub fn shape_apply_as_principal(
         &self,
         input: &ShapeApplyRequest,
@@ -48,7 +53,10 @@ impl Memory<'_> {
         let now = crate::unix_seconds_now();
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         Ok(self.vault.apply_shape(
-            ShapeApplier::Actor(self.actor),
+            ShapeApplier::Actor {
+                actor: self.actor,
+                credential: self.read_proof.as_ref(),
+            },
             input,
             now,
             &mut |id| read.is_entity_readable(id),
