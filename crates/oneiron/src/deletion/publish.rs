@@ -450,6 +450,11 @@ impl Vault {
                 .and_then(|()| {
                     if value.reason.is_hard() {
                         self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+                        crate::world_keys::reject_held_pad_world_in_txn(
+                            &self.store,
+                            &wtxn,
+                            &[*id],
+                        )?;
                         self.reject_held_redirect_shells_in_txn(&wtxn, id)
                     } else {
                         Ok(())
