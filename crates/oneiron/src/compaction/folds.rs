@@ -110,6 +110,97 @@ pub enum SelfFoldCall {
     },
 }
 
+/// What a fold verb answers under `output`: its typed answer, or the
+/// ledger's refusal, which changes nothing and which the agent can act on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum FoldReply<T> {
+    Answer(T),
+    Refused { error: String },
+}
+
+/// `self.fold`'s answer: the pending mark it made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FoldMarked {
+    pub fold: String,
+    pub from: u64,
+    pub through: u64,
+    /// Always true: the log does not change until a pass folds it.
+    pub pending: bool,
+}
+
+/// `self.compact`'s answer: the marks its batch folds, and when.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FoldCompactAsked {
+    pub pending: Vec<String>,
+    pub applies: String,
+}
+
+/// `self.unfold`'s answer: the fold whose raw turns come back after this
+/// step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FoldUnfolded {
+    pub fold: String,
+    pub from: u64,
+    pub through: u64,
+    pub unfolded_after_step: u64,
+}
+
+/// `self.folds`' answer: the run's folds, its pending marks, and whether a
+/// compact is asked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FoldList {
+    pub folds: Vec<FoldSpan>,
+    pub pending: Vec<FoldPending>,
+    pub compact_asked: bool,
+}
+
+/// One fold in [`FoldList`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FoldSpan {
+    pub fold: String,
+    pub from: u64,
+    pub through: u64,
+}
+
+/// One pending mark in [`FoldList`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FoldPending {
+    pub fold: String,
+    pub from: u64,
+    pub through: u64,
+    pub note: Option<String>,
+    /// Why its last pass did not fold it.
+    pub failed: Option<String>,
+}
+
+/// `describe({fold})`'s answer: a fold whole, or a mark still pending.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum FoldDescription {
+    Folded {
+        fold: String,
+        from: u64,
+        through: u64,
+        /// The stub the log shows in the span's place.
+        stub: String,
+        source: String,
+        /// Every id the span's turns name.
+        ids: Vec<String>,
+        /// Every result handle the span covers.
+        handles: Vec<String>,
+    },
+    Pending {
+        fold: String,
+        from: u64,
+        through: u64,
+        /// Always true.
+        pending: bool,
+        note: Option<String>,
+        failed: Option<String>,
+    },
+}
+
 impl SelfFoldCall {
     /// Whether the call changes the run's ledger.
     #[must_use]
@@ -372,7 +463,7 @@ impl FoldLedger {
     pub fn answer(&mut self, call: &SelfFoldCall, step: u64, prefix_end: Option<u64>) -> Value {
         match self.try_answer(call, step, prefix_end) {
             Ok(value) => value,
-            Err(error) => json!({ "error": error }),
+            Err(error) => json!(FoldReply::<Value>::Refused { error }),
         }
     }
 
@@ -427,11 +518,11 @@ impl FoldLedger {
                     note: note.clone(),
                     failed: None,
                 });
-                Ok(json!({
-                    "fold": fold_handle(self.last),
-                    "from": from,
-                    "through": through,
-                    "pending": true,
+                Ok(json!(FoldMarked {
+                    fold: fold_handle(self.last),
+                    from,
+                    through,
+                    pending: true,
                 }))
             }
             SelfFoldCall::Compact { note } => {
@@ -440,9 +531,13 @@ impl FoldLedger {
                     (earlier, note) => note.clone().or(earlier),
                 };
                 self.compact = Some(FoldCompactAsk { note });
-                Ok(json!({
-                    "pending": self.marks.iter().map(|mark| fold_handle(mark.fold)).collect::<Vec<_>>(),
-                    "applies": "at the next step boundary",
+                Ok(json!(FoldCompactAsked {
+                    pending: self
+                        .marks
+                        .iter()
+                        .map(|mark| fold_handle(mark.fold))
+                        .collect(),
+                    applies: "at the next step boundary".to_owned(),
                 }))
             }
             SelfFoldCall::Unfold { fold } => {
@@ -465,38 +560,46 @@ impl FoldLedger {
                 {
                     self.unfolds.push(FoldUnfold { fold: *fold, at });
                 }
-                Ok(json!({
-                    "fold": fold_handle(*fold),
-                    "from": from,
-                    "through": through,
-                    "unfolded_after_step": step,
+                Ok(json!(FoldUnfolded {
+                    fold: fold_handle(*fold),
+                    from,
+                    through,
+                    unfolded_after_step: step,
                 }))
             }
-            SelfFoldCall::List => Ok(json!({
-                "folds": self.folds.iter().map(|fold| json!({
-                    "fold": fold_handle(fold.fold),
-                    "from": fold.from,
-                    "through": fold.through,
-                })).collect::<Vec<_>>(),
-                "pending": self.marks.iter().map(|mark| json!({
-                    "fold": fold_handle(mark.fold),
-                    "from": mark.from,
-                    "through": mark.through,
-                    "note": mark.note,
-                    "failed": mark.failed,
-                })).collect::<Vec<_>>(),
-                "compact_asked": self.compact.is_some(),
+            SelfFoldCall::List => Ok(json!(FoldList {
+                folds: self
+                    .folds
+                    .iter()
+                    .map(|fold| FoldSpan {
+                        fold: fold_handle(fold.fold),
+                        from: fold.from,
+                        through: fold.through,
+                    })
+                    .collect(),
+                pending: self
+                    .marks
+                    .iter()
+                    .map(|mark| FoldPending {
+                        fold: fold_handle(mark.fold),
+                        from: mark.from,
+                        through: mark.through,
+                        note: mark.note.clone(),
+                        failed: mark.failed.clone(),
+                    })
+                    .collect(),
+                compact_asked: self.compact.is_some(),
             })),
             SelfFoldCall::Describe { fold } => {
                 if let Some(record) = self.fold(*fold) {
-                    return Ok(json!({
-                        "fold": fold_handle(record.fold),
-                        "from": record.from,
-                        "through": record.through,
-                        "stub": record.stub(),
-                        "source": record.source.as_str(),
-                        "ids": record.ids,
-                        "handles": record.handles,
+                    return Ok(json!(FoldDescription::Folded {
+                        fold: fold_handle(record.fold),
+                        from: record.from,
+                        through: record.through,
+                        stub: record.stub(),
+                        source: record.source.as_str().to_owned(),
+                        ids: record.ids.clone(),
+                        handles: record.handles.clone(),
                     }));
                 }
                 let mark = self
@@ -504,13 +607,13 @@ impl FoldLedger {
                     .iter()
                     .find(|mark| mark.fold == *fold)
                     .ok_or_else(|| format!("no fold {}", fold_handle(*fold)))?;
-                Ok(json!({
-                    "fold": fold_handle(mark.fold),
-                    "from": mark.from,
-                    "through": mark.through,
-                    "pending": true,
-                    "note": mark.note,
-                    "failed": mark.failed,
+                Ok(json!(FoldDescription::Pending {
+                    fold: fold_handle(mark.fold),
+                    from: mark.from,
+                    through: mark.through,
+                    pending: true,
+                    note: mark.note.clone(),
+                    failed: mark.failed.clone(),
                 }))
             }
         }

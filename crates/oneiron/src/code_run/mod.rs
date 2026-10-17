@@ -103,6 +103,10 @@ pub use run_verbs::{
     SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern, TaskRefuseDomain, TaskRefuseInput,
     TaskWaitSetRequest,
 };
+pub use run_verbs::{
+    AgentSpawnKind, AgentSpawnOutput, LeaderPatternFile, LeaderPatternOutput, MemoryEdgeOutput,
+    MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, TaskRefuseOutput,
+};
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
     AgentVerbRefusal, RunCall, SelfAgentVerbCall,

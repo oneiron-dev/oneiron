@@ -3840,6 +3840,7 @@
     {
       "name": "vault.search",
       "input": "crate::code_run::MemorySearchInput",
+      "output": "crate::code_run::MemorySearchOutput",
       "scope": "Read",
       "context": "run",
       "effect": "MemorySearch"
@@ -3847,6 +3848,7 @@
     {
       "name": "vault.claims.put",
       "input": "crate::code_run::MemoryClaimInput",
+      "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
       "effect": "MemoryPutClaim"
@@ -3854,6 +3856,7 @@
     {
       "name": "vault.claims.supersede",
       "input": "crate::code_run::MemorySupersedeInput",
+      "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
       "effect": "MemorySupersedeClaim"
@@ -3861,6 +3864,7 @@
     {
       "name": "vault.edges.put",
       "input": "crate::code_run::MemoryEdgeInput",
+      "output": "crate::code_run::MemoryEdgeOutput",
       "scope": "Write",
       "context": "run",
       "effect": "MemoryPutEdge"
@@ -3926,6 +3930,7 @@
     {
       "name": "self.fold",
       "input": "crate::compaction::FoldMarkInput",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",
       "scope": "Write",
       "context": "run",
       "effect": "Fold"
@@ -3933,6 +3938,7 @@
     {
       "name": "self.compact",
       "input": "crate::compaction::FoldCompactInput",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldCompactAsked>",
       "scope": "Write",
       "context": "run",
       "effect": "Fold"
@@ -3940,6 +3946,7 @@
     {
       "name": "self.unfold",
       "input": "crate::compaction::FoldUnfoldInput",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldUnfolded>",
       "scope": "Write",
       "context": "run",
       "effect": "Fold"
@@ -3947,6 +3954,7 @@
     {
       "name": "self.folds",
       "input": "crate::compaction::FoldsInput",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldList>",
       "scope": "Read",
       "context": "run",
       "effect": "Fold"
@@ -3954,6 +3962,7 @@
     {
       "name": "tasks.refuse",
       "input": "crate::code_run::TaskRefuseInput",
+      "output": "crate::code_run::TaskRefuseOutput",
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
@@ -3961,6 +3970,7 @@
     {
       "name": "self.agents.spawn",
       "input": "crate::code_run::AgentSpawnInput",
+      "output": "crate::code_run::AgentSpawnOutput",
       "scope": "Write",
       "context": "run",
       "effect": "AgentsSpawn"
@@ -3968,6 +3978,7 @@
     {
       "name": "self.leader.advice",
       "input": "crate::code_run::LeaderAdviceInput",
+      "output": "serde_json::Value",
       "scope": "Read",
       "context": "run",
       "effect": "Leader"
@@ -3975,6 +3986,7 @@
     {
       "name": "self.leader.pattern",
       "input": "crate::code_run::LeaderPatternInput",
+      "output": "crate::code_run::LeaderPatternOutput",
       "scope": "Read",
       "context": "run",
       "effect": "Leader"
@@ -3982,6 +3994,7 @@
     {
       "name": "self.skills.call",
       "input": "crate::code_run::SkillCallInput",
+      "output": "serde_json::Value",
       "scope": "Write",
       "context": "run",
       "effect": "SkillsCall"
@@ -3989,6 +4002,7 @@
     {
       "name": "self.team.start",
       "input": "crate::team::TeamStartInput",
+      "output": "crate::team::TeamRunAnswer",
       "scope": "Write",
       "context": "run",
       "effect": "Team"
@@ -3996,6 +4010,7 @@
     {
       "name": "self.team.record",
       "input": "crate::team::TeamRecordInput",
+      "output": "crate::team::TeamRunAnswer",
       "scope": "Write",
       "context": "run",
       "effect": "Team"
@@ -4003,6 +4018,7 @@
     {
       "name": "self.spawn",
       "input": "crate::code_run::ReaderSpawnInput",
+      "output": "crate::code_run::ReaderSpawnReceipt",
       "scope": "Write",
       "context": "run",
       "effect": "ReaderSpawn"
@@ -4010,6 +4026,7 @@
     {
       "name": "tasks.wait",
       "input": "crate::code_run::TaskWaitSetRequest",
+      "output": "crate::code_run::TaskWaitSetResult",
       "scope": "Read",
       "context": "run",
       "effect": "TasksWaitSet"

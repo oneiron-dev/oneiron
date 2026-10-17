@@ -70,8 +70,9 @@ mod stored_epoch;
 mod withdrawn;
 
 pub use folds::{
-    FoldCompactAsk, FoldCompactInput, FoldLedger, FoldMark, FoldMarkInput, FoldRecord, FoldUnfold,
-    FoldUnfoldInput, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
+    FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList,
+    FoldMark, FoldMarkInput, FoldMarked, FoldPending, FoldRecord, FoldReply, FoldSpan, FoldUnfold,
+    FoldUnfoldInput, FoldUnfolded, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
 };
 
 pub use driver::{
