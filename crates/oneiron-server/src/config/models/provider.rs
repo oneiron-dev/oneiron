@@ -317,8 +317,8 @@ pub struct ProviderConfig {
     /// HTTP: the broker runs no socket yet.
     pub responses_socket: Option<ResponsesSocket>,
     /// How this provider's JSON request bodies are compressed, or `None` to
-    /// send them plain. A broker-held key always sends plain: the broker
-    /// compresses nothing yet.
+    /// send them plain. A broker-held key has none here: the broker
+    /// compresses on its own route, Anthropic's Messages API.
     pub request_compression: Option<RequestCompression>,
 }
 
@@ -469,7 +469,8 @@ impl ProviderFile {
 }
 
 /// The request compression an entry has: what it wrote, else its route's in
-/// [`REQUEST_COMPRESSION_ROUTES`]. A broker-held key has none.
+/// [`REQUEST_COMPRESSION_ROUTES`]. A broker-held key has none: the broker
+/// picks its own, and an entry's codec does not reach it.
 fn request_compression(
     name: &str,
     kind: ProviderKind,

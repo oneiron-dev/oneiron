@@ -221,8 +221,11 @@ unless its entry names the codec its route decodes: `request_compression =
 "zstd"` (level 3) for our CPA agents route, say, or `"gzip"`. Set
 `request_compression = false` to send plain. If a compressed body is answered
 400 or 415, it is sent once more, plain; when that answer differs, the
-provider sends plain until restart. A `key_secret` provider sends plain: the
-credential broker compresses nothing yet.
+provider sends plain until restart. For a `key_secret` provider the credential
+broker compresses instead, after its checks and just before its one send: gzip
+level 1 on `/v1/messages` at `https://api.anthropic.com`, under the same
+16 KiB and smaller rules, with no plain resend. A `key_secret` entry takes no
+`request_compression`.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
