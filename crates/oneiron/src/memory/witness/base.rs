@@ -19,6 +19,7 @@ use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::session_overlay::SessionWriteRoute;
+use crate::workspace_roster::RoomRegenerationPermit;
 use crate::write_envelope::WriteActor;
 
 /// Tags an importer holds for the turn it lands, and the cell the program
@@ -184,13 +185,16 @@ impl Memory<'_> {
     /// Stream terminal sidecars and EntityDoc birth share the canonical witness
     /// transaction. An error rolls back row, indexes, receipt and seed deletion.
     /// `callback` names the write door: an `effect` that runs host code is
-    /// [`crate::store::Callback::Opaque`].
-    pub(crate) fn witness_with_route_and_txn_effect(
+    /// [`crate::store::Callback::Opaque`]. `prepare` runs in that transaction
+    /// before the room admits the witness: a Retry's terminal lands its TURN
+    /// there, or proves its room regeneration permit (FIX 3152, 3149).
+    pub(crate) fn witness_with_route_prepare_and_txn_effect(
         &self,
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
         callback: crate::store::Callback,
         before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<Option<RoomRegenerationPermit>>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness_as(
@@ -201,7 +205,28 @@ impl Memory<'_> {
             },
             WitnessDoor::Guest,
             before_txn,
-            |_| Ok(()),
+            prepare,
+            effect,
+        )
+    }
+
+    /// [`Self::witness_with_route_prepare_and_txn_effect`] with nothing to
+    /// prepare.
+    #[cfg(test)]
+    pub(crate) fn witness_with_route_and_txn_effect(
+        &self,
+        turn: &WitnessTurn,
+        session_route: Option<&SessionWriteRoute>,
+        callback: crate::store::Callback,
+        before_txn: impl FnOnce(),
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_with_route_prepare_and_txn_effect(
+            turn,
+            session_route,
+            callback,
+            before_txn,
+            |_| Ok(None),
             effect,
         )
     }
@@ -320,14 +345,15 @@ impl Memory<'_> {
     /// creates must be marker-free (checked INSIDE the write transaction so a
     /// concurrent hard delete cannot land between check and commit, A1),
     /// `prepare` runs, the conversation is re-read as a live room, an erased
-    /// PERSON is refused, and the room admits the witness. `quote_key`, taken
-    /// before the writer opened, is the read a quote's selection passes
-    /// (FIX 2027).
+    /// PERSON is refused, and the room admits the witness, under the room
+    /// regeneration permit `prepare` proved, if any (FIX 3149). `quote_key`,
+    /// taken before the writer opened, is the read a quote's selection
+    /// passes (FIX 2027).
     pub(super) fn base_guards_in_txn(
         &self,
         plan: &WitnessPlan<'_>,
         wtxn: &mut heed::RwTxn<'_>,
-        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<Option<RoomRegenerationPermit>>,
         quote_key: Option<&crate::claim::ScopedReadActorKey>,
     ) -> MemoryResult<BaseGuards> {
         let message_ids = plan.message_ids();
@@ -344,7 +370,7 @@ impl Memory<'_> {
                 return Ok(BaseGuards::HardDeleted(id));
             }
         }
-        prepare(wtxn)?;
+        let regeneration = prepare(wtxn)?;
         // Container resolution before the writer was advisory. A concurrent
         // writer may have claimed this ID, or a prepared project birth may
         // have created its home room. Never attach a turn to a non-room or
@@ -392,6 +418,7 @@ impl Memory<'_> {
             plan.turn,
             &message_ids,
             quote_key,
+            regeneration.as_ref(),
         )?;
         let leader_project = crate::workspace_roster::admit_leader_chat_witness(
             self.vault,

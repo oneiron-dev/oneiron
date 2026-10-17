@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `examples/provision-fixture-actor.rs` | src | s | — | — | Provisions the wire fixture's owner actor on a PRE-SERVER vault |
-| `src/agent_verbs.rs` | src | XL | 309 fn | — | — |
+| `src/agent_verbs.rs` | src | XL | 310 fn | — | — |
 | `src/caps.rs` | src | s | 1 re-export | — | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
 | `src/embedded.rs` | src | m | 1 fn · 21 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
@@ -24,7 +24,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/remote/checkpoint.rs` | src | s | 2 fn | — | A pinned authority checkpoint's image and attestations (OF-469), over the server route `GET… |
 | `src/remote/mod.rs` | src | m | 14 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 | `src/remote/origin.rs` | src | s | 2 crate-vis | — | — |
-| `src/remote/pairing.rs` | src | s | 2 crate-vis | — | — |
+| `src/remote/pairing.rs` | src | s | 3 crate-vis | — | — |
+| `src/remote/renewal.rs` | src | s | 1 fn | — | FIX 3377: a paired owner device renews its own credential over the server route `POST /v1/core/slips/renew` |
 | `src/remote/response.rs` | src | s | 8 crate-vis | — | — |
 | `src/remote/tests.rs` | test | s | — | — | — |
 | `src/remote/wire.rs` | src | s | 3 crate-vis | — | The transport seam under [`RemoteClient`] (OF-237): what carries a request this client signed, and the reply… |

@@ -93,6 +93,13 @@ pub enum PeerMachine {
 /// well-formed Genesis its own device key signed at seq 0 counts, as in the
 /// fold; none resident is `None`, and more than one refuses. Never the
 /// store's own id, a checkpoint's asserted id or another entry's `vault_id`.
+///
+/// On a vault that adopted a checkpoint image, the genesis its adopted,
+/// verified pin names is a root as well (OF-469, slice E): with no resident
+/// Genesis it is the vault's, and a resident one that differs refuses as a
+/// second root does. An image this vault has not adopted never names one,
+/// and an adoption that no longer verifies is an error (CALLS: OF-469 slice
+/// E adopted genesis).
 pub(super) fn resident_genesis_vault_id_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -113,6 +120,10 @@ pub(super) fn resident_genesis_vault_id_in_txn(
         if let Ok(root) = genesis_vault_id(&entry) {
             roots.insert(root);
         }
+    }
+    if let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+    {
+        roots.insert(adopted.pin().genesis);
     }
     if roots.len() > 1 {
         return Err(invalid_authority());
@@ -243,7 +254,7 @@ impl Vault {
     /// re-seal after a committed admission, never a rollback. A sync lane's
     /// upkeep re-seal runs again later; nothing else retries it.
     #[cfg(feature = "sync")]
-    fn reseal_after_machine_admission(&self) -> Result<()> {
+    pub(super) fn reseal_after_machine_admission(&self) -> Result<()> {
         self.reseal_custody_for_roster().map(drop).map_err(|error| {
             crate::error::Error::sync_engine(
                 crate::error::SyncEngineContext::CustodyResealAfterMachineAdmission,
@@ -488,8 +499,9 @@ impl Vault {
     /// it is not a machine of this vault yet. Sending it is harmless before
     /// the profile syncs; the receiver decides. It signs for the vault this
     /// install's fold names, or, while that fold cannot answer (its history
-    /// is incomplete, OF-469), for the vault its own resident Genesis roots
-    /// (`resident_genesis_vault_id_in_txn`): a machine missing history
+    /// is incomplete, OF-469), for the vault its own resident Genesis or its
+    /// adopted pin's genesis roots (`resident_genesis_vault_id_in_txn`): a
+    /// machine missing history
     /// still proves itself to its home for the tail, and claims nothing here.
     pub fn machine_connection_proof(
         &self,

@@ -173,10 +173,14 @@ pub struct RoomSection {
     /// participants (ARCH-0067 §8). `None` when no session was read, so the
     /// section renders no host line rather than guessing who is present.
     pub host: Option<crate::workspace_roster::RoomHosting>,
+    /// The PERSONs the reader may bring into the room by a roster write it
+    /// could sign (FIX 1163): the only ones `invite?:` suggests.
+    pub invitable: std::collections::BTreeSet<EntityId>,
 }
 
 impl RoomSection {
     /// Roster, invitees, scope, posture, host, rules and open offers only.
+    /// Invitees are the reader's people it may invite ([`Self::invitable`]).
     /// Values are escaped again by the board frame; flattening here only
     /// prevents row/control-character tricks. An undecided host renders as
     /// no host with its candidates. Persons are named by handle (PEOPLE,
@@ -215,7 +219,7 @@ impl RoomSection {
             .people
             .rows()
             .iter()
-            .filter(|row| !members.contains(&row.person))
+            .filter(|row| !members.contains(&row.person) && self.invitable.contains(&row.person))
             .collect();
         if !invitees.is_empty() {
             let mut line = format!(
