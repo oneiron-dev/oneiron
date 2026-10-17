@@ -106,7 +106,7 @@ pub(crate) use self::found_keys::{
     settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
-pub(crate) use self::known_values::{KnownSweep, KnownValues, handle_text};
+pub(crate) use self::known_values::{KnownSweep, KnownValues};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
     KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberKeys, MemberStep, filled,

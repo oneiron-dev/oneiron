@@ -260,7 +260,7 @@ impl Vault {
 }
 
 /// A handle as a text stands it in for a value: `[secret sc12]`.
-pub(crate) fn handle_text(handle: &str) -> String {
+fn handle_text(handle: &str) -> String {
     format!("[secret {handle}]")
 }
 
@@ -289,7 +289,7 @@ impl KnownSweep {
         }
         let limit = self.held.len() - hold;
         let (out, end) = self.known.replaced_until(&self.held, limit);
-        self.held.drain(..end);
+        self.held.drain(..end).for_each(drop);
         out
     }
 
