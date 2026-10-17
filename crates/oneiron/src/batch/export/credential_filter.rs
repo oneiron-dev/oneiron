@@ -206,9 +206,16 @@ impl Vault {
             let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
             // An epoch summary leaves only beside every record it was written
             // from, nested summaries included; otherwise it stays home.
-            if crate::compaction::epoch_sources_admitted_in(&self.store, &txn, id, bytes, |source, _| {
-                Ok(exported.contains(source) && !whole_vault_export_excludes_entity(self, source)?)
-            })? == Some(false)
+            if crate::compaction::epoch_sources_admitted_in(
+                &self.store,
+                &txn,
+                id,
+                bytes,
+                |source, _| {
+                    Ok(exported.contains(source)
+                        && !whole_vault_export_excludes_entity(self, source)?)
+                },
+            )? == Some(false)
             {
                 continue;
             }
