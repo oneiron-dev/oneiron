@@ -124,6 +124,61 @@ pub(super) fn read_result_tool_schema() -> Value {
     )
 }
 
+/// `invoke_action`'s arguments: the verb, and the body of `POST
+/// /v1/core/actions/{verb}`, field for field. `liveRun` is any string: the
+/// live-run resolver alone judges a handle.
+pub(super) fn invoke_action_tool_schema() -> Value {
+    tool_schema_root(
+        "https://oneiron.local/schemas/mcp/invoke_action.args.v1.json",
+        json!({
+            "schema_version": schema_version_property(),
+            "actor": actor_schema(),
+            "consent": consent_schema(),
+            "verb": nonblank_string_schema(),
+            "args": {
+                "type": "array",
+                "items": action_argument_schema(),
+            },
+            "idempotencyKey": nonblank_string_schema(),
+            "liveRun": { "type": "string" },
+        }),
+        &[
+            "schema_version",
+            "consent",
+            "verb",
+            "args",
+            "idempotencyKey",
+        ],
+    )
+}
+
+/// One action argument in the tagged `kind`/`value` codec an action body
+/// decodes (`oneiron::code_run::actions::ActionArgument`).
+fn action_argument_schema() -> Value {
+    let argument = |kind: &str, value: Value| {
+        closed_object_schema(
+            &["kind", "value"],
+            json!({
+                "kind": { "const": kind },
+                "value": value,
+            }),
+        )
+    };
+    json!({
+        "oneOf": [
+            argument("bool", json!({ "type": "boolean" })),
+            argument("number", json!({ "type": "number" })),
+            argument("text", json!({ "type": "string" })),
+            argument("token", json!({ "type": "string" })),
+            argument(
+                "entity",
+                closed_object_schema(&["id"], json!({ "id": entity_id_schema() })),
+            ),
+            argument("json", json!({})),
+        ],
+    })
+}
+
 /// One generated tool's schema, derived from its binding — never hand-listed.
 ///
 /// When the binding has required argument fields, `arguments` itself is

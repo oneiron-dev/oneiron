@@ -68,6 +68,22 @@ pub(crate) enum LiveRunRefusal {
 }
 
 impl LiveRunRefusal {
+    /// Every refusal.
+    const ALL: [Self; 6] = [
+        Self::Required,
+        Self::Invalid,
+        Self::Unavailable,
+        Self::Stale,
+        Self::Busy,
+        Self::Attached,
+    ];
+
+    /// The refusal `code` names, for a door that reports it by its code
+    /// (MCP's `invoke_action`).
+    pub(crate) fn from_code(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|refusal| refusal.code() == code)
+    }
+
     pub(crate) const fn code(self) -> &'static str {
         match self {
             Self::Required => LIVE_RUN_REQUIRED,
@@ -385,17 +401,23 @@ impl ResolvedLiveRun {
     /// Takes the run's guard for one whole action, waiting up to
     /// [`LIVE_RUN_GUARD_WAIT`] while an entry or another action holds it,
     /// then rechecks that the run is still registered under its lease, which
-    /// still holds, with this attachment.
+    /// still holds, with this attachment. The guard is waited for on the
+    /// runtime; the lease is read from the vault on a blocking thread, under
+    /// the guard.
     pub(crate) async fn hold(
         &self,
-        runs: &LiveRuns,
-        vault: &Vault,
+        runs: &Arc<LiveRuns>,
+        vault: &Arc<Vault>,
     ) -> oneiron::Result<Result<HeldLiveRun, LiveRunRefusal>> {
         let serial = match self.entry.wait_serial().await {
             Ok(serial) => serial,
             Err(refusal) => return Ok(Err(refusal)),
         };
-        if !runs.holds(vault, &self.entry)? {
+        let (runs, vault, entry) = (Arc::clone(runs), Arc::clone(vault), Arc::clone(&self.entry));
+        let holds = tokio::task::spawn_blocking(move || runs.holds(&vault, &entry))
+            .await
+            .map_err(|_| oneiron::Error::InvariantViolation("live-run lease read ended early"))??;
+        if !holds {
             return Ok(Err(LiveRunRefusal::Stale));
         }
         if lock(&self.entry.attached).as_ref() != Some(&self.binding) {
