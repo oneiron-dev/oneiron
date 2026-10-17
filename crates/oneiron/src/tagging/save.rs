@@ -192,7 +192,8 @@ pub(super) fn save_in_txn(
     let mut mentions: Vec<TaggedMention> = Vec::with_capacity(output.spans.len());
     let mut merge_evidence = Vec::new();
     for (index, span) in output.spans.iter().enumerate() {
-        let text = input.messages[span.message].text[span.start..span.end].trim();
+        let message_text = &input.messages[span.message].text;
+        let text = message_text[span.start..span.end].trim();
         let own = config
             .labels
             .get(&span.label)
@@ -208,7 +209,10 @@ pub(super) fn save_in_txn(
         .filter(|link| **link != MentionLink::Tag);
         let link = match (inherited, own) {
             (None, None) => MentionLink::Tag,
-            (None, Some(kind)) => linker.link(txn, kind, text)?,
+            (None, Some(kind)) => {
+                let link = linker.link(txn, kind, text)?;
+                linker.hinted(txn, link, text, message_text, span.start, span.end)?
+            }
             // A pronoun, or a label the table does not map, takes its
             // antecedent's link.
             (Some(inherited), None) => inherited.clone(),
@@ -237,10 +241,11 @@ pub(super) fn save_in_txn(
                             confidence: link_confidence.unwrap_or(span.confidence),
                         });
                     }
-                    MentionLink::Candidates {
+                    let link = MentionLink::Candidates {
                         kind,
                         entities: hits,
-                    }
+                    };
+                    linker.hinted(txn, link, text, message_text, span.start, span.end)?
                 }
             }
         };
@@ -400,6 +405,17 @@ pub(super) fn linkable_in_txn(
         && !crate::ports::removed_in_txn(store, txn, id)?)
 }
 
+/// Whether the record `id` can sit in a world the turn `turn` is in: the
+/// Linker's own world filter, for a re-check that runs outside a save.
+pub(crate) fn shares_world_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+    id: &EntityId,
+) -> Result<bool> {
+    Linker::new(vault, txn, turn, 0)?.shares_world(txn, id)
+}
+
 /// Links mentions over the identity key. It never compares names itself:
 /// candidates come only from the key's lookups.
 struct Linker<'v> {
@@ -462,6 +478,37 @@ impl<'v> Linker<'v> {
             }
         }
         Ok(found.into_iter().collect())
+    }
+
+    /// `link` narrowed to the one candidate a saved identity hint picks for
+    /// the mention `name` at `start..end` of `text`, as the nightly re-check
+    /// would settle it; `link` itself when it names fewer than two or no
+    /// hint picks one.
+    fn hinted(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        link: MentionLink,
+        name: &str,
+        text: &str,
+        start: usize,
+        end: usize,
+    ) -> Result<MentionLink> {
+        let MentionLink::Candidates { kind, entities } = &link else {
+            return Ok(link);
+        };
+        if entities.len() < 2 {
+            return Ok(link);
+        }
+        let hinted = crate::dreamer_runner::maintenance::identity::hinted_mention_in_txn(
+            self.vault, txn, *kind, name, text, start, end, entities,
+        )?;
+        Ok(match hinted {
+            Some(entity) => MentionLink::Candidates {
+                kind: *kind,
+                entities: vec![entity],
+            },
+            None => link,
+        })
     }
 
     /// Links a mention by its own name: its candidates, or a provisional
