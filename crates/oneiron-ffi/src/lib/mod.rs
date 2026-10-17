@@ -9,10 +9,10 @@
 //! while shared multi-vault sync is disabled.
 //! The core read/write N-API vault surface is mirrored by this C ABI.
 //!
-//! `oneiron_engine_start` runs the full server `oneiron serve` runs inside
-//! the app's process (OF-237); `oneiron_engine_vault` hands the same open
-//! vault to the storage functions above, beside the plain
-//! `oneiron_vault_open`.
+//! With the `engine` feature, `oneiron_engine_start` runs the full server
+//! `oneiron serve` runs inside the app's process (OF-237);
+//! `oneiron_engine_vault` hands the same open vault to the storage functions
+//! above, beside the plain `oneiron_vault_open`.
 //!
 //! # Safety
 //!
@@ -67,6 +67,7 @@
 //! ```
 
 mod alloc;
+#[cfg(feature = "engine")]
 mod engine;
 mod entity;
 mod guard;
@@ -77,9 +78,11 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "engine")]
 pub use self::engine::{
-    oneiron_engine_free, oneiron_engine_reply_free, oneiron_engine_request, oneiron_engine_start,
-    oneiron_engine_stop, oneiron_engine_vault, oneiron_engine_wake, oneiron_secret_sink_write,
+    OneironAppHost, OneironEngine, OneironReply, OneironSecretSink, oneiron_engine_free,
+    oneiron_engine_reply_free, oneiron_engine_request, oneiron_engine_start, oneiron_engine_stop,
+    oneiron_engine_vault, oneiron_engine_wake, oneiron_secret_sink_write,
 };
 pub use self::entity::{
     oneiron_buffer_free, oneiron_edge_info_array_free, oneiron_scored_entity_array_free,
@@ -96,9 +99,9 @@ pub use self::query::{
     oneiron_vault_targets, oneiron_vault_would_create_cycle,
 };
 pub use self::types::{
-    OneironAppHost, OneironBuffer, OneironByteSlice, OneironEdgeInfo, OneironEdgeInfoArray,
-    OneironEngine, OneironEntityInput, OneironReply, OneironScoredEntity, OneironScoredEntityArray,
-    OneironSecretSink, OneironStatus, OneironSubtreeEntry, OneironSubtreeEntryArray, OneironVault,
+    OneironBuffer, OneironByteSlice, OneironEdgeInfo, OneironEdgeInfoArray, OneironEntityInput,
+    OneironScoredEntity, OneironScoredEntityArray, OneironStatus, OneironSubtreeEntry,
+    OneironSubtreeEntryArray, OneironVault,
 };
 
 // The flat lib.rs module used to provide these names to the sibling test

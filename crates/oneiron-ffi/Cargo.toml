@@ -12,19 +12,31 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 oneiron = { path = "../oneiron" }
 serde_json = { workspace = true }
-# OF-237 slice 2: `oneiron_engine_*` runs the full server in the app's
-# process (`oneiron_server::embedded`), the app's callback table is its host
-# (`AppHost`), and the keychain's secrets cross as `Zeroizing` bytes.
-oneiron-server = { path = "../oneiron-server" }
-oneiron-vault-contract = { path = "../oneiron-vault-contract" }
-anyhow = "1"
-zeroize = "1"
+# OF-237 slice 2, behind `engine`: `oneiron_engine_*` runs the full server in
+# the app's process (`oneiron_server::embedded`), the app's callback table is
+# its host (`AppHost`), and the keychain's secrets cross as `Zeroizing` bytes.
+oneiron-server = { path = "../oneiron-server", optional = true }
+oneiron-vault-contract = { path = "../oneiron-vault-contract", optional = true }
+anyhow = { version = "1", optional = true }
+zeroize = { version = "1", optional = true }
 
 [build-dependencies]
 cbindgen = "0.29"
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# The `oneiron_engine_*` entry points. Off by default, so the storage ABI
+# library builds exactly as before; build the engine with
+# `cargo build -p oneiron-ffi --features engine`. The generated header names
+# them either way.
+engine = [
+  "dep:oneiron-server",
+  "dep:oneiron-vault-contract",
+  "dep:anyhow",
+  "dep:zeroize",
+]
 
 [lints]
 workspace = true

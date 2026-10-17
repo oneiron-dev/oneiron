@@ -8,11 +8,11 @@
 //! client's one dispatcher, so this crate adds no transport, no route table
 //! and no second error taxonomy.
 //!
-//! [`EmbeddedEngine`] runs the full server inside the app's process instead
-//! (`oneiron_server::embedded`): it opens the vault the way `oneiron serve`
-//! does, and its `client` attaches `Oneiron` handles to that same open
-//! vault. Its `request` reaches the server's HTTP surface; the handles'
-//! verbs still answer through the client's embedded dispatcher.
+//! With the `engine` feature, `EmbeddedEngine` runs the full server inside
+//! the app's process instead (`oneiron_server::embedded`): it opens the vault
+//! the way `oneiron serve` does, and its `client` attaches `Oneiron` handles
+//! to that same open vault. Its `request` reaches the server's HTTP surface;
+//! the handles' verbs still answer through the client's embedded dispatcher.
 //!
 //! The verb methods are generated from `scripts/sdk/agent-verbs.json` into
 //! `facade_generated.rs`: one exported method per facade row, which calls that
@@ -29,13 +29,15 @@
 //! Every exported row is callable: the table names no definition-only row.
 //!
 //! The one foreign callback interface is the embedded engine's app host,
-//! [`AppHostCallbacks`]. There is no subscription verb: streaming belongs to
-//! the transport lane, not to a second socket minted here.
+//! `AppHostCallbacks` (with `engine`). There is no subscription verb:
+//! streaming belongs to the transport lane, not to a second socket minted
+//! here.
 
 #[macro_use]
 mod contract;
 mod codec;
 mod dto;
+#[cfg(feature = "engine")]
 mod embedded_engine;
 mod error;
 mod facade_types_generated;
@@ -52,6 +54,7 @@ pub use dto::{
     StructuralEdgeSpec, StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor,
     WitnessMessage, WitnessReceipt, WitnessTurn,
 };
+#[cfg(feature = "engine")]
 pub use embedded_engine::{
     AppHostCallbacks, EmbeddedEngine, EngineHeader, EngineLimits, EngineReply, EngineRequest,
 };
@@ -75,11 +78,12 @@ pub const HEAD_MEMORY_PACK_SCHEMA_VERSION: u32 = oneiron::MEMORY_PACK_VERSION;
 /// Both constructors return this same type, and a narrower actor scope is
 /// still this same type. It holds the shared client and nothing else: no
 /// second storage handle, transport, budget or callback. A handle from
-/// [`EmbeddedEngine::client`] also holds that engine, so the server
-/// outlives every handle on its vault.
+/// `EmbeddedEngine::client` (with `engine`) also holds that engine, so the
+/// server outlives every handle on its vault.
 #[derive(uniffi::Object)]
 pub struct Oneiron {
     inner: oneiron_remote::OneironClient,
+    #[cfg(feature = "engine")]
     engine: Option<Arc<EmbeddedEngine>>,
 }
 
@@ -107,6 +111,7 @@ impl Oneiron {
         )?;
         Ok(Arc::new(Self {
             inner,
+            #[cfg(feature = "engine")]
             engine: None,
         }))
     }
@@ -122,6 +127,7 @@ impl Oneiron {
         let inner = oneiron_remote::OneironClient::connect(&url, &key)?;
         Ok(Arc::new(Self {
             inner,
+            #[cfg(feature = "engine")]
             engine: None,
         }))
     }
@@ -135,6 +141,7 @@ impl Oneiron {
         let inner = self.inner.as_actor(&actor_key)?;
         Ok(Arc::new(Self {
             inner,
+            #[cfg(feature = "engine")]
             engine: self.engine.clone(),
         }))
     }
@@ -144,6 +151,7 @@ impl Oneiron {
         let inner = self.inner.in_room_turn(&room_ref)?;
         Ok(Arc::new(Self {
             inner,
+            #[cfg(feature = "engine")]
             engine: self.engine.clone(),
         }))
     }

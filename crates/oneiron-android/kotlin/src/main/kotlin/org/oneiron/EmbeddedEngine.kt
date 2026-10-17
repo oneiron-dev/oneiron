@@ -21,6 +21,9 @@ class EngineReply(
  * Every method blocks: call it from an app thread, never from an [AppHost] callback, and call
  * [close] before letting the engine go. No method holds this object's monitor, so a callback
  * that runs while a call blocks never waits on it.
+ *
+ * The native library must be built with `--features engine`
+ * (`cargo build -p oneiron-android --features engine`); the default build has only [EmbeddedVault].
  */
 class EmbeddedEngine(
     path: String,

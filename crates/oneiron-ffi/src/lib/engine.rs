@@ -5,8 +5,11 @@
 //! Every engine call blocks its caller on the engine's own runtime: call it
 //! from an app thread, never from an `OneironAppHost` callback, where it
 //! fails `EngineError`.
+//!
+//! Built only with the `engine` feature (`cargo build -p oneiron-ffi
+//! --features engine`); the default library is the storage ABI alone.
 
-use std::{path::Path, ptr, sync::Arc, time::SystemTime};
+use std::{ffi::c_void, path::Path, ptr, sync::Arc, time::SystemTime};
 
 use oneiron_server::embedded::{
     BlockingEngine, EmbeddedRequest, embedded_serve_config, host_limits, unix_millis,
@@ -15,12 +18,93 @@ use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
 
 use super::alloc::{buffer_from_vec, free_vec};
-use super::guard::{ffi_guard, with_engine, with_optional_slice, write_out};
+use super::guard::{ffi_guard, with_optional_slice, write_out};
 use super::parse::{string_from_optional, string_from_required, validate_dimensions};
-use super::types::{
-    OneironAppHost, OneironByteSlice, OneironEngine, OneironReply, OneironSecretSink,
-    OneironStatus, OneironVault,
-};
+use super::types::{OneironBuffer, OneironByteSlice, OneironStatus, OneironVault};
+
+/// The app's side of an embedded engine, handed to `oneiron_engine_start`:
+/// its keychain, its wake timer and its readiness signal.
+///
+/// The engine calls these from threads of its own, so `user_data` and every
+/// callback must be safe to use from any thread until `release`. A callback
+/// must not call back into the engine; such a call fails `EngineError`. A
+/// null callback does nothing, and a null `keychain` holds no secret.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct OneironAppHost {
+    /// Handed back to every callback unchanged.
+    pub user_data: *mut c_void,
+    /// One secret from the app keychain by its exact UTF-8 name, borrowed for
+    /// the call. Answer with `oneiron_secret_sink_write(sink, ...)` before
+    /// returning, which copies the bytes at once; return without writing when
+    /// the keychain holds no such secret. `sink` is valid only for the call.
+    pub keychain: Option<
+        unsafe extern "C" fn(
+            user_data: *mut c_void,
+            name_ptr: *const u8,
+            name_len: usize,
+            sink: *mut OneironSecretSink,
+        ),
+    >,
+    /// Arms the app's timer for `at_unix_ms` when `has_at` is 1, or clears
+    /// it when `has_at` is 0. When the timer fires the app calls
+    /// `oneiron_engine_wake`.
+    pub schedule_wake:
+        Option<unsafe extern "C" fn(user_data: *mut c_void, has_at: u8, at_unix_ms: u64)>,
+    /// The engine opened its vault and takes requests.
+    pub ready: Option<unsafe extern "C" fn(user_data: *mut c_void)>,
+    /// Called exactly once, when the engine holds no copy of this table,
+    /// whatever `oneiron_engine_start` returned: free `user_data` here.
+    pub release: Option<unsafe extern "C" fn(user_data: *mut c_void)>,
+}
+
+/// Where a `keychain` callback answers, through `oneiron_secret_sink_write`.
+pub struct OneironSecretSink {
+    secret: Option<Zeroizing<Vec<u8>>>,
+}
+
+/// Rust-owned reply of `oneiron_engine_request`. Free it with
+/// `oneiron_engine_reply_free`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct OneironReply {
+    /// The HTTP status; a 4xx or 5xx is a reply, not an error.
+    pub status: u16,
+    /// Every reply header as one `name: value` line ended by CRLF, repeats
+    /// kept.
+    pub headers: OneironBuffer,
+    pub body: OneironBuffer,
+}
+
+impl OneironReply {
+    const fn empty() -> Self {
+        Self {
+            status: 0,
+            headers: OneironBuffer::empty(),
+            body: OneironBuffer::empty(),
+        }
+    }
+}
+
+/// Opaque embedded-engine handle returned by `oneiron_engine_start`.
+///
+/// Release the handle with `oneiron_engine_free` exactly once.
+pub struct OneironEngine {
+    engine: BlockingEngine<CAppHost>,
+}
+
+fn with_engine<R>(
+    engine: *mut OneironEngine,
+    f: impl FnOnce(&OneironEngine) -> Result<R, OneironStatus>,
+) -> Result<R, OneironStatus> {
+    if engine.is_null() {
+        return Err(OneironStatus::NullArg);
+    }
+    // SAFETY: `engine` is a non-null handle previously returned by
+    // `oneiron_engine_start` and not yet freed by `oneiron_engine_free`.
+    let engine = unsafe { &*engine };
+    f(engine)
+}
 
 /// The app's table, shared by every host the engine builds; `release` runs
 /// when the last copy goes.
@@ -46,7 +130,7 @@ impl Drop for HostTable {
 
 /// The app's table as the engine's host.
 #[derive(Clone)]
-pub(super) struct CAppHost(Arc<HostTable>);
+struct CAppHost(Arc<HostTable>);
 
 impl AppHost for CAppHost {
     fn keychain(&mut self, name: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {

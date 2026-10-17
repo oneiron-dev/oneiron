@@ -135,7 +135,8 @@ private final class EngineHostBox {
 
 /// The full Oneiron server inside this process, over the vault at `path`
 /// (OF-237). Its calls block: make them from app threads. `deinit` stops it
-/// in order.
+/// in order. The native library must be built with `--features engine`
+/// (`cargo build -p oneiron-ffi --features engine`).
 public final class Engine {
     private let handle: OpaquePointer
 

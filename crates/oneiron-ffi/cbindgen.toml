@@ -24,7 +24,8 @@ header = """
  * sends it one buffered HTTP/1.1 request, oneiron_engine_vault shares its
  * open vault with the storage functions, and oneiron_engine_free stops it in
  * order. Engine calls block: make them from app threads, never from a
- * callback.
+ * callback. The library exports these only when built with the `engine`
+ * cargo feature.
  */
 """
 

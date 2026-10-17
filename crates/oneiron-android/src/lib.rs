@@ -1,5 +1,6 @@
 //! Minimal JNI/Kotlin ownership adapter. The Java instance owns one engine vault,
-//! or a share of the one its `EmbeddedEngine` serves (`engine`).
+//! or a share of the one its `EmbeddedEngine` serves (`engine`, behind the
+//! `engine` feature).
 //! No engine state lives in process-global native storage.
 use jni::{
     JNIEnv,
@@ -10,6 +11,7 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use std::sync::{Arc, MutexGuard};
 
 // Public so its JNI exports are reachable items, as this file's are.
+#[cfg(feature = "engine")]
 pub mod engine;
 
 struct NativeVault {

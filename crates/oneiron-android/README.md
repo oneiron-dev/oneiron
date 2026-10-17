@@ -34,7 +34,9 @@ same-core deployment); the generated docs mirror remains read-only.
 
 `EmbeddedEngine` runs the full server `oneiron serve` runs inside the app's
 process (OF-237), next to the plain `EmbeddedVault(path)`, which stays a vault
-with no server. Its config is the one `oneiron serve --config <configFile>`
+with no server. The native library carries it only when built with
+`--features engine` (`cargo build -p oneiron-android --features engine`); the
+default build, the one the Android workflow makes, is the plain vault alone. Its config is the one `oneiron serve --config <configFile>`
 resolves for the path, with `dimensions` when it is not 0; a `memoryBytes` or
 `cpuMillisPerSecond` of 0 is unbounded. The app implements `AppHost`:
 `keychain(name)` returns the secret's bytes or `null`, `scheduleWake(atUnixMs)`
@@ -58,7 +60,7 @@ back into it throws), and call `close()` before letting it go.
 
 ## Native-host Kotlin proof
 
-The adapter is also plain JVM Kotlin. Compile `kotlin/src/main/kotlin/org/oneiron/EmbeddedVault.kt`
+The adapter is also plain JVM Kotlin. Compile `kotlin/src/main/kotlin/org/oneiron/*.kt`
 and `kotlin/tools/JniSmoke.kt` with `kotlinc -include-runtime -d smoke.jar`. Run:
 
 ```sh

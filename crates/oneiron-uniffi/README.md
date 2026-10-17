@@ -6,8 +6,8 @@
 > no Docker, no API key: the on-device Swift path); `connect` binds a remote
 > `oneiron-server`. Every facade row of `scripts/sdk/agent-verbs.json` is one
 > exported method that calls the client's typed method for that row on
-> either backend. `EmbeddedEngine` runs the full server inside the app's
-> process over the same kind of handle. No Swift or Kotlin package is
+> either backend. `EmbeddedEngine` (the `engine` feature) runs the full
+> server inside the app's process over the same kind of handle. No Swift or Kotlin package is
 > published yet, and no XCFramework is produced.
 
 ## What this is
@@ -118,7 +118,11 @@ from `EmbeddedEngine.client()` too. The server itself answers them through
 
 `EmbeddedEngine` runs the full server `oneiron serve` runs inside the app's
 own process (`oneiron_server::embedded::BlockingEngine`), next to `open`,
-which stays a plain vault with no server.
+which stays a plain vault with no server. It and `AppHostCallbacks` exist
+only when the library is built with `--features engine`
+(`cargo build -p oneiron-uniffi --features engine`), and bindgen run over
+that build; the default build, the one `run-stub-compile.sh` makes, has
+neither.
 
 | Rust | generated Swift | what it does |
 |---|---|---|
