@@ -30413,11 +30413,21 @@
       "PptxReview"
      ],
      "path": "src/office_body/pptx.rs",
-     "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) kept in this module's tables (ARCH-0077…",
+     "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door…",
      "surface": {
-      "crate-vis": 8,
-      "fn": 7,
+      "crate-vis": 5,
+      "fn": 8,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/doc.rs",
+     "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -50208,7 +50218,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50833,7 +50843,7 @@
    },
    "over_bar": 136,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3069,
+   "source_files": 3070,
    "test_files": 903
   },
   "oneiron-android": {
@@ -55626,7 +55636,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 6,
-      "fn": 23,
+      "fn": 24,
       "struct": 20
      }
     },
@@ -65163,7 +65173,7 @@
      "path": "src/decision_host.rs",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 13,
       "struct": 1
      }
