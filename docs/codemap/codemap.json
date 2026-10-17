@@ -31886,12 +31886,33 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorCallHost",
+      "ConnectorCallInvocation",
+      "ConnectorCallOutcome",
+      "ConnectorCallRequest",
+      "UntrustedToolResult"
+     ],
+     "path": "src/outbound_consent/connector_call.rs",
+     "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ScopedMcpDispatchResult"
      ],
      "path": "src/outbound_consent/execution.rs",
      "purpose": "Scoped-call execution, post-effect decision, and result transport",
      "surface": {
       "crate-vis": 3,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -31904,7 +31925,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 1,
-      "re-export": 5
+      "re-export": 7
      }
     },
     {
@@ -31983,6 +32004,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "FrozenToolCallView",
       "HeaderGrantRequirement",
       "MutationIntent",
       "PreparedToolCall",
@@ -31994,8 +32016,8 @@
      "surface": {
       "crate-vis": 12,
       "enum": 2,
-      "fn": 10,
-      "struct": 3
+      "fn": 18,
+      "struct": 4
      }
     },
     {
@@ -50518,8 +50540,8 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 10,
-     "impl_vault": false,
+     "files": 11,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
@@ -51122,7 +51144,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3088,
+   "source_files": 3089,
    "test_files": 903
   },
   "oneiron-android": {
@@ -65025,6 +65047,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorHostConfig",
+      "ConnectorTransport"
+     ],
+     "path": "src/config/connectors.rs",
+     "purpose": "`[connectors.<name>]`: where this host installed each catalog connector's transport (ONE-2510)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DesktopConfig"
      ],
      "path": "src/config/desktop.rs",
@@ -65226,8 +65264,8 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 1,
-      "mod": 12,
-      "re-export": 21
+      "mod": 13,
+      "re-export": 22
      }
     },
     {
@@ -65539,6 +65577,19 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ServedConnectorCallHost"
+     ],
+     "path": "src/connector_call_host.rs",
+     "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…",
+     "surface": {
+      "fn": 2,
       "struct": 1
      }
     },
@@ -66169,7 +66220,7 @@
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
       "fn": 3,
-      "mod": 22,
+      "mod": 23,
       "re-export": 1
      }
     },
@@ -69060,11 +69111,18 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
+    },
+    "connector_call_host": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…"
     },
     "control_keys": {
      "files": 3,
@@ -69321,7 +69379,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 534,
+   "source_files": 536,
    "test_files": 182
   },
   "oneiron-spawn": {
