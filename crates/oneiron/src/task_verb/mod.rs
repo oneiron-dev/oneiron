@@ -231,6 +231,7 @@ mod sdk_embedding_space;
 mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
+mod sdk_record_erase;
 mod sdk_self;
 mod sdk_share;
 mod sdk_shared;

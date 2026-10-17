@@ -97,6 +97,8 @@ vaultSharedEraseAsks(input: unknown): unknown
 vaultSharedCloseEraseAsk(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
+vaultRecordsErasePreview(input: unknown): unknown
+vaultRecordsEraseConfirm(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown

@@ -318,6 +318,10 @@ declare const vault: {
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
+  records: {
+    erase_confirm(input: { also_same_bytes?: boolean; preview_digest: string; record: string }): Promise<unknown>;
+    erase_preview(input: { record: string }): Promise<unknown>;
+  };
   refs: {
     links(input: { after?: string | null; limit?: number | null; text?: string | null; turn_ref?: string | null }): Promise<unknown>;
     resolve(input: { reference: string }): Promise<unknown>;

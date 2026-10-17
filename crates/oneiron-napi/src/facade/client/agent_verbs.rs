@@ -659,6 +659,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_records_erase_preview(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.records.erase_preview", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_records_erase_confirm(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.records.erase_confirm", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_authority_handoff_alarms(
         &self,
         input: serde_json::Value,

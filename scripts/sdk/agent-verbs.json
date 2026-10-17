@@ -1161,6 +1161,28 @@
       "section": false
     },
     {
+      "name": "vault.records.erase_preview",
+      "description": "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back.",
+      "input": "crate::task_verb::sdk::RecordEraseRequest",
+      "output": "crate::task_verb::sdk::RecordErasePreview",
+      "call": "crate::task_verb::sdk::preview_record_erase(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.records.erase_confirm",
+      "description": "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead.",
+      "input": "crate::task_verb::sdk::RecordEraseConfirmRequest",
+      "output": "crate::task_verb::sdk::RecordEraseOutcome",
+      "call": "crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.authority.handoff_alarms",
       "description": "Every saved authority handoff fork alarm, for the owner.",
       "input": "EmptyRequest",

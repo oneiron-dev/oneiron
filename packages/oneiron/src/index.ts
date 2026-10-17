@@ -344,6 +344,12 @@ export class Oneiron {
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
+    records: {
+      /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
+      erase_preview: (input: Facade.RecordEraseRequest): Facade.RecordErasePreview => this.#call(() => this.#client.vaultRecordsErasePreview(input) as Facade.RecordErasePreview),
+      /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
+      erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.RecordEraseOutcome => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.RecordEraseOutcome),
+    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),

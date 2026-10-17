@@ -71,6 +71,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.close_erase_ask", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
+        .route("/vault.records.erase_preview", post(facade_route))
+        .route("/vault.records.erase_confirm", post(facade_route))
         .route("/vault.authority.handoff_alarms", post(facade_route))
         .route(
             "/vault.authority.handoff_alarms.acknowledge",

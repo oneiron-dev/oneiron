@@ -497,7 +497,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.matured"
         | "vault.shared.erase_ask"
         | "vault.shared.erase_asks"
-        | "vault.shared.close_erase_ask" => {
+        | "vault.shared.close_erase_ask"
+        | "vault.records.erase_preview"
+        | "vault.records.erase_confirm" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
