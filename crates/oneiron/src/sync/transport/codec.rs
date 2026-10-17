@@ -185,7 +185,8 @@ impl LinkBytes {
             let slot = bytes.slot(tag);
             slot.in_frames.fetch_add(1, Ordering::Relaxed);
             slot.in_raw.fetch_add(raw as u64, Ordering::Relaxed);
-            slot.in_received.fetch_add(received as u64, Ordering::Relaxed);
+            slot.in_received
+                .fetch_add(received as u64, Ordering::Relaxed);
         }
     }
 
