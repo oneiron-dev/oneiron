@@ -160,7 +160,7 @@ pub struct DecisionHost {
     /// as it asks ([`Self::ladder_for_model`]).
     big_model: Option<Arc<crate::big_rung::BigModel>>,
     /// Each `ai.verdict` caller's own Read line (FIX 1123).
-    verdict_lines: crate::verdict_line::VerdictLines,
+    verdict_lines: Arc<crate::verdict_line::VerdictLines>,
 }
 
 impl DecisionHost {
@@ -193,7 +193,7 @@ impl DecisionHost {
             connector_slate: None,
             remote_opt_in: false,
             big_model: None,
-            verdict_lines: crate::verdict_line::VerdictLines::default(),
+            verdict_lines: Arc::default(),
         }
     }
 
