@@ -1183,6 +1183,9 @@ class Oneiron:
         def create(self, spec):
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
             return json.loads(_translate(lambda: self._client.tasks_create(json.dumps(spec))))
+        def wave(self, spec):
+            """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
+            return json.loads(_translate(lambda: self._client.tasks_wave(json.dumps(spec))))
         def update(self, spec):
             """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
             return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))

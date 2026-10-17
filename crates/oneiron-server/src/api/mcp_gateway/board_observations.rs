@@ -217,3 +217,100 @@ fn xml_leaf(value: &str) -> String {
     }
     escaped
 }
+
+/// A pumped run's own session read set (OF-533): keyed on the run's board
+/// connection under its agent, tagged apart from a connector's and Core's.
+pub(super) async fn run_read_set<'a>(
+    server: &'a SyncServer,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+) -> MappedMutexGuard<'a, SessionReadSet> {
+    let key = run_read_set_key(actor, connection);
+    let mut store = server.memories_cursors.lock().await;
+    store.current(key.clone(), &connection.0);
+    MutexGuard::map(store, |store| store.read_sets.entry(key).or_default())
+}
+
+pub(super) fn run_read_set_key(
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+) -> String {
+    serde_json::to_string(&(
+        "run",
+        actor.actor_class().gate_actor_class(),
+        actor.entity_ref().to_hex(),
+        &connection.0,
+    ))
+    .expect("string tuple serializes")
+}
+
+/// [`state`] for a pumped run: what changed under the agent's own read lane,
+/// with the agent's own outcomes folded in, as a vault-wide connector's are.
+pub(super) async fn run_state(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+    read: &oneiron::claim::ScopedRead<'_>,
+    packs: &[(String, String)],
+) -> Result<(SessionReadSet, ChangedLine, ChangedLine), McpGatewayError> {
+    let observations = run_read_set(server, actor, connection).await.clone();
+    let mut changed = observations
+        .refresh(read, 4096)
+        .map_err(|error| mcp_engine_error("run session refresh failed", error))?;
+    let mut visible = Vec::new();
+    for receipt in changed.install_rows.drain(..) {
+        let id = oneiron::EntityId::from_hex(&receipt.entity)
+            .map_err(|error| mcp_engine_error("run install receipt id invalid", error))?;
+        if read
+            .is_entity_readable(&id)
+            .map_err(|error| mcp_engine_error("run install receipt read failed", error))?
+        {
+            visible.push(receipt);
+        }
+    }
+    changed.install_overflow = visible.len().saturating_sub(16);
+    changed.install_rows = visible.into_iter().take(16).collect();
+    changed.overflow += changed.rows.len().saturating_sub(16);
+    changed.rows.truncate(16);
+    let installs = observations.pack_changes(packs, 16_usize.saturating_sub(changed.rows.len()));
+    changed.rows.extend(installs.rows);
+    changed.overflow += installs.overflow;
+    let board = changed.clone();
+    observations
+        .fold_own_changes(
+            read,
+            Some(actor.entity_ref()),
+            oneiron::claim::CallerLocality::OnDevice,
+            &mut changed,
+            16,
+        )
+        .map_err(|error| mcp_engine_error("run session refresh failed", error))?;
+    Ok((observations, changed, board))
+}
+
+/// [`delivered`] for a pumped run's board connection.
+pub(super) async fn run_delivered(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+    changed: &ChangedLine,
+    keyframe: bool,
+    epoch: u64,
+) {
+    let mut reads = run_read_set(server, actor, connection).await;
+    let superseded = server
+        .mcp_registry
+        .lock()
+        .await
+        .streams_mut()
+        .carrier_epoch(connection)
+        .is_some_and(|carrier| carrier > epoch);
+    if superseded {
+        return;
+    }
+    if keyframe {
+        reads.keyframe_committed(changed);
+    } else {
+        reads.acknowledge(changed);
+    }
+}

@@ -22,6 +22,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/steer", post(facade_route))
         .route("/describe", post(facade_route))
         .route("/tasks.create", post(facade_route))
+        .route("/tasks.wave", post(facade_route))
         .route("/tasks.update", post(facade_route))
         .route("/vault.witness", post(facade_route))
         .route("/vault.claims.upsert", post(facade_route))

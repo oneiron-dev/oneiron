@@ -359,6 +359,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_wave(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.wave")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.wave", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn tasks_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "tasks.update")?;
         let output = py

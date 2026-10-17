@@ -101,6 +101,11 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "tasks.wave" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::TaskWaveReceipt>(
+                        client, verb, &input,
+                    )
+                }
                 "tasks.update" => {
                     remote_agent_verb_output::<oneiron::task_verb::TaskUpdateReceipt>(
                         client, verb, &input,
@@ -976,6 +981,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.create", value)
+    }
+    pub fn tasks_wave(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskWaveRequest,
+    ) -> Result<oneiron::task_verb::sdk::TaskWaveReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.wave", value)
     }
     pub fn tasks_update(
         &self,
