@@ -43902,7 +43902,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 7,
       "re-export": 2,
@@ -44010,6 +44010,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HomeSearch"
+     ],
+     "path": "src/sync/connection/home_search.rs",
+     "purpose": "The home search this device's query doors reach through its own sync connection (OF-534): a search an opened…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -44021,7 +44035,7 @@
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
       "fn": 18,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -44073,7 +44087,7 @@
      "purpose": "Host-authorized home-node candidate updates, independent of socket liveness",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -52962,7 +52976,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53153,7 +53167,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3222,
+   "source_files": 3223,
    "test_files": 902
   },
   "oneiron-android": {
