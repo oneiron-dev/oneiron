@@ -292,7 +292,8 @@ impl<'a> ScopedRead<'a> {
         let Some(roster) = crate::context_board::room_roster_in(self.vault, txn, turn.room)? else {
             return Ok(None);
         };
-        if !crate::context_board::room_reader_in(self.vault, txn, turn.room, &roster, turn.caller)? {
+        if !crate::context_board::room_reader_in(self.vault, txn, turn.room, &roster, turn.caller)?
+        {
             return Ok(None);
         }
         let mut held = self
@@ -630,10 +631,7 @@ impl ScopedRead<'_> {
         if row.entity_type != crate::registry::ENTITY_TYPE_TASK {
             return Ok(false);
         }
-        let worlds_only = crate::federation::Scope {
-            facets: crate::federation::ScopeAxis::All,
-            ..granted.clone()
-        };
+        let worlds_only = super::actor_key::world_only(granted.worlds.clone());
         let raw = row.encode();
         let inside = match self.session_view {
             Some(view) => task_inside_credential(view, txn, *id, &raw, &worlds_only)?,
@@ -682,11 +680,11 @@ impl ScopedRead<'_> {
         // replayed with no stamp is no less outside a credential that cannot
         // read base (Astra #1388b P2).
         if row.entity_type != ENTITY_TYPE_CLAIM {
+            let ceiling = super::actor_key::world_only(granted.worlds.clone());
             return Ok(self
                 .record_world_in(txn, id, row.entity_type, &row.body)?
                 .is_none_or(|world| {
-                    let world = world.unwrap_or_else(crate::claim::base_world_id);
-                    !granted.worlds.contains(&crate::federation::ScopeId(world))
+                    !super::actor_key::record_world_scope(world).is_narrowing_of(&ceiling)
                 }));
         }
         // A claim with no decodable world names none, as a read that asked

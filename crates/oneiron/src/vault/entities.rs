@@ -300,8 +300,9 @@ impl Vault {
     /// denies it: the body carries the secret value in the clear. An LFS chunk
     /// no published object holds yet reads as absent, as `get()` reads it. A
     /// row whose words a deletion withdrew (stale, a pending source walk, or a
-    /// deletion fence over a full body) reads as absent too; a soft-erased
-    /// header-only shell still reads, since it carries no words.
+    /// deletion fence over a full body), whose non-CLAIM body is flagged
+    /// stale, or whose recorded source no longer stands reads as absent too;
+    /// a soft-erased header-only shell still reads, since it carries no words.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(bytes) = self.get_raw_in(&rtxn, id)? else {
@@ -322,7 +323,7 @@ impl Vault {
             return Ok(None);
         }
         if bytes.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
-            && crate::ports::withdrawn_in_txn(&self.store, &rtxn, id)?
+            && !crate::ports::raw_readable_in_txn(&self.store, &rtxn, id, &bytes)?
         {
             return Ok(None);
         }
@@ -591,7 +592,13 @@ impl Vault {
                     &entry.id,
                     row.entity_type,
                 )?
-                || crate::ports::withdrawn_in_txn(&self.store, &txn, &entry.id)?
+                || !crate::ports::body_readable_in_txn(
+                    &self.store,
+                    &txn,
+                    &entry.id,
+                    &row.body,
+                    crate::ports::BodyStale::for_kind(row.entity_type),
+                )?
             {
                 continue;
             }

@@ -241,11 +241,8 @@ impl Vault {
                 .map(|(receipt, _)| receipt.to_hex())
                 .collect::<Vec<_>>(),
         });
-        let envelope = proposals::run_tray_envelope(
-            self,
-            COACH_HEAL_ATTEMPT_KIND,
-            attempt.status.attempt.id,
-        )?;
+        let envelope =
+            proposals::run_tray_envelope(self, COACH_HEAL_ATTEMPT_KIND, attempt.status.attempt.id)?;
         let subject = envelope.actor().entity_ref();
         self.with_write_txn_grouped(|txn| {
             if let Some(settled) = blocked_reports::settled_in_txn(self, &*txn, &key)? {

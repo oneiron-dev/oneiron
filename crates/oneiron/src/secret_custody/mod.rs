@@ -62,6 +62,7 @@ mod doors;
 mod floor;
 mod masked_files;
 mod owner_door;
+mod transition;
 mod types;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
@@ -92,6 +93,10 @@ pub(crate) use self::masked_files::{
 };
 pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
+};
+pub(crate) use self::transition::{
+    CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_transitions,
+    write_custody_transition_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,

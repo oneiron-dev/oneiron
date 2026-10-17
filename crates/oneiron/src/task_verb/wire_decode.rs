@@ -260,6 +260,9 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
         brief: task_body_optional(entries, "brief")?
             .map(decode_stored_brief)
             .transpose()?,
+        subproject_ref: task_body_optional(entries, "subproject_ref")?
+            .map(|value| decode_entity_ref(value, "tasks.body.subproject_ref"))
+            .transpose()?,
     })
 }
 

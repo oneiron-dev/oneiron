@@ -59,8 +59,7 @@ fn frozen_candidates_in(
     let raw = vault
         .get_raw_in(txn, &ask_ref)?
         .ok_or_else(ask_record::invalid)?;
-    if EntityMetadataHeader::parse(&raw).map(|header| header.entity_type)
-        != Some(ENTITY_TYPE_CLAIM)
+    if EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) != Some(ENTITY_TYPE_CLAIM)
     {
         return Err(ask_record::invalid());
     }
