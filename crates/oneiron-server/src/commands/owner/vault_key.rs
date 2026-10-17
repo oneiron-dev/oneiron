@@ -131,8 +131,8 @@ fn reseal_capsule(args: VaultKeyResealArgs) -> anyhow::Result<()> {
 /// The registry's escrow capsule report at `path`, checked
 /// ([`view::parse_capsule_report`]).
 fn read_capsule_report(path: &Path) -> anyhow::Result<view::CapsuleReport> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     let report = view::parse_capsule_report(path, &bytes)?;
     check_name(&report.label)?;
     Ok(report)
