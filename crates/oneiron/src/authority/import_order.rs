@@ -74,6 +74,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        AuthorityOp::ResidenceResult(result) => {
+            vec![Grant::InstallKey(
+                result.machine,
+                entry.signer_key().clone(),
+            )]
+        }
         op => std::iter::once(&entry.signer)
             .chain(&entry.cosigns)
             .map(|signature| Grant::Admitter(signature.public_key.clone()))

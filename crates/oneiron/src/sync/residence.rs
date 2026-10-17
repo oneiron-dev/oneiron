@@ -6,6 +6,7 @@ mod tests;
 
 mod admission;
 mod authority_tail;
+mod directives;
 mod discover;
 mod policy;
 mod prune;
@@ -16,12 +17,18 @@ pub use authority_tail::{
     AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
 };
+pub use directives::ResidenceDirectiveState;
+pub(crate) use directives::{
+    finish_residence_directive_in_txn, pending_residence_directives, residence_refusal_reason,
+};
 pub use discover::discover_local_window_keys;
+pub(crate) use policy::set_device_sync_preference_in_txn;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use prune::demote_resident_window;
+pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 pub(crate) use sealed::drop_sealed_labels_in_txn;

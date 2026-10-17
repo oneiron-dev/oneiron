@@ -430,6 +430,8 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
         AuthorityOp::OwnerHandover(_) => (Other, "owner_handover", OpFields::default()),
+        AuthorityOp::ResidenceDirective(_) => (Other, "residence_directive", OpFields::default()),
+        AuthorityOp::ResidenceResult(_) => (Other, "residence_result", OpFields::default()),
     }
 }
 

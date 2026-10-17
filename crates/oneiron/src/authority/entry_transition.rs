@@ -187,6 +187,15 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // A machine's residence result, signed by its own install key under a
+    // chain the owner marked "yours" (OF-534). It changes no state.
+    if let AuthorityOp::ResidenceResult(result) = &entry.op {
+        if let Err(issue) = residence_result_stands(&state, entry, result, hash) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     let signer = entry.signer_key().clone();
     if let Some(folded) =
         super::anchor_fold::fold_anchor_entry(&mut state, entry, &signer, hash, restriction_only)
@@ -319,6 +328,35 @@ pub(super) fn fold_entry_state(
     EntryFold::Ready(state)
 }
 
+/// Whether a residence result's signer is the install key of the machine it
+/// names under a chain that says "yours" in the result's parent state, past
+/// that key's last sequence there.
+fn residence_result_stands(
+    state: &FoldState,
+    entry: &AuthorityLogEntry,
+    result: &ResidenceResult,
+    hash: AuthorityEntryHash,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let AuthorityKey::Ed25519(signer) = entry.signer_key() else {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    };
+    if !super::machine_claims::folded_machine_in(state, result.machine).is_some_and(|machine| {
+        machine
+            .chains()
+            .any(|(_, chain)| chain.says_yours() && chain.profile.machine_key == *signer)
+    }) {
+        return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
+    }
+    if state
+        .seqs
+        .get(entry.signer_key())
+        .is_some_and(|prior| entry.seq <= *prior)
+    {
+        return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    }
+    Ok(())
+}
+
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
 /// edit, or a machine revision. The roster rule reads either as a replica
 /// with no floor does; this install never counts what it grants.
@@ -422,13 +460,16 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::WorldKeyWraps(_)
-        | AuthorityOp::OwnerHandover(_) => false,
+        | AuthorityOp::OwnerHandover(_)
+        | AuthorityOp::ResidenceDirective(_)
+        | AuthorityOp::ResidenceResult(_) => false,
     }
 }
 
 fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
     // A machine profile is the owner's answer landed through the host, as a
-    // slip is; its own transition requires an owner consent key.
+    // slip is, and so is a residence directive; its own transition requires
+    // an owner consent key.
     !matches!(
         entry.op,
         AuthorityOp::Genesis { .. }
@@ -437,6 +478,7 @@ fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
             | AuthorityOp::SlipConsume { .. }
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::OwnerRoot(_)
+            | AuthorityOp::ResidenceDirective(_)
     )
 }
 

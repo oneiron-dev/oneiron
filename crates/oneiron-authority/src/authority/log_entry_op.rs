@@ -112,6 +112,12 @@ pub enum AuthorityOp {
     /// successor or signs their own removal, signed by an owner roster key
     /// like any Owner action (ARCH-0043, OF-163).
     OwnerHandover(OwnerHandover),
+    /// An owner's residence directive to one of their machines, signed by an
+    /// owner roster key like any owner act through the host (OF-534).
+    ResidenceDirective(ResidenceDirective),
+    /// A machine's result for a residence directive, signed by the install
+    /// key of the machine it names, with the directive among its parents.
+    ResidenceResult(ResidenceResult),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -166,6 +172,7 @@ impl AuthorityLogEntry {
         match &self.op {
             AuthorityOp::OwnerRoot(record) => record.validate_entry(self)?,
             AuthorityOp::WorldKeyWraps(record) => record.validate_entry(self)?,
+            AuthorityOp::ResidenceResult(result) => result.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -379,6 +386,8 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::WorldPrivacy(edit) => edit.settings.validate(),
         AuthorityOp::WorldKeyWraps(record) => record.validate(),
         AuthorityOp::OwnerHandover(handover) => handover.validate(),
+        AuthorityOp::ResidenceDirective(directive) => directive.validate(),
+        AuthorityOp::ResidenceResult(result) => result.validate(),
     }
 }
 

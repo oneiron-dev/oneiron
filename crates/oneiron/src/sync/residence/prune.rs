@@ -62,80 +62,88 @@ pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
 /// before touches were recorded counts as touched at zero. Returns how many
 /// items were pruned.
 pub fn prune_thin_items(vault: &Vault, before: u64) -> Result<usize> {
-    vault.with_write_txn_grouped(|txn| {
-        let opened: Vec<(String, Vec<u8>)> = vault
+    vault.with_write_txn_grouped(|txn| prune_thin_items_in_txn(vault, txn, before))
+}
+
+/// [`prune_thin_items`] in the caller's transaction, for a door that records
+/// more in the same commit.
+pub(crate) fn prune_thin_items_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    before: u64,
+) -> Result<usize> {
+    let opened: Vec<(String, Vec<u8>)> = vault
+        .store
+        .sync_state
+        .prefix_iter(txn, "ro:e:")?
+        .map(|row| row.map(|(key, value)| (key.to_string(), value.to_vec())))
+        .collect::<std::result::Result<_, _>>()?;
+    let mut pruned = 0;
+    for (key, window) in opened {
+        let Some(id) = key.strip_prefix("ro:e:") else {
+            continue;
+        };
+        let window = String::from_utf8_lossy(&window);
+        if vault
             .store
             .sync_state
-            .prefix_iter(txn, "ro:e:")?
-            .map(|row| row.map(|(key, value)| (key.to_string(), value.to_vec())))
-            .collect::<std::result::Result<_, _>>()?;
-        let mut pruned = 0;
-        for (key, window) in opened {
-            let Some(id) = key.strip_prefix("ro:e:") else {
-                continue;
-            };
-            let window = String::from_utf8_lossy(&window);
-            if vault
+            .get(txn, &format!("rp:w:{window}"))?
+            .is_some()
+        {
+            continue;
+        }
+        let touched = vault
+            .store
+            .sync_state
+            .get(txn, &format!("{TOUCH_PREFIX}{id}"))?
+            .and_then(|bytes| <[u8; 8]>::try_from(bytes.as_ref()).ok())
+            .map_or(0, u64::from_be_bytes);
+        if touched >= before {
+            continue;
+        }
+        // A legal hold keeps every byte of the rows it names, a cached
+        // copy too: a held item's cache stays (OF-470).
+        let Ok(item) = EntityId::from_hex(id) else {
+            continue;
+        };
+        if vault
+            .store
+            .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
+            .is_err()
+        {
+            continue;
+        }
+        for family in ["ri:b:", "ri:d:", TOUCH_PREFIX] {
+            vault
                 .store
                 .sync_state
-                .get(txn, &format!("rp:w:{window}"))?
-                .is_some()
-            {
-                continue;
-            }
-            let touched = vault
-                .store
-                .sync_state
-                .get(txn, &format!("{TOUCH_PREFIX}{id}"))?
-                .and_then(|bytes| <[u8; 8]>::try_from(bytes.as_ref()).ok())
-                .map_or(0, u64::from_be_bytes);
-            if touched >= before {
-                continue;
-            }
-            // A legal hold keeps every byte of the rows it names, a cached
-            // copy too: a held item's cache stays (OF-470).
-            let Ok(item) = EntityId::from_hex(id) else {
-                continue;
-            };
-            if vault
-                .store
-                .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
-                .is_err()
-            {
-                continue;
-            }
-            for family in ["ri:b:", "ri:d:", TOUCH_PREFIX] {
-                vault
-                    .store
-                    .sync_state
-                    .delete(txn, &format!("{family}{id}"))?;
-            }
+                .delete(txn, &format!("{family}{id}"))?;
+        }
+        vault.store.sync_state.delete(txn, &key)?;
+        pruned += 1;
+    }
+    // A touch row whose cache already left (promotion, an earlier prune)
+    // ages nothing.
+    let touches: Vec<String> = vault
+        .store
+        .sync_state
+        .prefix_iter(txn, TOUCH_PREFIX)?
+        .map(|row| row.map(|(key, _)| key.to_string()))
+        .collect::<std::result::Result<_, _>>()?;
+    for key in touches {
+        let Some(id) = key.strip_prefix(TOUCH_PREFIX) else {
+            continue;
+        };
+        if vault
+            .store
+            .sync_state
+            .get(txn, &format!("ro:e:{id}"))?
+            .is_none()
+        {
             vault.store.sync_state.delete(txn, &key)?;
-            pruned += 1;
         }
-        // A touch row whose cache already left (promotion, an earlier prune)
-        // ages nothing.
-        let touches: Vec<String> = vault
-            .store
-            .sync_state
-            .prefix_iter(txn, TOUCH_PREFIX)?
-            .map(|row| row.map(|(key, _)| key.to_string()))
-            .collect::<std::result::Result<_, _>>()?;
-        for key in touches {
-            let Some(id) = key.strip_prefix(TOUCH_PREFIX) else {
-                continue;
-            };
-            if vault
-                .store
-                .sync_state
-                .get(txn, &format!("ro:e:{id}"))?
-                .is_none()
-            {
-                vault.store.sync_state.delete(txn, &key)?;
-            }
-        }
-        Ok(pruned)
-    })
+    }
+    Ok(pruned)
 }
 
 /// What one [`demote_resident_window`] call did.

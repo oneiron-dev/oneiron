@@ -259,8 +259,10 @@ impl SyncConnection {
                         && sealed_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
                     {
                         let manager = std::sync::Arc::clone(&self.manager);
-                        let config = self.client_config();
+                        let mut config = self.client_config();
                         let events = event_tx.clone();
+                        let mode = std::sync::Arc::clone(&self.mode);
+                        let round = std::sync::Arc::clone(&self.directive_round);
                         sealed_task = Some(tokio::spawn(async move {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
@@ -284,6 +286,35 @@ impl SyncConnection {
                                 let _ = events.send(SyncEvent::Error(format!(
                                     "Authority catch-up failed: {error}"
                                 )));
+                            }
+                            // The owner's residence directives naming this
+                            // machine (OF-534). Their results reach the home
+                            // by the catch-up's append half, run again when
+                            // one finished, as the switched mode.
+                            match super::directives::apply_residence_directives(
+                                &manager, &config, &mode, &round,
+                            )
+                            .await
+                            {
+                                Ok(0) => {}
+                                Ok(_) => {
+                                    config.residence_mode = *mode.borrow();
+                                    if let Err(error) =
+                                        crate::sync::client::catch_up_authority(manager.vault(), &config)
+                                            .await
+                                        && !matches!(error, crate::sync::TransportError::InvalidPayload(_))
+                                    {
+                                        let _ = events.send(SyncEvent::Error(format!(
+                                            "Authority catch-up failed: {error}"
+                                        )));
+                                    }
+                                }
+                                Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Residence directives failed: {error}"
+                                    )));
+                                }
                             }
                             // A machine those rows made mine gets each portable
                             // credential's value sealed to it again (OF-422).
