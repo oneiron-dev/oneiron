@@ -550,6 +550,7 @@ pub(crate) fn capture_canonical_window_within(
             "row_births",
             "custody",
             "room_turns",
+            "withdrawn_cutoffs",
         ]
         .contains(&name.as_str())
     }) {

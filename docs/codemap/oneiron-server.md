@@ -30,13 +30,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/identity.rs` | src | s | 1 crate-vis | — | Identity decisions (OF-123, ask rule B): the host side of the Dreamer's identity re-check |
 | `src/ai_host/judge_swap.rs` | src | s | 1 crate-vis | — | The Coach's judge-swap upkeep on this server (OF-184) |
 | `src/ai_host/local_vision.rs` | src | m | 8 crate-vis | — | The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound… |
-| `src/ai_host/mod.rs` | src | L | 2 struct · 20 fn · 1 re-export · 24 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
+| `src/ai_host/mod.rs` | src | L | 2 struct · 21 fn · 1 re-export · 24 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
 | `src/ai_host/self_heal_detectors.rs` | src | m | 1 crate-vis | — | The host's scheduled T2/T3 detector pass (ARCH-0066 #tiers, OF-418) |
 | `src/ai_host/skill_author.rs` | src | s | 2 crate-vis | — | The Coach's skill-edit author (OF-214) |
 | `src/ai_host/skill_discovery.rs` | src | s | 1 crate-vis | — | The Coach's skill discovery (ARCH-0056 §5, ARCH-0066 #coach, OF-420): the standing attribution classifier… |
 | `src/ai_host/status.rs` | src | s | 4 struct · 3 enum · 9 crate-vis | AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus | Live state of the server's background AI work, shared between the workers that change it and the routes that… |
-| `src/ai_host/step.rs` | src | m | 7 crate-vis | — | One saved-workflow step on a model seat |
+| `src/ai_host/step.rs` | src | m | 8 crate-vis | — | One saved-workflow step on a model seat |
 | `src/ai_host/step_failure.rs` | src | s | 3 crate-vis | — | A failed workflow step, settled through the engine's typed failure ladder: the one door that may retry or… |
 | `src/ai_host/stewardship.rs` | src | s | 1 crate-vis | — | Follow-up drafts for due stewardship reach-outs (ARCH-0026 Represent) |
 | `src/ai_host/sync_wake.rs` | src | s | 3 crate-vis | — | A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's… |
@@ -143,7 +143,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/hold_worker.rs` | src | s | 1 crate-vis | — | The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks each new… |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | s | 1 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
-| `src/api/facade.rs` | src | L | 31 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | L | 30 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 9 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/facade/call_context.rs` | src | s | 20 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
@@ -153,7 +153,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/dispatch.rs` | src | XL | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
-| `src/api/facade/fanout_doors.rs` | src | s | 2 crate-vis | — | The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and… |
+| `src/api/facade/fanout_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and… |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 7 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/host_doors.rs` | src | L | 44 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
@@ -257,6 +257,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/proactivity_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read… |
 | `src/api/owner_routes/recovery_kit_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173) |
 | `src/api/owner_routes/secret_found_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/found*`: the owner's side of the found-key notice (OF-560) |
+| `src/api/owner_routes/secret_lift_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/lift*`: the owner's side of the historical lift sweep's proposals (OF-067) |
 | `src/api/owner_routes/secret_reveal_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check) |
 | `src/api/owner_routes/secret_use_routes.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/secrets/bind`: the owner binds a secret to an effector, so an agent's `self.use` can hand it… |
 | `src/api/owner_routes/skill_judge_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/skills/judge`: the serve skill judge (OF-495) |
@@ -374,7 +375,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli/recovery_kit_args.rs` | src | s | 5 struct · 1 enum | KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitRestoreArgs, RecoveryKitStatusArgs | Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173) |
 | `src/cli/wake_args.rs` | src | s | 1 struct · 1 enum | WakeArgs, WakeCommand | Host-side wake inbox commands |
 | `src/cli/widen_proposal_args.rs` | src | s | 2 struct · 2 enum | WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand | `oneiron widen-proposals`: the context-widen proposals agents raised, on a stopped vault… |
-| `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 19 re-export · 6 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 20 re-export · 6 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | m | 1 fn · 18 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | s | 7 crate-vis | — | A file holding a credential, readable by its owner alone |
 | `src/commands/dreamer.rs` | src | s | 1 fn | — | `oneiron dreamer grant`: the owner's weave grant, made offline, for a vault created before the Dreamer's… |
@@ -407,7 +408,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
 | `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
 | `src/commands/seat.rs` | src | s | 4 fn | — | `oneiron seat …`: the owner's official-seat sign-in surface (OF-375) |
-| `src/commands/serve.rs` | src | m | 11 crate-vis | — | The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then… |
+| `src/commands/serve.rs` | src | m | 1 struct · 1 fn · 11 crate-vis | OpenedServedVault | The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then… |
 | `src/commands/tests.rs` | test | L | — | — | — |
 | `src/commands/unauthenticated_bind_tests.rs` | test | s | — | — | Unauthenticated mode (`--insecure-allow-unauthenticated` with no `auth_secret`) admits a request with no… |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
@@ -465,7 +466,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_host.rs` | src | L | 1 struct · 23 fn · 1 const · 13 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_verdict.rs` | src | m | 8 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/device_local.rs` | src | s | 6 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
-| `src/embedded.rs` | src | s | 1 fn | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
+| `src/embedded.rs` | src | m | 1 fn · 2 re-export | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
+| `src/embedded/engine.rs` | src | m | 4 struct · 20 fn | BlockingEngine, EmbeddedEngine, EmbeddedReply, EmbeddedRequest | The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding |
 | `src/embedder/admitted.rs` | src | s | 3 crate-vis | — | A remote embedder's requests under run admission (ARCH-0053 `#run-admission`) |
 | `src/embedder/endpoint.rs` | src | L | 16 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
@@ -609,7 +611,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/forward.rs` | src | s | 2 crate-vis | — | One rung's stream handed to the caller event by event, up to its terminal or its failure |
 | `src/models/gemini_media.rs` | src | s | 1 crate-vis | — | The Gemini API's media leg: one request per call over [`ProviderHttp`], the key in `x-goog-api-key` |
 | `src/models/hosted_speech.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | HostedCloner | Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic… |
-| `src/models/http.rs` | src | m | 19 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
+| `src/models/http.rs` | src | m | 21 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 10 fn · 16 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/media.rs` | src | L | 3 struct · 16 fn · 10 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
@@ -624,7 +626,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/rerank.rs` | src | s | 5 crate-vis | — | The rerank transport: the `reranker` role's rungs speak `/v1/rerank`, the indexed-scores protocol… |
 | `src/models/responses_socket.rs` | src | m | 4 crate-vis | — | Responses over a held socket (ARCH-0081 §5) |
 | `src/models/role_route.rs` | src | s | 2 struct · 1 enum · 3 fn | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
-| `src/models/router.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
+| `src/models/router.rs` | src | s | 1 struct · 6 fn · 5 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
 | `src/models/run_backend.rs` | src | s | 1 struct · 1 fn | RunBackend | A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer) |
 | `src/models/served.rs` | src | s | 3 crate-vis | — | Which model actually answered: the receipt field a ladder fills in |
 | `src/models/soniox.rs` | src | L | 9 crate-vis | — | Soniox's real-time speech-to-text socket (OF-410): a live `[models.media.transcribe]` rung |
@@ -694,7 +696,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | m | 15 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
 | `src/server/live_rows_tests.rs` | test | s | 2 crate-vis | — | Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a… |
-| `src/server/live_runs.rs` | src | m | 25 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
+| `src/server/live_runs.rs` | src | m | 28 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
 | `src/server/media_embedding.rs` | src | m | 6 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
 | `src/server/mod.rs` | src | s | 3 re-export · 14 crate-vis | — | Sync server state and maintenance jobs, split by concern |
