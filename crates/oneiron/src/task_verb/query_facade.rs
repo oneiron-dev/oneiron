@@ -35,6 +35,8 @@ use super::consts::{
     TASK_GATE_RECEIPT_SCAN_LIMIT,
 };
 use super::consult_result::CancelTargetState;
+use super::create_origin::{put_proposal_origin_in_txn, task_create_origin_in_txn};
+use super::highway_types::HostBinding;
 use super::presence_scan::{
     cancel_target_state, is_cancelable_attempt_state, is_running_attempt_state,
     superseded_attempt_ids, task_owned_by, task_owned_in, task_presence_at,
@@ -701,6 +703,22 @@ impl Memory<'_> {
         now: u64,
         provenance: Value,
     ) -> MemoryResult<(EntityId, Option<String>)> {
+        self.persist_task_proposal_with_origin(predicate, value, subject, now, provenance, None)
+    }
+
+    /// [`Self::persist_task_proposal`] for a create a host bound to its
+    /// creator (OF-532): the creator is re-proved and witnessed under the
+    /// proposal id in the proposal's own transaction, before the claim
+    /// lands, so no settlement can see the proposal without its origin.
+    pub(super) fn persist_task_proposal_with_origin(
+        &self,
+        predicate: &str,
+        value: Value,
+        subject: EntityId,
+        now: u64,
+        provenance: Value,
+        creator: Option<&HostBinding>,
+    ) -> MemoryResult<(EntityId, Option<String>)> {
         let proposal_ref = self.vault().store.clock.entity_id()?;
         let mut candidate = ClaimCandidate::new(
             predicate.to_owned(),
@@ -730,6 +748,10 @@ impl Memory<'_> {
             end: now,
         };
         self.with_verified_actor_write_txn(|wtxn| {
+            if let Some(binding) = creator {
+                let origin = task_create_origin_in_txn(self, &*wtxn, binding)?;
+                put_proposal_origin_in_txn(self.vault(), wtxn, proposal_ref, &origin)?;
+            }
             apply_ops_with_gate_mode(
                 &self.vault().store,
                 &self.vault().config,
