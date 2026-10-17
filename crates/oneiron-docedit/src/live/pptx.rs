@@ -11,7 +11,7 @@
 use super::LiveError;
 use super::held;
 use crate::deck::{DeckView, ShapeKind, ShapeView, TextView};
-use crate::edit::{AssetRef, ConnectorPreset, IdMarks, Preset};
+use crate::edit::{AssetRef, ConnectorPreset, Digest, IdMarks, Preset};
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -95,61 +95,153 @@ pub struct DeckNode {
     /// Placeholder kind/index as read (`p:ph`), for export evidence.
     pub placeholder: Option<(String, u32)>,
     /// A shape's preset geometry. A live-born shape's `None` is a
-    /// rectangle; an imported shape's is custom geometry or a preset outside
-    /// the written set, kept as written.
+    /// rectangle; an imported shape's is a preset outside the written set,
+    /// kept as written, or custom geometry, which its payload marks.
     #[serde(default)]
     pub preset: Option<Preset>,
-    /// What a picture, graphic frame or connector is written from. Import
-    /// reads a table's cells, a classic chart's data and a connector's
-    /// geometry and glue; an imported picture's media, and any other frame
-    /// or connector, stay in the retained markup (`None`).
+    /// What a shape, picture, graphic frame or connector is written from.
+    /// Import reads a shape's custom geometry, a picture's media, a table's
+    /// cells, a chart's data, a SmartArt's text, an OLE object's program id
+    /// and preview, and a connector's geometry and glue; any other frame
+    /// stays in the retained markup (`None`).
     #[serde(default)]
     pub payload: Option<NodePayload>,
 }
 
-/// The native content a live-born node carries to the export projector.
+/// What a node is written from. A live-born node carries a picture, table,
+/// chart or connector; the held forms (an imported picture's media, a
+/// SmartArt, an OLE object, custom geometry) are read from the retained
+/// package, and no deck op writes them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodePayload {
     /// A raster asset by its engine identity; the export's resolver supplies
     /// the admitted record and bytes, which must hash to the reference.
     Picture { image: AssetRef },
+    /// An imported picture's media as the retained package holds it. A
+    /// picture takes new media as an engine asset ([`Self::Picture`]).
+    HeldPicture { media: HeldMedia },
     /// A native table: a header row of column names, then rows of cell text
     /// (`None` is an empty cell), one cell per column.
     Table {
         header: Vec<String>,
         rows: Vec<Vec<Option<String>>>,
     },
-    /// A classic chart over its embedded workbook: one category per point,
-    /// each series one value per category (`None` is a missing point).
+    /// A classic chart: one category per point, each series one value per
+    /// category (`None` is a missing point), or a scatter series one value
+    /// per x value.
     Chart {
         family: ChartKind,
         categories: Vec<String>,
         series: Vec<ChartSeries>,
+        /// Where the data lives; a live-born chart's is its own workbook.
+        #[serde(default)]
+        source: ChartSource,
     },
-    /// A connector, each end glued to a node on its slide or free.
+    /// A connector, each end glued to a node on its slide or free. `None`
+    /// is a preset outside the written set (or custom geometry), kept as
+    /// written; a live-born connector's is straight.
     Connector {
-        preset: ConnectorPreset,
+        #[serde(default)]
+        preset: Option<ConnectorPreset>,
         #[serde(default)]
         start: Option<ConnectorEnd>,
         #[serde(default)]
         end: Option<ConnectorEnd>,
     },
+    /// A SmartArt graphic's text, read from its data part: each node in
+    /// outline order. Its interior is carried, never edited (ARCH-0077).
+    SmartArt { nodes: Vec<SmartArtNode> },
+    /// An embedded or linked OLE object: its program id and the preview
+    /// picture its fallback shows.
+    Ole {
+        prog_id: Option<String>,
+        preview: Option<HeldMedia>,
+    },
+    /// A shape drawn from custom geometry (`a:custGeom`) with this many
+    /// paths. It takes no preset.
+    CustomGeometry { paths: u32 },
 }
 
-/// The classic chart families a live-born chart is written as.
+/// Media the retained package holds, by its part and the BLAKE3 hash of its
+/// bytes: the identity of media that has no engine asset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HeldMedia {
+    pub part: String,
+    pub hash: Digest,
+}
+
+/// One SmartArt node's text (paragraphs joined by `\n`) and its depth below
+/// the diagram's root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SmartArtNode {
+    pub text: String,
+    pub level: u32,
+}
+
+/// The classic chart families the live deck reads. A live-born chart is
+/// written as a bar, line or pie chart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChartKind {
     Bar,
     Line,
     Pie,
+    Area,
+    Scatter,
+    Doughnut,
+    Radar,
+}
+
+impl ChartKind {
+    /// The plot element this family is written as.
+    pub fn element(self) -> &'static str {
+        match self {
+            Self::Bar => "barChart",
+            Self::Line => "lineChart",
+            Self::Pie => "pieChart",
+            Self::Area => "areaChart",
+            Self::Scatter => "scatterChart",
+            Self::Doughnut => "doughnutChart",
+            Self::Radar => "radarChart",
+        }
+    }
+
+    /// Whether the family plots against axes (a pie or doughnut does not).
+    pub fn has_axes(self) -> bool {
+        !matches!(self, Self::Pie | Self::Doughnut)
+    }
+}
+
+/// Where a chart's data lives.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartSource {
+    /// The chart's own embedded workbook; caches are written with it.
+    #[default]
+    Workbook,
+    /// Literal points in the chart part, with no workbook.
+    Literal,
+    /// Only the chart's caches: the data lives in a linked workbook, in
+    /// another workbook, or in an embedded one the chart writer refuses
+    /// (shared with another chart, or read by cells outside the series).
+    /// The live deck reads the caches and writes no data to it.
+    Cached,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChartSeries {
     pub name: String,
     pub values: Vec<Option<serde_json::Number>>,
+    /// In a chart of several plots (a combo), the family of the plot that
+    /// draws this series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<ChartKind>,
+    /// A scatter series' x values, one per value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<Vec<Option<serde_json::Number>>>,
 }
 
 /// One glued connector end: the node and its geometry's connection site
@@ -165,68 +257,149 @@ impl NodePayload {
     /// The node kind this payload belongs to.
     pub fn kind(&self) -> NodeKind {
         match self {
-            Self::Picture { .. } => NodeKind::Picture,
-            Self::Table { .. } | Self::Chart { .. } => NodeKind::GraphicFrame,
+            Self::Picture { .. } | Self::HeldPicture { .. } => NodeKind::Picture,
+            Self::Table { .. } | Self::Chart { .. } | Self::SmartArt { .. } | Self::Ole { .. } => {
+                NodeKind::GraphicFrame
+            }
             Self::Connector { .. } => NodeKind::Connector,
+            Self::CustomGeometry { .. } => NodeKind::Shape,
         }
     }
 
-    /// No chart series holds more values than there are categories; a
-    /// shorter one ends in missing points.
+    /// Whether only the import writes this payload: it is read from the
+    /// retained package.
+    pub fn held(&self) -> bool {
+        matches!(
+            self,
+            Self::HeldPicture { .. }
+                | Self::SmartArt { .. }
+                | Self::Ole { .. }
+                | Self::CustomGeometry { .. }
+        )
+    }
+
+    /// A chart's series fit its categories: a category series holds no
+    /// more values than there are categories (a shorter one ends in missing
+    /// points; no categories is points by index), and only a scatter series
+    /// carries x values, at least one per value.
     pub fn check(&self) -> Result<(), LiveError> {
-        if let Self::Chart {
-            categories, series, ..
+        let Self::Chart {
+            family,
+            categories,
+            series,
+            ..
         } = self
-            && series
-                .iter()
-                .any(|line| line.values.len() > categories.len())
+        else {
+            return Ok(());
+        };
+        for line in series {
+            if line.family.unwrap_or(*family) == ChartKind::Scatter {
+                if line.x.as_ref().is_some_and(|x| x.len() < line.values.len()) {
+                    return Err(LiveError::Invalid(
+                        "a scatter series holds more values than x values",
+                    ));
+                }
+            } else if line.x.is_some() {
+                return Err(LiveError::Invalid("only a scatter series has x values"));
+            } else if !categories.is_empty() && line.values.len() > categories.len() {
+                return Err(LiveError::Invalid(
+                    "a chart series holds more values than there are categories",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether this payload is one a live-born node is written from: a
+    /// picture asset, a table, a bar, line or pie chart over its own
+    /// workbook, or a connector.
+    fn born(&self) -> Result<(), LiveError> {
+        if self.held() {
+            return Err(LiveError::Invalid(HELD));
+        }
+        if let Self::Chart {
+            family,
+            series,
+            source,
+            ..
+        } = self
+            && (!matches!(family, ChartKind::Bar | ChartKind::Line | ChartKind::Pie)
+                || *source != ChartSource::Workbook
+                || series
+                    .iter()
+                    .any(|line| line.family.is_some() || line.x.is_some()))
         {
-            return Err(LiveError::Invalid(
-                "a chart series holds more values than there are categories",
-            ));
+            return Err(LiveError::Invalid(BORN_CHART));
         }
         Ok(())
     }
 
     /// Whether this payload fits the element a bound node's `held` payload
-    /// was written as: a written table keeps its rows and columns, and a
-    /// written chart its family and its category and series counts.
+    /// was written as. A held form is only ever itself. A written table
+    /// keeps a rectangular grid of at least one column. A written chart
+    /// keeps where its data lives, a cached chart its data, a scatter chart
+    /// its family, and a combo chart its plot families; a single-plot chart
+    /// changes family among the category families.
     fn fits(&self, held: Option<&NodePayload>) -> Result<(), LiveError> {
+        if self.held() {
+            return if held == Some(self) {
+                Ok(())
+            } else {
+                Err(LiveError::Invalid(HELD))
+            };
+        }
         match (self, held) {
-            (
-                Self::Table { header, rows },
-                Some(Self::Table {
-                    header: was,
-                    rows: kept,
-                }),
-            ) => {
-                if header.len() != was.len()
-                    || rows.len() != kept.len()
-                    || rows.iter().any(|row| row.len() != header.len())
-                {
+            (Self::Table { header, rows }, Some(Self::Table { .. })) => {
+                if header.is_empty() || rows.iter().any(|row| row.len() != header.len()) {
                     return Err(LiveError::Invalid(WRITTEN_TABLE));
                 }
             }
             (
                 Self::Chart {
                     family,
-                    categories,
                     series,
+                    source,
+                    ..
                 },
-                Some(Self::Chart {
-                    family: was,
-                    categories: kept,
-                    series: lines,
-                }),
+                Some(
+                    was @ Self::Chart {
+                        family: kept,
+                        series: lines,
+                        source: from,
+                        ..
+                    },
+                ),
             ) => {
-                if family != was || categories.len() != kept.len() || series.len() != lines.len() {
+                if source != from {
+                    return Err(LiveError::Invalid(WRITTEN_SOURCE));
+                }
+                if *from == ChartSource::Cached && !super::reshape::same_data(was, self) {
+                    return Err(LiveError::Invalid(CACHED_CHART));
+                }
+                if (*family == ChartKind::Scatter) != (*kept == ChartKind::Scatter) {
                     return Err(LiveError::Invalid(WRITTEN_CHART));
+                }
+                if lines.iter().any(|line| line.family.is_some()) {
+                    let plots: Vec<ChartKind> = lines
+                        .iter()
+                        .map(|line| line.family.unwrap_or(*kept))
+                        .collect();
+                    if family != kept
+                        || series
+                            .iter()
+                            .any(|line| !plots.contains(&line.family.unwrap_or(*family)))
+                    {
+                        return Err(LiveError::Invalid(WRITTEN_COMBO));
+                    }
+                } else if series
+                    .iter()
+                    .any(|line| line.family.is_some_and(|plot| plot != *family))
+                {
+                    return Err(LiveError::Invalid(WRITTEN_COMBO));
                 }
             }
             (Self::Table { .. } | Self::Chart { .. }, _) => {
-                return Err(LiveError::Invalid(
-                    "a written frame keeps the table or chart the live deck reads in it",
-                ));
+                return Err(LiveError::Invalid(WRITTEN_FRAME));
             }
             _ => {}
         }
@@ -242,12 +415,30 @@ impl NodePayload {
     }
 }
 
-/// The written-table refusal: no deck op adds or removes a row or a column
-/// of a table already in the retained package.
-pub(crate) const WRITTEN_TABLE: &str = "a written table keeps its rows and columns";
-/// The written-chart refusal: chart writes are same-length replacements.
-pub(crate) const WRITTEN_CHART: &str =
-    "a written chart keeps its family and its category and series counts";
+/// The held-form refusal: an imported picture's media, a SmartArt, an OLE
+/// object and custom geometry are read from the retained package.
+pub(crate) const HELD: &str = "read from the retained package: no deck op writes held media, SmartArt, OLE or custom geometry";
+/// A live-born chart is written by the native chart writer.
+pub(crate) const BORN_CHART: &str =
+    "a live-born chart is a single bar, line or pie plot over its own workbook";
+/// The written-table refusal: a written table stays a rectangular grid.
+pub(crate) const WRITTEN_TABLE: &str =
+    "a written table holds at least one column and one cell per column in every row";
+/// A written frame stays the kind of frame the live deck read in it.
+pub(crate) const WRITTEN_FRAME: &str =
+    "a written frame keeps the table or chart the live deck reads in it";
+/// The written-chart refusal: a scatter chart stays a scatter chart.
+pub(crate) const WRITTEN_CHART: &str = "a written chart stays a scatter chart or a category chart";
+/// A written chart's data stays where it lives.
+pub(crate) const WRITTEN_SOURCE: &str = "a written chart keeps where its data lives";
+/// A combo chart keeps its plots; a single-plot chart gains none.
+pub(crate) const WRITTEN_COMBO: &str =
+    "a written chart keeps its plots: each series is drawn by one of them";
+/// A cached chart's data lives outside what the deck writes.
+pub(crate) const CACHED_CHART: &str =
+    "a chart read from its caches keeps its data: its source is outside the package";
+/// Custom geometry takes no preset, at the op as at export.
+pub(crate) const CUSTOM_GEOMETRY: &str = "custom geometry takes no preset";
 
 /// One run of a paragraph. Formatting rides as run-property marks; scheme
 /// colour and hyperlinks stay atomic values on the run that carries them.
@@ -616,15 +807,16 @@ pub enum DeckOp {
         node: NodeId,
         geometry: GeometryProps,
     },
-    /// A shape's preset geometry; custom geometry takes none at export.
+    /// A shape's preset geometry; a shape of custom geometry takes none.
     SetPreset {
         node: NodeId,
         preset: Preset,
     },
     /// What a picture, graphic frame or connector is written from: new
     /// media, a table's cells, a chart's data, or a connector's geometry
-    /// and glue. A written table keeps its rows and columns, and a written
-    /// chart its family and its category and series counts.
+    /// and glue. A written table or chart may change shape (rows, columns,
+    /// series, categories, a single plot's family), and the export rewrites
+    /// it; held forms are read only.
     SetPayload {
         node: NodeId,
         payload: NodePayload,
@@ -774,6 +966,7 @@ impl LiveDeck {
                 }
                 if let Some(payload) = payload {
                     payload.check()?;
+                    payload.born()?;
                 }
                 let id = self.take(*id)?;
                 self.nodes.insert(
@@ -879,6 +1072,9 @@ impl LiveDeck {
                 if found.kind != NodeKind::Shape {
                     return Err(LiveError::Invalid("only a shape takes a preset"));
                 }
+                if matches!(found.payload, Some(NodePayload::CustomGeometry { .. })) {
+                    return Err(LiveError::Invalid(CUSTOM_GEOMETRY));
+                }
                 found.preset = Some(*preset);
                 vec![*node]
             }
@@ -892,6 +1088,8 @@ impl LiveDeck {
                 payload.check()?;
                 if found.binding.is_some() {
                     payload.fits(found.payload.as_ref())?;
+                } else {
+                    payload.born()?;
                 }
                 found.payload = Some(payload.clone());
                 vec![*node]

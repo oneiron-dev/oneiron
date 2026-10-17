@@ -15,16 +15,18 @@
 pub mod deck_export;
 mod held;
 pub mod pptx;
+mod reshape;
 
 pub use deck_export::{
     ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport,
     StepOutcome, attach_evidence, check_picture, project, relationship_changes, roundtrip_check,
 };
 pub use pptx::{
-    ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, Conflict, ConnectorEnd,
-    DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps, Landing, LandingReceipt, LiveDeck,
-    NodeBinding, NodeId, NodeKind, NodePayload, Paragraph, PreflightReport, RelationshipChange,
-    RenderPair, RenderSide, Run, SlideRender, StampedOp, TextBody, diff, land, preflight,
+    ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict,
+    ConnectorEnd, DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps, HeldMedia, Landing,
+    LandingReceipt, LiveDeck, NodeBinding, NodeId, NodeKind, NodePayload, Paragraph,
+    PreflightReport, RelationshipChange, RenderPair, RenderSide, Run, SlideRender, SmartArtNode,
+    StampedOp, TextBody, diff, land, preflight,
 };
 
 use crate::deck::DeckError;
