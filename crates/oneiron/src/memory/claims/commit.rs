@@ -51,6 +51,26 @@ impl Memory<'_> {
         forced_approval: Option<ClaimApprovalStatus>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<CommitReceipt> {
+        self.commit_one_guarded(
+            input,
+            auto_supersede,
+            forced_approval,
+            before_txn,
+            &|_: &heed::RoTxn<'_>| Ok(()),
+        )
+    }
+
+    /// [`Self::commit_one_with_before_txn`], with `in_writer` run first in
+    /// the content writer that commits the claim: a door whose authority must
+    /// still hold when the claim lands rechecks it there (FIX 1400).
+    pub(super) fn commit_one_guarded(
+        &self,
+        input: &ClaimInput,
+        auto_supersede: bool,
+        forced_approval: Option<ClaimApprovalStatus>,
+        before_txn: impl FnOnce(),
+        in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
+    ) -> MemoryResult<CommitReceipt> {
         // This door does not own `companion.expression.*` any more than
         // `claim_retract` does, and for the mirror-image reason. Writing a new
         // head of that family means superseding the CURRENT head under the
@@ -163,6 +183,7 @@ impl Memory<'_> {
             };
             self.vault
                 .try_with_actor_content_write_txn(envelope.actor(), |content| {
+                    in_writer(content.read())?;
                     if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
                         && let Err(error) = self.verify_public_booking_writer_in_txn(content.read())
                     {
