@@ -381,7 +381,14 @@ impl Pass<'_> {
             return Ok(());
         };
         let actor = self.actor_class(entry.actor)?;
-        if !filter::fact_matches(&binding.selector, entry.kind, seen.claim.as_ref(), actor) {
+        if !filter::fact_matches(
+            self.vault,
+            &binding.selector,
+            entry.kind,
+            entry.entity,
+            seen.claim.as_ref(),
+            actor,
+        )? {
             self.report.skipped += 1;
             return Ok(());
         }
