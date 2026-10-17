@@ -1,8 +1,10 @@
 //! The join receipt (OF-531): one typed record per join intent. It holds the
-//! request, each party's recorded answer, the three consents as last decided
-//! with each granting party, and the participation a Ready decision
-//! committed. A Ready receipt is the evidence later work in the room
-//! re-proves; it is never a standing grant.
+//! request, each party's recorded answer, the consents as last decided with
+//! each granting party, and the participation a Ready decision committed. A
+//! Ready receipt is the evidence later work in the room re-proves; it is
+//! never a standing grant. A receipt still missing its subject's yes is an
+//! invitation (OF-417): a board writer filed it for an unrelated person, and
+//! it takes effect only once she accepts.
 
 use std::ops::Bound;
 
@@ -10,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::join_consent::{ConsentPart, ConsentSet, JoinDecision, JoinRequest, JoinSubject};
 use crate::agent_dispatch::SpendScopeId;
+use crate::conversation::HistoryChoice;
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
@@ -175,7 +178,7 @@ fn delete_joins_where(
 #[serde(deny_unknown_fields)]
 pub struct RecordedAnswer {
     pub part: ConsentPart,
-    /// The party: the host's PERSON, or the payer's.
+    /// The party: the subject, the host's PERSON, or the payer's.
     pub by: EntityId,
     /// The actor that answered for that party.
     pub actor: EntityId,
@@ -215,6 +218,7 @@ pub(super) struct JoinFiling {
     pub(super) join_ref: String,
     pub(super) intent_digest: String,
     pub(super) request: JoinRequest,
+    pub(super) history: HistoryChoice,
     pub(super) filed_by: EntityId,
     pub(super) principal: Option<EntityId>,
     pub(super) answers: Vec<RecordedAnswer>,
@@ -228,13 +232,19 @@ pub struct JoinReceipt {
     pub join_ref: String,
     pub intent_digest: String,
     pub request: JoinRequest,
-    /// The authenticated actor that filed it: the subject or its principal.
+    /// The history a person's first entry into an ordinary room sees until
+    /// the owner's P5 answer moves it (OF-365); a rejoin keeps the room's.
+    #[serde(default)]
+    pub history: HistoryChoice,
+    /// The authenticated actor that filed it: the subject or its principal,
+    /// or, for an invitation, the board writer whose roster write seated the
+    /// subject.
     pub filed_by: EntityId,
     /// For the vault's own agent: the live owner who filed for it, through
     /// whose standing it stands.
     pub principal: Option<EntityId>,
     pub answers: Vec<RecordedAnswer>,
-    /// The three consents as last decided, each naming its granting party
+    /// The consents as last decided, each naming its granting party
     /// and evidence, or the party it waits on.
     pub consents: ConsentSet,
     pub decision: JoinDecision,
@@ -257,6 +267,7 @@ impl JoinReceipt {
             join_ref: self.join_ref,
             intent_digest: self.intent_digest,
             request: self.request,
+            history: self.history,
             filed_by: self.filed_by,
             principal: self.principal,
             answers: self.answers,
@@ -275,6 +286,7 @@ impl JoinReceipt {
             join_ref: filing.join_ref,
             intent_digest: filing.intent_digest,
             request: filing.request,
+            history: filing.history,
             filed_by: filing.filed_by,
             principal: filing.principal,
             answers: filing.answers,

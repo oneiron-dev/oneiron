@@ -2,10 +2,7 @@
 
 use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
-    JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange, ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome,
-    SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
-    SelfMemorySupersedeClaimCall, SelfSpeechCall,
+    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
@@ -18,7 +15,7 @@ use crate::engine_executor::{
     JsResultTarget, RESULT_REPLY_INLINE_BYTES,
 };
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
-use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Result, TimeRange};
+use crate::{EntityId, Result};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -93,24 +90,6 @@ fn parse<T: serde::de::DeserializeOwned>(input: &str) -> Result<T> {
 
 fn decode<T: serde::de::DeserializeOwned>(input: Value) -> Result<T> {
     serde_json::from_value(input).map_err(|_| failure("invalid typed component arguments"))
-}
-
-/// A guest time: a JavaScript number above the safe range was rounded before
-/// it left the guest, so it is refused rather than stored.
-fn js_time(value: u64) -> Result<u64> {
-    if value > JS_SAFE_INTEGER {
-        return Err(failure("invalid guest integer"));
-    }
-    Ok(value)
-}
-
-/// A guest number for an `f32` field. As the typed import did, a number past
-/// `f32`'s range is refused, not rounded to its edge or to infinity.
-fn js_f32(value: f64) -> Result<f32> {
-    if !value.is_finite() || value.abs() > f64::from(f32::MAX) {
-        return Err(failure("invalid guest number"));
-    }
-    Ok(value as f32)
 }
 
 /// `bytes` as text when they are UTF-8 and their JSON string is no longer than
@@ -339,22 +318,6 @@ fn can_read(input: Value) -> Result<Option<(JsResultTarget, bool)>> {
         .ok_or_else(|| failure("result ref must be a name, handle or card"))
 }
 
-/// The result a `self.spawn` source names: its ref as a string, or a card's
-/// `ref` or `handle`.
-fn reader_source(source: Value) -> Result<String> {
-    match source {
-        Value::String(text) => Ok(text),
-        Value::Object(mut fields) => ["ref", "handle"]
-            .into_iter()
-            .find_map(|key| match fields.remove(key) {
-                Some(Value::String(text)) => Some(text),
-                _ => None,
-            })
-            .ok_or_else(|| failure("spawn source must be a result ref or card")),
-        _ => Err(failure("spawn source must be a result ref or card")),
-    }
-}
-
 /// The result a `describe` input names, when it names one: a string (a bound
 /// name, or a handle, whose colon no name has, either with a range suffix),
 /// a result's card by its `ref` or `handle`, or `{name}` with none of a task
@@ -423,7 +386,7 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             // A row the run answers itself is its own typed call, so it keeps
             // the effect, gate and replay row it has always had.
             if let Some(verb) = RunVerb::from_name(&args.verb) {
-                return run_verb_call(verb, args.input, now);
+                return crate::code_run::run_verb_call::run_verb_call(verb, args.input, now);
             }
             let verb =
                 AgentVerb::from_name(&args.verb).ok_or_else(|| failure("unknown SDK verb"))?;
@@ -519,174 +482,6 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     })
 }
 
-/// The typed `self.*` call a run row makes: the call, effect and gate the row
-/// had as a hand-written import. Every row has its arm here, so a run row is
-/// never served undecoded.
-fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
-    Ok(match verb {
-        RunVerb::VaultSearch => {
-            let args: MemorySearchInput = decode(input)?;
-            SelfCall::MemorySearch(SelfMemorySearchCall::new(
-                args.query,
-                args.limit.map_or(20, |limit| limit as usize),
-            ))
-        }
-        RunVerb::VaultClaimsPut => {
-            let args: MemoryClaimInput = decode(input)?;
-            let confidence = args.confidence.map(js_f32).transpose()?;
-            let occurred = args.occurred.unwrap_or(MemoryTimeRange {
-                start: now,
-                end: now,
-            });
-            let (start, end) = (js_time(occurred.start)?, js_time(occurred.end)?);
-            if start > end {
-                return Err(failure("invalid claim time range"));
-            }
-            let candidate = ClaimCandidate::new(
-                args.predicate,
-                ClaimSubject::Entity(EntityId::from_hex(&args.subject)?),
-                json_value(args.value),
-                confidence.unwrap_or(1.0),
-            );
-            SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
-                EntityId::from_hex(&args.id)?,
-                candidate,
-                TimeRange { start, end },
-                args.learned_at.map_or(Ok(now), js_time)?,
-            ))
-        }
-        RunVerb::VaultClaimsSupersede => {
-            let args: MemorySupersedeInput = decode(input)?;
-            SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(
-                EntityId::from_hex(&args.new_id)?,
-                EntityId::from_hex(&args.old_id)?,
-                js_time(args.now)?,
-            ))
-        }
-        RunVerb::VaultEdgesPut => {
-            let args: MemoryEdgeInput = decode(input)?;
-            let weight = args.weight.map(js_f32).transpose()?;
-            let kind =
-                EdgeKind::from_name(&args.kind).ok_or_else(|| failure("invalid edge kind"))?;
-            let weight = weight
-                .or_else(|| kind.default_weight())
-                .ok_or(failure("edge weight required"))?;
-            SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
-                EntityId::from_hex(&args.src)?,
-                kind,
-                EntityId::from_hex(&args.tgt)?,
-                weight,
-            ))
-        }
-        RunVerb::SelfFold => {
-            let args: crate::compaction::FoldMarkInput = decode(input)?;
-            SelfCall::Fold(crate::compaction::SelfFoldCall::Mark {
-                from: args.from,
-                through: args.through,
-                note: args.note,
-            })
-        }
-        RunVerb::SelfCompact => {
-            let args: crate::compaction::FoldCompactInput = decode(input)?;
-            SelfCall::Fold(crate::compaction::SelfFoldCall::Compact { note: args.note })
-        }
-        RunVerb::SelfUnfold => {
-            let args: crate::compaction::FoldUnfoldInput = decode(input)?;
-            SelfCall::Fold(crate::compaction::SelfFoldCall::Unfold {
-                fold: crate::compaction::parse_fold_handle(&args.fold)?,
-            })
-        }
-        RunVerb::SelfFolds => {
-            let _: crate::compaction::FoldsInput = decode(input)?;
-            SelfCall::Fold(crate::compaction::SelfFoldCall::List)
-        }
-        RunVerb::TasksRefuse => {
-            let args: crate::code_run::TaskRefuseInput = decode(input)?;
-            SelfCall::TasksRefuse(crate::code_run::SelfTaskRefuseCall {
-                task_ref: args
-                    .task_ref
-                    .as_deref()
-                    .map(EntityId::from_hex)
-                    .transpose()?,
-                domain: match args.domain {
-                    crate::code_run::TaskRefuseDomain::Bond => {
-                        crate::agent_def::RefusalDomain::Bond
-                    }
-                    crate::code_run::TaskRefuseDomain::Logistics => {
-                        crate::agent_def::RefusalDomain::Logistics
-                    }
-                },
-                reason_ref: args.reason_ref,
-                at: args.at.map_or(Ok(now), js_time)?,
-            })
-        }
-        RunVerb::SelfSkillsCall => {
-            let args: crate::code_run::SkillCallInput = decode(input)?;
-            SelfCall::SkillsCall(crate::code_run::SelfSkillCall {
-                skill: EntityId::from_hex(&args.skill)?,
-                args: args.args,
-            })
-        }
-        RunVerb::SelfAgentsSpawn => {
-            let args: crate::code_run::AgentSpawnInput = decode(input)?;
-            SelfCall::AgentsSpawn(Box::new(args.into_call()?))
-        }
-        RunVerb::SelfLeaderAdvice => {
-            let args: crate::code_run::LeaderAdviceInput = decode(input)?;
-            SelfCall::Leader(crate::code_run::SelfLeaderCall::Advice { top: args.top })
-        }
-        RunVerb::SelfLeaderPattern => {
-            let args: crate::code_run::LeaderPatternInput = decode(input)?;
-            SelfCall::Leader(crate::code_run::SelfLeaderCall::Pattern {
-                skill: EntityId::from_hex(&args.skill)?,
-            })
-        }
-        RunVerb::SelfSpawn => {
-            let args: crate::code_run::ReaderSpawnInput = decode(input)?;
-            SelfCall::ReaderSpawn(Box::new(crate::code_run::SelfReaderSpawnCall {
-                source: reader_source(args.source)?,
-                ask: args.ask,
-                intent_key: args.intent_key,
-                bound: None,
-            }))
-        }
-        RunVerb::Summarize => {
-            let args: crate::code_run::SummarizeInput = decode(input)?;
-            SelfCall::Summarize(Box::new(crate::code_run::SelfSummarizeCall {
-                reference: args.r#ref,
-                effort: args.effort.map(|effort| match effort {
-                    crate::code_run::SummarizeInputEffort::Low => {
-                        crate::code_run::SummarizeEffort::Low
-                    }
-                    crate::code_run::SummarizeInputEffort::Medium => {
-                        crate::code_run::SummarizeEffort::Medium
-                    }
-                    crate::code_run::SummarizeInputEffort::High => {
-                        crate::code_run::SummarizeEffort::High
-                    }
-                }),
-                group: args.group,
-                defer: args.defer.unwrap_or(false),
-                bound: None,
-            }))
-        }
-        RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
-        RunVerb::SelfTeamRecord => {
-            SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
-        }
-        RunVerb::TasksWait => {
-            let args: crate::code_run::TaskWaitSetRequest = decode(input)?;
-            SelfCall::TasksWaitSet(crate::code_run::TaskWaitSetCall {
-                tasks: args.tasks,
-                all: args.all,
-                n_of: args.n_of,
-                until: args.until.map(js_time).transpose()?,
-                step_key: args.step_key,
-            })
-        }
-    })
-}
-
 /// Bytes `value` takes as JSON, holding none of them.
 fn encoded_len(value: &Value) -> usize {
     struct Count(usize);
@@ -736,6 +531,71 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         .to_string())
 }
 
+/// The failure codes a guest's failed reply names under `error`: each a
+/// stable word a host door refuses with, which the guest can act on. Any
+/// other failure (an internal error's text) answers `{failed: true}` alone,
+/// and the replay row keeps the whole error either way.
+const GUEST_FAILURE_CODES: &[&str] = &[
+    // summarize and reader children (OF-190)
+    "summarize_unbound",
+    "summarize_unresolved",
+    "summarize_invalid_group",
+    "summarize_past_cutoff",
+    "summarize_unmetered",
+    "reader_spawn_unbound",
+    "reader_spawn_unresolved",
+    "reader_spawn_invalid_intent_key",
+    "reader_spawn_past_cutoff",
+    "reader_spawn_unmetered",
+    "not_reader_task",
+    "finding_not_own",
+    "finding_tainted",
+    "finding_not_json",
+    "reader_task_settled",
+    "task_wait_unbound",
+    "task_wait_invalid",
+    "task_wait_changed",
+    // the planner, refusals, skills and teams
+    "planner_unbound",
+    "tasks_refuse_unbound",
+    "tasks_refuse_other_task",
+    "tasks_refuse_invalid_reason",
+    "skills_call_unleased",
+    "skills_call_unbound",
+    "skills_call_lease_lost",
+    "skills_call_no_runtime",
+    "skills_call_no_executor",
+    "team_unbound",
+    "team_off_record",
+    "team_start_invalid_agent",
+    "team_start_spawn_refused",
+    "team_start_unknown_pattern",
+    "team_start_solo",
+    "team_start_invalid_input",
+    "team_start_tournament_not_market",
+    "team_start_invalid_tournament",
+    "team_record_not_led",
+    "team_record_invalid_input",
+    "team_record_unknown_member",
+    "team_record_member_outside_team",
+    "team_record_no_models",
+    "team_record_roles",
+    "team_record_decider",
+    // the bridge
+    "host_bridge_halted",
+    "task_declined",
+    // the facade's error codes a coordination call fails with
+    "BAD_REQUEST",
+    "NOT_FOUND",
+    "FORBIDDEN",
+    "INVALID_STATE",
+    "LEASE_REQUIRED",
+    "IDENTITY_UNSETTLED",
+    "BUDGET_SPENT",
+    "MODEL_UNAVAILABLE",
+    "PENDING_ASK",
+];
+
 /// One dispatched call's reply body, before its budget envelope.
 fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
     Ok(match outcome {
@@ -778,7 +638,13 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
-        SelfDispatchOutcome::Failed(_) => json!({"failed":true}),
+        SelfDispatchOutcome::Failed(value) => {
+            if GUEST_FAILURE_CODES.contains(&value.error.as_str()) {
+                json!({"failed": true, "error": value.error})
+            } else {
+                json!({"failed": true})
+            }
+        }
         SelfDispatchOutcome::AgentDefinitionPut(value) => {
             json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
         }

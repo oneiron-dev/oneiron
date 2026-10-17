@@ -8,9 +8,13 @@ use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
     GrantBound,
 };
+use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::workspace_roster::ProjectRole;
+use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -264,6 +268,10 @@ impl Vault {
         let mut ops = Vec::new();
         // Each new chunk is born under its page's facet (facet rule C).
         let mut text_births = HashMap::new();
+        // Rule A: the owner states each page and its verbatim chunks; a model
+        // summary is concluded from its chunk. Stamped once the ops land.
+        let writer = WriteActor::new(actor, EdgeActorClass::Human);
+        let mut births = Vec::new();
         let mut fingerprint_updates = Vec::new();
         let mut membership_updates = Vec::new();
         for (page, segments, summaries, annotation, predicted) in prepared {
@@ -308,6 +316,10 @@ impl Vault {
                 now,
             )?;
             ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"project_id":docs.project_id.to_hex(),"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
+            births.extend(
+                RowBirth::written(writer, MadeByClass::Stated, "docs.import", &[], &[], now)
+                    .map(|birth| (asset, birth)),
+            );
             if unchanged {
                 continue;
             }
@@ -343,6 +355,17 @@ impl Vault {
                 }
                 receipt.chunk_refs.push(chunk.to_hex());
                 ops.push(put(chunk,crate::registry::ENTITY_TYPE_ASSET_TEXT,json!({"text":segment.text,"source":"imported","asset_ref":asset.to_hex(),"section":segment.section}),now)?);
+                births.extend(
+                    RowBirth::written(
+                        writer,
+                        MadeByClass::Stated,
+                        "docs.import.chunk",
+                        &[asset],
+                        &[page.text.as_bytes()],
+                        now,
+                    )
+                    .map(|birth| (chunk, birth)),
+                );
                 ops.push(BatchOp::Text {
                     id: chunk,
                     fields: vec![("text".into(), segment.text.clone())],
@@ -373,6 +396,17 @@ impl Vault {
                         json!({"text":text,"derivation":envelope}),
                         now,
                     )?);
+                    births.extend(
+                        RowBirth::written(
+                            writer,
+                            MadeByClass::Concluded,
+                            "docs.import.summary",
+                            &[chunk],
+                            &[segment.text.as_bytes()],
+                            now,
+                        )
+                        .map(|birth| (id, birth)),
+                    );
                     ops.push(BatchOp::Text {
                         id,
                         fields: vec![("text".into(), text)],
@@ -431,6 +465,15 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             ApplyOpsGateMode::new(false, true).with_text_births(text_births),
         )?;
+        // A stable id a re-import writes again keeps its first birth.
+        for (row, birth) in &births {
+            crate::provenance::birth::stamp_birth_if_absent_in_txn(
+                &self.store,
+                &mut txn,
+                row,
+                birth,
+            )?;
+        }
         for (asset, fingerprint) in fingerprint_updates {
             fingerprint.persist(&self.store, &mut txn, &asset)?;
         }

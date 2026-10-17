@@ -878,6 +878,15 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
     let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
+    // The paired-machine mesh listener (OF-535), as `serve` starts it: off
+    // unless the host names its bind address.
+    let mesh = crate::handler::mesh::start(
+        Arc::clone(&sync_server),
+        &crate::handler::mesh::MeshConfig::from_env()?,
+        &app,
+        config.limits.connections().header_read_timeout,
+    )
+    .await?;
     let artifact_task = artifacts.map(|listener| {
         let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
         let stop = shutdown.triggered();
@@ -887,6 +896,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // listener closes the moment SIGTERM lands, and this resolves once the
     // requests already in the runtime have finished.
     let result = http.serve_until(app, shutdown.triggered()).await;
+    if let Some(mesh) = mesh {
+        mesh.stop().await;
+    }
     host.on_stop()?;
     let _ = ctl_task.await;
     if let Some(task) = artifact_task {

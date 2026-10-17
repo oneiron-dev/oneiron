@@ -229,12 +229,15 @@ class OneironError(RuntimeError):
     message: str
     suggestions: tuple[str, ...]
     wrong_root: dict[str, str] | None
+    # The verb hook's stop; on PENDING_ASK `{"status": "pending", "invocation", "ask"}`.
+    hook: dict[str, Any] | None
     def __init__(
         self,
         code: str,
         message: str,
         suggestions: list[str],
         wrong_root: dict[str, str] | None = None,
+        hook: dict[str, Any] | None = None,
     ) -> None: ...
 
 class Oneiron:
@@ -252,6 +255,8 @@ class Oneiron:
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
     def last_receipt_ref(self) -> str | None: ...
+    def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
+        """Resends a PENDING_ASK call under its invocation; the reply is the verb's shared wire JSON."""
 # BEGIN GENERATED FACADE VERBS
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -682,10 +687,28 @@ class Oneiron:
             """Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run."""
         def put(self, input: Facade.BlobArtifactInput) -> Facade.EntityRefReceipt:
             """Registers one blob artifact; its bytes ride vault.artifacts.append."""
+        @property
+        def body(self) -> "Oneiron._VaultArtifactsBodyVerbs": ...
         def append(self, input: Facade.AppendBlobVersionRequest) -> Facade.BlobVersionView:
             """Appends one version of bytes to a blob artifact's append-only chain."""
         def read(self, input: Facade.ReadBlobVersionRequest) -> Facade.BlobContent | None:
             """Reads one version of a blob artifact's bytes."""
+    class _VaultArtifactsBodyVerbs:
+        def import_(self, request: Facade.OfficeBodyImportRequest) -> Facade.OfficeBodyHead: ...
+        def head(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.OfficeBodyHead | None: ...
+        def read(self, request: Facade.OfficeBodyReadRequest) -> Facade.OfficeBodyView: ...
+        def commits(self, request: Facade.OfficeBodyArtifactRequest) -> list[Facade.TextCommitReceipt]: ...
+        def edit(self, request: Facade.OfficeBodyEditRequest) -> Facade.OfficeBodyEdit: ...
+        @property
+        def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs": ...
+        def export(self, request: Facade.OfficeBodyExportVerbRequest) -> Facade.OfficeBodyExportView: ...
+        def preview(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.XlsxPreview: ...
+    class _VaultArtifactsBodyForkVerbs:
+        def open(self, request: Facade.OfficeBodyForkOpenRequest) -> Facade.OfficeBodyFork: ...
+        def edit(self, request: Facade.OfficeBodyForkEditRequest) -> Facade.OfficeBodyEdit: ...
+        def diff(self, request: Facade.OfficeBodyForkRequest) -> Facade.OfficeBodyDiff: ...
+        def merge(self, request: Facade.OfficeBodyForkMergeRequest) -> Facade.OfficeBodyDiff: ...
+        def discard(self, request: Facade.OfficeBodyForkRequest) -> Facade.OfficeBodyFork: ...
     class _VaultCodeVerbs:
         def diff(self, request: Facade.CodeDiffRequest) -> Facade.CodeDiffView | None: ...
         def blame(self, request: Facade.CodeStateRequest) -> Facade.CodeBlameView | None: ...
@@ -750,9 +773,14 @@ class Oneiron:
         def confirm(self, spec: Facade.ProjectCardConfirmRequest) -> Facade.ProjectMintReceipt:
             """The owner's tap that confirms a host-held project card; only the host's own door can complete it."""
         @property
+        def roster(self) -> "Oneiron._VaultProjectsRosterVerbs": ...
+        @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs": ...
         def route_tradeoff(self, spec: Facade.ProjectTradeoffRouteRequest) -> Facade.TaskAskReceipt:
             """Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room."""
+    class _VaultProjectsRosterVerbs:
+        def write(self, spec: Facade.ProjectRosterWriteRequest) -> Facade.ProjectRosterWriteOutcome:
+            """Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."""
     class _VaultProjectsGoalVerbs:
         def intake(self, spec: Facade.ProjectRefRequest) -> Facade.ProjectGoalInterviewContext:
             """What a project's goal-intake interview starts from, for a member of its home room."""
@@ -842,6 +870,8 @@ class Oneiron:
             """Creates a NOTE of a registered kind from an existing entity."""
         def edit(self, input: Facade.EditNoteRequest) -> Facade.NoteEditOutcome:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
+        def seal(self, request: Facade.NoteRefRequest) -> Facade.NoteSeal: ...
+        def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
@@ -887,6 +917,10 @@ class Oneiron:
             """Every live catalogued connector whose name or summary matches the query."""
         def status(self, spec: Facade.ConnectorNameRequest) -> Facade.ConnectorView | None:
             """One catalogued connector by name, removed ones included."""
+        def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ConnectorCallReply:
+            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+        def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
+            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs": ...
     class _ConnectorOutboundVerbs:
