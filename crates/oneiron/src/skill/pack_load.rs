@@ -8,6 +8,10 @@ use crate::{EntityId, Error, Result, Vault};
 /// One actual tier-2 load. Native record-only skills have no file tree.
 #[derive(Debug, Clone)]
 pub struct LoadedSkillPack {
+    /// The entity whose body loaded: the requested skill, or the open
+    /// proposal its exploration trial routed this attempt to. Bindings and
+    /// invocation witnesses name this entity, never the request.
+    pub entity: EntityId,
     pub record: SkillRecord,
     pub source_files: Option<Vec<crate::skill_hub::HubFile>>,
 }
@@ -67,6 +71,9 @@ impl Vault {
 
     /// Loads the exact stored SKILL.md/scripts when present and stamps one row
     /// atomically. A failed package check never records a successful load.
+    /// While an exploration trial of the skill's open proposal routes this
+    /// attempt, the proposal loads instead: [`LoadedSkillPack::entity`] names
+    /// what loaded.
     pub fn load_attempt_skill_pack(
         &self,
         attempt: AttemptId,
@@ -128,7 +135,7 @@ impl Vault {
         executor_model: Option<&str>,
         at: u64,
     ) -> Result<LoadedSkillPack> {
-        self.with_write_txn_grouped(|txn| {
+        let (loaded, ask) = self.with_write_txn_grouped(|txn| {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                 return Err(Error::EntityNotFound);
             }
@@ -143,9 +150,20 @@ impl Vault {
                     "pack load requires an active approved skill",
                 ));
             }
-            let source_files = self
-                .runtime_skill_package_in_txn(txn, skill, &record)?
-                .map(|package| package.files);
+            // The requested skill is the incumbent arm. An exploration trial
+            // of its open proposal may route this attempt to the proposal,
+            // reserving the run's charge in this same transaction.
+            let routed =
+                super::exploration_trial::route_in_txn(self, txn, attempt, skill, &record, at)?;
+            let (entity, record, source_files) = match routed.load {
+                Some(trial) => (trial.entity, trial.record, trial.source_files),
+                None => {
+                    let source_files = self
+                        .runtime_skill_package_in_txn(txn, skill, &record)?
+                        .map(|package| package.files);
+                    (*skill, record, source_files)
+                }
+            };
             let queue = AttemptQueue::new(self);
             queue.require_skill_load_lease_in_txn(txn, attempt, lease_owner, attempt_count)?;
             if let Some(executor_model) = executor_model {
@@ -160,18 +178,31 @@ impl Vault {
             if let Some(resident) = resident {
                 let receipt = crate::receipt::attempt_pack_receipt_id(&attempt);
                 super::resident::bind_receipt_in_txn(self, txn, &receipt, &resident)?;
-                super::resident::bind_skill_in_txn(self, txn, &receipt, skill)?;
+                super::resident::bind_skill_in_txn(self, txn, &receipt, &entity)?;
             }
             queue.append_manifest_entry_in_txn(
                 txn,
                 attempt,
                 ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
             )?;
-            Ok(LoadedSkillPack {
-                record,
-                source_files,
-            })
-        })
+            Ok((
+                LoadedSkillPack {
+                    entity,
+                    record,
+                    source_files,
+                },
+                routed.ask,
+            ))
+        })?;
+        // Over the slice the loop asks, outside the load's transaction: the
+        // queue opens its own. The load stands either way, and the Coach
+        // queues an ask that did not land here.
+        if let Some(proposal) = ask
+            && let Err(error) = super::exploration_trial::queue_trial_ask(self, &proposal)
+        {
+            tracing::warn!(%error, "an exploration trial's overrun ask is not queued yet");
+        }
+        Ok(loaded)
     }
 
     /// The callable door runs the shared load in the caller's own lease
@@ -211,6 +242,8 @@ impl Vault {
     /// exactly that entity's manifest/evidence binding in one pack-load call.
     /// A winner that is no longer active refuses at the load door rather than
     /// silently loading a runner-up under an out-of-date candidate ranking.
+    /// A winner whose open proposal is on trial may load that proposal; the
+    /// returned entity is the one that loaded.
     #[expect(
         clippy::too_many_arguments,
         reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
@@ -246,7 +279,7 @@ impl Vault {
             executor_model,
             at,
         )?;
-        Ok(Some((winner, pack)))
+        Ok(Some((pack.entity, pack)))
     }
 
     /// Load one surfaceable actor claim; content digest is its revision, never a made-up counter.

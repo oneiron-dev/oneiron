@@ -193,6 +193,15 @@ impl Vault {
         ASKS.get(&self.store, &txn, &seq)
     }
 
+    /// [`Self::decision_ask`] in the caller's snapshot.
+    pub(crate) fn decision_ask_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        seq: u64,
+    ) -> Result<Option<DecisionAsk>> {
+        ASKS.get(&self.store, txn, &seq)
+    }
+
     /// The newest ask for this question version and principal, open or answered: how a
     /// caller whose decision came back with a human ask finds the ask and its answer.
     pub fn latest_decision_ask(

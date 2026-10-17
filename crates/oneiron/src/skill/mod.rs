@@ -8,6 +8,7 @@
 mod call;
 mod codec;
 mod doors;
+mod exploration_trial;
 mod graph;
 pub mod helper;
 mod identity;
@@ -24,6 +25,10 @@ mod tests;
 pub use self::call::execute_callable_skill;
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
+pub(crate) use self::exploration_trial::{
+    ExplorationTrialClose, ExplorationTrialStatus, close_exploration_trial_in_txn,
+    drive_exploration_trial, settle_exploration_route_in_txn,
+};
 pub use self::graph::{
     GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult,
     GraphSkillStage, execute_graph_workflow_skill,

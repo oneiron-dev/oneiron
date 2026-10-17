@@ -198,13 +198,14 @@ pub use gate::{
     HeldOutReplayNotes, HeldOutVerdict, HonestyReplay, HonestyReplayObservation,
     JevTradeoffVerdict, JudgeMeasurements, PreferredResponse, ProjectGoalRevisionProposal,
     SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME,
-    SkillEditCycle, SkillEditDisposition, SkillEditGoal, SkillTradeoffAsk,
+    SkillEditCycle, SkillEditDisposition, SkillEditGoal, SkillEditPreflight, SkillTradeoffAsk,
     SkillTradeoffPreferences, SkillTradeoffQuestion, TradeoffChoice, TradeoffResolution,
     TradeoffRole, TradeoffRule, TradeoffRung, WorldAxisScore, admit_optimized_skill_revision,
     dev_receipts, dismiss_project_goal_revision_proposal, escalate_skill_tradeoff_ask,
     held_out_receipt_set_digest, held_out_receipts, is_skill_edit_verdict_receipt,
-    measure_skill_edit_goal_axes, pending_skill_tradeoff_asks, project_goal_revision_proposals,
-    receipt_is_held_out, register_held_out_replay_scorer, resolve_skill_edit_tradeoff,
+    measure_skill_edit_goal_axes, pending_skill_tradeoff_asks, preflight_skill_edit_offline_floors,
+    project_goal_revision_proposals, receipt_is_held_out, register_held_out_replay_scorer,
+    resolve_skill_edit_tradeoff,
     resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit, score_gate_skill_edit_in_cycle,
     score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap, set_skill_edit_goal_axes,
     set_skill_goal_project, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask,
@@ -215,9 +216,11 @@ pub use gate::{
     skill_tradeoff_asks_for, skill_tradeoff_preferences, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
-    check_optimizer_admission_in_txn, displaced_judge_revision_in_txn, ensure_current_judge_in_txn,
-    optimizer_birth_marker_for_create_in_txn, project_goal_revision_proposals_in_txn,
-    skill_edit_verdict_receipts, validate_judge_revision, with_optimized_skill_admission,
+    SkillEditTrialBasis, check_optimizer_admission_in_txn, displaced_judge_revision_in_txn,
+    ensure_current_judge_in_txn, optimizer_birth_marker_for_create_in_txn,
+    project_goal_revision_proposals_in_txn, skill_edit_preflight_passed_in_txn,
+    skill_edit_trial_basis_in_txn, skill_edit_verdict_receipts, validate_judge_revision,
+    with_optimized_skill_admission,
 };
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;

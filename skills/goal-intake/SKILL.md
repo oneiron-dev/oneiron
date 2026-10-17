@@ -34,18 +34,24 @@ the record without the human's own pick.
 5. Record **preferences** only for tradeoffs the human actually chose: prefer X
    over Y and their reason. Empty is valid before the first human pick. Never
    infer a preference from a model score or a proposal.
-6. Ask for the **exploration budget**: maximum spend, exploration slice within
-   it, and allowed human minutes. This is a soft share, not a budget lease or
-   permission to widen a Grant. Confirm responsibility, constraints and open
-   questions before committing.
+6. Ask for the **exploration budget**: maximum spend and the exploration slice
+   within it, both in one named unit, and allowed human minutes. The slice
+   funds live trials of proposed skill revisions under this goal; a trial run
+   that would pass it waits for the vault owner's yes. This is a soft share, not a
+   budget lease or permission to widen a Grant. Confirm responsibility,
+   constraints and open questions before committing.
 
 ## Commit
 Build a `GoalRecord` with `goal`, `why`, `primary_axes`, `floor_axes`,
 `cost_axes`, `preferences`, and `exploration_budget`. Each `GoalAxis` has
 `name`, `measure`, `bound`. Each `GoalPreference` has `prefer`, `over`, `reason`.
-`GoalExplorationBudget` has `max_spend`, `exploration_slice`, `human_minutes`
-(nonnegative integers in the host's budget unit; the slice cannot exceed the
-maximum). Include a `human_minutes` cost axis. Do not invent bounds or convert
+`GoalExplorationBudget` has `max_spend`, `exploration_slice`, `unit` and
+`human_minutes`. `max_spend` and `exploration_slice` are nonnegative integers
+counted in `unit`, the host's budget unit name (lowercase letters, digits, `_`
+or `-`, such as `tokens`); the slice cannot exceed the maximum. A trial is
+charged against the slice only when its run's launch estimate is in that same
+unit. `human_minutes` is a nonnegative integer of minutes. Include a
+`human_minutes` cost axis. Do not invent bounds or convert
 an unanswered question into a blank field; pause to ask. Show the draft to the
 human and accept their explicit confirmation.
 
