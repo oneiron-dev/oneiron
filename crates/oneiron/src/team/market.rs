@@ -26,9 +26,6 @@ const MARKET: SideTable<String, Market, Named> = SideTable::new(&side_table::TEA
 /// Longest reference kept.
 const MAX_REF_BYTES: usize = 256;
 
-/// Most agents one market holds.
-const MAX_AGENTS: usize = 1024;
-
 /// The share of the pool held back as the bounty when the caller names none.
 pub const DEFAULT_BOUNTY_SHARE: f64 = 0.2;
 
@@ -238,8 +235,9 @@ pub fn open_market(
     if !(0.0..1.0).contains(&bounty_share) {
         return Err(Error::InvalidClaimBody("a bounty share lies in [0, 1)"));
     }
-    if agents.is_empty() || agents.len() > MAX_AGENTS {
-        return Err(Error::InvalidClaimBody("a market holds 1..=1024 agents"));
+    // A market has no agent cap (ARCH-0079: width has no count cap).
+    if agents.is_empty() {
+        return Err(Error::InvalidClaimBody("a market holds at least one agent"));
     }
     if let MarketMode::Islands { islands, .. } = mode
         && islands == 0
