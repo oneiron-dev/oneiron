@@ -29,11 +29,12 @@ use loro::{ExportMode, LoroDoc, LoroValue};
 
 use super::super::loro_support::{doc_from_snapshot, doc_version_vector, import_doc, map_delete};
 use super::super::types::WindowKey;
-use super::super::window_rows::{WINDOW_FULL_RESYNC_MARKER, WINDOW_SNAPSHOT, WINDOW_UPDATE};
+use super::super::window_rows::{WINDOW_FULL_RESYNC_MARKER, WINDOW_UPDATE};
 use super::{persist_window_doc_in_txn, write_window_svf_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result, SyncEngineContext};
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::store::legal_hold::HoldActor;
 
 /// A rebuilt window cut and ready to install; nothing is persisted yet.
@@ -67,8 +68,15 @@ pub(crate) fn prepare_rebootstrap(
     let window = key.as_str().to_owned();
     let (read_snapshot, rows) = {
         let rtxn = vault.store.env.read_txn()?;
-        let rows = WINDOW_UPDATE.scan_from(&vault.store, &rtxn, format!("{window}:").as_bytes())?;
-        (WINDOW_SNAPSHOT.get(&vault.store, &rtxn, &window)?, rows)
+        let address = WindowAddress::new(&window);
+        let rows = vault
+            .store
+            .port_window_updates(&rtxn, address, |row, bytes| (row, bytes.to_vec()))?
+            .collect::<Result<Vec<_>>>()?;
+        let snapshot = vault
+            .store
+            .port_window_doc_with_raw(&rtxn, address, |raw| Ok(raw.to_vec()))?;
+        (snapshot, rows)
     };
     if rows.iter().any(|(row, _)| row.window != window) {
         return Err(not_installable("pending update outside the window"));
@@ -116,13 +124,20 @@ impl PreparedRebootstrap {
         let window = self.key.as_str().to_owned();
         let prefix = format!("{window}:");
         vault.with_write_txn_grouped(|wtxn| {
-            if WINDOW_SNAPSHOT.get(&vault.store, wtxn, &window)? != self.read_snapshot {
+            let address = WindowAddress::new(&window);
+            if vault
+                .store
+                .port_window_doc_with_raw(wtxn, address, |raw| Ok(raw.to_vec()))?
+                != self.read_snapshot
+            {
                 return Err(Error::ConcurrentWrite(
                     "window snapshot changed during re-bootstrap",
                 ));
             }
-            let updates: BTreeSet<Vec<u8>> = WINDOW_UPDATE
-                .scan_keys(&vault.store, wtxn, prefix.as_bytes())?
+            let updates: BTreeSet<Vec<u8>> = vault
+                .store
+                .port_window_updates(wtxn, address, |row, _| row)?
+                .collect::<Result<Vec<_>>>()?
                 .iter()
                 .map(|row| WINDOW_UPDATE.key_bytes(row))
                 .collect();

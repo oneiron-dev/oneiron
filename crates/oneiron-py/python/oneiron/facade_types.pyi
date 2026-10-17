@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 269 facade rows, 1010 declarations.
+Census: 269 facade rows, 1014 declarations.
 Inputs: 225 of 269 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 218 of 269 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
@@ -5008,6 +5008,8 @@ class OfficeBodyExportVerbRequest(TypedDict):
     run_ref: str
     author: NotRequired[str | None]
     made_by: NotRequired[Any | None]
+    utc_offset_minutes: NotRequired[int | None]
+    iana_timezone: NotRequired[str | None]
 class OfficeBodyExportRecord(TypedDict):
     artifact: EntityId
     version: int
@@ -5021,6 +5023,10 @@ class OfficeBodyExportRecord(TypedDict):
 class OfficeBodyExportView(TypedDict):
     frontier: list[int]
     record: NotRequired[OfficeBodyExportRecord | None]
+class OfficeBodyPreviewRequest(TypedDict):
+    artifact_ref: str
+    utc_offset_minutes: NotRequired[int | None]
+    iana_timezone: NotRequired[str | None]
 class XlsxCell(TypedDict):
     col: int
     row: int
@@ -5322,3 +5328,34 @@ NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):
     status: NoteLifecycleStatus
     seal: NotRequired[NoteSeal | None]
+class SelfUiStateValueBool(TypedDict):
+    type: Literal["bool"]
+    value: bool
+class SelfUiStateValueNumber(TypedDict):
+    type: Literal["number"]
+    value: FiniteF64
+class SelfUiStateValueText(TypedDict):
+    type: Literal["text"]
+    value: LensText
+class SelfUiStateValueToken(TypedDict):
+    type: Literal["token"]
+    value: str
+SelfUiStateValue = SelfUiStateValueBool | SelfUiStateValueNumber | SelfUiStateValueText | SelfUiStateValueToken
+class GeneratedUiStatePatchAdd(TypedDict):
+    op: Literal["add"]
+    path: str
+    value: SelfUiStateValue
+class GeneratedUiStatePatchReplace(TypedDict):
+    op: Literal["replace"]
+    path: str
+    value: SelfUiStateValue
+class GeneratedUiStatePatchRemove(TypedDict):
+    op: Literal["remove"]
+    path: str
+GeneratedUiStatePatch = GeneratedUiStatePatchAdd | GeneratedUiStatePatchReplace | GeneratedUiStatePatchRemove
+class GeneratedUiActionEvent(TypedDict):
+    cardId: str
+    elementId: str
+    actionId: str
+    patch: NotRequired[list[GeneratedUiStatePatch]]
+    occurredAt: int

@@ -7,9 +7,10 @@
 //! Sync (`oneiron/sync/1`) serves the very router the TCP listener serves, one
 //! HTTP/1.1 connection per stream, so every slip, machine proof and grant check
 //! runs unchanged. A mesh caller is always off this device: its requests carry
-//! a peer address made from its endpoint key, never a loopback one. The
-//! listener's own connection floor, header timeout and body-idle limit are the
-//! TCP listener's numbers; every mesh peer is a paired machine the handshake
+//! a peer address made from its endpoint key, never a loopback one, and the
+//! MACHINE its handshake proved ([`MeshProvedMachine`]). The listener's own
+//! connection floor, header timeout and body-idle limit are the TCP
+//! listener's numbers; every mesh peer is a paired machine the handshake
 //! admitted, so there is no stranger to give a share. Every connection and
 //! refused attempt leaves a path receipt in the vault (`VaultPathReceipts`).
 
@@ -24,6 +25,12 @@ use crate::http_listener::ConnectionLimits;
 const BIND_ENV: &str = "ONEIRON_MESH_BIND";
 /// Comma-separated private relay URLs; unset is direct paths only.
 const RELAYS_ENV: &str = "ONEIRON_MESH_RELAYS";
+
+/// The MACHINE a mesh connection's handshake proved, on every request its
+/// streams carry. A request off the TCP listener has none.
+#[allow(dead_code)] // Admission does not compare it with the request's machine proof yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MeshProvedMachine(pub(crate) oneiron::EntityId);
 
 /// The mesh listener's settings, from the host's environment.
 #[derive(Debug, Clone, Default)]
@@ -114,12 +121,11 @@ mod host {
         AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
         PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
     };
-    use oneiron_organ_host::{
-        AskHandlers, HostConfig, ORGAN_ALPN, OrganHost, OrganRouter, OrganService,
-    };
+    use oneiron_organ_host::{AskHandlers, ORGAN_ALPN, OrganRouter, OrganService};
     use tokio::sync::Semaphore;
     use tokio::task::JoinHandle;
 
+    use super::MeshProvedMachine;
     use crate::http_listener::ConnectionLimits;
 
     /// How often the routes' ticks run.
@@ -163,9 +169,10 @@ mod host {
         server: &Arc<crate::server::SyncServer>,
     ) -> MeshRoutes {
         let vault = &server.vault;
-        // This machine's organ host serves the owner's other nodes, and its
-        // calls that wait for a node are re-driven on the tick (OF-575).
-        let organs = Arc::new(OrganHost::new(HostConfig::default()));
+        // This machine's organ host (the server's one, which the seal worker
+        // shares) serves the owner's other nodes, and its calls that wait for
+        // a node are re-driven on the tick (OF-575).
+        let organs = Arc::clone(&server.organs);
         let router = Arc::new(OrganRouter::new().with_local(Arc::clone(&organs)));
         MeshRoutes::default()
             .route(
@@ -238,6 +245,11 @@ mod host {
             .ok_or_else(|| {
                 anyhow::anyhow!("the mesh listener needs this install enrolled as a machine")
             })?;
+        // The installed packs' organs go on the host before it is offered.
+        let installing = Arc::clone(&server);
+        tokio::task::spawn_blocking(move || installing.install_pack_organs())
+            .await
+            .map_err(|error| anyhow::anyhow!("pack organ install: {error}"))?;
         let routes = Arc::new(mesh_routes(app, limits, &server));
         let policy = AcceptPolicy {
             roster: Arc::new(VaultMachineRoster(Arc::clone(&vault))),
@@ -326,6 +338,7 @@ mod host {
         fn serve(&self, connection: Box<dyn MeshConnection>) -> MeshFuture<'_, ()> {
             Box::pin(async move {
                 let peer = mesh_peer_address(connection.endpoint_key());
+                let machine = MeshProvedMachine(connection.machine());
                 loop {
                     let stream = connection.accept_duplex().await?;
                     let place = Arc::clone(&self.floor)
@@ -339,6 +352,7 @@ mod host {
                             let mut request = request
                                 .map(|body| crate::http_listener::idle_body(body, body_idle));
                             request.extensions_mut().insert(ConnectInfo(peer));
+                            request.extensions_mut().insert(machine);
                             hyper::service::Service::call(&routes, request)
                         });
                     let header_read_timeout = self.limits.header_read_timeout;
