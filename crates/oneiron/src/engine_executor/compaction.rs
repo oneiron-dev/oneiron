@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use crate::code_run::{CodeRunBridgeCall, CodeRunHistoryTurn};
 use crate::compaction::{
-    CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
+    CompactHooks, CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionWatermark, CompactionWindowMessage,
     EpochPlacement, FoldLedger, GatedCompaction, escape_compacted_text, gate_compaction,
@@ -50,6 +50,9 @@ struct LiveSeat {
     hot_steps: u64,
     spawn: Arc<dyn CompactionSpawn>,
     flight: Option<Receiver<FlightOutcome>>,
+    /// The in-flight epoch pass's `host.compact` chain, for its post-hooks
+    /// once the keyframe lands.
+    hooks: CompactHooks,
     /// Set for the rest of one `run` call when its pass ended without a swap.
     held: Option<CompactionSuppression>,
     last_feed: Option<(Instant, u64)>,
@@ -72,6 +75,8 @@ enum PassOutcome {
 pub(super) struct Flight {
     pub(super) epoch: Option<CompactionRequest>,
     pub(super) folds: Vec<FoldJob>,
+    /// The epoch pass's `host.compact` chain past its pre-hooks.
+    pub(super) hooks: CompactHooks,
 }
 
 /// One mark of a batch, sealed: its request, and what its stub lists beside
@@ -99,6 +104,8 @@ struct FlightOutcome {
 pub(super) struct FinishedFlight {
     pub(super) epoch: Option<Result<GatedCompaction, CompactionSuppression>>,
     pub(super) folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
+    /// The epoch pass's `host.compact` chain, for its post-hooks.
+    pub(super) hooks: CompactHooks,
 }
 
 /// What a caller can know about a run's compaction after a call.
@@ -167,6 +174,7 @@ impl RunCompaction {
                 hot_steps,
                 spawn,
                 flight: None,
+                hooks: CompactHooks::default(),
                 held: None,
                 last_feed: None,
                 session_bound: false,
@@ -256,6 +264,7 @@ impl RunCompaction {
             },
         };
         seat.flight = None;
+        let hooks = std::mem::take(&mut seat.hooks);
         self.report.in_flight = false;
         let epoch = outcome.epoch.map(|outcome| match outcome {
             PassOutcome::Accepted(gated) => Ok(*gated),
@@ -294,7 +303,11 @@ impl RunCompaction {
                 (job, answer)
             })
             .collect();
-        Some(FinishedFlight { epoch, folds })
+        Some(FinishedFlight {
+            epoch,
+            folds,
+            hooks,
+        })
     }
 
     /// The pass did not swap: the run keeps its raw window, and this reason
@@ -373,6 +386,7 @@ impl RunCompaction {
                     Ok(Flight {
                         epoch: request,
                         folds,
+                        hooks,
                     }) => {
                         if epoch.is_some() && request.is_none() {
                             seat.driver.abandon();
@@ -395,6 +409,7 @@ impl RunCompaction {
                                 let _ = sender.send(FlightOutcome { epoch, folds });
                             }));
                             seat.flight = Some(receiver);
+                            seat.hooks = hooks;
                             self.report.in_flight = true;
                         }
                     }

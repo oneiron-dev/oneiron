@@ -135,6 +135,7 @@ impl Memory<'_> {
                 trigger_ref: task_ref.to_hex(),
                 job_ref: None,
                 occurred_at: Some(now),
+                mention: None,
             })?;
             report.digest_intent_refs.push(receipt.intent_ref);
             // The marker lands AFTER the schedule, deliberately: a crash in
