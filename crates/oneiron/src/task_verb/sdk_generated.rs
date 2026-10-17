@@ -5916,15 +5916,7 @@ pub fn self_memory_diary(
     memory: &Memory<'_>,
     input: DiaryEntryRequest,
 ) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
-    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
-        memory,
-        "self.memory.diary",
-        &input,
-        &["/content"],
-    )?;
-    let landed = crate::task_verb::sdk::self_memory_diary_write(memory, input)?;
-    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
-    Ok(landed)
+    crate::task_verb::sdk::self_memory_diary_write(memory, input)
 }
 pub fn self_memory_diary_reads(
     memory: &Memory<'_>,
@@ -6243,15 +6235,7 @@ pub fn vault_kv_put(
     memory: &Memory<'_>,
     input: crate::memory::KeyValuePut,
 ) -> MemoryResult<crate::memory::KeyValuePutReceipt> {
-    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
-        memory,
-        "vault.kv.put",
-        &input,
-        &["/value"],
-    )?;
-    let landed = memory.key_value_put(&input)?;
-    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
-    Ok(landed)
+    memory.key_value_put(&input)
 }
 pub fn vault_kv_delete(
     memory: &Memory<'_>,
