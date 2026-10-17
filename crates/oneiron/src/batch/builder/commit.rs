@@ -301,6 +301,10 @@ fn apply_admitted(
         batch.origin,
     )?;
     after_apply(wtxn)?;
+    // OF-533: a delegated TASK's terminal result reaches its parked runs here.
+    for task in &tasks {
+        crate::task_verb::deliver_task_result_in_txn(vault, wtxn, *task)?;
+    }
     crate::scope_summary::rederive_changed_in_txn(vault, wtxn)?;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;

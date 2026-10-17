@@ -228,6 +228,8 @@ vaultDecisionsAsksClimb(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
+connectorCall(input: unknown): unknown
+connectorSchema(input: unknown): unknown
 vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown

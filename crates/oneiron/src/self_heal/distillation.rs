@@ -1,5 +1,8 @@
 //! Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof.
 //! No model grade, label, or mint operation signs or schedules a T1 run.
+//! The host's pass registers each family's minted T2 here (OF-418), and a
+//! registration a shipped closed-form T1 reproduces is graduated: the T2
+//! stops running and the T1 already runs in the Coach's tier-1 sweep.
 use super::{
     DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticSourceKind,
     stored_diagnostic_event,
@@ -15,6 +18,9 @@ use serde::{Deserialize, Serialize};
 
 const LABEL: SideTable<Vec<u8>, ReviewedFinding, Named> =
     SideTable::new(&side_table::SELF_HEAL_DISTILL);
+/// Each family's registered T2. Key: the family.
+const MINTED: SideTable<Vec<u8>, MintedRegistration, Named> =
+    SideTable::new(&side_table::SELF_HEAL_MINTED);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewedFinding {
@@ -34,6 +40,32 @@ pub struct MintedT2 {
     pub negative_events: Vec<EntityId>,
 }
 
+/// One family's registered T2: the exact reviewed corpus the host's pass asks
+/// with, and the closed-form T1 that retired it, if one reproduces every label.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MintedRegistration {
+    pub family: String,
+    /// Hash of the seed's wording and the corpus. A new label or a reworded
+    /// seed is a new revision, registered afresh.
+    pub revision: [u8; 32],
+    #[serde(with = "super::receipt_serde::ids")]
+    pub positive_events: Vec<EntityId>,
+    #[serde(with = "super::receipt_serde::ids")]
+    pub negative_events: Vec<EntityId>,
+    pub registered_at: u64,
+    /// The T1 detector that reproduces this revision's labels. A graduated
+    /// T2 no longer runs.
+    pub graduated_to: Option<String>,
+}
+
+/// One reviewed example as a minted T2 is shown it: its runs, oldest first.
+#[derive(Clone, Debug)]
+pub struct MintedExample {
+    pub event_id: EntityId,
+    pub positive: bool,
+    pub runs: Vec<RetrievalRunRecord>,
+}
+
 /// Proof that a closed-form implementation reproduces the reviewed labels.
 /// This does not provide an auto-arm method. A separately signed scheduled
 /// detector run and the normal heal consent checks remain required.
@@ -48,6 +80,26 @@ pub struct GraduatedT1 {
 pub enum ClosedFormPredicate {
     RetrievalMiss,
 }
+impl ClosedFormPredicate {
+    /// The shipped closed-form detector that raises `class`. A class with none
+    /// cannot graduate until a release ships one.
+    #[must_use]
+    pub fn for_class(class: DiagnosticEventClass) -> Option<Self> {
+        match class {
+            DiagnosticEventClass::RetrievalMiss => Some(Self::RetrievalMiss),
+            _ => None,
+        }
+    }
+
+    /// Whether this closed form raises on a reviewed window: on any one of its
+    /// runs, as the T1 raises per run. The policy hook for how a T3 window's
+    /// label reads as T1 evidence.
+    fn raises_on(self, runs: &[RetrievalRunRecord]) -> bool {
+        runs.iter().any(|run| match self {
+            Self::RetrievalMiss => DiagnosticObservation::from_retrieval_run(run).is_some(),
+        })
+    }
+}
 
 fn key(family: &str, id: &EntityId) -> Vec<u8> {
     let mut out = Vec::new();
@@ -55,6 +107,29 @@ fn key(family: &str, id: &EntityId) -> Vec<u8> {
     out.push(b':');
     out.extend_from_slice(id.as_bytes());
     out
+}
+/// A registration's revision: the seed's wording and the exact corpus.
+fn minted_revision(minted: &MintedT2) -> [u8; 32] {
+    let policy = &minted.policy;
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron.self_heal.minted_t2.v1\0");
+    for part in [
+        policy.family.as_str(),
+        policy.class.as_str(),
+        policy.prompt.as_str(),
+        policy.rubric.as_str(),
+    ] {
+        hash.update(&(part.len() as u64).to_be_bytes());
+        hash.update(part.as_bytes());
+    }
+    hash.update(&(policy.consecutive as u64).to_be_bytes());
+    for ids in [&minted.positive_events, &minted.negative_events] {
+        hash.update(&(ids.len() as u64).to_be_bytes());
+        for id in ids {
+            hash.update(id.as_bytes());
+        }
+    }
+    *hash.finalize().as_bytes()
 }
 fn family_prefix(family: &str) -> Vec<u8> {
     let mut out = Vec::new();
@@ -205,25 +280,7 @@ impl Vault {
         {
             return Err(Error::InvalidConfig("T2 examples changed".into()));
         }
-        for id in current
-            .positive_events
-            .iter()
-            .chain(&current.negative_events)
-        {
-            let event = self.reviewed_diagnostic(id)?;
-            let mut rows = Vec::new();
-            for run_ref in &event.evidence_refs {
-                let row = self
-                    .store
-                    .retrieval_run(RetrievalRunId::from_bytes(*run_ref.as_bytes()))?
-                    .ok_or(Error::EntityNotFound)?;
-                rows.push(row);
-            }
-            rows.sort_by_key(|row| (row.started_at, row.run_id.as_bytes()));
-            if rows.is_empty() || !replays_group(&rows, &event)? {
-                return Err(Error::CorruptedIndex("T3 example telemetry changed"));
-            }
-        }
+        self.minted_t2_examples(&current)?;
         self.classify_prompt_with_examples(
             &minted.policy,
             decisions,
@@ -232,8 +289,102 @@ impl Vault {
         )
     }
 
+    /// Each reviewed example's runs, positives first: what the host shows a
+    /// minted T2 beside the runs it grades. A run gone or changed since its
+    /// finding was raised fails closed, as the classifier does.
+    pub fn minted_t2_examples(&self, minted: &MintedT2) -> Result<Vec<MintedExample>> {
+        let mut examples = Vec::new();
+        for (ids, positive) in [
+            (&minted.positive_events, true),
+            (&minted.negative_events, false),
+        ] {
+            for id in ids {
+                let runs = self
+                    .example_runs(id)?
+                    .ok_or(Error::CorruptedIndex("T3 example telemetry changed"))?;
+                examples.push(MintedExample {
+                    event_id: *id,
+                    positive,
+                    runs,
+                });
+            }
+        }
+        Ok(examples)
+    }
+
+    /// A reviewed finding's runs, oldest first, while they still replay to
+    /// its hash; `None` when one is gone or changed.
+    fn example_runs(&self, id: &EntityId) -> Result<Option<Vec<RetrievalRunRecord>>> {
+        let event = self.reviewed_diagnostic(id)?;
+        let mut rows = Vec::with_capacity(event.evidence_refs.len());
+        for run_ref in &event.evidence_refs {
+            let Some(row) = self
+                .store
+                .retrieval_run(RetrievalRunId::from_bytes(*run_ref.as_bytes()))?
+            else {
+                return Ok(None);
+            };
+            rows.push(row);
+        }
+        rows.sort_by_key(|row| (row.started_at, row.run_id.as_bytes()));
+        Ok((!rows.is_empty() && replays_group(&rows, &event)?).then_some(rows))
+    }
+
+    /// Registers the T2 a seed `t3` policy's reviewed findings mint, or keeps
+    /// the registration the same wording and corpus already hold. A new
+    /// revision is checked once against the shipped closed-form T1 for its
+    /// class; one that reproduces every label is graduated and stops running.
+    /// `None` until the reviewed findings mint a T2.
+    pub fn register_minted_t2(
+        &self,
+        seed: &DetectorPolicy,
+        now: u64,
+    ) -> Result<Option<(MintedT2, MintedRegistration)>> {
+        let Some(minted) = self.mint_t2(seed.clone())? else {
+            return Ok(None);
+        };
+        let revision = minted_revision(&minted);
+        let k = seed.family.as_bytes().to_vec();
+        let stored = {
+            let txn = self.store.env.read_txn()?;
+            MINTED
+                .get(&self.store, &txn, &k)
+                .map_err(|_| Error::CorruptedIndex("minted detector"))?
+        };
+        if let Some(stored) = stored.filter(|stored| stored.revision == revision) {
+            return Ok(Some((minted, stored)));
+        }
+        let graduated_to = match ClosedFormPredicate::for_class(seed.class) {
+            Some(predicate) => self
+                .graduate_t1(&minted, predicate)?
+                .map(|t1| t1.detector_id.to_owned()),
+            None => None,
+        };
+        let registration = MintedRegistration {
+            family: seed.family.clone(),
+            revision,
+            positive_events: minted.positive_events.clone(),
+            negative_events: minted.negative_events.clone(),
+            registered_at: now,
+            graduated_to,
+        };
+        self.with_write_txn_grouped(|txn| MINTED.put(&self.store, txn, &k, &registration))?;
+        Ok(Some((minted, registration)))
+    }
+
+    /// Every family's registered T2, by family: the owner's read.
+    pub fn minted_registrations(&self) -> Result<Vec<MintedRegistration>> {
+        let txn = self.store.env.read_txn()?;
+        MINTED
+            .iter_from(&self.store, &txn, &[])?
+            .map(|row| row.map(|(_, registration)| registration))
+            .collect()
+    }
+
     /// Verify stored ARCH-0037 rows against a known closed-form detector.
     /// New dynamic predicates are not trusted as T1: they require a code change.
+    /// A reviewed window agrees when the closed form raises on one of its runs
+    /// exactly when the owner confirmed it.
     pub fn graduate_t1(
         &self,
         minted: &MintedT2,
@@ -261,24 +412,10 @@ impl Vault {
             (&current.negative_events, false),
         ] {
             for id in ids {
-                let event = self.reviewed_diagnostic(id)?;
-                // A T3 window cannot be used as one T1 observation.
-                if event.evidence_refs.len() != 1 {
-                    return Ok(None);
-                }
-                let run_id = RetrievalRunId::from_bytes(*event.evidence_refs[0].as_bytes());
-                let Some(run) = self.store.retrieval_run(run_id)? else {
+                let Some(runs) = self.example_runs(id)? else {
                     return Ok(None);
                 };
-                if !replays(&run, &event)? {
-                    return Ok(None);
-                }
-                let matches = match predicate {
-                    ClosedFormPredicate::RetrievalMiss => {
-                        DiagnosticObservation::from_retrieval_run(&run).is_some()
-                    }
-                };
-                if matches != expected {
+                if predicate.raises_on(&runs) != expected {
                     return Ok(None);
                 }
             }
@@ -304,8 +441,4 @@ fn replays_group(runs: &[RetrievalRunRecord], event: &super::DiagnosticEvent) ->
         .last()
         .is_some_and(|last| event.replay.run_ref.as_deref() == Some(last.run_id.to_hex().as_str()))
         && event.replay.content_hash == *hasher.finalize().as_bytes())
-}
-
-fn replays(run: &RetrievalRunRecord, event: &super::DiagnosticEvent) -> Result<bool> {
-    replays_group(std::slice::from_ref(run), event)
 }

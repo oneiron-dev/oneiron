@@ -397,7 +397,7 @@ side_tables! {
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
-    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw;
+    CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
     CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored;
