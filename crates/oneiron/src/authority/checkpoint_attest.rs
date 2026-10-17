@@ -381,6 +381,22 @@ struct StoredAttestation {
     attestation: AuthorityCheckpointAttestation,
 }
 
+/// The attestations stored for `image` that were made under the root policy
+/// whose digest is `policy`, as their roots made them.
+pub(super) fn checkpoint_attestations_under_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    image: &[u8; 32],
+    policy: &[u8; 32],
+) -> Result<Vec<AuthorityCheckpointAttestation>> {
+    Ok(ATTESTATIONS
+        .scan_from(store, txn, image)?
+        .into_iter()
+        .filter(|(_, stored)| stored.policy == *policy)
+        .map(|(_, stored)| stored.attestation)
+        .collect())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AttestedHead {

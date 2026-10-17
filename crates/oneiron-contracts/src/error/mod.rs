@@ -241,6 +241,8 @@ pub enum ErrorKind {
     AuthorityLogStoreKeyMismatch,
     AuthorityLogSignerPending,
     AuthorityLogFull,
+    /// The authority fold needs history this vault does not hold (OF-469).
+    AuthorityHistoryRequired,
     InvalidSecretCustodyBody,
     SecretNameInUse,
     SecretCustodyNotActive,
