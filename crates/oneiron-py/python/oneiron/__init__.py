@@ -452,6 +452,9 @@ class Oneiron:
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
         @property
+        def campaign(self) -> "Oneiron._VaultCampaignVerbs":
+            return Oneiron._VaultCampaignVerbs(self._client)
+        @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs":
             return Oneiron._VaultWeaveVerbs(self._client)
         @property
@@ -667,6 +670,27 @@ class Oneiron:
         def namespaces(self, request: dict[str, Any]) -> list[list[str]]:
             """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
             return json.loads(_translate(lambda: self._client.vault_kv_namespaces(json.dumps(request, allow_nan=False))))
+    class _VaultCampaignVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def program(self) -> "Oneiron._VaultCampaignProgramVerbs":
+            return Oneiron._VaultCampaignProgramVerbs(self._client)
+    class _VaultCampaignProgramVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_program_create(json.dumps(spec))))
+        def read(self, spec):
+            """One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_program_read(json.dumps(spec))))
+        def update(self, spec):
+            """Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_program_update(json.dumps(spec))))
+        def archive(self, spec):
+            """Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_program_archive(json.dumps(spec))))
     class _VaultWeaveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -685,6 +709,9 @@ class Oneiron:
         @property
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs":
             return Oneiron._VaultWeaveOwnerVerbs(self._client)
+        @property
+        def item(self) -> "Oneiron._VaultWeaveItemVerbs":
+            return Oneiron._VaultWeaveItemVerbs(self._client)
     class _VaultWeaveLinkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -697,12 +724,27 @@ class Oneiron:
         @property
         def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs":
             return Oneiron._VaultWeaveOwnerLinkVerbs(self._client)
+        @property
+        def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs":
+            return Oneiron._VaultWeaveOwnerItemVerbs(self._client)
     class _VaultWeaveOwnerLinkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
             """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_owner_link_wrong(json.dumps(spec))))
+    class _VaultWeaveOwnerItemVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_owner_item_wrong(json.dumps(spec))))
+    class _VaultWeaveItemVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
     class _VaultPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
